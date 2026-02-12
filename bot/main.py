@@ -495,7 +495,7 @@ async def settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_document(
             document=dump_path.open("rb"),
             filename=dump_path.name,
-            caption="SQLite dump created.",
+            caption="✅ SQLite dump created.",
         )
         return SETTINGS_MENU
 
@@ -507,7 +507,7 @@ async def settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_document(
             document=logs_path.open("rb"),
             filename=logs_path.name,
-            caption="Logs dump created.",
+            caption="✅ Logs dump created.",
         )
         return SETTINGS_MENU
 
@@ -595,7 +595,7 @@ async def auto_dump_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     set_setting(get_db_path(), AUTO_DUMP_SETTING_KEY, mode)
     _configure_auto_dump(context.application, mode)
     await update.message.reply_text(
-        f"Auto dump mode set: {mode}",
+        f"✅ Auto dump mode set: {mode}",
         reply_markup=ReplyKeyboardMarkup(SETTINGS_KEYS, resize_keyboard=True),
     )
     return SETTINGS_MENU
@@ -610,7 +610,7 @@ async def add_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_owner(user_id):
         await _forward_text_to_owner(update, context, raw)
         await update.message.reply_text(
-            "Successfully sent to the bot Owner",
+            "✅ Successfully sent to the bot Owner",
             reply_markup=_main_menu_markup(user_id),
         )
         return MENU
@@ -670,7 +670,7 @@ async def add_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_owner(user_id):
         await _forward_document_to_owner(update, context)
         await update.message.reply_text(
-            "Successfully sent to the bot Owner",
+            "✅ Successfully sent to the bot Owner",
             reply_markup=_main_menu_markup(user_id),
         )
         return MENU
@@ -925,7 +925,7 @@ async def approve_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         set_user_status(get_db_path(), target_id, "approved")
         await query.edit_message_text(f"Approved user {target_id}")
         try:
-            await context.bot.send_message(target_id, "Access approved. Tap Start.")
+            await context.bot.send_message(target_id, "✅ Access approved. Tap Start.")
         except Exception:
             pass
         return
@@ -935,7 +935,7 @@ async def approve_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         set_user_status(get_db_path(), target_id, "rejected")
         await query.edit_message_text(f"Rejected user {target_id}")
         try:
-            await context.bot.send_message(target_id, "Access rejected.")
+            await context.bot.send_message(target_id, "❌ Access rejected.")
         except Exception:
             pass
 
@@ -949,7 +949,7 @@ async def _save_entry(update: Update, entry):
         await update.message.reply_text(str(exc), reply_markup=_main_menu_markup(update.effective_user.id))
         return None
 
-    await update.message.reply_text(f"Saved: {saved.get('id')}", reply_markup=_main_menu_markup(update.effective_user.id))
+    await update.message.reply_text(f"✅ Saved: {saved.get('id')}", reply_markup=_main_menu_markup(update.effective_user.id))
     return saved
 
 
@@ -960,7 +960,7 @@ def _get_ru_de_answer(entry):
 
 
 def _format_feedback(entry, ok):
-    status = "Correct" if ok else "Wrong"
+    status = "Correct ✅" if ok else "Wrong ❌"
     if entry.get("type") == "verb":
         inf = entry.get("infinitive", "")
         pr = entry.get("prateritum", "")
@@ -1198,7 +1198,7 @@ async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, w
         logging.exception("AI request failed for word: %s", word)
         await _reply_text_with_retry(
             update.message,
-            f"AI request failed: {exc}",
+            f"❌ AI request failed: {exc}",
             reply_markup=ReplyKeyboardMarkup([[STOP_TEXT]], resize_keyboard=True),
         )
         return ADD_CLARIFY
@@ -1214,7 +1214,7 @@ async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, w
         await _reply_text_with_retry(
             update.message,
             (
-                f"AI failed to parse for word: {word}\n"
+                f"❌ AI failed to parse for word: {word}\n"
                 f"Clarification: {clarification or '-'}\n"
                 "Use Clarify AI or Clarify Field."
             ),
@@ -1252,7 +1252,7 @@ async def _process_next_ai_word(update: Update, context: ContextTypes.DEFAULT_TY
     context.user_data.pop("pending_entry", None)
     await _reply_text_with_retry(
         update.message,
-        "Done.",
+        "✅ Done.",
         reply_markup=_main_menu_markup(update.effective_user.id),
     )
     return MENU
@@ -1265,7 +1265,7 @@ async def _stop_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop("edit_stage", None)
     context.user_data.pop("edit_field", None)
     await update.message.reply_text(
-        "Stopped.",
+        "❌ Stopped.",
         reply_markup=_main_menu_markup(update.effective_user.id),
     )
     return MENU
