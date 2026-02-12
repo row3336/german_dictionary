@@ -979,6 +979,9 @@ async def _auto_dump_job(context: ContextTypes.DEFAULT_TYPE):
 
 def _configure_auto_dump(app: Application, mode: str):
     job_queue = app.job_queue
+    if job_queue is None:
+        return
+
     for job in job_queue.get_jobs_by_name(AUTO_DUMP_JOB_NAME):
         job.schedule_removal()
 
