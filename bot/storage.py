@@ -610,6 +610,38 @@ def update_word_cefr_level(db_path, word_id, level):
         )
 
 
+def update_word_fields(db_path, word_id, fields):
+    allowed = {
+        "type",
+        "article",
+        "german",
+        "plural",
+        "infinitive",
+        "prateritum",
+        "partizip2",
+        "russian",
+        "cefr_level",
+    }
+    values = {}
+    for key, value in dict(fields or {}).items():
+        if key not in allowed:
+            continue
+        if key == "cefr_level":
+            values[key] = _normalize_level(value)
+        else:
+            values[key] = _safe_text(value)
+    if not values:
+        return
+
+    parts = [f"{key} = ?" for key in values]
+    params = list(values.values()) + [_safe_text(word_id)]
+    query = f"UPDATE words SET {', '.join(parts)} WHERE id = ?"
+
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        conn.execute(query, tuple(params))
+
+
 def create_template_from_word(raw_word):
     raw_word = raw_word.strip()
     if not raw_word:

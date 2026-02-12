@@ -43,6 +43,7 @@ from .storage import (
     set_user_status,
     toggle_user_level,
     update_progress,
+    update_word_fields,
 )
 
 (
@@ -204,6 +205,17 @@ def _wait_markup():
     return ReplyKeyboardMarkup(WAIT_KEYS, resize_keyboard=True)
 
 
+def _quiz_markup(user_id, article=False):
+    rows = []
+    if article:
+        rows.append(["der", "die", "das"])
+    if is_owner(user_id):
+        rows.append([AI_CLARIFY_FIELD, STOP_TEXT])
+    else:
+        rows.append([STOP_TEXT])
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True)
+
+
 def _levels_markup(user_id):
     enabled = set(get_user_levels(get_db_path(), user_id))
     rows = []
@@ -292,6 +304,62 @@ def _set_entry_field(entry, raw_update):
 
 def _set_entry_field_value(entry, field, value):
     return _set_entry_field(entry, f"{field}={value}")
+
+
+async def _start_quiz_edit(update: Update, context: ContextTypes.DEFAULT_TYPE, return_state):
+    context.user_data["edit_source"] = "quiz"
+    context.user_data["edit_stage"] = "pick_field"
+    context.user_data["edit_return_state"] = return_state
+    await update.message.reply_text(
+        "Choose field to edit:",
+        reply_markup=ReplyKeyboardMarkup(EDIT_FIELDS_KEYS, resize_keyboard=True),
+    )
+    return ADD_EDIT
+
+
+async def _show_quiz_prompt_after_edit(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
+    state = context.user_data.get("edit_return_state")
+    entry = context.user_data.get("quiz_entry")
+    if not entry:
+        return await _back_to_tests(update)
+
+    if state == QUIZ_RU_DE:
+        prompt = _normalize_russian_singular(entry.get("russian", ""))
+        text = _format_question(prompt)
+        if prefix_text:
+            text = f"{prefix_text}\n\n{text}"
+        await update.message.reply_text(
+            text,
+            reply_markup=_quiz_markup(update.effective_user.id, article=False),
+            parse_mode="Markdown",
+        )
+        return QUIZ_RU_DE
+
+    if state == QUIZ_DE_RU:
+        prompt = entry.get("infinitive", "") if entry.get("type") == "verb" else entry.get("german", "")
+        text = _format_question(prompt)
+        if prefix_text:
+            text = f"{prefix_text}\n\n{text}"
+        await update.message.reply_text(
+            text,
+            reply_markup=_quiz_markup(update.effective_user.id, article=False),
+            parse_mode="Markdown",
+        )
+        return QUIZ_DE_RU
+
+    if state == QUIZ_ARTICLE:
+        prompt = entry.get("german", "")
+        text = _format_question(prompt)
+        if prefix_text:
+            text = f"{prefix_text}\n\n{text}"
+        await update.message.reply_text(
+            text,
+            reply_markup=_quiz_markup(update.effective_user.id, article=True),
+            parse_mode="Markdown",
+        )
+        return QUIZ_ARTICLE
+
+    return await _back_to_tests(update)
 
 
 def _md_escape(text):
@@ -721,6 +789,7 @@ async def add_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ADD_CLARIFY
 
     if text == AI_CLARIFY_FIELD:
+        context.user_data["edit_source"] = "add"
         context.user_data["edit_stage"] = "pick_field"
         await update.message.reply_text(
             "Choose field to edit:",
@@ -768,7 +837,9 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == STOP_TEXT:
         return await _stop_queue(update, context)
 
-    entry = context.user_data.get("pending_entry")
+    source = context.user_data.get("edit_source", "add")
+    entry_key = "pending_entry" if source == "add" else "quiz_entry"
+    entry = context.user_data.get(entry_key)
     if not entry:
         await update.message.reply_text("No entry to edit.", reply_markup=_main_menu_markup(update.effective_user.id))
         return MENU
@@ -776,6 +847,8 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     stage = context.user_data.get("edit_stage", "pick_field")
     if text == BACK_TEXT:
         if stage == "pick_field":
+            if source == "quiz":
+                return await _show_quiz_prompt_after_edit(update, context, "✅ Edit canceled.")
             return await _show_ai_preview(update, entry)
         if stage == "pick_level":
             context.user_data["edit_stage"] = "pick_field"
@@ -831,9 +904,12 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=ReplyKeyboardMarkup(EDIT_LEVEL_KEYS, resize_keyboard=True),
             )
             return ADD_EDIT
-        context.user_data["pending_entry"] = updated
+        context.user_data[entry_key] = updated
         context.user_data["edit_stage"] = "pick_field"
         context.user_data.pop("edit_field", None)
+        if source == "quiz":
+            update_word_fields(get_db_path(), updated.get("id"), updated)
+            return await _show_quiz_prompt_after_edit(update, context, "✅ Updated.")
         return await _show_ai_preview(update, updated)
 
     field = context.user_data.get("edit_field", "")
@@ -853,9 +929,12 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return ADD_EDIT
 
-    context.user_data["pending_entry"] = updated
+    context.user_data[entry_key] = updated
     context.user_data["edit_stage"] = "pick_field"
     context.user_data.pop("edit_field", None)
+    if source == "quiz":
+        update_word_fields(get_db_path(), updated.get("id"), updated)
+        return await _show_quiz_prompt_after_edit(update, context, "✅ Updated.")
     return await _show_ai_preview(update, updated)
 
 
@@ -863,6 +942,8 @@ async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     if text == STOP_TEXT:
         return await _back_to_tests(update)
+    if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
+        return await _start_quiz_edit(update, context, QUIZ_RU_DE)
 
     entry = context.user_data.get("quiz_entry")
     if not entry:
@@ -880,6 +961,8 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     if text == STOP_TEXT:
         return await _back_to_tests(update)
+    if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
+        return await _start_quiz_edit(update, context, QUIZ_DE_RU)
 
     entry = context.user_data.get("quiz_entry")
     if not entry:
@@ -898,6 +981,8 @@ async def quiz_article(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     if text == STOP_TEXT:
         return await _back_to_tests(update)
+    if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
+        return await _start_quiz_edit(update, context, QUIZ_ARTICLE)
 
     entry = context.user_data.get("quiz_entry")
     if not entry:
@@ -1016,7 +1101,7 @@ async def _send_ru_de_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
     if prefix_text:
         prompt_text = f"{prefix_text}\n\n{prompt_text}"
 
-    await update.message.reply_text(prompt_text, reply_markup=ReplyKeyboardMarkup(QUIZ_KEYS, resize_keyboard=True), parse_mode="Markdown")
+    await update.message.reply_text(prompt_text, reply_markup=_quiz_markup(update.effective_user.id, article=False), parse_mode="Markdown")
     return QUIZ_RU_DE
 
 
@@ -1035,7 +1120,7 @@ async def _send_de_ru_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
     if prefix_text:
         prompt_text = f"{prefix_text}\n\n{prompt_text}"
 
-    await update.message.reply_text(prompt_text, reply_markup=ReplyKeyboardMarkup(QUIZ_KEYS, resize_keyboard=True), parse_mode="Markdown")
+    await update.message.reply_text(prompt_text, reply_markup=_quiz_markup(update.effective_user.id, article=False), parse_mode="Markdown")
     return QUIZ_DE_RU
 
 
@@ -1053,7 +1138,7 @@ async def _send_article_prompt(update: Update, context: ContextTypes.DEFAULT_TYP
     if prefix_text:
         prompt_text = f"{prefix_text}\n\n{prompt_text}"
 
-    await update.message.reply_text(prompt_text, reply_markup=ReplyKeyboardMarkup(ARTICLE_KEYS, resize_keyboard=True), parse_mode="Markdown")
+    await update.message.reply_text(prompt_text, reply_markup=_quiz_markup(update.effective_user.id, article=True), parse_mode="Markdown")
     return QUIZ_ARTICLE
 
 
@@ -1264,6 +1349,8 @@ async def _stop_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop("pending_entry", None)
     context.user_data.pop("edit_stage", None)
     context.user_data.pop("edit_field", None)
+    context.user_data.pop("edit_source", None)
+    context.user_data.pop("edit_return_state", None)
     await update.message.reply_text(
         "❌ Stopped.",
         reply_markup=_main_menu_markup(update.effective_user.id),
