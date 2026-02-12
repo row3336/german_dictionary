@@ -54,27 +54,37 @@ from .storage import (
     ADD_INPUT,
     ADD_CONFIRM,
     ADD_CLARIFY,
+    ADD_EDIT,
     QUIZ_RU_DE,
     QUIZ_DE_RU,
     QUIZ_ARTICLE,
-) = range(11)
+) = range(12)
 
 BACK_TEXT = "Back"
 STOP_TEXT = "Stop"
 START_TEXT = "Start"
 AI_CONFIRM = "Confirm"
-AI_CLARIFY = "Clarify"
+AI_CLARIFY_AI = "Clarify AI"
+AI_CLARIFY_FIELD = "Clarify Field"
 AI_REJECT = "Reject"
 
 OWNER_MAIN_KEYS = [["Add Word", "Tests"], ["Settings", "Stat"]]
 USER_MAIN_KEYS = [["Add Word", "Tests"], ["Info", "Stat"]]
 WAIT_KEYS = [[START_TEXT]]
 ADD_KEYS = [[BACK_TEXT]]
-AI_KEYS = [[AI_CONFIRM, AI_CLARIFY, AI_REJECT], [STOP_TEXT]]
+AI_KEYS = [[AI_CONFIRM, AI_CLARIFY_AI, AI_CLARIFY_FIELD], [AI_REJECT, STOP_TEXT]]
 TESTS_KEYS = [["Quiz RU -> DE", "Quiz DE -> RU"], ["Quiz article", BACK_TEXT]]
 SETTINGS_KEYS = [["Dump DB", "Dump Logs"], ["Auto Dump", "Levels"], [BACK_TEXT]]
 AUTO_DUMP_KEYS = [["Daily", "Weekly"], ["Off", BACK_TEXT]]
 LEVELS_BACK_TEXT = "Back"
+EDIT_FIELDS_KEYS = [
+    ["russian", "cefr_level"],
+    ["article", "plural"],
+    ["prateritum", "partizip2"],
+    ["german", "infinitive"],
+    ["type", BACK_TEXT],
+]
+EDIT_LEVEL_KEYS = [["A1", "A2", "B1"], ["B2", "C1", "C2"], [BACK_TEXT]]
 QUIZ_KEYS = [[STOP_TEXT]]
 ARTICLE_KEYS = [["der", "die", "das"], [STOP_TEXT]]
 
@@ -228,6 +238,60 @@ def _normalize_russian_singular(text):
     if "/" in text:
         text = text.split("/", 1)[0].strip()
     return text
+
+
+def _russian_variants(text):
+    source = str(text or "")
+    parts = re.split(r"[,/;]", source)
+    out = []
+    for part in parts:
+        value = _normalize_answer(part)
+        if value:
+            out.append(value)
+    return out
+
+
+def _set_entry_field(entry, raw_update):
+    if "=" not in raw_update:
+        return None, "Use format: field=value"
+    field, value = raw_update.split("=", 1)
+    field = field.strip().lower()
+    value = value.strip()
+
+    allowed = {
+        "russian",
+        "cefr_level",
+        "article",
+        "plural",
+        "prateritum",
+        "partizip2",
+        "german",
+        "infinitive",
+        "type",
+    }
+    if field not in allowed:
+        return None, f"Unknown field: {field}"
+
+    updated = dict(entry)
+    if field == "cefr_level":
+        level = _parse_level_toggle(value)
+        if not level:
+            return None, "cefr_level must be one of A1,A2,B1,B2,C1,C2"
+        updated["cefr_level"] = level
+    elif field == "type":
+        normalized_type = _type_label(value)
+        if normalized_type not in ALLOWED_AI_TYPES:
+            return None, "Invalid type."
+        updated["type"] = normalized_type
+    elif field == "russian":
+        updated["russian"] = value
+    else:
+        updated[field] = value
+    return updated, None
+
+
+def _set_entry_field_value(entry, field, value):
+    return _set_entry_field(entry, f"{field}={value}")
 
 
 def _md_escape(text):
@@ -649,19 +713,27 @@ async def add_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == STOP_TEXT:
         return await _stop_queue(update, context)
 
-    if text == AI_CLARIFY:
+    if text == AI_CLARIFY_AI:
         await update.message.reply_text(
-            "Send clarification text.",
+            "Send clarification text for AI.",
             reply_markup=ReplyKeyboardMarkup([[STOP_TEXT]], resize_keyboard=True),
         )
         return ADD_CLARIFY
+
+    if text == AI_CLARIFY_FIELD:
+        context.user_data["edit_stage"] = "pick_field"
+        await update.message.reply_text(
+            "Choose field to edit:",
+            reply_markup=ReplyKeyboardMarkup(EDIT_FIELDS_KEYS, resize_keyboard=True),
+        )
+        return ADD_EDIT
 
     if text == AI_REJECT:
         return await _process_next_ai_word(update, context)
 
     if text != AI_CONFIRM:
         await update.message.reply_text(
-            "Use the buttons: Confirm, Clarify, or Reject.",
+            "Use: Confirm, Clarify AI, Clarify Field, or Reject.",
             reply_markup=ReplyKeyboardMarkup(AI_KEYS, resize_keyboard=True),
         )
         return ADD_CONFIRM
@@ -691,6 +763,102 @@ async def add_clarify(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return await _process_ai_word(update, context, word, text)
 
 
+async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    if text == STOP_TEXT:
+        return await _stop_queue(update, context)
+
+    entry = context.user_data.get("pending_entry")
+    if not entry:
+        await update.message.reply_text("No entry to edit.", reply_markup=_main_menu_markup(update.effective_user.id))
+        return MENU
+
+    stage = context.user_data.get("edit_stage", "pick_field")
+    if text == BACK_TEXT:
+        if stage == "pick_field":
+            return await _show_ai_preview(update, entry)
+        if stage == "pick_level":
+            context.user_data["edit_stage"] = "pick_field"
+            await update.message.reply_text(
+                "Choose field to edit:",
+                reply_markup=ReplyKeyboardMarkup(EDIT_FIELDS_KEYS, resize_keyboard=True),
+            )
+            return ADD_EDIT
+        context.user_data["edit_stage"] = "pick_field"
+        await update.message.reply_text(
+            "Choose field to edit:",
+            reply_markup=ReplyKeyboardMarkup(EDIT_FIELDS_KEYS, resize_keyboard=True),
+        )
+        return ADD_EDIT
+
+    if stage == "pick_field":
+        field = text.strip().lower()
+        allowed_fields = {"russian", "cefr_level", "article", "plural", "prateritum", "partizip2", "german", "infinitive", "type"}
+        if field not in allowed_fields:
+            await update.message.reply_text(
+                "Use field buttons.",
+                reply_markup=ReplyKeyboardMarkup(EDIT_FIELDS_KEYS, resize_keyboard=True),
+            )
+            return ADD_EDIT
+        context.user_data["edit_field"] = field
+        if field == "cefr_level":
+            context.user_data["edit_stage"] = "pick_level"
+            await update.message.reply_text(
+                "Choose CEFR level:",
+                reply_markup=ReplyKeyboardMarkup(EDIT_LEVEL_KEYS, resize_keyboard=True),
+            )
+            return ADD_EDIT
+
+        context.user_data["edit_stage"] = "enter_value"
+        await update.message.reply_text(
+            f"Enter new value for {field}:",
+            reply_markup=ReplyKeyboardMarkup([[BACK_TEXT, STOP_TEXT]], resize_keyboard=True),
+        )
+        return ADD_EDIT
+
+    if stage == "pick_level":
+        level = _parse_level_toggle(text)
+        if not level:
+            await update.message.reply_text(
+                "Use level buttons.",
+                reply_markup=ReplyKeyboardMarkup(EDIT_LEVEL_KEYS, resize_keyboard=True),
+            )
+            return ADD_EDIT
+        updated, error = _set_entry_field_value(entry, "cefr_level", level)
+        if error:
+            await update.message.reply_text(
+                error,
+                reply_markup=ReplyKeyboardMarkup(EDIT_LEVEL_KEYS, resize_keyboard=True),
+            )
+            return ADD_EDIT
+        context.user_data["pending_entry"] = updated
+        context.user_data["edit_stage"] = "pick_field"
+        context.user_data.pop("edit_field", None)
+        return await _show_ai_preview(update, updated)
+
+    field = context.user_data.get("edit_field", "")
+    if not field:
+        context.user_data["edit_stage"] = "pick_field"
+        await update.message.reply_text(
+            "Choose field to edit:",
+            reply_markup=ReplyKeyboardMarkup(EDIT_FIELDS_KEYS, resize_keyboard=True),
+        )
+        return ADD_EDIT
+
+    updated, error = _set_entry_field_value(entry, field, text)
+    if error:
+        await update.message.reply_text(
+            error,
+            reply_markup=ReplyKeyboardMarkup([[BACK_TEXT, STOP_TEXT]], resize_keyboard=True),
+        )
+        return ADD_EDIT
+
+    context.user_data["pending_entry"] = updated
+    context.user_data["edit_stage"] = "pick_field"
+    context.user_data.pop("edit_field", None)
+    return await _show_ai_preview(update, updated)
+
+
 async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     if text == STOP_TEXT:
@@ -717,8 +885,9 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not entry:
         return await _send_de_ru_prompt(update, context, None)
 
-    expected = _normalize_russian_singular(entry.get("russian", ""))
-    ok = _normalize_answer(text) == _normalize_answer(expected)
+    answer = _normalize_answer(text)
+    variants = _russian_variants(entry.get("russian", ""))
+    ok = answer in variants
     _update_srs_for_entry(update.effective_user.id, entry, MODE_DE_RU, ok)
 
     feedback = _format_feedback(entry, ok)
@@ -1021,8 +1190,10 @@ async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, w
         return MENU
 
     context.user_data["pending_word"] = word
+    prompt_text = _ai_prompt(word, clarification)
+    context.user_data["last_ai_prompt"] = prompt_text
     try:
-        response_text = generate_fields(_ai_prompt(word, clarification))
+        response_text = generate_fields(prompt_text)
     except Exception as exc:
         logging.exception("AI request failed for word: %s", word)
         await _reply_text_with_retry(
@@ -1034,9 +1205,19 @@ async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, w
 
     entry = _try_parse_json(response_text)
     if entry is None or not _validate_ai_entry(entry):
+        logging.warning(
+            "AI parse failed word=%s clarification=%s raw=%s",
+            word,
+            clarification,
+            (response_text or "")[:500],
+        )
         await _reply_text_with_retry(
             update.message,
-            "AI failed to parse. Send clarification text or Stop.",
+            (
+                f"AI failed to parse for word: {word}\n"
+                f"Clarification: {clarification or '-'}\n"
+                "Use Clarify AI or Clarify Field."
+            ),
             reply_markup=ReplyKeyboardMarkup([[STOP_TEXT]], resize_keyboard=True),
         )
         return ADD_CLARIFY
@@ -1081,6 +1262,8 @@ async def _stop_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop("add_queue", None)
     context.user_data.pop("pending_word", None)
     context.user_data.pop("pending_entry", None)
+    context.user_data.pop("edit_stage", None)
+    context.user_data.pop("edit_field", None)
     await update.message.reply_text(
         "Stopped.",
         reply_markup=_main_menu_markup(update.effective_user.id),
@@ -1318,6 +1501,7 @@ def main():
             ],
             ADD_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_confirm)],
             ADD_CLARIFY: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_clarify)],
+            ADD_EDIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_edit)],
             QUIZ_RU_DE: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_ru_de)],
             QUIZ_DE_RU: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_de_ru)],
             QUIZ_ARTICLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_article)],
