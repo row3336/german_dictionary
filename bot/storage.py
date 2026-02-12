@@ -10,6 +10,7 @@ MIN_EASE = 1.3
 QUIZ_RU_DE = "ru_de"
 QUIZ_DE_RU = "de_ru"
 QUIZ_ARTICLE = "article"
+CEFR_LEVELS = ("A1", "A2", "B1", "B2", "C1", "C2")
 
 
 def default_srs(today=None):
@@ -45,6 +46,7 @@ def init_db(db_path):
                 prateritum TEXT NOT NULL DEFAULT '',
                 partizip2 TEXT NOT NULL DEFAULT '',
                 russian TEXT NOT NULL DEFAULT '',
+                cefr_level TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -77,8 +79,27 @@ def init_db(db_path):
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS user_levels (
+                user_id INTEGER NOT NULL,
+                level TEXT NOT NULL,
+                PRIMARY KEY (user_id, level),
+                FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+            );
             """
         )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_words_cefr ON words(cefr_level)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_user_levels_user ON user_levels(user_id)")
+        _ensure_schema(conn)
+
+
+def _ensure_schema(conn):
+    word_cols = {
+        row["name"] if isinstance(row, sqlite3.Row) else row[1]
+        for row in conn.execute("PRAGMA table_info(words)").fetchall()
+    }
+    if "cefr_level" not in word_cols:
+        conn.execute("ALTER TABLE words ADD COLUMN cefr_level TEXT NOT NULL DEFAULT ''")
 
 
 def _normalize_text(text):
@@ -98,10 +119,16 @@ def _safe_int(value, default=0):
         return default
 
 
+def _normalize_level(level):
+    value = _safe_text(level).strip().upper()
+    return value if value in CEFR_LEVELS else ""
+
+
 def _entry_key(entry):
-    if entry.get("type") == "verb":
+    entry_type = _normalize_text(entry.get("type", ""))
+    if entry_type == "verb":
         return ("verb", _normalize_text(entry.get("infinitive", "")))
-    return ("nomen", _normalize_text(entry.get("german", "")))
+    return (entry_type or "nomen", _normalize_text(entry.get("german", "")))
 
 
 def _row_to_entry(row):
@@ -115,6 +142,7 @@ def _row_to_entry(row):
         "prateritum": row["prateritum"] or "",
         "partizip2": row["partizip2"] or "",
         "russian": row["russian"] or "",
+        "cefr_level": row["cefr_level"] or "",
     }
 
 
@@ -123,7 +151,7 @@ def load_words(db_path):
     with _connect(db_path) as conn:
         rows = conn.execute(
             """
-            SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian
+            SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian, cefr_level
             FROM words
             ORDER BY created_at ASC
             """
@@ -154,6 +182,7 @@ def register_or_update_user(db_path, user_id, username="", first_name=""):
                 """,
                 (_safe_text(username), _safe_text(first_name), int(user_id)),
             )
+            _ensure_default_user_levels(conn, int(user_id))
             return existing["status"]
 
         conn.execute(
@@ -163,6 +192,7 @@ def register_or_update_user(db_path, user_id, username="", first_name=""):
             """,
             (int(user_id), _safe_text(username), _safe_text(first_name)),
         )
+        _ensure_default_user_levels(conn, int(user_id))
     return "pending"
 
 
@@ -194,6 +224,63 @@ def set_user_status(db_path, user_id, status):
             """,
             (int(user_id), status),
         )
+        _ensure_default_user_levels(conn, int(user_id))
+
+
+def _ensure_default_user_levels(conn, user_id):
+    rows = conn.execute(
+        "SELECT level FROM user_levels WHERE user_id = ?",
+        (int(user_id),),
+    ).fetchall()
+    if rows:
+        return
+    conn.executemany(
+        "INSERT OR IGNORE INTO user_levels (user_id, level) VALUES (?, ?)",
+        [(int(user_id), level) for level in CEFR_LEVELS],
+    )
+
+
+def get_user_levels(db_path, user_id):
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        _ensure_default_user_levels(conn, int(user_id))
+        rows = conn.execute(
+            "SELECT level FROM user_levels WHERE user_id = ? ORDER BY level",
+            (int(user_id),),
+        ).fetchall()
+    levels = {row["level"] for row in rows}
+    return [level for level in CEFR_LEVELS if level in levels]
+
+
+def toggle_user_level(db_path, user_id, level):
+    level = _normalize_level(level)
+    if not level:
+        raise ValueError("Invalid CEFR level.")
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        _ensure_default_user_levels(conn, int(user_id))
+        exists = conn.execute(
+            "SELECT 1 FROM user_levels WHERE user_id = ? AND level = ?",
+            (int(user_id), level),
+        ).fetchone()
+        all_rows = conn.execute(
+            "SELECT level FROM user_levels WHERE user_id = ?",
+            (int(user_id),),
+        ).fetchall()
+        count = len(all_rows)
+        if exists and count <= 1:
+            return False, [row["level"] for row in all_rows]
+        if exists:
+            conn.execute(
+                "DELETE FROM user_levels WHERE user_id = ? AND level = ?",
+                (int(user_id), level),
+            )
+        else:
+            conn.execute(
+                "INSERT OR IGNORE INTO user_levels (user_id, level) VALUES (?, ?)",
+                (int(user_id), level),
+            )
+    return True, get_user_levels(db_path, user_id)
 
 
 def get_user_info(db_path, user_id):
@@ -248,7 +335,7 @@ def find_existing_word(db_path, raw_word):
     with _connect(db_path) as conn:
         row = conn.execute(
             """
-            SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian
+            SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian, cefr_level
             FROM words
             WHERE lower(trim(german)) = ? OR lower(trim(infinitive)) = ?
             LIMIT 1
@@ -269,8 +356,8 @@ def _dedupe_entry(conn, entry):
         ).fetchone()
     else:
         row = conn.execute(
-            "SELECT id FROM words WHERE type = 'nomen' AND lower(trim(german)) = ? LIMIT 1",
-            (key_value,),
+            "SELECT id FROM words WHERE lower(trim(type)) = ? AND lower(trim(german)) = ? LIMIT 1",
+            (key_type, key_value),
         ).fetchone()
     if row:
         raise ValueError("Already in database.")
@@ -287,8 +374,8 @@ def add_word(db_path, entry):
         conn.execute(
             """
             INSERT INTO words (
-                id, type, article, german, plural, infinitive, prateritum, partizip2, russian
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                id, type, article, german, plural, infinitive, prateritum, partizip2, russian, cefr_level
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 entry["id"],
@@ -300,6 +387,7 @@ def add_word(db_path, entry):
                 _safe_text(entry.get("prateritum", "")),
                 _safe_text(entry.get("partizip2", "")),
                 _safe_text(entry.get("russian", "")),
+                _normalize_level(entry.get("cefr_level", "")),
             ),
         )
     return entry
@@ -316,7 +404,7 @@ def _progress_for_row(row):
     }
 
 
-def select_due(db_path, user_id, mode, word_type=None, today=None):
+def select_due(db_path, user_id, mode, word_type=None, levels=None, today=None):
     if today is None:
         today = date.today()
     due_today = today.isoformat()
@@ -327,12 +415,18 @@ def select_due(db_path, user_id, mode, word_type=None, today=None):
     if word_type:
         where_clauses.insert(0, "w.type = ?")
         params.insert(2, word_type)
+    if levels:
+        safe_levels = [lvl for lvl in (_normalize_level(x) for x in levels) if lvl]
+        if safe_levels:
+            placeholders = ",".join("?" for _ in safe_levels)
+            where_clauses.append(f"upper(w.cefr_level) IN ({placeholders})")
+            params.extend(safe_levels)
 
     where_sql = " AND ".join(where_clauses)
 
     query = f"""
         SELECT
-            w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.russian,
+            w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.russian, w.cefr_level,
             p.interval AS p_interval, p.repetitions AS p_repetitions, p.ease AS p_ease, p.due AS p_due
         FROM words w
         LEFT JOIN progress p
@@ -466,8 +560,8 @@ def migrate_json_to_sqlite(json_path, db_path):
             conn.execute(
                 """
                 INSERT INTO words (
-                    id, type, article, german, plural, infinitive, prateritum, partizip2, russian
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    id, type, article, german, plural, infinitive, prateritum, partizip2, russian, cefr_level
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     entry["id"],
@@ -479,10 +573,41 @@ def migrate_json_to_sqlite(json_path, db_path):
                     _safe_text(entry.get("prateritum", "")),
                     _safe_text(entry.get("partizip2", "")),
                     _safe_text(entry.get("russian", "")),
+                    _normalize_level(entry.get("cefr_level", "")),
                 ),
             )
             inserted += 1
     return inserted
+
+
+def list_words_for_cefr_backfill(db_path, limit=0):
+    init_db(db_path)
+    query = """
+        SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian, cefr_level
+        FROM words
+        WHERE trim(coalesce(cefr_level, '')) = ''
+        ORDER BY created_at ASC
+    """
+    params = ()
+    if int(limit) > 0:
+        query += " LIMIT ?"
+        params = (int(limit),)
+
+    with _connect(db_path) as conn:
+        rows = conn.execute(query, params).fetchall()
+    return [_row_to_entry(row) for row in rows]
+
+
+def update_word_cefr_level(db_path, word_id, level):
+    safe_level = _normalize_level(level)
+    if not safe_level:
+        raise ValueError("Invalid CEFR level.")
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        conn.execute(
+            "UPDATE words SET cefr_level = ? WHERE id = ?",
+            (safe_level, _safe_text(word_id)),
+        )
 
 
 def create_template_from_word(raw_word):

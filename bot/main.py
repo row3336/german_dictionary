@@ -1,15 +1,18 @@
 
 import json
+import asyncio
 import logging
 import os
 import random
 import re
 import shutil
+from logging.handlers import TimedRotatingFileHandler
 from datetime import datetime, time, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, Update
+from telegram.error import RetryAfter
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -22,6 +25,7 @@ from telegram.ext import (
 
 from .ai import generate_fields
 from .storage import (
+    CEFR_LEVELS,
     QUIZ_ARTICLE as MODE_ARTICLE,
     QUIZ_DE_RU as MODE_DE_RU,
     QUIZ_RU_DE as MODE_RU_DE,
@@ -29,6 +33,7 @@ from .storage import (
     count_words,
     find_existing_word,
     get_setting,
+    get_user_levels,
     get_user_status,
     init_db,
     migrate_json_to_sqlite,
@@ -36,6 +41,7 @@ from .storage import (
     select_due,
     set_setting,
     set_user_status,
+    toggle_user_level,
     update_progress,
 )
 
@@ -44,13 +50,14 @@ from .storage import (
     TESTS_MENU,
     SETTINGS_MENU,
     AUTO_DUMP_MENU,
+    LEVELS_MENU,
     ADD_INPUT,
     ADD_CONFIRM,
     ADD_CLARIFY,
     QUIZ_RU_DE,
     QUIZ_DE_RU,
     QUIZ_ARTICLE,
-) = range(10)
+) = range(11)
 
 BACK_TEXT = "Back"
 STOP_TEXT = "Stop"
@@ -65,8 +72,9 @@ WAIT_KEYS = [[START_TEXT]]
 ADD_KEYS = [[BACK_TEXT]]
 AI_KEYS = [[AI_CONFIRM, AI_CLARIFY, AI_REJECT], [STOP_TEXT]]
 TESTS_KEYS = [["Quiz RU -> DE", "Quiz DE -> RU"], ["Quiz article", BACK_TEXT]]
-SETTINGS_KEYS = [["Dump DB", "Dump Logs"], ["Auto Dump", BACK_TEXT]]
+SETTINGS_KEYS = [["Dump DB", "Dump Logs"], ["Auto Dump", "Levels"], [BACK_TEXT]]
 AUTO_DUMP_KEYS = [["Daily", "Weekly"], ["Off", BACK_TEXT]]
+LEVELS_BACK_TEXT = "Back"
 QUIZ_KEYS = [[STOP_TEXT]]
 ARTICLE_KEYS = [["der", "die", "das"], [STOP_TEXT]]
 
@@ -100,10 +108,7 @@ NUMERAL_SET = {
     "zwei",
     "drei",
     "vier",
-    "funf",
     "fuenf",
-    "funfzehn",
-    "funfzig",
     "fuenfzehn",
     "fuenfzig",
     "funf",
@@ -115,9 +120,7 @@ NUMERAL_SET = {
     "neun",
     "zehn",
     "elf",
-    "zwolf",
     "zwoelf",
-    "zwolf",
     "dreizehn",
     "vierzehn",
     "sechzehn",
@@ -126,7 +129,6 @@ NUMERAL_SET = {
     "neunzehn",
     "zwanzig",
     "dreissig",
-    "drei?ig",
     "vierzig",
     "sechzig",
     "siebzig",
@@ -146,7 +148,6 @@ ALLOWED_AI_TYPES = {
     "adjektiv",
     "pronomen",
     "adverb",
-    "praposition",
     "praeposition",
     "konjunktion",
     "partikel",
@@ -193,6 +194,27 @@ def _wait_markup():
     return ReplyKeyboardMarkup(WAIT_KEYS, resize_keyboard=True)
 
 
+def _levels_markup(user_id):
+    enabled = set(get_user_levels(get_db_path(), user_id))
+    rows = []
+    row = []
+    for idx, level in enumerate(CEFR_LEVELS, start=1):
+        mark = "ON" if level in enabled else "OFF"
+        row.append(f"{level} {mark}")
+        if idx % 2 == 0:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([LEVELS_BACK_TEXT])
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True)
+
+
+def _parse_level_toggle(text):
+    token = (text or "").strip().split(" ", 1)[0].upper()
+    return token if token in CEFR_LEVELS else ""
+
+
 def _normalize_answer(text):
     return " ".join(text.strip().lower().split())
 
@@ -215,6 +237,37 @@ def _md_escape(text):
     return text
 
 
+async def _reply_text_with_retry(message, text, max_retries=2, **kwargs):
+    attempts = 0
+    while True:
+        try:
+            return await message.reply_text(text, **kwargs)
+        except RetryAfter as exc:
+            attempts += 1
+            if attempts > max_retries:
+                raise
+            await asyncio.sleep(int(getattr(exc, "retry_after", 1)) + 1)
+
+
+def _scan_words_before_ai(lines):
+    filtered = []
+    existing = []
+    recognition = []
+    for raw in lines:
+        word = raw.strip()
+        if not word:
+            continue
+        reason = _prefilter_reject_reason(word)
+        if reason:
+            filtered.append(word)
+            continue
+        if find_existing_word(get_db_path(), word):
+            existing.append(word)
+            continue
+        recognition.append(word)
+    return filtered, existing, recognition
+
+
 def _prefilter_reject_reason(word):
     normalized = _normalize_lookup_text(word)
     if not normalized:
@@ -231,7 +284,7 @@ def _prefilter_reject_reason(word):
 def _type_label(raw_type):
     value = _normalize_lookup_text(raw_type)
     if value == "praeposition":
-        return "praposition"
+        return "praeposition"
     return value
 
 
@@ -402,11 +455,55 @@ async def settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         return AUTO_DUMP_MENU
 
+    if text == "Levels":
+        enabled = ", ".join(get_user_levels(get_db_path(), user_id))
+        await update.message.reply_text(
+            f"Enabled levels: {enabled}",
+            reply_markup=_levels_markup(user_id),
+        )
+        return LEVELS_MENU
+
     await update.message.reply_text(
         "Use settings buttons.",
         reply_markup=ReplyKeyboardMarkup(SETTINGS_KEYS, resize_keyboard=True),
     )
     return SETTINGS_MENU
+
+
+async def levels_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    user_id = update.effective_user.id
+    if not is_owner(user_id):
+        return await _back_to_main_menu(update)
+
+    if text == LEVELS_BACK_TEXT:
+        await update.message.reply_text(
+            "Settings:",
+            reply_markup=ReplyKeyboardMarkup(SETTINGS_KEYS, resize_keyboard=True),
+        )
+        return SETTINGS_MENU
+
+    level = _parse_level_toggle(text)
+    if not level:
+        await update.message.reply_text(
+            "Use level buttons.",
+            reply_markup=_levels_markup(user_id),
+        )
+        return LEVELS_MENU
+
+    changed, levels = toggle_user_level(get_db_path(), user_id, level)
+    if not changed:
+        await update.message.reply_text(
+            "At least one level must stay enabled.",
+            reply_markup=_levels_markup(user_id),
+        )
+        return LEVELS_MENU
+
+    await update.message.reply_text(
+        f"Enabled levels: {', '.join(levels)}",
+        reply_markup=_levels_markup(user_id),
+    )
+    return LEVELS_MENU
 
 
 async def auto_dump_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -471,7 +568,28 @@ async def add_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ADD_INPUT
 
     if len(lines) > 1:
-        context.user_data["add_queue"] = lines
+        filtered, existing, recognition = _scan_words_before_ai(lines)
+        context.user_data["add_queue"] = recognition
+        logging.info(
+            "Batch add scan: total=%s filtered=%s existing=%s recognition=%s",
+            len(lines),
+            len(filtered),
+            len(existing),
+            len(recognition),
+        )
+        logging.info("Batch add details: filtered=%s", filtered)
+        logging.info("Batch add details: existing=%s", existing)
+        logging.info("Batch add details: recognition=%s", recognition)
+        await _reply_text_with_retry(
+            update.message,
+            (
+                f"Already in database {len(existing)}\n"
+                f"Filtred {len(filtered)}\n"
+                f"For recognition {len(recognition)}\n"
+                "Logs: Settings -> Dump Logs"
+            ),
+            reply_markup=ReplyKeyboardMarkup([[STOP_TEXT]], resize_keyboard=True),
+        )
         return await _process_next_ai_word(update, context)
 
     context.user_data.pop("add_queue", None)
@@ -501,7 +619,28 @@ async def add_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("File is empty.")
         return ADD_INPUT
 
-    context.user_data["add_queue"] = lines
+    filtered, existing, recognition = _scan_words_before_ai(lines)
+    context.user_data["add_queue"] = recognition
+    logging.info(
+        "Batch add scan: total=%s filtered=%s existing=%s recognition=%s",
+        len(lines),
+        len(filtered),
+        len(existing),
+        len(recognition),
+    )
+    logging.info("Batch add details: filtered=%s", filtered)
+    logging.info("Batch add details: existing=%s", existing)
+    logging.info("Batch add details: recognition=%s", recognition)
+    await _reply_text_with_retry(
+        update.message,
+        (
+            f"Already in database {len(existing)}\n"
+            f"Filtred {len(filtered)}\n"
+            f"For recognition {len(recognition)}\n"
+            "Logs: Settings -> Dump Logs"
+        ),
+        reply_markup=ReplyKeyboardMarkup([[STOP_TEXT]], resize_keyboard=True),
+    )
     return await _process_next_ai_word(update, context)
 
 
@@ -652,7 +791,7 @@ def _get_ru_de_answer(entry):
 
 
 def _format_feedback(entry, ok):
-    status = "Correct ?" if ok else "Wrong ?"
+    status = "Correct" if ok else "Wrong"
     if entry.get("type") == "verb":
         inf = entry.get("infinitive", "")
         pr = entry.get("prateritum", "")
@@ -678,7 +817,8 @@ def _format_question(word):
 
 
 def _pick_due_entry(context, user_id, mode, word_type=None):
-    due = select_due(get_db_path(), user_id=user_id, mode=mode, word_type=word_type)
+    levels = get_user_levels(get_db_path(), user_id)
+    due = select_due(get_db_path(), user_id=user_id, mode=mode, word_type=word_type, levels=levels)
     if not due:
         return None
 
@@ -753,10 +893,11 @@ def _ai_prompt(word, clarification):
     return (
         "Return only a JSON object and nothing else. "
         "Detect German part of speech. Allowed types: "
-        "nomen, verb, adjektiv, pronomen, adverb, praposition, konjunktion, partikel. "
-        "For nomen return: type, article, german, plural, russian. "
-        "For verb return: type, infinitive, prateritum, partizip2, russian. "
-        "For all other allowed types return: type, german, russian. "
+        "nomen, verb, adjektiv, pronomen, adverb, praeposition, konjunktion, partikel. "
+        "Set cefr_level from: A1, A2, B1, B2, C1, C2. "
+        "For nomen return: type, article, german, plural, russian, cefr_level. "
+        "For verb return: type, infinitive, prateritum, partizip2, russian, cefr_level. "
+        "For all other allowed types return: type, german, russian, cefr_level. "
         "Use Russian translation in singular only. No extra text."
         f"\nWord: {word}{extra}"
     )
@@ -768,6 +909,8 @@ def _validate_ai_entry(entry):
 
     entry_type = _type_label(entry.get("type", ""))
     if entry_type not in ALLOWED_AI_TYPES:
+        return False
+    if _parse_level_toggle(entry.get("cefr_level", "")) == "":
         return False
 
     if entry_type == "nomen":
@@ -781,6 +924,7 @@ def _normalize_ai_entry(entry):
     entry = dict(entry)
     entry_type = _type_label(entry.get("type", ""))
     entry["type"] = entry_type
+    cefr_level = _parse_level_toggle(entry.get("cefr_level", ""))
 
     if entry_type == "verb":
         return {
@@ -789,6 +933,7 @@ def _normalize_ai_entry(entry):
             "prateritum": str(entry.get("prateritum", "")).strip(),
             "partizip2": str(entry.get("partizip2", "")).strip(),
             "russian": _normalize_russian_singular(entry.get("russian", "")),
+            "cefr_level": cefr_level,
         }
 
     if entry_type == "nomen":
@@ -798,24 +943,30 @@ def _normalize_ai_entry(entry):
             "german": str(entry.get("german", "")).strip(),
             "plural": str(entry.get("plural", "")).strip(),
             "russian": _normalize_russian_singular(entry.get("russian", "")),
+            "cefr_level": cefr_level,
         }
 
     return {
         "type": entry_type,
         "german": str(entry.get("german", "")).strip(),
         "russian": _normalize_russian_singular(entry.get("russian", "")),
+        "cefr_level": cefr_level,
     }
 
 
 def _format_ai_preview(entry):
     entry_type = entry.get("type")
+    level = entry.get("cefr_level", "")
     if entry_type == "nomen":
         art = entry.get("article", "")
         ger = entry.get("german", "")
         plural = entry.get("plural", "")
         rus = entry.get("russian", "")
         extras = f" ({plural})" if plural else ""
-        return "Recognized [Nomen]\n" f"{art} *{_md_escape(ger)}* - {_md_escape(rus)}{_md_escape(extras)}"
+        return (
+            f"Recognized [Nomen {level}]\n"
+            f"{art} *{_md_escape(ger)}* - {_md_escape(rus)}{_md_escape(extras)}"
+        )
 
     if entry_type == "verb":
         inf = entry.get("infinitive", "")
@@ -824,11 +975,14 @@ def _format_ai_preview(entry):
         rus = entry.get("russian", "")
         extras = " / ".join([x for x in [pr, p2] if x])
         extras = f" ({extras})" if extras else ""
-        return "Recognized [Verb]\n" f"*{_md_escape(inf)}* - {_md_escape(rus)}{_md_escape(extras)}"
+        return (
+            f"Recognized [Verb {level}]\n"
+            f"*{_md_escape(inf)}* - {_md_escape(rus)}{_md_escape(extras)}"
+        )
 
     ger = entry.get("german", "")
     rus = entry.get("russian", "")
-    return f"Recognized [{entry_type}]\n*{_md_escape(ger)}* - {_md_escape(rus)}"
+    return f"Recognized [{entry_type} {level}]\n*{_md_escape(ger)}* - {_md_escape(rus)}"
 
 
 async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, word, clarification):
@@ -836,36 +990,33 @@ async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, w
 
     reject_reason = _prefilter_reject_reason(word)
     if reject_reason:
-        await update.message.reply_text(
-            f"{reject_reason} Skipped: {word}",
-            reply_markup=(
-                ReplyKeyboardMarkup([[STOP_TEXT]], resize_keyboard=True)
-                if has_queue
-                else ReplyKeyboardMarkup(ADD_KEYS, resize_keyboard=True)
-            ),
-        )
         if has_queue:
-            return await _process_next_ai_word(update, context)
+            logging.info("Queue skip filtered word: %s", word)
+            return ADD_INPUT
+        await _reply_text_with_retry(
+            update.message,
+            f"{reject_reason} Skipped: {word}",
+            reply_markup=ReplyKeyboardMarkup(ADD_KEYS, resize_keyboard=True),
+        )
         return ADD_INPUT
 
     existing = find_existing_word(get_db_path(), word)
     if existing:
         existing_type = existing.get("type", "word")
         existing_value = existing.get("infinitive", "") if existing_type == "verb" else existing.get("german", "")
-        await update.message.reply_text(
-            f"Already in database: [{existing_type}] {existing_value}",
-            reply_markup=(
-                ReplyKeyboardMarkup([[STOP_TEXT]], resize_keyboard=True)
-                if has_queue
-                else ReplyKeyboardMarkup(ADD_KEYS, resize_keyboard=True)
-            ),
-        )
         if has_queue:
-            return await _process_next_ai_word(update, context)
+            logging.info("Queue skip existing word: %s", word)
+            return ADD_INPUT
+        await _reply_text_with_retry(
+            update.message,
+            f"Already in database: [{existing_type}] {existing_value}",
+            reply_markup=ReplyKeyboardMarkup(ADD_KEYS, resize_keyboard=True),
+        )
         return ADD_INPUT
 
     if not os.getenv("OPENAI_API_KEY"):
-        await update.message.reply_text(
+        await _reply_text_with_retry(
+            update.message,
             "AI is not configured. Set OPENAI_API_KEY in .env.",
             reply_markup=_main_menu_markup(update.effective_user.id),
         )
@@ -876,7 +1027,8 @@ async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, w
         response_text = generate_fields(_ai_prompt(word, clarification))
     except Exception as exc:
         logging.exception("AI request failed for word: %s", word)
-        await update.message.reply_text(
+        await _reply_text_with_retry(
+            update.message,
             f"AI request failed: {exc}",
             reply_markup=ReplyKeyboardMarkup([[STOP_TEXT]], resize_keyboard=True),
         )
@@ -884,7 +1036,8 @@ async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, w
 
     entry = _try_parse_json(response_text)
     if entry is None or not _validate_ai_entry(entry):
-        await update.message.reply_text(
+        await _reply_text_with_retry(
+            update.message,
             "AI failed to parse. Send clarification text or Stop.",
             reply_markup=ReplyKeyboardMarkup([[STOP_TEXT]], resize_keyboard=True),
         )
@@ -897,7 +1050,8 @@ async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, w
 
 async def _show_ai_preview(update: Update, entry):
     preview = _format_ai_preview(entry)
-    await update.message.reply_text(
+    await _reply_text_with_retry(
+        update.message,
         preview,
         reply_markup=ReplyKeyboardMarkup(AI_KEYS, resize_keyboard=True),
         parse_mode="Markdown",
@@ -907,18 +1061,22 @@ async def _show_ai_preview(update: Update, entry):
 
 async def _process_next_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE):
     queue = context.user_data.get("add_queue") or []
-    if not queue:
-        context.user_data.pop("pending_word", None)
-        context.user_data.pop("pending_entry", None)
-        await update.message.reply_text(
-            "Done.",
-            reply_markup=_main_menu_markup(update.effective_user.id),
-        )
-        return MENU
+    while queue:
+        word = queue.pop(0)
+        context.user_data["add_queue"] = queue
+        state = await _process_ai_word(update, context, word, None)
+        if state in (ADD_CONFIRM, ADD_CLARIFY, MENU):
+            return state
+        queue = context.user_data.get("add_queue") or []
 
-    word = queue.pop(0)
-    context.user_data["add_queue"] = queue
-    return await _process_ai_word(update, context, word, None)
+    context.user_data.pop("pending_word", None)
+    context.user_data.pop("pending_entry", None)
+    await _reply_text_with_retry(
+        update.message,
+        "Done.",
+        reply_markup=_main_menu_markup(update.effective_user.id),
+    )
+    return MENU
 
 
 async def _stop_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1007,7 +1165,14 @@ def _configure_logging():
     log_path.parent.mkdir(parents=True, exist_ok=True)
     formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
 
-    file_handler = logging.FileHandler(log_path, encoding="utf-8")
+    file_handler = TimedRotatingFileHandler(
+        filename=log_path,
+        when="D",
+        interval=1,
+        backupCount=14,
+        encoding="utf-8",
+        utc=True,
+    )
     file_handler.setFormatter(formatter)
 
     stream_handler = logging.StreamHandler()
@@ -1018,6 +1183,21 @@ def _configure_logging():
     root_logger.handlers.clear()
     root_logger.addHandler(file_handler)
     root_logger.addHandler(stream_handler)
+
+    _cleanup_old_dump_logs()
+
+
+def _cleanup_old_dump_logs(days=14):
+    cutoff = datetime.now(timezone.utc).timestamp() - (days * 24 * 60 * 60)
+    dump_dir = get_dump_dir()
+    if not dump_dir.exists():
+        return
+    for path in dump_dir.glob("bot-logs-*.txt"):
+        try:
+            if path.stat().st_mtime < cutoff:
+                path.unlink(missing_ok=True)
+        except OSError:
+            continue
 
 
 async def _auto_dump_job(context: ContextTypes.DEFAULT_TYPE):
@@ -1133,6 +1313,7 @@ def main():
             TESTS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, tests_menu_choice)],
             SETTINGS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, settings_menu_choice)],
             AUTO_DUMP_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, auto_dump_choice)],
+            LEVELS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, levels_choice)],
             ADD_INPUT: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, add_input),
                 MessageHandler(filters.Document.ALL, add_document),
