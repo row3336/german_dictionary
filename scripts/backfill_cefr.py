@@ -47,20 +47,49 @@ def main():
     print(f"Words without CEFR level: {len(words)}")
     updated = 0
     failed = 0
+    failed_items = []
 
     for entry in words:
         try:
-            level = _parse_level(generate_fields(_prompt(entry)))
+            raw = generate_fields(_prompt(entry))
+            level = _parse_level(raw)
             if not level:
                 failed += 1
+                failed_items.append(
+                    {
+                        "id": entry.get("id"),
+                        "type": entry.get("type"),
+                        "german": entry.get("german"),
+                        "infinitive": entry.get("infinitive"),
+                        "russian": entry.get("russian"),
+                        "reason": "invalid_or_missing_cefr_level",
+                        "raw_response": raw,
+                    }
+                )
                 continue
             update_word_cefr_level(db_path, entry["id"], level)
             updated += 1
-        except Exception:
+        except Exception as exc:
             failed += 1
+            failed_items.append(
+                {
+                    "id": entry.get("id"),
+                    "type": entry.get("type"),
+                    "german": entry.get("german"),
+                    "infinitive": entry.get("infinitive"),
+                    "russian": entry.get("russian"),
+                    "reason": f"exception: {exc}",
+                }
+            )
+
+    failed_path = Path("./data/backfill_cefr_failed.json")
+    failed_path.parent.mkdir(parents=True, exist_ok=True)
+    with failed_path.open("w", encoding="utf-8") as f:
+        json.dump(failed_items, f, ensure_ascii=False, indent=2)
 
     print(f"Updated: {updated}")
     print(f"Failed: {failed}")
+    print(f"Failed report: {failed_path.resolve()}")
 
 
 if __name__ == "__main__":

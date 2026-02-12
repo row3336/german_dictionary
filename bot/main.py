@@ -910,8 +910,6 @@ def _validate_ai_entry(entry):
     entry_type = _type_label(entry.get("type", ""))
     if entry_type not in ALLOWED_AI_TYPES:
         return False
-    if _parse_level_toggle(entry.get("cefr_level", "")) == "":
-        return False
 
     if entry_type == "nomen":
         return bool(entry.get("german"))
@@ -956,7 +954,7 @@ def _normalize_ai_entry(entry):
 
 def _format_ai_preview(entry):
     entry_type = entry.get("type")
-    level = entry.get("cefr_level", "")
+    level = entry.get("cefr_level", "") or "NO_LEVEL"
     if entry_type == "nomen":
         art = entry.get("article", "")
         ger = entry.get("german", "")
