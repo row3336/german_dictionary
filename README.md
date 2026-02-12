@@ -18,7 +18,7 @@ python -m bot.main
 ```
 
 ## AI helper (optional)
-There is a minimal helper in `bot/ai.py` that calls the OpenAI Responses API.
+There is a minimal helper in `bot/ai.py` that calls the OpenAI API.
 You can use it to autofill fields or validate input. Example:
 
 ```python
@@ -30,7 +30,9 @@ print(text)
 ```
 
 ## Data format
-`data/words.json` stores a list of entries. See examples inside the file.
+- Main storage is SQLite: `data/words.db` (configurable via `DB_PATH`).
+- On startup, the bot migrates legacy JSON from `DATA_PATH` (`./data/words.json`) if the DB is empty.
+- Export sends a JSON snapshot (`EXPORT_PATH`).
 
 ## Next steps
 - Flesh out the conversation flow for quizzes.

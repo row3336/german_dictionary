@@ -1,10 +1,11 @@
-﻿import json
+import json
 import os
 import random
+import re
 from pathlib import Path
 
 from dotenv import load_dotenv
-from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
+from telegram import ReplyKeyboardMarkup, Update
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -16,19 +17,22 @@ from telegram.ext import (
 
 from .ai import generate_fields
 from .storage import (
+    QUIZ_ARTICLE as MODE_ARTICLE,
+    QUIZ_DE_RU as MODE_DE_RU,
+    QUIZ_RU_DE as MODE_RU_DE,
     add_word,
-    create_template_from_word,
-    load_words,
-    save_words,
+    count_words,
+    export_words_json,
+    find_existing_word,
+    init_db,
+    migrate_json_to_sqlite,
     select_due,
-    update_sm2,
+    update_progress,
 )
 
 MENU, ADD_INPUT, ADD_CONFIRM, ADD_CLARIFY, QUIZ_RU_DE, QUIZ_DE_RU, QUIZ_ARTICLE = range(7)
 BACK_TEXT = "Back"
 STOP_TEXT = "Stop"
-CONFIRM_ADD = "Add"
-CONFIRM_CANCEL = "Cancel"
 AI_CONFIRM = "Confirm"
 AI_CLARIFY = "Clarify"
 AI_REJECT = "Reject"
@@ -40,14 +44,88 @@ MENU_KEYS = [
 ]
 
 ADD_KEYS = [[BACK_TEXT]]
-CONFIRM_KEYS = [[CONFIRM_ADD, CONFIRM_CANCEL]]
 QUIZ_KEYS = [[STOP_TEXT]]
 ARTICLE_KEYS = [["der", "die", "das"], [STOP_TEXT]]
 AI_KEYS = [[AI_CONFIRM, AI_CLARIFY, AI_REJECT], [STOP_TEXT]]
 
+ARTICLE_SET = {
+    "der",
+    "die",
+    "das",
+    "den",
+    "dem",
+    "des",
+    "ein",
+    "eine",
+    "einen",
+    "einem",
+    "eines",
+    "kein",
+    "keine",
+    "keinen",
+    "keinem",
+    "keines",
+}
 
-def get_data_path():
+NUMERAL_SET = {
+    "null",
+    "eins",
+    "zwei",
+    "drei",
+    "vier",
+    "funf",
+    "fuenf",
+    "funfzehn",
+    "funfzig",
+    "fuenfzehn",
+    "fuenfzig",
+    "funf",
+    "funfzehn",
+    "funfzig",
+    "sechs",
+    "sieben",
+    "acht",
+    "neun",
+    "zehn",
+    "elf",
+    "zwolf",
+    "zwoelf",
+    "zwolf",
+    "dreizehn",
+    "vierzehn",
+    "sechzehn",
+    "siebzehn",
+    "achtzehn",
+    "neunzehn",
+    "zwanzig",
+    "dreissig",
+    "drei?ig",
+    "vierzig",
+    "sechzig",
+    "siebzig",
+    "achtzig",
+    "neunzig",
+    "hundert",
+    "tausend",
+    "million",
+    "milliarde",
+}
+
+NUMERIC_RE = re.compile(
+    r"^\s*[+-]?(?:(?:\d{1,3}(?:[.,]\d{3})+)|\d+)(?:[.,]\d+)?\s*%?\s*$"
+)
+
+
+def get_db_path():
+    return Path(os.getenv("DB_PATH", "./data/words.db"))
+
+
+def get_legacy_json_path():
     return Path(os.getenv("DATA_PATH", "./data/words.json"))
+
+
+def get_export_path():
+    return Path(os.getenv("EXPORT_PATH", "./data/words.export.json"))
 
 
 def is_owner(user_id):
@@ -94,22 +172,23 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await _start_article_quiz(update, context)
 
     if text == "Export data":
-        data_path = get_data_path()
-        if not data_path.exists():
+        db_path = get_db_path()
+        if not db_path.exists():
             await update.message.reply_text("No data file found yet.")
             return MENU
+
+        export_path = export_words_json(db_path, get_export_path())
         await update.message.reply_document(
-            document=data_path.open("rb"),
-            filename=data_path.name,
-            caption="Here is your words.json dump.",
+            document=export_path.open("rb"),
+            filename=export_path.name,
+            caption="Here is your words export.",
         )
         return MENU
 
     if text == "Stats":
-        data_path = get_data_path()
-        words = load_words(data_path)
+        total = count_words(get_db_path())
         await update.message.reply_text(
-            f"Total words: {len(words)}",
+            f"Total words: {total}",
             reply_markup=ReplyKeyboardMarkup(MENU_KEYS, resize_keyboard=True),
         )
         return MENU
@@ -238,7 +317,7 @@ async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
     expected = _get_ru_de_answer(entry)
     ok = _normalize_answer(text) == _normalize_answer(expected)
 
-    _update_srs_for_entry(entry, ok)
+    _update_srs_for_entry(update.effective_user.id, entry, MODE_RU_DE, ok)
 
     feedback = _format_feedback(entry, ok)
     return await _send_ru_de_prompt(update, context, feedback)
@@ -256,7 +335,7 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
     expected = _normalize_russian_singular(entry.get("russian", ""))
     ok = _normalize_answer(text) == _normalize_answer(expected)
 
-    _update_srs_for_entry(entry, ok)
+    _update_srs_for_entry(update.effective_user.id, entry, MODE_DE_RU, ok)
 
     feedback = _format_feedback(entry, ok)
     return await _send_de_ru_prompt(update, context, feedback)
@@ -274,26 +353,23 @@ async def quiz_article(update: Update, context: ContextTypes.DEFAULT_TYPE):
     expected = entry.get("article", "")
     ok = _normalize_answer(text) == _normalize_answer(expected)
 
-    _update_srs_for_entry(entry, ok)
+    _update_srs_for_entry(update.effective_user.id, entry, MODE_ARTICLE, ok)
 
     feedback = _format_feedback(entry, ok)
     return await _send_article_prompt(update, context, feedback)
 
 
 async def _save_entry(update: Update, entry):
-    data_path = get_data_path()
-    words = load_words(data_path)
     if "russian" in entry:
         entry["russian"] = _normalize_russian_singular(entry["russian"])
     try:
-        saved = add_word(words, entry)
+        saved = add_word(get_db_path(), entry)
     except ValueError as exc:
         await update.message.reply_text(
             str(exc),
             reply_markup=ReplyKeyboardMarkup(MENU_KEYS, resize_keyboard=True),
         )
         return None
-    save_words(data_path, words)
 
     await update.message.reply_text(
         f"Saved: {saved.get('id')}",
@@ -317,7 +393,7 @@ def _normalize_lookup_text(text):
 
 
 def _normalize_russian_singular(text):
-    text = text.strip()
+    text = str(text).strip()
     if "/" in text:
         text = text.split("/", 1)[0].strip()
     return text
@@ -327,6 +403,23 @@ def _md_escape(text):
     for ch in ("*", "_", "`"):
         text = text.replace(ch, f"\\{ch}")
     return text
+
+
+def _prefilter_reject_reason(word):
+    normalized = _normalize_lookup_text(word)
+    if not normalized:
+        return "Empty value."
+
+    if NUMERIC_RE.match(normalized):
+        return "Filtered: looks like a number."
+
+    if normalized in ARTICLE_SET:
+        return "Filtered: article words are not stored."
+
+    if normalized in NUMERAL_SET:
+        return "Filtered: numeral words are not stored."
+
+    return None
 
 
 async def _start_ru_de_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -342,7 +435,7 @@ async def _start_article_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 def _format_feedback(entry, ok):
-    status = "Correct ✅" if ok else "Wrong ❌"
+    status = "Correct ?" if ok else "Wrong ?"
     if entry.get("type") == "verb":
         inf = entry.get("infinitive", "")
         pr = entry.get("prateritum", "")
@@ -368,25 +461,25 @@ def _format_question(word):
     return f">>    *{_md_escape(word)}* ?"
 
 
-def _pick_due_entry(context, words, predicate=None):
-    due = select_due(words)
-    if predicate:
-        due = [w for w in due if predicate(w)]
+def _pick_due_entry(context, user_id, mode, word_type=None):
+    due = select_due(get_db_path(), user_id=user_id, mode=mode, word_type=word_type)
     if not due:
         return None
-    last_id = context.user_data.get("last_quiz_id")
+
+    last_ids = context.user_data.setdefault("last_quiz_ids", {})
+    last_id = last_ids.get(mode)
+
     pool = [w for w in due if w.get("id") != last_id] if len(due) > 1 else due
     if not pool:
         pool = due
     entry = random.choice(pool)
-    context.user_data["last_quiz_id"] = entry.get("id")
+    last_ids[mode] = entry.get("id")
     return entry
 
 
 async def _send_ru_de_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
-    data_path = get_data_path()
-    words = load_words(data_path)
-    entry = _pick_due_entry(context, words)
+    user_id = update.effective_user.id
+    entry = _pick_due_entry(context, user_id, MODE_RU_DE)
     if not entry:
         await update.message.reply_text(
             "No due words. Add more or wait until due date.",
@@ -395,6 +488,7 @@ async def _send_ru_de_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
         return MENU
 
     context.user_data["quiz_entry"] = entry
+    context.user_data["quiz_mode"] = MODE_RU_DE
     prompt = _normalize_russian_singular(entry.get("russian", ""))
     prompt_text = _format_question(prompt)
     if prefix_text:
@@ -409,9 +503,8 @@ async def _send_ru_de_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
 
 async def _send_de_ru_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
-    data_path = get_data_path()
-    words = load_words(data_path)
-    entry = _pick_due_entry(context, words)
+    user_id = update.effective_user.id
+    entry = _pick_due_entry(context, user_id, MODE_DE_RU)
     if not entry:
         await update.message.reply_text(
             "No due words. Add more or wait until due date.",
@@ -420,6 +513,7 @@ async def _send_de_ru_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
         return MENU
 
     context.user_data["quiz_entry"] = entry
+    context.user_data["quiz_mode"] = MODE_DE_RU
     if entry.get("type") == "verb":
         prompt = entry.get("infinitive", "")
     else:
@@ -437,9 +531,8 @@ async def _send_de_ru_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
 
 async def _send_article_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
-    data_path = get_data_path()
-    words = load_words(data_path)
-    entry = _pick_due_entry(context, words, predicate=lambda w: w.get("type") == "nomen")
+    user_id = update.effective_user.id
+    entry = _pick_due_entry(context, user_id, MODE_ARTICLE, word_type="nomen")
     if not entry:
         await update.message.reply_text(
             "No due nouns. Add more or wait until due date.",
@@ -448,6 +541,7 @@ async def _send_article_prompt(update: Update, context: ContextTypes.DEFAULT_TYP
         return MENU
 
     context.user_data["quiz_entry"] = entry
+    context.user_data["quiz_mode"] = MODE_ARTICLE
     prompt = entry.get("german", "")
     prompt_text = _format_question(prompt)
     if prefix_text:
@@ -484,19 +578,6 @@ def _validate_ai_entry(entry):
     return False
 
 
-def _find_existing_word(words, raw_word):
-    candidate = _normalize_lookup_text(raw_word)
-    if not candidate:
-        return None
-
-    for entry in words:
-        if _normalize_lookup_text(entry.get("german", "")) == candidate:
-            return entry
-        if _normalize_lookup_text(entry.get("infinitive", "")) == candidate:
-            return entry
-    return None
-
-
 def _format_ai_preview(entry):
     entry_type = entry.get("type")
     if entry_type == "nomen":
@@ -524,15 +605,26 @@ def _format_ai_preview(entry):
 
 
 async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, word, clarification):
-    data_path = get_data_path()
-    words = load_words(data_path)
-    existing = _find_existing_word(words, word)
+    has_queue = bool(context.user_data.get("add_queue"))
+
+    reject_reason = _prefilter_reject_reason(word)
+    if reject_reason:
+        await update.message.reply_text(
+            f"{reject_reason} Skipped: {word}",
+            reply_markup=(
+                ReplyKeyboardMarkup([[STOP_TEXT]], resize_keyboard=True)
+                if has_queue
+                else ReplyKeyboardMarkup(ADD_KEYS, resize_keyboard=True)
+            ),
+        )
+        if has_queue:
+            return await _process_next_ai_word(update, context)
+        return ADD_INPUT
+
+    existing = find_existing_word(get_db_path(), word)
     if existing:
         existing_type = existing.get("type", "word")
-        existing_value = (
-            existing.get("infinitive", "") if existing_type == "verb" else existing.get("german", "")
-        )
-        has_queue = bool(context.user_data.get("add_queue"))
+        existing_value = existing.get("infinitive", "") if existing_type == "verb" else existing.get("german", "")
         await update.message.reply_text(
             f"Already in database: [{existing_type}] {existing_value}",
             reply_markup=(
@@ -638,15 +730,18 @@ def _extract_json(text):
     return text[start : end + 1]
 
 
-def _update_srs_for_entry(entry, ok):
-    data_path = get_data_path()
-    words = load_words(data_path)
-    for w in words:
-        if w.get("id") == entry.get("id"):
-            quality = 5 if ok else 2
-            w["srs"] = update_sm2(w.get("srs", {}), quality)
-            break
-    save_words(data_path, words)
+def _update_srs_for_entry(user_id, entry, mode, ok):
+    quality = 5 if ok else 2
+    update_progress(get_db_path(), user_id=user_id, word_id=entry.get("id"), mode=mode, quality=quality)
+
+
+def _prepare_storage():
+    db_path = get_db_path()
+    init_db(db_path)
+
+    legacy_json_path = get_legacy_json_path()
+    if legacy_json_path.suffix.lower() == ".json":
+        migrate_json_to_sqlite(legacy_json_path, db_path)
 
 
 def main():
@@ -654,6 +749,8 @@ def main():
     token = os.getenv("BOT_TOKEN")
     if not token:
         raise SystemExit("BOT_TOKEN is missing in .env")
+
+    _prepare_storage()
 
     app = Application.builder().token(token).build()
 
