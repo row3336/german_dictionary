@@ -71,6 +71,12 @@ def _normalize_text(text):
     return " ".join(str(text).strip().lower().split())
 
 
+def _safe_text(value):
+    if value is None:
+        return ""
+    return str(value)
+
+
 def _entry_key(entry):
     if entry.get("type") == "verb":
         return ("verb", _normalize_text(entry.get("infinitive", "")))
@@ -164,14 +170,14 @@ def add_word(db_path, entry):
             """,
             (
                 entry["id"],
-                entry.get("type", ""),
-                entry.get("article", ""),
-                entry.get("german", ""),
-                entry.get("plural", ""),
-                entry.get("infinitive", ""),
-                entry.get("prateritum", ""),
-                entry.get("partizip2", ""),
-                entry.get("russian", ""),
+                _safe_text(entry.get("type", "")),
+                _safe_text(entry.get("article", "")),
+                _safe_text(entry.get("german", "")),
+                _safe_text(entry.get("plural", "")),
+                _safe_text(entry.get("infinitive", "")),
+                _safe_text(entry.get("prateritum", "")),
+                _safe_text(entry.get("partizip2", "")),
+                _safe_text(entry.get("russian", "")),
             ),
         )
     return entry
@@ -343,14 +349,14 @@ def migrate_json_to_sqlite(json_path, db_path):
                 """,
                 (
                     entry["id"],
-                    entry.get("type", ""),
-                    entry.get("article", ""),
-                    entry.get("german", ""),
-                    entry.get("plural", ""),
-                    entry.get("infinitive", ""),
-                    entry.get("prateritum", ""),
-                    entry.get("partizip2", ""),
-                    entry.get("russian", ""),
+                    _safe_text(entry.get("type", "")),
+                    _safe_text(entry.get("article", "")),
+                    _safe_text(entry.get("german", "")),
+                    _safe_text(entry.get("plural", "")),
+                    _safe_text(entry.get("infinitive", "")),
+                    _safe_text(entry.get("prateritum", "")),
+                    _safe_text(entry.get("partizip2", "")),
+                    _safe_text(entry.get("russian", "")),
                 ),
             )
             inserted += 1
