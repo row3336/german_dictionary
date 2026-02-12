@@ -79,11 +79,8 @@ SETTINGS_KEYS = [["Dump DB", "Dump Logs"], ["Auto Dump", "Levels"], [BACK_TEXT]]
 AUTO_DUMP_KEYS = [["Daily", "Weekly"], ["Off", BACK_TEXT]]
 LEVELS_BACK_TEXT = "Back"
 EDIT_FIELDS_KEYS = [
-    ["russian", "cefr_level"],
-    ["article", "plural"],
-    ["prateritum", "partizip2"],
-    ["german", "infinitive"],
-    ["type", BACK_TEXT],
+    ["russian", "level"],
+    [BACK_TEXT],
 ]
 EDIT_LEVEL_KEYS = [["A1", "A2", "B1"], ["B2", "C1", "C2"], [BACK_TEXT]]
 QUIZ_KEYS = [[STOP_TEXT]]
@@ -272,6 +269,7 @@ def _set_entry_field(entry, raw_update):
 
     allowed = {
         "russian",
+        "level",
         "cefr_level",
         "article",
         "plural",
@@ -285,10 +283,13 @@ def _set_entry_field(entry, raw_update):
         return None, f"Unknown field: {field}"
 
     updated = dict(entry)
+    if field == "level":
+        field = "cefr_level"
+
     if field == "cefr_level":
         level = _parse_level_toggle(value)
         if not level:
-            return None, "cefr_level must be one of A1,A2,B1,B2,C1,C2"
+            return None, "level must be one of A1,A2,B1,B2,C1,C2"
         updated["cefr_level"] = level
     elif field == "type":
         normalized_type = _type_label(value)
@@ -866,7 +867,7 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if stage == "pick_field":
         field = text.strip().lower()
-        allowed_fields = {"russian", "cefr_level", "article", "plural", "prateritum", "partizip2", "german", "infinitive", "type"}
+        allowed_fields = {"russian", "level"}
         if field not in allowed_fields:
             await update.message.reply_text(
                 "Use field buttons.",
@@ -874,7 +875,7 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return ADD_EDIT
         context.user_data["edit_field"] = field
-        if field == "cefr_level":
+        if field == "level":
             context.user_data["edit_stage"] = "pick_level"
             await update.message.reply_text(
                 "Choose CEFR level:",
