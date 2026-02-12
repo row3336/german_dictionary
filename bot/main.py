@@ -1,5 +1,6 @@
 
 import json
+import logging
 import os
 import random
 import re
@@ -64,7 +65,7 @@ WAIT_KEYS = [[START_TEXT]]
 ADD_KEYS = [[BACK_TEXT]]
 AI_KEYS = [[AI_CONFIRM, AI_CLARIFY, AI_REJECT], [STOP_TEXT]]
 TESTS_KEYS = [["Quiz RU -> DE", "Quiz DE -> RU"], ["Quiz article", BACK_TEXT]]
-SETTINGS_KEYS = [["Dump DB", "Auto Dump"], [BACK_TEXT]]
+SETTINGS_KEYS = [["Dump DB", "Dump Logs"], ["Auto Dump", BACK_TEXT]]
 AUTO_DUMP_KEYS = [["Daily", "Weekly"], ["Off", BACK_TEXT]]
 QUIZ_KEYS = [[STOP_TEXT]]
 ARTICLE_KEYS = [["der", "die", "das"], [STOP_TEXT]]
@@ -162,6 +163,10 @@ def get_legacy_json_path():
 
 def get_dump_dir():
     return Path(os.getenv("DUMP_DIR", "./data/backups"))
+
+
+def get_log_path():
+    return Path(os.getenv("LOG_PATH", "./data/bot.log"))
 
 
 def get_owner_id():
@@ -374,6 +379,18 @@ async def settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
             document=dump_path.open("rb"),
             filename=dump_path.name,
             caption="SQLite dump created.",
+        )
+        return SETTINGS_MENU
+
+    if text == "Dump Logs":
+        logs_path = _create_logs_dump_file()
+        if logs_path is None:
+            await update.message.reply_text("Log file is empty or not found yet.")
+            return SETTINGS_MENU
+        await update.message.reply_document(
+            document=logs_path.open("rb"),
+            filename=logs_path.name,
+            caption="Logs dump created.",
         )
         return SETTINGS_MENU
 
@@ -855,7 +872,16 @@ async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, w
         return MENU
 
     context.user_data["pending_word"] = word
-    response_text = generate_fields(_ai_prompt(word, clarification))
+    try:
+        response_text = generate_fields(_ai_prompt(word, clarification))
+    except Exception as exc:
+        logging.exception("AI request failed for word: %s", word)
+        await update.message.reply_text(
+            f"AI request failed: {exc}",
+            reply_markup=ReplyKeyboardMarkup([[STOP_TEXT]], resize_keyboard=True),
+        )
+        return ADD_CLARIFY
+
     entry = _try_parse_json(response_text)
     if entry is None or not _validate_ai_entry(entry):
         await update.message.reply_text(
@@ -963,6 +989,37 @@ def _create_dump_file():
     return dump_path
 
 
+def _create_logs_dump_file():
+    log_path = get_log_path()
+    if not log_path.exists() or log_path.stat().st_size == 0:
+        return None
+
+    dump_dir = get_dump_dir()
+    dump_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    out_path = dump_dir / f"bot-logs-{stamp}.txt"
+    shutil.copy2(log_path, out_path)
+    return out_path
+
+
+def _configure_logging():
+    log_path = get_log_path()
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+
+    file_handler = logging.FileHandler(log_path, encoding="utf-8")
+    file_handler.setFormatter(formatter)
+
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(formatter)
+
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+    root_logger.handlers.clear()
+    root_logger.addHandler(file_handler)
+    root_logger.addHandler(stream_handler)
+
+
 async def _auto_dump_job(context: ContextTypes.DEFAULT_TYPE):
     try:
         dump_path = _create_dump_file()
@@ -1054,6 +1111,7 @@ def _prepare_storage():
 
 def main():
     load_dotenv()
+    _configure_logging()
     token = os.getenv("BOT_TOKEN")
     if not token:
         raise SystemExit("BOT_TOKEN is missing in .env")
