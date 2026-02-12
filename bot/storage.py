@@ -88,9 +88,9 @@ def init_db(db_path):
             );
             """
         )
+        _ensure_schema(conn)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_words_cefr ON words(cefr_level)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_user_levels_user ON user_levels(user_id)")
-        _ensure_schema(conn)
 
 
 def _ensure_schema(conn):
