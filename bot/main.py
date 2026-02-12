@@ -1,13 +1,17 @@
+
 import json
 import os
 import random
 import re
+import shutil
+from datetime import datetime, time, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
-from telegram import ReplyKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, Update
 from telegram.ext import (
     Application,
+    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     ConversationHandler,
@@ -22,31 +26,53 @@ from .storage import (
     QUIZ_RU_DE as MODE_RU_DE,
     add_word,
     count_words,
-    export_words_json,
     find_existing_word,
+    get_setting,
+    get_user_status,
     init_db,
     migrate_json_to_sqlite,
+    register_or_update_user,
     select_due,
+    set_setting,
+    set_user_status,
     update_progress,
 )
 
-MENU, ADD_INPUT, ADD_CONFIRM, ADD_CLARIFY, QUIZ_RU_DE, QUIZ_DE_RU, QUIZ_ARTICLE = range(7)
+(
+    MENU,
+    TESTS_MENU,
+    SETTINGS_MENU,
+    AUTO_DUMP_MENU,
+    ADD_INPUT,
+    ADD_CONFIRM,
+    ADD_CLARIFY,
+    QUIZ_RU_DE,
+    QUIZ_DE_RU,
+    QUIZ_ARTICLE,
+) = range(10)
+
 BACK_TEXT = "Back"
 STOP_TEXT = "Stop"
+START_TEXT = "Start"
 AI_CONFIRM = "Confirm"
 AI_CLARIFY = "Clarify"
 AI_REJECT = "Reject"
 
-MENU_KEYS = [
-    ["Add word", "Export data"],
-    ["Quiz RU -> DE", "Quiz DE -> RU"],
-    ["Quiz article", "Stats"],
-]
-
+OWNER_MAIN_KEYS = [["Add Word", "Tests"], ["Settings", "Stat"]]
+USER_MAIN_KEYS = [["Add Word", "Tests"], ["Info", "Stat"]]
+WAIT_KEYS = [[START_TEXT]]
 ADD_KEYS = [[BACK_TEXT]]
+AI_KEYS = [[AI_CONFIRM, AI_CLARIFY, AI_REJECT], [STOP_TEXT]]
+TESTS_KEYS = [["Quiz RU -> DE", "Quiz DE -> RU"], ["Quiz article", BACK_TEXT]]
+SETTINGS_KEYS = [["Dump DB", "Auto Dump"], [BACK_TEXT]]
+AUTO_DUMP_KEYS = [["Daily", "Weekly"], ["Off", BACK_TEXT]]
 QUIZ_KEYS = [[STOP_TEXT]]
 ARTICLE_KEYS = [["der", "die", "das"], [STOP_TEXT]]
-AI_KEYS = [[AI_CONFIRM, AI_CLARIFY, AI_REJECT], [STOP_TEXT]]
+
+APPROVE_PREFIX = "approve_user:"
+REJECT_PREFIX = "reject_user:"
+AUTO_DUMP_SETTING_KEY = "auto_dump_mode"
+AUTO_DUMP_JOB_NAME = "auto_db_dump"
 
 ARTICLE_SET = {
     "der",
@@ -111,9 +137,19 @@ NUMERAL_SET = {
     "milliarde",
 }
 
-NUMERIC_RE = re.compile(
-    r"^\s*[+-]?(?:(?:\d{1,3}(?:[.,]\d{3})+)|\d+)(?:[.,]\d+)?\s*%?\s*$"
-)
+NUMERIC_RE = re.compile(r"^\s*[+-]?(?:(?:\d{1,3}(?:[.,]\d{3})+)|\d+)(?:[.,]\d+)?\s*%?\s*$")
+
+ALLOWED_AI_TYPES = {
+    "nomen",
+    "verb",
+    "adjektiv",
+    "pronomen",
+    "adverb",
+    "praposition",
+    "praeposition",
+    "konjunktion",
+    "partikel",
+}
 
 
 def get_db_path():
@@ -124,24 +160,139 @@ def get_legacy_json_path():
     return Path(os.getenv("DATA_PATH", "./data/words.json"))
 
 
-def get_export_path():
-    return Path(os.getenv("EXPORT_PATH", "./data/words.export.json"))
+def get_dump_dir():
+    return Path(os.getenv("DUMP_DIR", "./data/backups"))
+
+
+def get_owner_id():
+    try:
+        return int(os.getenv("OWNER_ID", "0"))
+    except ValueError:
+        return 0
 
 
 def is_owner(user_id):
-    try:
-        owner_id = int(os.getenv("OWNER_ID", "0"))
-    except ValueError:
-        owner_id = 0
+    owner_id = get_owner_id()
     return owner_id != 0 and user_id == owner_id
 
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    reply_markup = ReplyKeyboardMarkup(MENU_KEYS, resize_keyboard=True)
-    await update.message.reply_text(
-        "Hi! Choose a mode:",
-        reply_markup=reply_markup,
+def _main_menu_keys(user_id):
+    return OWNER_MAIN_KEYS if is_owner(user_id) else USER_MAIN_KEYS
+
+
+def _main_menu_markup(user_id):
+    return ReplyKeyboardMarkup(_main_menu_keys(user_id), resize_keyboard=True)
+
+
+def _wait_markup():
+    return ReplyKeyboardMarkup(WAIT_KEYS, resize_keyboard=True)
+
+
+def _normalize_answer(text):
+    return " ".join(text.strip().lower().split())
+
+
+def _normalize_lookup_text(text):
+    return " ".join(str(text).strip().lower().split())
+
+
+def _normalize_russian_singular(text):
+    text = str(text).strip()
+    if "/" in text:
+        text = text.split("/", 1)[0].strip()
+    return text
+
+
+def _md_escape(text):
+    text = str(text or "")
+    for ch in ("*", "_", "`"):
+        text = text.replace(ch, f"\\{ch}")
+    return text
+
+
+def _prefilter_reject_reason(word):
+    normalized = _normalize_lookup_text(word)
+    if not normalized:
+        return "Empty value."
+    if NUMERIC_RE.match(normalized):
+        return "Filtered: looks like a number."
+    if normalized in ARTICLE_SET:
+        return "Filtered: article words are not stored."
+    if normalized in NUMERAL_SET:
+        return "Filtered: numeral words are not stored."
+    return None
+
+
+def _type_label(raw_type):
+    value = _normalize_lookup_text(raw_type)
+    if value == "praeposition":
+        return "praposition"
+    return value
+
+
+def _is_user_approved(user_id):
+    if is_owner(user_id):
+        return True
+    return get_user_status(get_db_path(), user_id) == "approved"
+
+
+async def _request_owner_approval(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id):
+    owner_id = get_owner_id()
+    if owner_id == 0:
+        return
+    user = update.effective_user
+    text = (
+        "New access request:\n"
+        f"user_id: {user_id}\n"
+        f"username: @{user.username if user and user.username else '-'}\n"
+        f"name: {user.first_name if user and user.first_name else '-'}"
     )
+    keyboard = InlineKeyboardMarkup(
+        [[
+            InlineKeyboardButton("Approve", callback_data=f"{APPROVE_PREFIX}{user_id}"),
+            InlineKeyboardButton("Reject", callback_data=f"{REJECT_PREFIX}{user_id}"),
+        ]]
+    )
+    try:
+        await context.bot.send_message(chat_id=owner_id, text=text, reply_markup=keyboard)
+    except Exception:
+        pass
+
+
+async def _show_waiting(update: Update):
+    await update.message.reply_text(
+        "Access pending owner approval. Tap Start later.",
+        reply_markup=_wait_markup(),
+    )
+
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    user_id = user.id
+
+    register_or_update_user(
+        get_db_path(),
+        user_id,
+        username=user.username or "",
+        first_name=user.first_name or "",
+    )
+
+    if is_owner(user_id):
+        set_user_status(get_db_path(), user_id, "approved")
+        await update.message.reply_text("Main menu:", reply_markup=_main_menu_markup(user_id))
+        return MENU
+
+    status = get_user_status(get_db_path(), user_id)
+    if status == "approved":
+        await update.message.reply_text("Main menu:", reply_markup=_main_menu_markup(user_id))
+        return MENU
+
+    if status == "rejected":
+        await update.message.reply_text("Access was rejected by owner.", reply_markup=_wait_markup())
+        return MENU
+
+    await _request_owner_approval(update, context, user_id)
+    await _show_waiting(update)
     return MENU
 
 
@@ -149,58 +300,142 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     user_id = update.effective_user.id
 
-    if text == "Add word":
-        if not is_owner(user_id):
-            await update.message.reply_text(
-                "Only the owner can add words.",
-                reply_markup=ReplyKeyboardMarkup(MENU_KEYS, resize_keyboard=True),
-            )
-            return MENU
+    if text == START_TEXT:
+        return await start(update, context)
+
+    if not _is_user_approved(user_id):
+        await _show_waiting(update)
+        return MENU
+
+    if text == "Add Word":
         await update.message.reply_text(
             "Send a word or a list (one per line), or upload a .txt file.",
             reply_markup=ReplyKeyboardMarkup(ADD_KEYS, resize_keyboard=True),
         )
         return ADD_INPUT
 
-    if text == "Quiz RU -> DE":
-        return await _start_ru_de_quiz(update, context)
-
-    if text == "Quiz DE -> RU":
-        return await _start_de_ru_quiz(update, context)
-
-    if text == "Quiz article":
-        return await _start_article_quiz(update, context)
-
-    if text == "Export data":
-        db_path = get_db_path()
-        if not db_path.exists():
-            await update.message.reply_text("No data file found yet.")
-            return MENU
-
-        export_path = export_words_json(db_path, get_export_path())
-        await update.message.reply_document(
-            document=export_path.open("rb"),
-            filename=export_path.name,
-            caption="Here is your words export.",
+    if text == "Tests":
+        await update.message.reply_text(
+            "Choose test mode:",
+            reply_markup=ReplyKeyboardMarkup(TESTS_KEYS, resize_keyboard=True),
         )
+        return TESTS_MENU
+
+    if text == "Settings" and is_owner(user_id):
+        await update.message.reply_text(
+            "Settings:",
+            reply_markup=ReplyKeyboardMarkup(SETTINGS_KEYS, resize_keyboard=True),
+        )
+        return SETTINGS_MENU
+
+    if text == "Info" and not is_owner(user_id):
+        await update.message.reply_text("Info will be added soon.", reply_markup=_main_menu_markup(user_id))
         return MENU
 
-    if text == "Stats":
+    if text == "Stat":
         total = count_words(get_db_path())
-        await update.message.reply_text(
-            f"Total words: {total}",
-            reply_markup=ReplyKeyboardMarkup(MENU_KEYS, resize_keyboard=True),
-        )
+        await update.message.reply_text(f"Total words: {total}", reply_markup=_main_menu_markup(user_id))
         return MENU
 
     await update.message.reply_text("Unknown command. Use the menu buttons.")
     return MENU
 
 
+async def tests_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    if text == BACK_TEXT:
+        return await _back_to_main_menu(update)
+    if text == "Quiz RU -> DE":
+        return await _send_ru_de_prompt(update, context, None)
+    if text == "Quiz DE -> RU":
+        return await _send_de_ru_prompt(update, context, None)
+    if text == "Quiz article":
+        return await _send_article_prompt(update, context, None)
+
+    await update.message.reply_text(
+        "Use tests menu buttons.",
+        reply_markup=ReplyKeyboardMarkup(TESTS_KEYS, resize_keyboard=True),
+    )
+    return TESTS_MENU
+
+
+async def settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    user_id = update.effective_user.id
+    if not is_owner(user_id):
+        return await _back_to_main_menu(update)
+
+    if text == BACK_TEXT:
+        return await _back_to_main_menu(update)
+
+    if text == "Dump DB":
+        dump_path = _create_dump_file()
+        await update.message.reply_document(
+            document=dump_path.open("rb"),
+            filename=dump_path.name,
+            caption="SQLite dump created.",
+        )
+        return SETTINGS_MENU
+
+    if text == "Auto Dump":
+        mode = get_setting(get_db_path(), AUTO_DUMP_SETTING_KEY, "off")
+        await update.message.reply_text(
+            f"Current auto dump mode: {mode}",
+            reply_markup=ReplyKeyboardMarkup(AUTO_DUMP_KEYS, resize_keyboard=True),
+        )
+        return AUTO_DUMP_MENU
+
+    await update.message.reply_text(
+        "Use settings buttons.",
+        reply_markup=ReplyKeyboardMarkup(SETTINGS_KEYS, resize_keyboard=True),
+    )
+    return SETTINGS_MENU
+
+
+async def auto_dump_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    user_id = update.effective_user.id
+    if not is_owner(user_id):
+        return await _back_to_main_menu(update)
+
+    if text == BACK_TEXT:
+        await update.message.reply_text(
+            "Settings:",
+            reply_markup=ReplyKeyboardMarkup(SETTINGS_KEYS, resize_keyboard=True),
+        )
+        return SETTINGS_MENU
+
+    mode_map = {"Daily": "daily", "Weekly": "weekly", "Off": "off"}
+    if text not in mode_map:
+        await update.message.reply_text(
+            "Use auto dump buttons.",
+            reply_markup=ReplyKeyboardMarkup(AUTO_DUMP_KEYS, resize_keyboard=True),
+        )
+        return AUTO_DUMP_MENU
+
+    mode = mode_map[text]
+    set_setting(get_db_path(), AUTO_DUMP_SETTING_KEY, mode)
+    _configure_auto_dump(context.application, mode)
+    await update.message.reply_text(
+        f"Auto dump mode set: {mode}",
+        reply_markup=ReplyKeyboardMarkup(SETTINGS_KEYS, resize_keyboard=True),
+    )
+    return SETTINGS_MENU
+
+
 async def add_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     raw = update.message.text.strip()
+    user_id = update.effective_user.id
     if raw == BACK_TEXT:
-        return await _back_to_menu(update)
+        return await _back_to_main_menu(update)
+
+    if not is_owner(user_id):
+        await _forward_text_to_owner(update, context, raw)
+        await update.message.reply_text(
+            "Successfully sent to the bot Owner",
+            reply_markup=_main_menu_markup(user_id),
+        )
+        return MENU
 
     if raw.startswith("{"):
         entry = _try_parse_json(raw)
@@ -231,6 +466,15 @@ async def add_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not doc or not doc.file_name.lower().endswith(".txt"):
         await update.message.reply_text("Please upload a .txt file.")
         return ADD_INPUT
+
+    user_id = update.effective_user.id
+    if not is_owner(user_id):
+        await _forward_document_to_owner(update, context)
+        await update.message.reply_text(
+            "Successfully sent to the bot Owner",
+            reply_markup=_main_menu_markup(user_id),
+        )
+        return MENU
 
     file = await doc.get_file()
     data = await file.download_as_bytearray()
@@ -268,10 +512,7 @@ async def add_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     entry = context.user_data.pop("pending_entry", None)
     if not entry:
-        await update.message.reply_text(
-            "Nothing to save.",
-            reply_markup=ReplyKeyboardMarkup(MENU_KEYS, resize_keyboard=True),
-        )
+        await update.message.reply_text("Nothing to save.", reply_markup=_main_menu_markup(update.effective_user.id))
         return MENU
 
     saved = await _save_entry(update, entry)
@@ -288,27 +529,16 @@ async def add_clarify(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     word = context.user_data.get("pending_word")
     if not word:
-        await update.message.reply_text(
-            "No word to clarify.",
-            reply_markup=ReplyKeyboardMarkup(MENU_KEYS, resize_keyboard=True),
-        )
+        await update.message.reply_text("No word to clarify.", reply_markup=_main_menu_markup(update.effective_user.id))
         return MENU
 
     return await _process_ai_word(update, context, word, text)
 
 
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Ok, canceled.",
-        reply_markup=ReplyKeyboardMarkup(MENU_KEYS, resize_keyboard=True),
-    )
-    return MENU
-
-
 async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     if text == STOP_TEXT:
-        return await _back_to_menu(update)
+        return await _back_to_tests(update)
 
     entry = context.user_data.get("quiz_entry")
     if not entry:
@@ -316,7 +546,6 @@ async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     expected = _get_ru_de_answer(entry)
     ok = _normalize_answer(text) == _normalize_answer(expected)
-
     _update_srs_for_entry(update.effective_user.id, entry, MODE_RU_DE, ok)
 
     feedback = _format_feedback(entry, ok)
@@ -326,7 +555,7 @@ async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     if text == STOP_TEXT:
-        return await _back_to_menu(update)
+        return await _back_to_tests(update)
 
     entry = context.user_data.get("quiz_entry")
     if not entry:
@@ -334,7 +563,6 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     expected = _normalize_russian_singular(entry.get("russian", ""))
     ok = _normalize_answer(text) == _normalize_answer(expected)
-
     _update_srs_for_entry(update.effective_user.id, entry, MODE_DE_RU, ok)
 
     feedback = _format_feedback(entry, ok)
@@ -344,7 +572,7 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def quiz_article(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     if text == STOP_TEXT:
-        return await _back_to_menu(update)
+        return await _back_to_tests(update)
 
     entry = context.user_data.get("quiz_entry")
     if not entry:
@@ -352,11 +580,39 @@ async def quiz_article(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     expected = entry.get("article", "")
     ok = _normalize_answer(text) == _normalize_answer(expected)
-
     _update_srs_for_entry(update.effective_user.id, entry, MODE_ARTICLE, ok)
 
     feedback = _format_feedback(entry, ok)
     return await _send_article_prompt(update, context, feedback)
+
+
+async def approve_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    if not is_owner(query.from_user.id):
+        await query.edit_message_text("Owner only action.")
+        return
+
+    data = query.data or ""
+    if data.startswith(APPROVE_PREFIX):
+        target_id = int(data.replace(APPROVE_PREFIX, "", 1))
+        set_user_status(get_db_path(), target_id, "approved")
+        await query.edit_message_text(f"Approved user {target_id}")
+        try:
+            await context.bot.send_message(target_id, "Access approved. Tap Start.")
+        except Exception:
+            pass
+        return
+
+    if data.startswith(REJECT_PREFIX):
+        target_id = int(data.replace(REJECT_PREFIX, "", 1))
+        set_user_status(get_db_path(), target_id, "rejected")
+        await query.edit_message_text(f"Rejected user {target_id}")
+        try:
+            await context.bot.send_message(target_id, "Access rejected.")
+        except Exception:
+            pass
 
 
 async def _save_entry(update: Update, entry):
@@ -365,16 +621,10 @@ async def _save_entry(update: Update, entry):
     try:
         saved = add_word(get_db_path(), entry)
     except ValueError as exc:
-        await update.message.reply_text(
-            str(exc),
-            reply_markup=ReplyKeyboardMarkup(MENU_KEYS, resize_keyboard=True),
-        )
+        await update.message.reply_text(str(exc), reply_markup=_main_menu_markup(update.effective_user.id))
         return None
 
-    await update.message.reply_text(
-        f"Saved: {saved.get('id')}",
-        reply_markup=ReplyKeyboardMarkup(MENU_KEYS, resize_keyboard=True),
-    )
+    await update.message.reply_text(f"Saved: {saved.get('id')}", reply_markup=_main_menu_markup(update.effective_user.id))
     return saved
 
 
@@ -382,56 +632,6 @@ def _get_ru_de_answer(entry):
     if entry.get("type") == "verb":
         return entry.get("infinitive", "")
     return entry.get("german", "")
-
-
-def _normalize_answer(text):
-    return " ".join(text.strip().lower().split())
-
-
-def _normalize_lookup_text(text):
-    return " ".join(str(text).strip().lower().split())
-
-
-def _normalize_russian_singular(text):
-    text = str(text).strip()
-    if "/" in text:
-        text = text.split("/", 1)[0].strip()
-    return text
-
-
-def _md_escape(text):
-    for ch in ("*", "_", "`"):
-        text = text.replace(ch, f"\\{ch}")
-    return text
-
-
-def _prefilter_reject_reason(word):
-    normalized = _normalize_lookup_text(word)
-    if not normalized:
-        return "Empty value."
-
-    if NUMERIC_RE.match(normalized):
-        return "Filtered: looks like a number."
-
-    if normalized in ARTICLE_SET:
-        return "Filtered: article words are not stored."
-
-    if normalized in NUMERAL_SET:
-        return "Filtered: numeral words are not stored."
-
-    return None
-
-
-async def _start_ru_de_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    return await _send_ru_de_prompt(update, context, None)
-
-
-async def _start_de_ru_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    return await _send_de_ru_prompt(update, context, None)
-
-
-async def _start_article_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    return await _send_article_prompt(update, context, None)
 
 
 def _format_feedback(entry, ok):
@@ -447,8 +647,7 @@ def _format_feedback(entry, ok):
 
     art = entry.get("article", "")
     ger = entry.get("german", "")
-    plural = entry.get("plural", "")
-    extras = f" ({plural})" if plural else ""
+    extras = f" ({entry.get('plural')})" if entry.get("type") == "nomen" and entry.get("plural") else ""
     if art:
         return f"{status} >>> {art} *{_md_escape(ger)}*{_md_escape(extras)}"
     return f"{status} >>> *{_md_escape(ger)}*{_md_escape(extras)}"
@@ -456,7 +655,7 @@ def _format_feedback(entry, ok):
 
 def _format_question(word):
     if word:
-        word = word.strip()
+        word = str(word).strip()
         word = word[:1].upper() + word[1:].lower()
     return f">>    *{_md_escape(word)}* ?"
 
@@ -468,90 +667,67 @@ def _pick_due_entry(context, user_id, mode, word_type=None):
 
     last_ids = context.user_data.setdefault("last_quiz_ids", {})
     last_id = last_ids.get(mode)
-
     pool = [w for w in due if w.get("id") != last_id] if len(due) > 1 else due
     if not pool:
         pool = due
+
     entry = random.choice(pool)
     last_ids[mode] = entry.get("id")
     return entry
 
 
 async def _send_ru_de_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
-    user_id = update.effective_user.id
-    entry = _pick_due_entry(context, user_id, MODE_RU_DE)
+    entry = _pick_due_entry(context, update.effective_user.id, MODE_RU_DE)
     if not entry:
         await update.message.reply_text(
             "No due words. Add more or wait until due date.",
-            reply_markup=ReplyKeyboardMarkup(MENU_KEYS, resize_keyboard=True),
+            reply_markup=ReplyKeyboardMarkup(TESTS_KEYS, resize_keyboard=True),
         )
-        return MENU
+        return TESTS_MENU
 
     context.user_data["quiz_entry"] = entry
-    context.user_data["quiz_mode"] = MODE_RU_DE
-    prompt = _normalize_russian_singular(entry.get("russian", ""))
-    prompt_text = _format_question(prompt)
+    prompt_text = _format_question(_normalize_russian_singular(entry.get("russian", "")))
     if prefix_text:
         prompt_text = f"{prefix_text}\n\n{prompt_text}"
 
-    await update.message.reply_text(
-        prompt_text,
-        reply_markup=ReplyKeyboardMarkup(QUIZ_KEYS, resize_keyboard=True),
-        parse_mode="Markdown",
-    )
+    await update.message.reply_text(prompt_text, reply_markup=ReplyKeyboardMarkup(QUIZ_KEYS, resize_keyboard=True), parse_mode="Markdown")
     return QUIZ_RU_DE
 
 
 async def _send_de_ru_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
-    user_id = update.effective_user.id
-    entry = _pick_due_entry(context, user_id, MODE_DE_RU)
+    entry = _pick_due_entry(context, update.effective_user.id, MODE_DE_RU)
     if not entry:
         await update.message.reply_text(
             "No due words. Add more or wait until due date.",
-            reply_markup=ReplyKeyboardMarkup(MENU_KEYS, resize_keyboard=True),
+            reply_markup=ReplyKeyboardMarkup(TESTS_KEYS, resize_keyboard=True),
         )
-        return MENU
+        return TESTS_MENU
 
     context.user_data["quiz_entry"] = entry
-    context.user_data["quiz_mode"] = MODE_DE_RU
-    if entry.get("type") == "verb":
-        prompt = entry.get("infinitive", "")
-    else:
-        prompt = entry.get("german", "")
+    prompt = entry.get("infinitive", "") if entry.get("type") == "verb" else entry.get("german", "")
     prompt_text = _format_question(prompt)
     if prefix_text:
         prompt_text = f"{prefix_text}\n\n{prompt_text}"
 
-    await update.message.reply_text(
-        prompt_text,
-        reply_markup=ReplyKeyboardMarkup(QUIZ_KEYS, resize_keyboard=True),
-        parse_mode="Markdown",
-    )
+    await update.message.reply_text(prompt_text, reply_markup=ReplyKeyboardMarkup(QUIZ_KEYS, resize_keyboard=True), parse_mode="Markdown")
     return QUIZ_DE_RU
 
 
 async def _send_article_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
-    user_id = update.effective_user.id
-    entry = _pick_due_entry(context, user_id, MODE_ARTICLE, word_type="nomen")
+    entry = _pick_due_entry(context, update.effective_user.id, MODE_ARTICLE, word_type="nomen")
     if not entry:
         await update.message.reply_text(
             "No due nouns. Add more or wait until due date.",
-            reply_markup=ReplyKeyboardMarkup(MENU_KEYS, resize_keyboard=True),
+            reply_markup=ReplyKeyboardMarkup(TESTS_KEYS, resize_keyboard=True),
         )
-        return MENU
+        return TESTS_MENU
 
     context.user_data["quiz_entry"] = entry
-    context.user_data["quiz_mode"] = MODE_ARTICLE
-    prompt = entry.get("german", "")
-    prompt_text = _format_question(prompt)
+    prompt_text = _format_question(entry.get("german", ""))
     if prefix_text:
         prompt_text = f"{prefix_text}\n\n{prompt_text}"
 
-    await update.message.reply_text(
-        prompt_text,
-        reply_markup=ReplyKeyboardMarkup(ARTICLE_KEYS, resize_keyboard=True),
-        parse_mode="Markdown",
-    )
+    await update.message.reply_text(prompt_text, reply_markup=ReplyKeyboardMarkup(ARTICLE_KEYS, resize_keyboard=True), parse_mode="Markdown")
     return QUIZ_ARTICLE
 
 
@@ -559,9 +735,11 @@ def _ai_prompt(word, clarification):
     extra = f"\nClarification: {clarification}" if clarification else ""
     return (
         "Return only a JSON object and nothing else. "
-        "Detect whether the German word is a noun or a verb. "
-        "For noun, return keys: type='nomen', article, german, plural, russian. "
-        "For verb, return keys: type='verb', infinitive, prateritum, partizip2, russian. "
+        "Detect German part of speech. Allowed types: "
+        "nomen, verb, adjektiv, pronomen, adverb, praposition, konjunktion, partikel. "
+        "For nomen return: type, article, german, plural, russian. "
+        "For verb return: type, infinitive, prateritum, partizip2, russian. "
+        "For all other allowed types return: type, german, russian. "
         "Use Russian translation in singular only. No extra text."
         f"\nWord: {word}{extra}"
     )
@@ -570,12 +748,46 @@ def _ai_prompt(word, clarification):
 def _validate_ai_entry(entry):
     if not isinstance(entry, dict):
         return False
-    entry_type = entry.get("type")
+
+    entry_type = _type_label(entry.get("type", ""))
+    if entry_type not in ALLOWED_AI_TYPES:
+        return False
+
     if entry_type == "nomen":
         return bool(entry.get("german"))
     if entry_type == "verb":
         return bool(entry.get("infinitive"))
-    return False
+    return bool(entry.get("german"))
+
+
+def _normalize_ai_entry(entry):
+    entry = dict(entry)
+    entry_type = _type_label(entry.get("type", ""))
+    entry["type"] = entry_type
+
+    if entry_type == "verb":
+        return {
+            "type": "verb",
+            "infinitive": str(entry.get("infinitive", "")).strip(),
+            "prateritum": str(entry.get("prateritum", "")).strip(),
+            "partizip2": str(entry.get("partizip2", "")).strip(),
+            "russian": _normalize_russian_singular(entry.get("russian", "")),
+        }
+
+    if entry_type == "nomen":
+        return {
+            "type": "nomen",
+            "article": str(entry.get("article", "")).strip(),
+            "german": str(entry.get("german", "")).strip(),
+            "plural": str(entry.get("plural", "")).strip(),
+            "russian": _normalize_russian_singular(entry.get("russian", "")),
+        }
+
+    return {
+        "type": entry_type,
+        "german": str(entry.get("german", "")).strip(),
+        "russian": _normalize_russian_singular(entry.get("russian", "")),
+    }
 
 
 def _format_ai_preview(entry):
@@ -586,10 +798,8 @@ def _format_ai_preview(entry):
         plural = entry.get("plural", "")
         rus = entry.get("russian", "")
         extras = f" ({plural})" if plural else ""
-        return (
-            "Recognized [Nomen]\n"
-            f"{art} *{_md_escape(ger)}* - {_md_escape(rus)}{_md_escape(extras)}"
-        )
+        return "Recognized [Nomen]\n" f"{art} *{_md_escape(ger)}* - {_md_escape(rus)}{_md_escape(extras)}"
+
     if entry_type == "verb":
         inf = entry.get("infinitive", "")
         pr = entry.get("prateritum", "")
@@ -597,11 +807,11 @@ def _format_ai_preview(entry):
         rus = entry.get("russian", "")
         extras = " / ".join([x for x in [pr, p2] if x])
         extras = f" ({extras})" if extras else ""
-        return (
-            "Recognized [Verb]\n"
-            f"*{_md_escape(inf)}* - {_md_escape(rus)}{_md_escape(extras)}"
-        )
-    return "AI returned unknown type."
+        return "Recognized [Verb]\n" f"*{_md_escape(inf)}* - {_md_escape(rus)}{_md_escape(extras)}"
+
+    ger = entry.get("german", "")
+    rus = entry.get("russian", "")
+    return f"Recognized [{entry_type}]\n*{_md_escape(ger)}* - {_md_escape(rus)}"
 
 
 async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, word, clarification):
@@ -640,13 +850,12 @@ async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, w
     if not os.getenv("OPENAI_API_KEY"):
         await update.message.reply_text(
             "AI is not configured. Set OPENAI_API_KEY in .env.",
-            reply_markup=ReplyKeyboardMarkup(MENU_KEYS, resize_keyboard=True),
+            reply_markup=_main_menu_markup(update.effective_user.id),
         )
         return MENU
 
     context.user_data["pending_word"] = word
-    prompt = _ai_prompt(word, clarification)
-    response_text = generate_fields(prompt)
+    response_text = generate_fields(_ai_prompt(word, clarification))
     entry = _try_parse_json(response_text)
     if entry is None or not _validate_ai_entry(entry):
         await update.message.reply_text(
@@ -655,6 +864,7 @@ async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, w
         )
         return ADD_CLARIFY
 
+    entry = _normalize_ai_entry(entry)
     context.user_data["pending_entry"] = entry
     return await _show_ai_preview(update, entry)
 
@@ -676,7 +886,7 @@ async def _process_next_ai_word(update: Update, context: ContextTypes.DEFAULT_TY
         context.user_data.pop("pending_entry", None)
         await update.message.reply_text(
             "Done.",
-            reply_markup=ReplyKeyboardMarkup(MENU_KEYS, resize_keyboard=True),
+            reply_markup=_main_menu_markup(update.effective_user.id),
         )
         return MENU
 
@@ -691,17 +901,25 @@ async def _stop_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop("pending_entry", None)
     await update.message.reply_text(
         "Stopped.",
-        reply_markup=ReplyKeyboardMarkup(MENU_KEYS, resize_keyboard=True),
+        reply_markup=_main_menu_markup(update.effective_user.id),
     )
     return MENU
 
 
-async def _back_to_menu(update: Update):
+async def _back_to_main_menu(update: Update):
     await update.message.reply_text(
-        "Back to menu.",
-        reply_markup=ReplyKeyboardMarkup(MENU_KEYS, resize_keyboard=True),
+        "Main menu:",
+        reply_markup=_main_menu_markup(update.effective_user.id),
     )
     return MENU
+
+
+async def _back_to_tests(update: Update):
+    await update.message.reply_text(
+        "Tests:",
+        reply_markup=ReplyKeyboardMarkup(TESTS_KEYS, resize_keyboard=True),
+    )
+    return TESTS_MENU
 
 
 def _try_parse_json(text):
@@ -735,6 +953,89 @@ def _update_srs_for_entry(user_id, entry, mode, ok):
     update_progress(get_db_path(), user_id=user_id, word_id=entry.get("id"), mode=mode, quality=quality)
 
 
+def _create_dump_file():
+    db_path = get_db_path()
+    dump_dir = get_dump_dir()
+    dump_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    dump_path = dump_dir / f"words-{stamp}.db"
+    shutil.copy2(db_path, dump_path)
+    return dump_path
+
+
+async def _auto_dump_job(context: ContextTypes.DEFAULT_TYPE):
+    try:
+        dump_path = _create_dump_file()
+    except Exception:
+        return
+
+    owner_id = get_owner_id()
+    if owner_id:
+        try:
+            await context.bot.send_message(owner_id, f"Auto dump created: {dump_path.name}")
+        except Exception:
+            pass
+
+
+def _configure_auto_dump(app: Application, mode: str):
+    job_queue = app.job_queue
+    for job in job_queue.get_jobs_by_name(AUTO_DUMP_JOB_NAME):
+        job.schedule_removal()
+
+    mode = (mode or "off").lower()
+    if mode == "daily":
+        job_queue.run_daily(
+            _auto_dump_job,
+            time=time(hour=0, minute=0, tzinfo=timezone.utc),
+            name=AUTO_DUMP_JOB_NAME,
+        )
+    elif mode == "weekly":
+        job_queue.run_daily(
+            _auto_dump_job,
+            time=time(hour=0, minute=0, tzinfo=timezone.utc),
+            days=(0,),
+            name=AUTO_DUMP_JOB_NAME,
+        )
+
+
+async def _forward_text_to_owner(update: Update, context: ContextTypes.DEFAULT_TYPE, raw_text: str):
+    owner_id = get_owner_id()
+    if owner_id == 0:
+        return
+
+    user = update.effective_user
+    info = (
+        "User submitted words:\n"
+        f"user_id: {user.id}\n"
+        f"username: @{user.username if user.username else '-'}\n"
+        f"name: {user.first_name if user.first_name else '-'}"
+    )
+    try:
+        await context.bot.send_message(owner_id, info)
+        await context.bot.send_message(owner_id, raw_text)
+    except Exception:
+        pass
+
+
+async def _forward_document_to_owner(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    owner_id = get_owner_id()
+    if owner_id == 0:
+        return
+
+    user = update.effective_user
+    info = (
+        "User submitted file:\n"
+        f"user_id: {user.id}\n"
+        f"username: @{user.username if user.username else '-'}\n"
+        f"name: {user.first_name if user.first_name else '-'}"
+    )
+    try:
+        await context.bot.send_message(owner_id, info)
+        await context.bot.forward_message(owner_id, update.effective_chat.id, update.message.message_id)
+    except Exception:
+        pass
+
+
 def _prepare_storage():
     db_path = get_db_path()
     init_db(db_path)
@@ -742,6 +1043,10 @@ def _prepare_storage():
     legacy_json_path = get_legacy_json_path()
     if legacy_json_path.suffix.lower() == ".json":
         migrate_json_to_sqlite(legacy_json_path, db_path)
+
+    owner_id = get_owner_id()
+    if owner_id:
+        set_user_status(db_path, owner_id, "approved")
 
 
 def main():
@@ -754,10 +1059,19 @@ def main():
 
     app = Application.builder().token(token).build()
 
+    mode = get_setting(get_db_path(), AUTO_DUMP_SETTING_KEY, "off")
+    _configure_auto_dump(app, mode)
+
     conv = ConversationHandler(
-        entry_points=[CommandHandler("start", start)],
+        entry_points=[
+            CommandHandler("start", start),
+            MessageHandler(filters.Regex(f"^{START_TEXT}$") & ~filters.COMMAND, start),
+        ],
         states={
             MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, menu_choice)],
+            TESTS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, tests_menu_choice)],
+            SETTINGS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, settings_menu_choice)],
+            AUTO_DUMP_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, auto_dump_choice)],
             ADD_INPUT: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, add_input),
                 MessageHandler(filters.Document.ALL, add_document),
@@ -768,10 +1082,11 @@ def main():
             QUIZ_DE_RU: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_de_ru)],
             QUIZ_ARTICLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_article)],
         },
-        fallbacks=[CommandHandler("cancel", cancel)],
+        fallbacks=[CommandHandler("start", start)],
     )
 
     app.add_handler(conv)
+    app.add_handler(CallbackQueryHandler(approve_callback, pattern=f"^({APPROVE_PREFIX}|{REJECT_PREFIX}).+"))
     app.run_polling()
 
 

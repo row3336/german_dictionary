@@ -63,6 +63,20 @@ def init_db(db_path):
 
             CREATE INDEX IF NOT EXISTS idx_words_type ON words(type);
             CREATE INDEX IF NOT EXISTS idx_progress_due ON progress(user_id, mode, due);
+
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY,
+                username TEXT NOT NULL DEFAULT '',
+                first_name TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS app_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
             """
         )
 
@@ -75,6 +89,13 @@ def _safe_text(value):
     if value is None:
         return ""
     return str(value)
+
+
+def _safe_int(value, default=0):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _entry_key(entry):
@@ -115,6 +136,107 @@ def count_words(db_path):
     with _connect(db_path) as conn:
         row = conn.execute("SELECT COUNT(*) AS cnt FROM words").fetchone()
     return int(row["cnt"])
+
+
+def register_or_update_user(db_path, user_id, username="", first_name=""):
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        existing = conn.execute(
+            "SELECT status FROM users WHERE user_id = ?",
+            (int(user_id),),
+        ).fetchone()
+        if existing:
+            conn.execute(
+                """
+                UPDATE users
+                SET username = ?, first_name = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE user_id = ?
+                """,
+                (_safe_text(username), _safe_text(first_name), int(user_id)),
+            )
+            return existing["status"]
+
+        conn.execute(
+            """
+            INSERT INTO users (user_id, username, first_name, status, created_at, updated_at)
+            VALUES (?, ?, ?, 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """,
+            (int(user_id), _safe_text(username), _safe_text(first_name)),
+        )
+    return "pending"
+
+
+def get_user_status(db_path, user_id):
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT status FROM users WHERE user_id = ?",
+            (int(user_id),),
+        ).fetchone()
+    if not row:
+        return None
+    return row["status"]
+
+
+def set_user_status(db_path, user_id, status):
+    init_db(db_path)
+    status = _safe_text(status).strip().lower()
+    if status not in {"pending", "approved", "rejected"}:
+        raise ValueError("Invalid user status.")
+    with _connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO users (user_id, username, first_name, status, created_at, updated_at)
+            VALUES (?, '', '', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ON CONFLICT(user_id) DO UPDATE SET
+                status = excluded.status,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (int(user_id), status),
+        )
+
+
+def get_user_info(db_path, user_id):
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT user_id, username, first_name, status, created_at, updated_at FROM users WHERE user_id = ?",
+            (int(user_id),),
+        ).fetchone()
+    if not row:
+        return None
+    return {
+        "user_id": _safe_int(row["user_id"]),
+        "username": row["username"] or "",
+        "first_name": row["first_name"] or "",
+        "status": row["status"] or "pending",
+        "created_at": row["created_at"] or "",
+        "updated_at": row["updated_at"] or "",
+    }
+
+
+def set_setting(db_path, key, value):
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO app_settings (key, value) VALUES (?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """,
+            (_safe_text(key), _safe_text(value)),
+        )
+
+
+def get_setting(db_path, key, default=None):
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT value FROM app_settings WHERE key = ?",
+            (_safe_text(key),),
+        ).fetchone()
+    if not row:
+        return default
+    return row["value"]
 
 
 def find_existing_word(db_path, raw_word):
