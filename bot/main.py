@@ -1215,7 +1215,11 @@ def _format_feedback_article(entry, ok):
     article = str(entry.get("article", "")).strip()
     german = _cap_word(entry.get("german", ""))
     plural = _cap_word(entry.get("plural", ""))
-    lines = [f"{status} >>>     *{_md_escape((article + ' ' + german).strip())}*".strip()]
+    russian = _low_word(entry.get("russian", ""))
+    headline = f"{status} >>>     *{_md_escape((article + ' ' + german).strip())}*"
+    if russian:
+        headline += f" ({_md_escape(russian)})"
+    lines = [headline.strip()]
     if plural:
         lines.append("")
         lines.append(f"_pl. die {_md_escape(plural)}_")
