@@ -244,38 +244,32 @@ async def _show_quiz_prompt_after_edit(update: Update, context: ContextTypes.DEF
         return await _back_to_tests(update)
 
     if state == QUIZ_RU_DE:
-        prompt = _normalize_russian_singular(entry.get("russian", ""))
-        text = _format_question(prompt)
+        text = _format_ru_question(entry)
         if prefix_text:
             text = f"{prefix_text}\n\n{text}"
         await update.message.reply_text(
             text,
             reply_markup=_quiz_markup(update.effective_user.id, article=False),
-            parse_mode="Markdown",
         )
         return QUIZ_RU_DE
 
     if state == QUIZ_DE_RU:
-        prompt = entry.get("infinitive", "") if entry.get("type") == "verb" else entry.get("german", "")
-        text = _format_question(prompt)
+        text = _format_de_ru_question(entry)
         if prefix_text:
             text = f"{prefix_text}\n\n{text}"
         await update.message.reply_text(
             text,
             reply_markup=_quiz_markup(update.effective_user.id, article=False),
-            parse_mode="Markdown",
         )
         return QUIZ_DE_RU
 
     if state == QUIZ_ARTICLE:
-        prompt = entry.get("german", "")
-        text = _format_question(prompt)
+        text = _format_article_question(entry)
         if prefix_text:
             text = f"{prefix_text}\n\n{text}"
         await update.message.reply_text(
             text,
             reply_markup=_quiz_markup(update.effective_user.id, article=True),
-            parse_mode="Markdown",
         )
         return QUIZ_ARTICLE
 
@@ -1051,7 +1045,7 @@ async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _update_srs_for_entry(update.effective_user.id, entry, MODE_RU_DE, ok)
     context.user_data["quiz_last_answered_entry"] = entry
 
-    feedback = _format_feedback(entry, ok)
+    feedback = _format_feedback_ru_de(entry, ok)
     return await _send_ru_de_prompt(update, context, feedback)
 
 
@@ -1074,7 +1068,7 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _update_srs_for_entry(update.effective_user.id, entry, MODE_DE_RU, ok)
     context.user_data["quiz_last_answered_entry"] = entry
 
-    feedback = _format_feedback(entry, ok)
+    feedback = _format_feedback_de_ru(entry, ok)
     return await _send_de_ru_prompt(update, context, feedback)
 
 
@@ -1096,7 +1090,7 @@ async def quiz_article(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _update_srs_for_entry(update.effective_user.id, entry, MODE_ARTICLE, ok)
     context.user_data["quiz_last_answered_entry"] = entry
 
-    feedback = _format_feedback(entry, ok)
+    feedback = _format_feedback_article(entry, ok)
     return await _send_article_prompt(update, context, feedback)
 
 
@@ -1148,30 +1142,83 @@ def _get_ru_de_answer(entry):
     return entry.get("german", "")
 
 
-def _format_feedback(entry, ok):
+def _cap_word(word):
+    word = str(word or "").strip()
+    if not word:
+        return ""
+    return word[:1].upper() + word[1:].lower()
+
+
+def _low_word(word):
+    return str(word or "").strip().lower()
+
+
+def _format_ru_question(entry):
+    ru = _normalize_russian_singular(entry.get("russian", ""))
+    return f">>    {ru} ?"
+
+
+def _format_de_ru_question(entry):
+    word_type = entry.get("type", "")
+    article = str(entry.get("article", "")).strip()
+    base = entry.get("infinitive", "") if word_type == "verb" else entry.get("german", "")
+    base = _cap_word(base) if word_type == "nomen" else _low_word(base)
+    prefix = f"{article} " if article else ""
+    return f">>    {prefix}{base}?"
+
+
+def _format_article_question(entry):
+    return f">>     {_cap_word(entry.get('german', ''))} ?"
+
+
+def _format_feedback_ru_de(entry, ok):
     status = "Correct ✅" if ok else "Wrong ❌"
-    if entry.get("type") == "verb":
-        inf = entry.get("infinitive", "")
-        pr = entry.get("prateritum", "")
-        p2 = entry.get("partizip2", "")
-        extras = " / ".join([x for x in [pr, p2] if x])
-        if extras:
-            extras = f" ({extras})"
-        return f"{status} >>> *{_md_escape(inf)}*{_md_escape(extras)}"
+    word_type = entry.get("type", "")
+    article = str(entry.get("article", "")).strip()
+    if word_type == "nomen":
+        base = _cap_word(entry.get("german", ""))
+    elif word_type == "verb":
+        base = _low_word(entry.get("infinitive", ""))
+    else:
+        base = _low_word(entry.get("german", ""))
 
-    art = entry.get("article", "")
-    ger = entry.get("german", "")
-    extras = f" ({entry.get('plural')})" if entry.get("type") == "nomen" and entry.get("plural") else ""
-    if art:
-        return f"{status} >>> {art} *{_md_escape(ger)}*{_md_escape(extras)}"
-    return f"{status} >>> *{_md_escape(ger)}*{_md_escape(extras)}"
+    headline = f"{status} >>>     "
+    if article:
+        headline += f"{article} "
+    headline += base
+    lines = [headline]
+
+    if word_type == "nomen":
+        plural = _cap_word(entry.get("plural", ""))
+        if plural:
+            lines.append("")
+            lines.append(f"plural die {plural}")
+    elif word_type == "verb":
+        pr = _low_word(entry.get("prateritum", ""))
+        p2 = _low_word(entry.get("partizip2", ""))
+        forms = ", ".join([x for x in [pr, p2] if x])
+        if forms:
+            lines.append("")
+            lines.append(forms)
+
+    return "\n".join(lines)
 
 
-def _format_question(word):
-    if word:
-        word = str(word).strip()
-        word = word[:1].upper() + word[1:].lower()
-    return f">>    *{_md_escape(word)}* ?"
+def _format_feedback_de_ru(entry, ok):
+    status = "Correct ✅" if ok else "Wrong ❌"
+    return f"{status} >>>     {_low_word(entry.get('russian', ''))}"
+
+
+def _format_feedback_article(entry, ok):
+    status = "Correct ✅" if ok else "Wrong ❌"
+    article = str(entry.get("article", "")).strip()
+    german = _cap_word(entry.get("german", ""))
+    plural = _cap_word(entry.get("plural", ""))
+    lines = [f"{status} >>>     {article} {german}".strip()]
+    if plural:
+        lines.append("")
+        lines.append(f"plural die {plural}")
+    return "\n".join(lines)
 
 
 def _pick_due_entry(context, user_id, mode, word_type=None):
@@ -1201,11 +1248,11 @@ async def _send_ru_de_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
         return TESTS_MENU
 
     context.user_data["quiz_entry"] = entry
-    prompt_text = _format_question(_normalize_russian_singular(entry.get("russian", "")))
+    prompt_text = _format_ru_question(entry)
     if prefix_text:
         prompt_text = f"{prefix_text}\n\n{prompt_text}"
 
-    await update.message.reply_text(prompt_text, reply_markup=_quiz_markup(update.effective_user.id, article=False), parse_mode="Markdown")
+    await update.message.reply_text(prompt_text, reply_markup=_quiz_markup(update.effective_user.id, article=False))
     return QUIZ_RU_DE
 
 
@@ -1219,12 +1266,11 @@ async def _send_de_ru_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
         return TESTS_MENU
 
     context.user_data["quiz_entry"] = entry
-    prompt = entry.get("infinitive", "") if entry.get("type") == "verb" else entry.get("german", "")
-    prompt_text = _format_question(prompt)
+    prompt_text = _format_de_ru_question(entry)
     if prefix_text:
         prompt_text = f"{prefix_text}\n\n{prompt_text}"
 
-    await update.message.reply_text(prompt_text, reply_markup=_quiz_markup(update.effective_user.id, article=False), parse_mode="Markdown")
+    await update.message.reply_text(prompt_text, reply_markup=_quiz_markup(update.effective_user.id, article=False))
     return QUIZ_DE_RU
 
 
@@ -1238,11 +1284,11 @@ async def _send_article_prompt(update: Update, context: ContextTypes.DEFAULT_TYP
         return TESTS_MENU
 
     context.user_data["quiz_entry"] = entry
-    prompt_text = _format_question(entry.get("german", ""))
+    prompt_text = _format_article_question(entry)
     if prefix_text:
         prompt_text = f"{prefix_text}\n\n{prompt_text}"
 
-    await update.message.reply_text(prompt_text, reply_markup=_quiz_markup(update.effective_user.id, article=True), parse_mode="Markdown")
+    await update.message.reply_text(prompt_text, reply_markup=_quiz_markup(update.effective_user.id, article=True))
     return QUIZ_ARTICLE
 
 
