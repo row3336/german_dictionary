@@ -37,7 +37,6 @@ from .storage import (
     get_user_levels,
     get_user_status,
     init_db,
-    migrate_json_to_sqlite,
     register_or_update_user,
     select_due,
     set_setting,
@@ -179,10 +178,6 @@ ALLOWED_AI_TYPES = {
 
 def get_db_path():
     return Path(os.getenv("DB_PATH", "./data/words.db"))
-
-
-def get_legacy_json_path():
-    return Path(os.getenv("DATA_PATH", "./data/words.json"))
 
 
 def get_dump_dir():
@@ -1705,7 +1700,12 @@ async def _auto_dump_job(context: ContextTypes.DEFAULT_TYPE):
     owner_id = get_owner_id()
     if owner_id:
         try:
-            await context.bot.send_message(owner_id, f"Auto dump created: {dump_path.name}")
+            await context.bot.send_document(
+                chat_id=owner_id,
+                document=dump_path.open("rb"),
+                filename=dump_path.name,
+                caption=f"✅ Auto dump created: {dump_path.name}",
+            )
         except Exception:
             pass
 
@@ -1737,10 +1737,6 @@ def _configure_auto_dump(app: Application, mode: str):
 def _prepare_storage():
     db_path = get_db_path()
     init_db(db_path)
-
-    legacy_json_path = get_legacy_json_path()
-    if legacy_json_path.suffix.lower() == ".json":
-        migrate_json_to_sqlite(legacy_json_path, db_path)
 
     owner_id = get_owner_id()
     if owner_id:

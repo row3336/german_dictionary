@@ -1,4 +1,3 @@
-import json
 import sqlite3
 import uuid
 from datetime import date, timedelta
@@ -535,61 +534,6 @@ def update_progress(db_path, user_id, word_id, mode, quality):
                 updated["due"],
             ),
         )
-
-
-def export_words_json(db_path, output_path):
-    words = load_words(db_path)
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with output_path.open("w", encoding="utf-8") as f:
-        json.dump(words, f, ensure_ascii=False, indent=2)
-    return output_path
-
-
-def migrate_json_to_sqlite(json_path, db_path):
-    json_path = Path(json_path)
-    if not json_path.exists():
-        return 0
-
-    init_db(db_path)
-    with _connect(db_path) as conn:
-        current = conn.execute("SELECT COUNT(*) AS cnt FROM words").fetchone()["cnt"]
-        if current:
-            return 0
-
-        with json_path.open("r", encoding="utf-8") as f:
-            words = json.load(f)
-
-        inserted = 0
-        for raw in words:
-            entry = dict(raw)
-            if entry.get("id") in (None, "", "unique"):
-                entry["id"] = str(uuid.uuid4())
-            try:
-                _dedupe_entry(conn, entry)
-            except ValueError:
-                continue
-            conn.execute(
-                """
-                INSERT INTO words (
-                    id, type, article, german, plural, infinitive, prateritum, partizip2, russian, cefr_level
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    entry["id"],
-                    _safe_text(entry.get("type", "")),
-                    _safe_text(entry.get("article", "")),
-                    _safe_text(entry.get("german", "")),
-                    _safe_text(entry.get("plural", "")),
-                    _safe_text(entry.get("infinitive", "")),
-                    _safe_text(entry.get("prateritum", "")),
-                    _safe_text(entry.get("partizip2", "")),
-                    _safe_text(entry.get("russian", "")),
-                    _normalize_level(entry.get("cefr_level", "")),
-                ),
-            )
-            inserted += 1
-    return inserted
 
 
 def list_words_for_cefr_backfill(db_path, limit=0):

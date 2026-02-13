@@ -31,8 +31,6 @@ print(text)
 
 ## Data format
 - Main storage is SQLite: `data/words.db` (configurable via `DB_PATH`).
-- On startup, the bot migrates legacy JSON from `DATA_PATH` (`./data/words.json`) if the DB is empty.
-- Export sends a JSON snapshot (`EXPORT_PATH`).
 - Words support CEFR levels in `cefr_level` (`A1..C2`).
 - Per-user enabled levels are stored separately and used as quiz filter.
 
