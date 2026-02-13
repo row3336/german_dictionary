@@ -102,12 +102,25 @@ def init_db(db_path):
                 reviewed_at TEXT NOT NULL DEFAULT '',
                 FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
             );
+
+            CREATE TABLE IF NOT EXISTS quiz_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                word_id TEXT NOT NULL,
+                mode TEXT NOT NULL,
+                is_correct INTEGER NOT NULL,
+                prev_is_correct INTEGER,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
+            );
             """
         )
         _ensure_schema(conn)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_words_cefr ON words(cefr_level)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_user_levels_user ON user_levels(user_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_word_flags_status_created ON word_flags(status, created_at)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_quiz_events_day_user ON quiz_events(created_at, user_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_quiz_events_user_word_mode ON quiz_events(user_id, word_id, mode, created_at)")
 
 
 def _ensure_schema(conn):
@@ -645,6 +658,135 @@ def update_progress(db_path, user_id, word_id, mode, quality):
                 updated["due"],
             ),
         )
+
+
+def log_quiz_event(db_path, user_id, word_id, mode, is_correct):
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        prev = conn.execute(
+            """
+            SELECT is_correct
+            FROM quiz_events
+            WHERE user_id = ? AND word_id = ? AND mode = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (int(user_id), _safe_text(word_id), _safe_text(mode)),
+        ).fetchone()
+        prev_is_correct = None if not prev else int(prev["is_correct"])
+        conn.execute(
+            """
+            INSERT INTO quiz_events (user_id, word_id, mode, is_correct, prev_is_correct, created_at)
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """,
+            (
+                int(user_id),
+                _safe_text(word_id),
+                _safe_text(mode),
+                1 if bool(is_correct) else 0,
+                prev_is_correct,
+            ),
+        )
+
+
+def list_daily_user_stats(db_path, day_iso, user_id=None):
+    init_db(db_path)
+    params = [str(day_iso)]
+    where = "date(e.created_at) = date(?)"
+    if user_id is not None:
+        where += " AND e.user_id = ?"
+        params.append(int(user_id))
+
+    query = f"""
+        SELECT
+            e.user_id AS user_id,
+            u.username AS username,
+            u.first_name AS first_name,
+            COUNT(*) AS total_attempts,
+            SUM(CASE WHEN e.is_correct = 1 THEN 1 ELSE 0 END) AS correct_attempts,
+            COUNT(DISTINCT e.word_id) AS unique_words,
+            SUM(CASE WHEN e.is_correct = 1 AND e.prev_is_correct = 0 THEN 1 ELSE 0 END) AS wrong_to_correct,
+            SUM(CASE WHEN e.is_correct = 1 AND e.prev_is_correct = 1 THEN 1 ELSE 0 END) AS correct_to_correct,
+            SUM(CASE WHEN e.is_correct = 1 AND e.prev_is_correct IS NULL THEN 1 ELSE 0 END) AS first_time_correct
+        FROM quiz_events e
+        LEFT JOIN users u ON u.user_id = e.user_id
+        WHERE {where}
+        GROUP BY e.user_id, u.username, u.first_name
+        ORDER BY total_attempts DESC, correct_attempts DESC
+    """
+    with _connect(db_path) as conn:
+        rows = conn.execute(query, tuple(params)).fetchall()
+
+    result = []
+    for row in rows:
+        total = int(row["total_attempts"] or 0)
+        correct = int(row["correct_attempts"] or 0)
+        win_rate = round((correct / total) * 100, 1) if total > 0 else 0.0
+        wrong_to_correct = int(row["wrong_to_correct"] or 0)
+        correct_to_correct = int(row["correct_to_correct"] or 0)
+        first_time_correct = int(row["first_time_correct"] or 0)
+        memory_score = round(
+            correct_to_correct + (wrong_to_correct * 0.7) + (first_time_correct * 0.5),
+            1,
+        )
+        result.append(
+            {
+                "user_id": int(row["user_id"]),
+                "username": row["username"] or "",
+                "first_name": row["first_name"] or "",
+                "total_attempts": total,
+                "correct_attempts": correct,
+                "win_rate": win_rate,
+                "unique_words": int(row["unique_words"] or 0),
+                "wrong_to_correct": wrong_to_correct,
+                "correct_to_correct": correct_to_correct,
+                "first_time_correct": first_time_correct,
+                "memory_score": memory_score,
+            }
+        )
+    return result
+
+
+def get_daily_totals(db_path, day_iso):
+    rows = list_daily_user_stats(db_path, day_iso=day_iso)
+    if not rows:
+        return {
+            "total_attempts": 0,
+            "correct_attempts": 0,
+            "win_rate": 0.0,
+            "unique_users": 0,
+            "unique_words": 0,
+            "wrong_to_correct": 0,
+            "correct_to_correct": 0,
+            "first_time_correct": 0,
+            "memory_score": 0.0,
+        }
+
+    total_attempts = sum(x["total_attempts"] for x in rows)
+    correct_attempts = sum(x["correct_attempts"] for x in rows)
+    unique_words = sum(x["unique_words"] for x in rows)
+    wrong_to_correct = sum(x["wrong_to_correct"] for x in rows)
+    correct_to_correct = sum(x["correct_to_correct"] for x in rows)
+    first_time_correct = sum(x["first_time_correct"] for x in rows)
+    memory_score = round(sum(x["memory_score"] for x in rows), 1)
+    return {
+        "total_attempts": total_attempts,
+        "correct_attempts": correct_attempts,
+        "win_rate": round((correct_attempts / total_attempts) * 100, 1) if total_attempts > 0 else 0.0,
+        "unique_users": len(rows),
+        "unique_words": unique_words,
+        "wrong_to_correct": wrong_to_correct,
+        "correct_to_correct": correct_to_correct,
+        "first_time_correct": first_time_correct,
+        "memory_score": memory_score,
+    }
+
+
+def list_daily_leaderboard(db_path, day_iso, min_attempts=1, limit=20):
+    rows = list_daily_user_stats(db_path, day_iso=day_iso)
+    filtered = [r for r in rows if r["total_attempts"] >= int(min_attempts)]
+    filtered.sort(key=lambda x: (x["win_rate"], x["total_attempts"], x["memory_score"]), reverse=True)
+    return filtered[: int(limit)]
 
 
 def list_words_for_cefr_backfill(db_path, limit=0):
