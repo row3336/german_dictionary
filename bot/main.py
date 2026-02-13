@@ -255,6 +255,28 @@ def _stop_keys(user_id):
     return [[t(_user_interface_lang(user_id), "stop")]]
 
 
+def _add_input_markup(user_id):
+    return ReplyKeyboardMarkup(
+        [
+            ["Level: Auto", "Level: A1", "Level: A2"],
+            ["Level: B1", "Level: B2", "Level: C1"],
+            ["Level: C2", t(_user_interface_lang(user_id), "back")],
+        ],
+        resize_keyboard=True,
+    )
+
+
+def _parse_add_level_mode(text):
+    token = str(text or "").strip()
+    if token == "Level: Auto":
+        return ""
+    if token.startswith("Level: "):
+        level = token.replace("Level: ", "", 1).strip().upper()
+        if level in CEFR_LEVELS:
+            return level
+    return None
+
+
 def _split_text_chunks(text, max_size=3500):
     text = str(text or "").strip()
     if not text:
@@ -667,9 +689,11 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return MENU
 
     if action == "add_word":
+        level_mode = context.user_data.get("add_level_override", "")
+        level_label = level_mode if level_mode else "Auto"
         await update.message.reply_text(
-            "Send a word or a list (one per line), or upload a .txt file.",
-            reply_markup=ReplyKeyboardMarkup(_add_keys(user_id), resize_keyboard=True),
+            f"Send a word or a list (one per line), or upload a .txt file.\nCurrent level mode: {level_label}",
+            reply_markup=_add_input_markup(user_id),
         )
         return ADD_INPUT
 
@@ -930,7 +954,17 @@ async def auto_dump_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def add_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     raw = update.message.text.strip()
     user_id = update.effective_user.id
+    level_mode = _parse_add_level_mode(raw)
+    if level_mode is not None:
+        if level_mode:
+            context.user_data["add_level_override"] = level_mode
+            await update.message.reply_text(f"✅ Level mode set: {level_mode}", reply_markup=_add_input_markup(user_id))
+        else:
+            context.user_data.pop("add_level_override", None)
+            await update.message.reply_text("✅ Level mode set: Auto", reply_markup=_add_input_markup(user_id))
+        return ADD_INPUT
     if _action_key_from_text(raw, user_id) == "back":
+        context.user_data.pop("add_level_override", None)
         return await _back_to_main_menu(update)
 
     if not is_owner(user_id):
@@ -1780,6 +1814,9 @@ async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, w
         return ADD_CLARIFY
 
     entry = _normalize_ai_entry(entry)
+    level_override = str(context.user_data.get("add_level_override", "") or "").strip().upper()
+    if level_override in CEFR_LEVELS:
+        entry["cefr_level"] = level_override
     context.user_data["pending_entry"] = entry
     return await _show_ai_preview(update, entry)
 
