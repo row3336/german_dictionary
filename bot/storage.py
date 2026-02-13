@@ -113,6 +113,12 @@ def init_db(db_path):
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
             );
+
+            CREATE TABLE IF NOT EXISTS banned_words (
+                normalized_word TEXT PRIMARY KEY,
+                raw_word TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
             """
         )
         _ensure_schema(conn)
@@ -474,6 +480,38 @@ def get_setting(db_path, key, default=None):
     if not row:
         return default
     return row["value"]
+
+
+def add_banned_word(db_path, raw_word):
+    normalized = _normalize_text(raw_word)
+    if not normalized:
+        return False
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO banned_words (normalized_word, raw_word)
+            VALUES (?, ?)
+            """,
+            (normalized, _safe_text(raw_word).strip()),
+        )
+        row = conn.execute(
+            "SELECT changes() AS cnt"
+        ).fetchone()
+    return bool(row and int(row["cnt"]) > 0)
+
+
+def is_banned_word(db_path, raw_word):
+    normalized = _normalize_text(raw_word)
+    if not normalized:
+        return False
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT 1 FROM banned_words WHERE normalized_word = ? LIMIT 1",
+            (normalized,),
+        ).fetchone()
+    return bool(row)
 
 
 def find_existing_word(db_path, raw_word):

@@ -29,10 +29,12 @@ from .app_config import (
     ADD_INPUT,
     ADD_KEYS,
     AI_CLARIFY_AI,
+    AI_BAN_WORD,
     AI_CLARIFY_FIELD,
     AI_CONFIRM,
     AI_KEYS,
     AI_REJECT,
+    AI_SKIP,
     ALLOWED_AI_TYPES,
     APPROVE_PREFIX,
     ARTICLE_SET,
@@ -85,6 +87,7 @@ from .storage import (
     QUIZ_RU_DE as MODE_RU_DE,
     add_word_flag,
     add_word,
+    add_banned_word,
     count_words,
     ensure_default_languages_for_existing_users,
     find_existing_word,
@@ -107,6 +110,7 @@ from .storage import (
     list_daily_leaderboard,
     list_daily_user_stats,
     get_daily_totals,
+    is_banned_word,
     log_quiz_event,
 )
 from .i18n import (
@@ -253,6 +257,13 @@ def _add_keys(user_id):
 
 def _stop_keys(user_id):
     return [[t(_user_interface_lang(user_id), "stop")]]
+
+
+def _clarify_keys(user_id):
+    return [
+        [AI_CLARIFY_AI, AI_CLARIFY_FIELD, AI_BAN_WORD],
+        [AI_SKIP, t(_user_interface_lang(user_id), "stop")],
+    ]
 
 
 def _add_input_markup(user_id):
@@ -582,6 +593,8 @@ def _prefilter_reject_reason(word):
         return "Filtered: article words are not stored."
     if normalized in NUMERAL_SET:
         return "Filtered: numeral words are not stored."
+    if is_banned_word(get_db_path(), normalized):
+        return "Filtered: banned word."
     return None
 
 
@@ -1077,10 +1090,13 @@ async def add_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if _action_key_from_text(text, update.effective_user.id) == "stop":
         return await _stop_queue(update, context)
 
+    if text == AI_BAN_WORD:
+        return await _ban_pending_word(update, context)
+
     if text == AI_CLARIFY_AI:
         await update.message.reply_text(
             "Send clarification text for AI.",
-            reply_markup=ReplyKeyboardMarkup(_stop_keys(update.effective_user.id), resize_keyboard=True),
+            reply_markup=ReplyKeyboardMarkup(_clarify_keys(update.effective_user.id), resize_keyboard=True),
         )
         return ADD_CLARIFY
 
@@ -1098,7 +1114,7 @@ async def add_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if text != AI_CONFIRM:
         await update.message.reply_text(
-            "Use: Confirm, Clarify AI, Clarify Field, or Reject.",
+            "Use: Confirm, Clarify AI, Clarify Field, Reject, or Ban Word.",
             reply_markup=ReplyKeyboardMarkup(AI_KEYS, resize_keyboard=True),
         )
         return ADD_CONFIRM
@@ -1119,6 +1135,24 @@ async def add_clarify(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "stop":
         return await _stop_queue(update, context)
+    if text == AI_SKIP:
+        return await _process_next_ai_word(update, context)
+    if text == AI_BAN_WORD:
+        return await _ban_pending_word(update, context)
+    if text == AI_CLARIFY_FIELD:
+        context.user_data["edit_source"] = "add"
+        context.user_data["edit_stage"] = "pick_field"
+        await update.message.reply_text(
+            "Choose field to edit:",
+            reply_markup=_edit_fields_markup("add"),
+        )
+        return ADD_EDIT
+    if text == AI_CLARIFY_AI:
+        await update.message.reply_text(
+            "Send clarification text for AI.",
+            reply_markup=ReplyKeyboardMarkup(_clarify_keys(update.effective_user.id), resize_keyboard=True),
+        )
+        return ADD_CLARIFY
 
     word = context.user_data.get("pending_word")
     if not word:
@@ -1799,8 +1833,8 @@ async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, w
         logging.exception("AI request failed for word: %s", word)
         await _reply_text_with_retry(
             update.message,
-            f"❌ AI request failed: {exc}",
-            reply_markup=ReplyKeyboardMarkup(_stop_keys(update.effective_user.id), resize_keyboard=True),
+            f"Error: AI request failed: {exc}",
+            reply_markup=ReplyKeyboardMarkup(_clarify_keys(update.effective_user.id), resize_keyboard=True),
         )
         return ADD_CLARIFY
 
@@ -1815,11 +1849,11 @@ async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, w
         await _reply_text_with_retry(
             update.message,
             (
-                f"❌ AI failed to parse for word: {word}\n"
+                f"Error: AI failed to parse for word: {word}\n"
                 f"Clarification: {clarification or '-'}\n"
-                "Use Clarify AI or Clarify Field."
+                "Use Clarify AI, Clarify Field, Skip, or Ban Word."
             ),
-            reply_markup=ReplyKeyboardMarkup(_stop_keys(update.effective_user.id), resize_keyboard=True),
+            reply_markup=ReplyKeyboardMarkup(_clarify_keys(update.effective_user.id), resize_keyboard=True),
         )
         return ADD_CLARIFY
 
@@ -1877,6 +1911,21 @@ async def _process_next_ai_word(update: Update, context: ContextTypes.DEFAULT_TY
         reply_markup=_main_menu_markup(update.effective_user.id),
     )
     return MENU
+
+
+async def _ban_pending_word(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    word = (context.user_data.get("pending_word") or "").strip()
+    if not word:
+        await update.message.reply_text(
+            "❌ No word to ban.",
+            reply_markup=ReplyKeyboardMarkup(_add_keys(update.effective_user.id), resize_keyboard=True),
+        )
+        return ADD_INPUT
+    created = add_banned_word(get_db_path(), word)
+    status = "✅ Added to banned list." if created else "✅ Already in banned list."
+    await update.message.reply_text(f"{status} ({word})")
+    context.user_data.pop("pending_entry", None)
+    return await _process_next_ai_word(update, context)
 
 
 async def _stop_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
