@@ -552,6 +552,8 @@ def _prefilter_reject_reason(word):
     normalized = _normalize_lookup_text(word)
     if not normalized:
         return "Empty value."
+    if len(normalized) < 2:
+        return "Filtered: too short word."
     if NUMERIC_RE.match(normalized):
         return "Filtered: looks like a number."
     if normalized in ARTICLE_SET:
