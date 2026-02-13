@@ -132,6 +132,10 @@ from .text_utils import (
     type_label as _type_label,
 )
 
+
+AI_PREFETCH_WINDOW = 10
+AI_PREFETCH_CONCURRENCY = 3
+
 DAILY_STATS_JOB_NAME = "daily_stats_report"
 
 
@@ -307,6 +311,25 @@ def _split_text_chunks(text, max_size=3500):
     if current:
         chunks.append("\n".join(current).strip())
     return [c for c in chunks if c]
+
+
+def _make_add_queue(words):
+    return [{"qid": idx, "word": value} for idx, value in enumerate(words)]
+
+
+def _queue_item_word(item):
+    if isinstance(item, dict):
+        return str(item.get("word", "")).strip()
+    return str(item).strip()
+
+
+def _queue_item_id(item):
+    if isinstance(item, dict):
+        try:
+            return str(int(item.get("qid")))
+        except (TypeError, ValueError):
+            return ""
+    return ""
 
 
 def _load_info_text():
@@ -1006,7 +1029,8 @@ async def add_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if len(lines) > 1:
         filtered, existing, recognition = _scan_words_before_ai(lines)
-        context.user_data["add_queue"] = recognition
+        context.user_data["add_queue"] = _make_add_queue(recognition)
+        context.user_data.pop("add_prefetch_cache", None)
         logging.info(
             "Batch add scan: total=%s filtered=%s existing=%s recognition=%s",
             len(lines),
@@ -1061,7 +1085,8 @@ async def add_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ADD_INPUT
 
     filtered, existing, recognition = _scan_words_before_ai(lines)
-    context.user_data["add_queue"] = recognition
+    context.user_data["add_queue"] = _make_add_queue(recognition)
+    context.user_data.pop("add_prefetch_cache", None)
     logging.info(
         "Batch add scan: total=%s filtered=%s existing=%s recognition=%s",
         len(lines),
@@ -1787,7 +1812,7 @@ def _format_ai_preview(entry):
     return f"Recognized [{entry_type} {level}]\n*{_md_escape(ger)}* - {_md_escape(rus)} / {_md_escape(ukr)} / {_md_escape(eng)}"
 
 
-async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, word, clarification):
+async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, word, clarification, prefetched=None):
     has_queue = bool(context.user_data.get("add_queue"))
 
     reject_reason = _prefilter_reject_reason(word)
@@ -1827,16 +1852,28 @@ async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, w
     context.user_data["pending_word"] = word
     prompt_text = _ai_prompt(word, clarification)
     context.user_data["last_ai_prompt"] = prompt_text
-    try:
-        response_text = generate_fields(prompt_text)
-    except Exception as exc:
-        logging.exception("AI request failed for word: %s", word)
-        await _reply_text_with_retry(
-            update.message,
-            f"Error: AI request failed: {exc}",
-            reply_markup=ReplyKeyboardMarkup(_clarify_keys(update.effective_user.id), resize_keyboard=True),
-        )
-        return ADD_CLARIFY
+    if prefetched is not None:
+        if prefetched.get("ok"):
+            response_text = prefetched.get("text", "")
+        else:
+            exc = prefetched.get("error", "unknown error")
+            await _reply_text_with_retry(
+                update.message,
+                f"Error: AI request failed: {exc}",
+                reply_markup=ReplyKeyboardMarkup(_clarify_keys(update.effective_user.id), resize_keyboard=True),
+            )
+            return ADD_CLARIFY
+    else:
+        try:
+            response_text = generate_fields(prompt_text)
+        except Exception as exc:
+            logging.exception("AI request failed for word: %s", word)
+            await _reply_text_with_retry(
+                update.message,
+                f"Error: AI request failed: {exc}",
+                reply_markup=ReplyKeyboardMarkup(_clarify_keys(update.effective_user.id), resize_keyboard=True),
+            )
+            return ADD_CLARIFY
 
     entry = _try_parse_json(response_text)
     if entry is None or not _validate_ai_entry(entry):
@@ -1893,25 +1930,63 @@ async def _show_ai_preview(update: Update, entry):
     return ADD_CONFIRM
 
 
+async def _prefetch_ai_queue(context: ContextTypes.DEFAULT_TYPE):
+    queue = context.user_data.get("add_queue") or []
+    if not queue:
+        return
+    cache = context.user_data.setdefault("add_prefetch_cache", {})
+    to_fetch = []
+    for item in queue:
+        if len(to_fetch) >= AI_PREFETCH_WINDOW:
+            break
+        qid = _queue_item_id(item)
+        word = _queue_item_word(item)
+        if not qid or not word or qid in cache:
+            continue
+        to_fetch.append((qid, word))
+    if not to_fetch:
+        return
+
+    semaphore = asyncio.Semaphore(AI_PREFETCH_CONCURRENCY)
+
+    async def _worker(qid, word):
+        prompt_text = _ai_prompt(word, None)
+        async with semaphore:
+            try:
+                response_text = await asyncio.to_thread(generate_fields, prompt_text)
+                cache[qid] = {"ok": True, "text": response_text}
+            except Exception as exc:
+                cache[qid] = {"ok": False, "error": str(exc)}
+
+    await asyncio.gather(*[_worker(qid, word) for qid, word in to_fetch])
+
+
 async def _process_next_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _prefetch_ai_queue(context)
     queue = context.user_data.get("add_queue") or []
     while queue:
-        word = queue.pop(0)
+        item = queue.pop(0)
         context.user_data["add_queue"] = queue
-        state = await _process_ai_word(update, context, word, None)
+        word = _queue_item_word(item)
+        qid = _queue_item_id(item)
+        prefetched = None
+        if qid:
+            prefetched = (context.user_data.get("add_prefetch_cache") or {}).pop(qid, None)
+        state = await _process_ai_word(update, context, word, None, prefetched=prefetched)
         if state in (ADD_CONFIRM, ADD_CLARIFY, MENU):
+            await _prefetch_ai_queue(context)
             return state
         queue = context.user_data.get("add_queue") or []
 
     context.user_data.pop("pending_word", None)
     context.user_data.pop("pending_entry", None)
+    context.user_data.pop("add_prefetch_cache", None)
     await _reply_text_with_retry(
         update.message,
         "✅ Done.",
         reply_markup=_main_menu_markup(update.effective_user.id),
     )
     return MENU
-
 
 async def _ban_pending_word(update: Update, context: ContextTypes.DEFAULT_TYPE):
     word = (context.user_data.get("pending_word") or "").strip()
@@ -1930,6 +2005,7 @@ async def _ban_pending_word(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def _stop_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop("add_queue", None)
+    context.user_data.pop("add_prefetch_cache", None)
     context.user_data.pop("pending_word", None)
     context.user_data.pop("pending_entry", None)
     context.user_data.pop("edit_stage", None)
@@ -2262,3 +2338,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
