@@ -57,6 +57,7 @@ from .app_config import (
     QUIZ_RU_DE,
     REJECT_PREFIX,
     REVIEW_FLAGS,
+    REVIEW_FLAGS_TEXT,
     REVIEW_MARK_TEXT,
     REVIEW_SKIP_TEXT,
     SETTINGS_KEYS,
@@ -535,7 +536,7 @@ async def settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         return SETTINGS_MENU
 
-    if text == "Review Flags":
+    if text == REVIEW_FLAGS_TEXT:
         items = list_pending_word_flags(get_db_path(), limit=500)
         if not items:
             await update.message.reply_text("✅ No flagged words.", reply_markup=ReplyKeyboardMarkup(SETTINGS_KEYS, resize_keyboard=True))
