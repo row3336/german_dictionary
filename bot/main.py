@@ -379,12 +379,16 @@ def _parse_level_toggle(text):
 def _edit_fields_markup(source):
     if source == "review":
         return ReplyKeyboardMarkup(EDIT_FIELDS_KEYS_FULL, resize_keyboard=True)
+    if source == "add":
+        return ReplyKeyboardMarkup([["russian", "ukrainian", "english"], ["level", BACK_TEXT]], resize_keyboard=True)
     return ReplyKeyboardMarkup(EDIT_FIELDS_KEYS, resize_keyboard=True)
 
 
 def _allowed_edit_fields(source):
     if source == "review":
         return {"russian", "ukrainian", "english", "level", "article", "plural", "prateritum", "partizip2", "german", "infinitive", "type"}
+    if source == "add":
+        return {"russian", "ukrainian", "english", "level"}
     return {"russian", "level"}
 
 
