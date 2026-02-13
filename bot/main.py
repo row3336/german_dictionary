@@ -1196,7 +1196,15 @@ def _format_feedback_ru_de(entry, ok):
             lines.append(f"_pl. die {_md_escape(plural)}_")
     elif word_type == "verb":
         pr = _low_word(entry.get("prateritum", ""))
-        p2 = _low_word(entry.get("partizip2", ""))
+        p2 = str(entry.get("partizip2", "") or "").strip().lower()
+        aux = str(
+            entry.get("perfect_aux")
+            or entry.get("hilfsverb")
+            or entry.get("aux")
+            or ""
+        ).strip().lower()
+        if p2 and aux in {"hat", "ist"} and not p2.startswith("hat ") and not p2.startswith("ist "):
+            p2 = f"{aux} {p2}"
         forms = ", ".join([x for x in [pr, p2] if x])
         if forms:
             lines.append("")
