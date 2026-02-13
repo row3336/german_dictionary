@@ -205,6 +205,7 @@ def _settings_menu_keys(user_id):
             [t(lang, "back")],
         ]
     return [
+        [t(lang, "levels")],
         [t(lang, "interface_lang_btn"), t(lang, "dict_lang_btn")],
         [t(lang, "info"), t(lang, "back")],
     ]
@@ -310,8 +311,11 @@ def _split_text_chunks(text, max_size=3500):
     return [c for c in chunks if c]
 
 
-def _load_info_text():
-    path = get_info_path()
+def _load_info_text(lang="en"):
+    lang = normalize_interface_lang(lang, default="en")
+    path = get_info_path().parent / f"info_{lang}.md"
+    if not path.exists():
+        path = get_info_path()
     if path.exists():
         try:
             return path.read_text(encoding="utf-8").strip()
@@ -730,7 +734,7 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return SETTINGS_MENU
 
     if action == "info":
-        chunks = _split_text_chunks(_load_info_text())
+        chunks = _split_text_chunks(_load_info_text(_user_interface_lang(user_id)))
         if not chunks:
             await update.message.reply_text("Info is empty.", reply_markup=_main_menu_markup(user_id))
             return MENU
@@ -820,7 +824,7 @@ async def settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
         return await _ask_dictionary_language(update, user_id)
 
     if action == "info":
-        chunks = _split_text_chunks(_load_info_text())
+        chunks = _split_text_chunks(_load_info_text(_user_interface_lang(user_id)))
         for idx, chunk in enumerate(chunks):
             markup = ReplyKeyboardMarkup(_settings_menu_keys(user_id), resize_keyboard=True) if idx == len(chunks) - 1 else None
             await update.message.reply_text(chunk, reply_markup=markup)
