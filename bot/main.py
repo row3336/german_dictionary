@@ -211,9 +211,13 @@ def _set_entry_field_value(entry, field, value):
 
 
 async def _start_quiz_edit(update: Update, context: ContextTypes.DEFAULT_TYPE, return_state):
+    entry = context.user_data.get("quiz_entry")
+    if not entry:
+        return await _back_to_tests(update)
     context.user_data["edit_source"] = "quiz"
     context.user_data["edit_stage"] = "pick_field"
     context.user_data["edit_return_state"] = return_state
+    await update.message.reply_text(_format_word_card(entry, "Current quiz word:"))
     await update.message.reply_text(
         "Choose field to edit:",
         reply_markup=ReplyKeyboardMarkup(EDIT_FIELDS_KEYS, resize_keyboard=True),
@@ -275,7 +279,18 @@ def _review_markup():
 
 def _format_review_card(entry):
     lines = [
-        "Review flagged word:",
+        _format_word_card(entry, "Review flagged word:"),
+        "",
+        f"flag from user: {entry.get('flag_user_id', '')}",
+        f"comment: {entry.get('flag_comment', '') or '-'}",
+        f"created: {entry.get('flag_created_at', '') or '-'}",
+    ]
+    return "\n".join(lines)
+
+
+def _format_word_card(entry, title="Word card:"):
+    lines = [
+        title,
         f"id: {entry.get('id', '')}",
         f"type: {entry.get('type', '')}",
         f"level: {entry.get('cefr_level', '') or '-'}",
@@ -286,10 +301,6 @@ def _format_review_card(entry):
         f"prateritum: {entry.get('prateritum', '') or '-'}",
         f"partizip2: {entry.get('partizip2', '') or '-'}",
         f"russian: {entry.get('russian', '') or '-'}",
-        "",
-        f"flag from user: {entry.get('flag_user_id', '')}",
-        f"comment: {entry.get('flag_comment', '') or '-'}",
-        f"created: {entry.get('flag_created_at', '') or '-'}",
     ]
     return "\n".join(lines)
 
@@ -919,6 +930,7 @@ async def _start_flag_comment(update: Update, context: ContextTypes.DEFAULT_TYPE
         return await _back_to_tests(update)
     context.user_data["flag_word_id"] = entry.get("id")
     context.user_data["flag_return_state"] = return_state
+    await update.message.reply_text(_format_word_card(entry, "Flagging this word:"))
     await update.message.reply_text(
         "Send comment for this word flag:",
         reply_markup=ReplyKeyboardMarkup([[STOP_TEXT]], resize_keyboard=True),
