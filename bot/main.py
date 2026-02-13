@@ -1937,7 +1937,7 @@ async def _ban_pending_word(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def _stop_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop("add_queue", None)
-        context.user_data.pop("pending_word", None)
+    context.user_data.pop("pending_word", None)
     context.user_data.pop("pending_entry", None)
     context.user_data.pop("edit_stage", None)
     context.user_data.pop("edit_field", None)
