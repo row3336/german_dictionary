@@ -149,6 +149,25 @@ def _normalize_text(text):
     return " ".join(str(text).strip().lower().split())
 
 
+def _split_variants(text):
+    raw = _safe_text(text)
+    for delim in (",", ";", "/"):
+        raw = raw.replace(delim, "|")
+    return [part.strip() for part in raw.split("|") if part.strip()]
+
+
+def _form_variants(text):
+    values = set()
+    for part in _split_variants(text):
+        normalized = _normalize_text(part)
+        if normalized:
+            values.add(normalized)
+        tokens = normalized.split()
+        if len(tokens) > 1 and tokens[0] in {"hat", "ist"}:
+            values.add(" ".join(tokens[1:]))
+    return values
+
+
 def _safe_text(value):
     if value is None:
         return ""
@@ -469,14 +488,38 @@ def find_existing_word(db_path, raw_word):
             SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian, cefr_level
             , ukrainian, english
             FROM words
-            WHERE lower(trim(german)) = ? OR lower(trim(infinitive)) = ?
+            WHERE lower(trim(german)) = ?
+               OR lower(trim(infinitive)) = ?
+               OR lower(trim(plural)) = ?
+               OR lower(trim(prateritum)) = ?
+               OR lower(trim(partizip2)) = ?
             LIMIT 1
             """,
-            (candidate, candidate),
+            (candidate, candidate, candidate, candidate, candidate),
         ).fetchone()
-    if not row:
-        return None
-    return _row_to_entry(row)
+        if row:
+            return _row_to_entry(row)
+
+        # Fallback for composite verb forms like "hat gesehen" and multi-value fields.
+        rows = conn.execute(
+            """
+            SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian, cefr_level
+            , ukrainian, english
+            FROM words
+            """
+        ).fetchall()
+
+    for item in rows:
+        variants = {
+            _normalize_text(item["german"]),
+            _normalize_text(item["infinitive"]),
+        }
+        variants.update(_form_variants(item["plural"]))
+        variants.update(_form_variants(item["prateritum"]))
+        variants.update(_form_variants(item["partizip2"]))
+        if candidate in variants:
+            return _row_to_entry(item)
+    return None
 
 
 def _dedupe_entry(conn, entry):
@@ -488,8 +531,8 @@ def _dedupe_entry(conn, entry):
         ).fetchone()
     else:
         row = conn.execute(
-            "SELECT id FROM words WHERE lower(trim(type)) = ? AND lower(trim(german)) = ? LIMIT 1",
-            (key_type, key_value),
+            "SELECT id FROM words WHERE lower(trim(german)) = ? LIMIT 1",
+            (key_value,),
         ).fetchone()
     if row:
         raise ValueError("Already in database.")

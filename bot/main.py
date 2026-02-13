@@ -1706,6 +1706,16 @@ def _normalize_ai_entry(entry):
     }
 
 
+def _is_non_infinitive_verb_input(raw_word, entry):
+    if entry.get("type") != "verb":
+        return False
+    source = _normalize_lookup_text(raw_word)
+    infinitive = _normalize_lookup_text(entry.get("infinitive", ""))
+    if not source or not infinitive:
+        return False
+    return source != infinitive
+
+
 def _format_ai_preview(entry):
     entry_type = entry.get("type")
     level = entry.get("cefr_level", "") or "NO_LEVEL"
@@ -1817,6 +1827,23 @@ async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, w
     level_override = str(context.user_data.get("add_level_override", "") or "").strip().upper()
     if level_override in CEFR_LEVELS:
         entry["cefr_level"] = level_override
+
+    if _is_non_infinitive_verb_input(word, entry):
+        inf = entry.get("infinitive", "")
+        existing_inf = find_existing_word(get_db_path(), inf) if inf else None
+        if existing_inf:
+            msg = f"❌ Verb form detected: {word}. Base infinitive: {inf}. Already in database, not saved."
+            if has_queue:
+                await _reply_text_with_retry(update.message, msg)
+                logging.info("Queue skip non-infinitive verb input (existing infinitive): %s -> %s", word, inf)
+                return ADD_INPUT
+            await _reply_text_with_retry(
+                update.message,
+                msg,
+                reply_markup=ReplyKeyboardMarkup(_add_keys(update.effective_user.id), resize_keyboard=True),
+            )
+            return ADD_INPUT
+
     context.user_data["pending_entry"] = entry
     return await _show_ai_preview(update, entry)
 
