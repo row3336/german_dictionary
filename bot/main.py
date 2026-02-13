@@ -210,14 +210,25 @@ def _set_entry_field_value(entry, field, value):
     return _set_entry_field(entry, f"{field}={value}")
 
 
+def _get_quiz_action_entry(context: ContextTypes.DEFAULT_TYPE):
+    last_answered = context.user_data.get("quiz_last_answered_entry")
+    if last_answered:
+        return last_answered, "Last answered word:"
+    current = context.user_data.get("quiz_entry")
+    if current:
+        return current, "Current quiz word:"
+    return None, ""
+
+
 async def _start_quiz_edit(update: Update, context: ContextTypes.DEFAULT_TYPE, return_state):
-    entry = context.user_data.get("quiz_entry")
+    entry, title = _get_quiz_action_entry(context)
     if not entry:
         return await _back_to_tests(update)
     context.user_data["edit_source"] = "quiz"
+    context.user_data["quiz_edit_entry"] = entry
     context.user_data["edit_stage"] = "pick_field"
     context.user_data["edit_return_state"] = return_state
-    await update.message.reply_text(_format_word_card(entry, "Current quiz word:"))
+    await update.message.reply_text(_format_word_card(entry, title))
     await update.message.reply_text(
         "Choose field to edit:",
         reply_markup=ReplyKeyboardMarkup(EDIT_FIELDS_KEYS, resize_keyboard=True),
@@ -226,6 +237,7 @@ async def _start_quiz_edit(update: Update, context: ContextTypes.DEFAULT_TYPE, r
 
 
 async def _show_quiz_prompt_after_edit(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text, state_override=None):
+    context.user_data.pop("quiz_edit_entry", None)
     state = state_override or context.user_data.get("edit_return_state")
     entry = context.user_data.get("quiz_entry")
     if not entry:
@@ -819,7 +831,12 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await _stop_queue(update, context)
 
     source = context.user_data.get("edit_source", "add")
-    entry_key = "pending_entry" if source == "add" else "quiz_entry"
+    if source == "add":
+        entry_key = "pending_entry"
+    elif source == "quiz":
+        entry_key = "quiz_edit_entry"
+    else:
+        entry_key = "quiz_entry"
     entry = context.user_data.get(entry_key)
     if not entry:
         await update.message.reply_text("No entry to edit.", reply_markup=_main_menu_markup(update.effective_user.id))
@@ -892,6 +909,12 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("edit_field", None)
         if source == "quiz":
             update_word_fields(get_db_path(), updated.get("id"), updated)
+            current_quiz_entry = context.user_data.get("quiz_entry")
+            if current_quiz_entry and current_quiz_entry.get("id") == updated.get("id"):
+                context.user_data["quiz_entry"] = updated
+            last_answered = context.user_data.get("quiz_last_answered_entry")
+            if last_answered and last_answered.get("id") == updated.get("id"):
+                context.user_data["quiz_last_answered_entry"] = updated
             return await _show_quiz_prompt_after_edit(update, context, "✅ Updated.")
         return await _show_ai_preview(update, updated)
 
@@ -917,6 +940,12 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop("edit_field", None)
     if source == "quiz":
         update_word_fields(get_db_path(), updated.get("id"), updated)
+        current_quiz_entry = context.user_data.get("quiz_entry")
+        if current_quiz_entry and current_quiz_entry.get("id") == updated.get("id"):
+            context.user_data["quiz_entry"] = updated
+        last_answered = context.user_data.get("quiz_last_answered_entry")
+        if last_answered and last_answered.get("id") == updated.get("id"):
+            context.user_data["quiz_last_answered_entry"] = updated
         return await _show_quiz_prompt_after_edit(update, context, "✅ Updated.")
     if source == "review":
         update_word_fields(get_db_path(), updated.get("id"), updated)
@@ -925,24 +954,31 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def _start_flag_comment(update: Update, context: ContextTypes.DEFAULT_TYPE, return_state):
-    entry = context.user_data.get("quiz_entry")
+    entry, title = _get_quiz_action_entry(context)
     if not entry:
         return await _back_to_tests(update)
     context.user_data["flag_word_id"] = entry.get("id")
     context.user_data["flag_return_state"] = return_state
-    await update.message.reply_text(_format_word_card(entry, "Flagging this word:"))
+    await update.message.reply_text(_format_word_card(entry, title))
     await update.message.reply_text(
         "Send comment for this word flag:",
-        reply_markup=ReplyKeyboardMarkup([[STOP_TEXT]], resize_keyboard=True),
+        reply_markup=ReplyKeyboardMarkup([[BACK_TEXT]], resize_keyboard=True),
     )
     return FLAG_COMMENT
 
 
 async def flag_comment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
-    if text == STOP_TEXT:
+    if text == BACK_TEXT:
+        return_state = context.user_data.get("flag_return_state")
         context.user_data.pop("flag_word_id", None)
         context.user_data.pop("flag_return_state", None)
+        if return_state == QUIZ_RU_DE:
+            return await _show_quiz_prompt_after_edit(update, context, "✅ Flag canceled.", state_override=QUIZ_RU_DE)
+        if return_state == QUIZ_DE_RU:
+            return await _show_quiz_prompt_after_edit(update, context, "✅ Flag canceled.", state_override=QUIZ_DE_RU)
+        if return_state == QUIZ_ARTICLE:
+            return await _show_quiz_prompt_after_edit(update, context, "✅ Flag canceled.", state_override=QUIZ_ARTICLE)
         return await _back_to_tests(update)
 
     word_id = context.user_data.get("flag_word_id")
@@ -1013,6 +1049,7 @@ async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
     expected = _get_ru_de_answer(entry)
     ok = _normalize_answer(text) == _normalize_answer(expected)
     _update_srs_for_entry(update.effective_user.id, entry, MODE_RU_DE, ok)
+    context.user_data["quiz_last_answered_entry"] = entry
 
     feedback = _format_feedback(entry, ok)
     return await _send_ru_de_prompt(update, context, feedback)
@@ -1035,6 +1072,7 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
     variants = _russian_variants(entry.get("russian", ""))
     ok = answer in variants
     _update_srs_for_entry(update.effective_user.id, entry, MODE_DE_RU, ok)
+    context.user_data["quiz_last_answered_entry"] = entry
 
     feedback = _format_feedback(entry, ok)
     return await _send_de_ru_prompt(update, context, feedback)
@@ -1056,6 +1094,7 @@ async def quiz_article(update: Update, context: ContextTypes.DEFAULT_TYPE):
     expected = entry.get("article", "")
     ok = _normalize_answer(text) == _normalize_answer(expected)
     _update_srs_for_entry(update.effective_user.id, entry, MODE_ARTICLE, ok)
+    context.user_data["quiz_last_answered_entry"] = entry
 
     feedback = _format_feedback(entry, ok)
     return await _send_article_prompt(update, context, feedback)
