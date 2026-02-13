@@ -1,0 +1,158 @@
+LANG_EN = "en"
+LANG_RU = "ru"
+LANG_UK = "uk"
+
+DICT_RU = "ru"
+DICT_UK = "uk"
+DICT_EN = "en"
+
+INTERFACE_LANGS = (LANG_EN, LANG_RU, LANG_UK)
+DICT_LANGS = (DICT_RU, DICT_UK, DICT_EN)
+
+
+TEXTS = {
+    "en": {
+        "start": "Start",
+        "back": "Back",
+        "stop": "Stop",
+        "add_word": "Add Word",
+        "tests": "Tests",
+        "settings": "Settings",
+        "info": "Info",
+        "stat": "Stat",
+        "main_menu": "Main menu:",
+        "choose_test": "Choose test mode:",
+        "quiz_l1_de": "Quiz L1 -> DE",
+        "quiz_de_l1": "Quiz DE -> L1",
+        "quiz_article": "Quiz article",
+        "dump_db": "Dump DB",
+        "dump_logs": "Dump Logs",
+        "suggested_words": "Suggested Words",
+        "review_flags": "Review Flags ⚠️",
+        "auto_dump": "Auto Dump",
+        "levels": "Levels",
+        "interface_lang_btn": "Interface Language",
+        "dict_lang_btn": "Dictionary Language",
+        "daily": "Daily",
+        "weekly": "Weekly",
+        "off": "Off",
+        "choose_ui_lang": "Choose interface language:",
+        "choose_dict_lang": "Choose dictionary language:",
+        "dict_ru": "DE->RU (German + Russian)",
+        "dict_uk": "DE->UA (German + Ukrainian)",
+        "dict_en": "DE->EN (German + English)",
+        "unknown_menu": "Unknown command. Use the menu buttons.",
+        "settings_title": "Settings:",
+    },
+    "ru": {
+        "start": "Старт",
+        "back": "Назад",
+        "stop": "Стоп",
+        "add_word": "Добавить слово",
+        "tests": "Тесты",
+        "settings": "Настройки",
+        "info": "Инфо",
+        "stat": "Стат",
+        "main_menu": "Главное меню:",
+        "choose_test": "Выберите режим теста:",
+        "quiz_l1_de": "Тест L1 -> DE",
+        "quiz_de_l1": "Тест DE -> L1",
+        "quiz_article": "Тест артиклей",
+        "dump_db": "Дамп БД",
+        "dump_logs": "Дамп логов",
+        "suggested_words": "Предложенные слова",
+        "review_flags": "Флаги ⚠️",
+        "auto_dump": "Автодамп",
+        "levels": "Уровни",
+        "interface_lang_btn": "Язык интерфейса",
+        "dict_lang_btn": "Язык словаря",
+        "daily": "Ежедневно",
+        "weekly": "Еженедельно",
+        "off": "Выключено",
+        "choose_ui_lang": "Выберите язык интерфейса:",
+        "choose_dict_lang": "Выберите язык словаря:",
+        "dict_ru": "DE->RU (немецкий + русский)",
+        "dict_uk": "DE->UA (немецкий + украинский)",
+        "dict_en": "DE->EN (немецкий + английский)",
+        "unknown_menu": "Неизвестная команда. Используйте кнопки меню.",
+        "settings_title": "Настройки:",
+    },
+    "uk": {
+        "start": "Старт",
+        "back": "Назад",
+        "stop": "Стоп",
+        "add_word": "Додати слово",
+        "tests": "Тести",
+        "settings": "Налаштування",
+        "info": "Інфо",
+        "stat": "Стат",
+        "main_menu": "Головне меню:",
+        "choose_test": "Оберіть режим тесту:",
+        "quiz_l1_de": "Тест L1 -> DE",
+        "quiz_de_l1": "Тест DE -> L1",
+        "quiz_article": "Тест артиклів",
+        "dump_db": "Дамп БД",
+        "dump_logs": "Дамп логів",
+        "suggested_words": "Запропоновані слова",
+        "review_flags": "Прапорці ⚠️",
+        "auto_dump": "Автодамп",
+        "levels": "Рівні",
+        "interface_lang_btn": "Мова інтерфейсу",
+        "dict_lang_btn": "Мова словника",
+        "daily": "Щодня",
+        "weekly": "Щотижня",
+        "off": "Вимкнено",
+        "choose_ui_lang": "Оберіть мову інтерфейсу:",
+        "choose_dict_lang": "Оберіть мову словника:",
+        "dict_ru": "DE->RU (німецька + російська)",
+        "dict_uk": "DE->UA (німецька + українська)",
+        "dict_en": "DE->EN (німецька + англійська)",
+        "unknown_menu": "Невідома команда. Використайте кнопки меню.",
+        "settings_title": "Налаштування:",
+    },
+}
+
+
+def normalize_interface_lang(value, default="en"):
+    token = str(value or "").strip().lower()
+    return token if token in INTERFACE_LANGS else default
+
+
+def normalize_dict_lang(value, default="ru"):
+    token = str(value or "").strip().lower()
+    return token if token in DICT_LANGS else default
+
+
+def t(lang, key):
+    lang = normalize_interface_lang(lang)
+    return TEXTS.get(lang, TEXTS["en"]).get(key, TEXTS["en"].get(key, key))
+
+
+def interface_choices():
+    return ["English 🇬🇧", "Русский", "Українська 🇺🇦"]
+
+
+def parse_interface_choice(text):
+    token = str(text or "").strip()
+    if token == "English 🇬🇧":
+        return "en"
+    if token == "Русский":
+        return "ru"
+    if token == "Українська 🇺🇦":
+        return "uk"
+    return ""
+
+
+def dict_choices(lang):
+    return [t(lang, "dict_ru"), t(lang, "dict_uk"), t(lang, "dict_en")]
+
+
+def parse_dict_choice(text, lang):
+    token = str(text or "").strip()
+    if token == t(lang, "dict_ru"):
+        return "ru"
+    if token == t(lang, "dict_uk"):
+        return "uk"
+    if token == t(lang, "dict_en"):
+        return "en"
+    return ""
