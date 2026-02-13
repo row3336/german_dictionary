@@ -470,7 +470,7 @@ def update_sm2(srs, quality, today=None):
         interval = 1
     else:
         if repetitions == 0:
-            interval = 1
+            interval = 2
         elif repetitions == 1:
             interval = 6
         else:
