@@ -1,14 +1,11 @@
 
-import json
 import asyncio
 import logging
 import os
 import random
-import re
 import shutil
 from logging.handlers import TimedRotatingFileHandler
 from datetime import datetime, time, timezone
-from pathlib import Path
 
 from dotenv import load_dotenv
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, Update
@@ -24,8 +21,61 @@ from telegram.ext import (
 )
 
 from .ai import generate_fields
-from .storage import (
+from .app_config import (
+    ADD_CLARIFY,
+    ADD_CONFIRM,
+    ADD_EDIT,
+    ADD_INPUT,
+    ADD_KEYS,
+    AI_CLARIFY_AI,
+    AI_CLARIFY_FIELD,
+    AI_CONFIRM,
+    AI_KEYS,
+    AI_REJECT,
+    ALLOWED_AI_TYPES,
+    APPROVE_PREFIX,
+    ARTICLE_SET,
+    AUTO_DUMP_JOB_NAME,
+    AUTO_DUMP_KEYS,
+    AUTO_DUMP_MENU,
+    AUTO_DUMP_SETTING_KEY,
+    BACK_TEXT,
     CEFR_LEVELS,
+    EDIT_FIELDS_KEYS,
+    EDIT_FIELDS_KEYS_FULL,
+    EDIT_LEVEL_KEYS,
+    FLAG_COMMENT,
+    FLAG_TEXT,
+    LEVELS_BACK_TEXT,
+    LEVELS_MENU,
+    MENU,
+    NUMERAL_SET,
+    NUMERIC_RE,
+    OWNER_MAIN_KEYS,
+    QUIZ_ARTICLE,
+    QUIZ_DE_RU,
+    QUIZ_KEYS,
+    QUIZ_RU_DE,
+    REJECT_PREFIX,
+    REVIEW_FLAGS,
+    REVIEW_MARK_TEXT,
+    REVIEW_SKIP_TEXT,
+    SETTINGS_KEYS,
+    SETTINGS_MENU,
+    START_TEXT,
+    STOP_TEXT,
+    TESTS_KEYS,
+    TESTS_MENU,
+    USER_MAIN_KEYS,
+    WAIT_KEYS,
+    get_db_path,
+    get_dump_dir,
+    get_log_path,
+    get_owner_id,
+    get_suggestions_path,
+    is_owner,
+)
+from .storage import (
     QUIZ_ARTICLE as MODE_ARTICLE,
     QUIZ_DE_RU as MODE_DE_RU,
     QUIZ_RU_DE as MODE_RU_DE,
@@ -47,162 +97,15 @@ from .storage import (
     update_word_fields,
     list_pending_word_flags,
 )
-
-(
-    MENU,
-    TESTS_MENU,
-    SETTINGS_MENU,
-    AUTO_DUMP_MENU,
-    LEVELS_MENU,
-    ADD_INPUT,
-    ADD_CONFIRM,
-    ADD_CLARIFY,
-    ADD_EDIT,
-    FLAG_COMMENT,
-    REVIEW_FLAGS,
-    QUIZ_RU_DE,
-    QUIZ_DE_RU,
-    QUIZ_ARTICLE,
-) = range(14)
-
-BACK_TEXT = "Back"
-STOP_TEXT = "Stop"
-START_TEXT = "Start"
-AI_CONFIRM = "Confirm"
-AI_CLARIFY_AI = "Clarify AI"
-AI_CLARIFY_FIELD = "Clarify Field"
-AI_REJECT = "Reject"
-
-OWNER_MAIN_KEYS = [["Add Word", "Tests"], ["Settings", "Stat"]]
-USER_MAIN_KEYS = [["Add Word", "Tests"], ["Info", "Stat"]]
-WAIT_KEYS = [[START_TEXT]]
-ADD_KEYS = [[BACK_TEXT]]
-AI_KEYS = [[AI_CONFIRM, AI_CLARIFY_AI, AI_CLARIFY_FIELD], [AI_REJECT, STOP_TEXT]]
-TESTS_KEYS = [["Quiz RU -> DE", "Quiz DE -> RU"], ["Quiz article", BACK_TEXT]]
-SETTINGS_KEYS = [["Dump DB", "Dump Logs"], ["Suggested Words", "Review Flags"], ["Auto Dump", "Levels"], [BACK_TEXT]]
-AUTO_DUMP_KEYS = [["Daily", "Weekly"], ["Off", BACK_TEXT]]
-LEVELS_BACK_TEXT = "Back"
-FLAG_TEXT = "⚠️"
-REVIEW_MARK_TEXT = "Mark Reviewed"
-REVIEW_SKIP_TEXT = "Skip"
-EDIT_FIELDS_KEYS = [
-    ["russian", "level"],
-    [BACK_TEXT],
-]
-EDIT_FIELDS_KEYS_FULL = [
-    ["russian", "level"],
-    ["article", "plural"],
-    ["prateritum", "partizip2"],
-    ["german", "infinitive"],
-    ["type", BACK_TEXT],
-]
-EDIT_LEVEL_KEYS = [["A1", "A2", "B1"], ["B2", "C1", "C2"], [BACK_TEXT]]
-QUIZ_KEYS = [[STOP_TEXT]]
-ARTICLE_KEYS = [["der", "die", "das"], [STOP_TEXT]]
-
-APPROVE_PREFIX = "approve_user:"
-REJECT_PREFIX = "reject_user:"
-AUTO_DUMP_SETTING_KEY = "auto_dump_mode"
-AUTO_DUMP_JOB_NAME = "auto_db_dump"
-
-ARTICLE_SET = {
-    "der",
-    "die",
-    "das",
-    "den",
-    "dem",
-    "des",
-    "ein",
-    "eine",
-    "einen",
-    "einem",
-    "eines",
-    "kein",
-    "keine",
-    "keinen",
-    "keinem",
-    "keines",
-}
-
-NUMERAL_SET = {
-    "null",
-    "eins",
-    "zwei",
-    "drei",
-    "vier",
-    "fuenf",
-    "fuenfzehn",
-    "fuenfzig",
-    "funf",
-    "funfzehn",
-    "funfzig",
-    "sechs",
-    "sieben",
-    "acht",
-    "neun",
-    "zehn",
-    "elf",
-    "zwoelf",
-    "dreizehn",
-    "vierzehn",
-    "sechzehn",
-    "siebzehn",
-    "achtzehn",
-    "neunzehn",
-    "zwanzig",
-    "dreissig",
-    "vierzig",
-    "sechzig",
-    "siebzig",
-    "achtzig",
-    "neunzig",
-    "hundert",
-    "tausend",
-    "million",
-    "milliarde",
-}
-
-NUMERIC_RE = re.compile(r"^\s*[+-]?(?:(?:\d{1,3}(?:[.,]\d{3})+)|\d+)(?:[.,]\d+)?\s*%?\s*$")
-
-ALLOWED_AI_TYPES = {
-    "nomen",
-    "verb",
-    "adjektiv",
-    "pronomen",
-    "adverb",
-    "praeposition",
-    "konjunktion",
-    "partikel",
-}
-
-
-def get_db_path():
-    return Path(os.getenv("DB_PATH", "./data/words.db"))
-
-
-def get_dump_dir():
-    return Path(os.getenv("DUMP_DIR", "./data/backups"))
-
-
-def get_log_path():
-    return Path(os.getenv("LOG_PATH", "./data/bot.log"))
-
-
-def get_suggestions_path():
-    return Path(os.getenv("SUGGESTIONS_PATH", "./data/suggested_words.txt"))
-
-
-def get_owner_id():
-    try:
-        return int(os.getenv("OWNER_ID", "0"))
-    except ValueError:
-        return 0
-
-
-def is_owner(user_id):
-    owner_id = get_owner_id()
-    return owner_id != 0 and user_id == owner_id
-
+from .text_utils import (
+    md_escape as _md_escape,
+    normalize_answer as _normalize_answer,
+    normalize_lookup_text as _normalize_lookup_text,
+    normalize_russian_singular as _normalize_russian_singular,
+    russian_variants as _russian_variants,
+    try_parse_json as _try_parse_json,
+    type_label as _type_label,
+)
 
 def _main_menu_keys(user_id):
     return OWNER_MAIN_KEYS if is_owner(user_id) else USER_MAIN_KEYS
@@ -258,32 +161,6 @@ def _allowed_edit_fields(source):
     if source == "review":
         return {"russian", "level", "article", "plural", "prateritum", "partizip2", "german", "infinitive", "type"}
     return {"russian", "level"}
-
-
-def _normalize_answer(text):
-    return " ".join(text.strip().lower().split())
-
-
-def _normalize_lookup_text(text):
-    return " ".join(str(text).strip().lower().split())
-
-
-def _normalize_russian_singular(text):
-    text = str(text).strip()
-    if "/" in text:
-        text = text.split("/", 1)[0].strip()
-    return text
-
-
-def _russian_variants(text):
-    source = str(text or "")
-    parts = re.split(r"[,/;]", source)
-    out = []
-    for part in parts:
-        value = _normalize_answer(part)
-        if value:
-            out.append(value)
-    return out
 
 
 def _set_entry_field(entry, raw_update):
@@ -444,13 +321,6 @@ async def _send_next_review_flag(update: Update, context: ContextTypes.DEFAULT_T
     return SETTINGS_MENU
 
 
-def _md_escape(text):
-    text = str(text or "")
-    for ch in ("*", "_", "`"):
-        text = text.replace(ch, f"\\{ch}")
-    return text
-
-
 async def _reply_text_with_retry(message, text, max_retries=2, **kwargs):
     attempts = 0
     while True:
@@ -493,13 +363,6 @@ def _prefilter_reject_reason(word):
     if normalized in NUMERAL_SET:
         return "Filtered: numeral words are not stored."
     return None
-
-
-def _type_label(raw_type):
-    value = _normalize_lookup_text(raw_type)
-    if value == "praeposition":
-        return "praeposition"
-    return value
 
 
 def _is_user_approved(user_id):
@@ -1564,32 +1427,6 @@ async def _back_to_tests(update: Update):
         reply_markup=ReplyKeyboardMarkup(TESTS_KEYS, resize_keyboard=True),
     )
     return TESTS_MENU
-
-
-def _try_parse_json(text):
-    candidate = _extract_json(text)
-    try:
-        return json.loads(candidate)
-    except json.JSONDecodeError:
-        opens = candidate.count("{")
-        closes = candidate.count("}")
-        if opens > closes:
-            fixed = candidate + ("}" * (opens - closes))
-            try:
-                return json.loads(fixed)
-            except json.JSONDecodeError:
-                return None
-        return None
-
-
-def _extract_json(text):
-    start = text.find("{")
-    end = text.rfind("}")
-    if start == -1:
-        return text
-    if end == -1:
-        return text[start:]
-    return text[start : end + 1]
 
 
 def _update_srs_for_entry(user_id, entry, mode, ok):
