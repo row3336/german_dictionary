@@ -1,0 +1,65 @@
+import json
+import re
+
+
+def normalize_answer(text):
+    return " ".join(text.strip().lower().split())
+
+
+def normalize_lookup_text(text):
+    return " ".join(str(text).strip().lower().split())
+
+
+def normalize_russian_singular(text):
+    text = str(text).strip()
+    if "/" in text:
+        text = text.split("/", 1)[0].strip()
+    return text
+
+
+def russian_variants(text):
+    source = str(text or "")
+    parts = re.split(r"[,/;]", source)
+    out = []
+    for part in parts:
+        value = normalize_answer(part)
+        if value:
+            out.append(value)
+    return out
+
+
+def md_escape(text):
+    text = str(text or "")
+    for ch in ("*", "_", "`"):
+        text = text.replace(ch, f"\\{ch}")
+    return text
+
+
+def type_label(raw_type):
+    return normalize_lookup_text(raw_type)
+
+
+def extract_json(text):
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1:
+        return text
+    if end == -1:
+        return text[start:]
+    return text[start : end + 1]
+
+
+def try_parse_json(text):
+    candidate = extract_json(text)
+    try:
+        return json.loads(candidate)
+    except json.JSONDecodeError:
+        opens = candidate.count("{")
+        closes = candidate.count("}")
+        if opens > closes:
+            fixed = candidate + ("}" * (opens - closes))
+            try:
+                return json.loads(fixed)
+            except json.JSONDecodeError:
+                return None
+        return None
