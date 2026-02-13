@@ -54,7 +54,6 @@ from .app_config import (
     OWNER_MAIN_KEYS,
     QUIZ_ARTICLE,
     QUIZ_DE_RU,
-    QUIZ_KEYS,
     QUIZ_RU_DE,
     REJECT_PREFIX,
     REVIEW_FLAGS,
