@@ -75,7 +75,7 @@ WAIT_KEYS = [[START_TEXT]]
 ADD_KEYS = [[BACK_TEXT]]
 AI_KEYS = [[AI_CONFIRM, AI_CLARIFY_AI, AI_CLARIFY_FIELD], [AI_REJECT, STOP_TEXT]]
 TESTS_KEYS = [["Quiz RU -> DE", "Quiz DE -> RU"], ["Quiz article", BACK_TEXT]]
-SETTINGS_KEYS = [["Dump DB", "Dump Logs"], ["Auto Dump", "Levels"], [BACK_TEXT]]
+SETTINGS_KEYS = [["Dump DB", "Dump Logs"], ["Suggested Words", "Auto Dump"], ["Levels", BACK_TEXT]]
 AUTO_DUMP_KEYS = [["Daily", "Weekly"], ["Off", BACK_TEXT]]
 LEVELS_BACK_TEXT = "Back"
 EDIT_FIELDS_KEYS = [
@@ -176,6 +176,10 @@ def get_dump_dir():
 
 def get_log_path():
     return Path(os.getenv("LOG_PATH", "./data/bot.log"))
+
+
+def get_suggestions_path():
+    return Path(os.getenv("SUGGESTIONS_PATH", "./data/suggested_words.txt"))
 
 
 def get_owner_id():
@@ -580,6 +584,18 @@ async def settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         return SETTINGS_MENU
 
+    if text == "Suggested Words":
+        suggestions_path = _create_suggestions_dump_file()
+        if suggestions_path is None:
+            await update.message.reply_text("No suggested words file yet.")
+            return SETTINGS_MENU
+        await update.message.reply_document(
+            document=suggestions_path.open("rb"),
+            filename=suggestions_path.name,
+            caption="✅ Suggested words dump created.",
+        )
+        return SETTINGS_MENU
+
     if text == "Auto Dump":
         mode = get_setting(get_db_path(), AUTO_DUMP_SETTING_KEY, "off")
         await update.message.reply_text(
@@ -677,7 +693,7 @@ async def add_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await _back_to_main_menu(update)
 
     if not is_owner(user_id):
-        await _forward_text_to_owner(update, context, raw)
+        _append_suggested_words(update.effective_user, [line.strip() for line in raw.splitlines() if line.strip()])
         await update.message.reply_text(
             "✅ Successfully sent to the bot Owner",
             reply_markup=_main_menu_markup(user_id),
@@ -737,7 +753,11 @@ async def add_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user_id = update.effective_user.id
     if not is_owner(user_id):
-        await _forward_document_to_owner(update, context)
+        file = await doc.get_file()
+        data = await file.download_as_bytearray()
+        text = data.decode("utf-8", errors="ignore")
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        _append_suggested_words(update.effective_user, lines)
         await update.message.reply_text(
             "✅ Successfully sent to the bot Owner",
             reply_markup=_main_menu_markup(user_id),
@@ -1429,6 +1449,37 @@ def _create_logs_dump_file():
     return out_path
 
 
+def _create_suggestions_dump_file():
+    src = get_suggestions_path()
+    if not src.exists() or src.stat().st_size == 0:
+        return None
+
+    dump_dir = get_dump_dir()
+    dump_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    out_path = dump_dir / f"suggested-words-{stamp}.txt"
+    shutil.copy2(src, out_path)
+    return out_path
+
+
+def _append_suggested_words(user, words):
+    items = [str(x).strip() for x in (words or []) if str(x).strip()]
+    if not items:
+        return
+
+    path = get_suggestions_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    user_id = getattr(user, "id", 0)
+    username = getattr(user, "username", "") or "-"
+    first_name = getattr(user, "first_name", "") or "-"
+
+    with path.open("a", encoding="utf-8") as f:
+        f.write(f"\n[{ts}] user_id={user_id} username=@{username} name={first_name}\n")
+        for word in items:
+            f.write(f"{word}\n")
+
+
 def _configure_logging():
     log_path = get_log_path()
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1505,44 +1556,6 @@ def _configure_auto_dump(app: Application, mode: str):
             days=(0,),
             name=AUTO_DUMP_JOB_NAME,
         )
-
-
-async def _forward_text_to_owner(update: Update, context: ContextTypes.DEFAULT_TYPE, raw_text: str):
-    owner_id = get_owner_id()
-    if owner_id == 0:
-        return
-
-    user = update.effective_user
-    info = (
-        "User submitted words:\n"
-        f"user_id: {user.id}\n"
-        f"username: @{user.username if user.username else '-'}\n"
-        f"name: {user.first_name if user.first_name else '-'}"
-    )
-    try:
-        await context.bot.send_message(owner_id, info)
-        await context.bot.send_message(owner_id, raw_text)
-    except Exception:
-        pass
-
-
-async def _forward_document_to_owner(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    owner_id = get_owner_id()
-    if owner_id == 0:
-        return
-
-    user = update.effective_user
-    info = (
-        "User submitted file:\n"
-        f"user_id: {user.id}\n"
-        f"username: @{user.username if user.username else '-'}\n"
-        f"name: {user.first_name if user.first_name else '-'}"
-    )
-    try:
-        await context.bot.send_message(owner_id, info)
-        await context.bot.forward_message(owner_id, update.effective_chat.id, update.message.message_id)
-    except Exception:
-        pass
 
 
 def _prepare_storage():
