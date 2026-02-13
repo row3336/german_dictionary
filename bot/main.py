@@ -70,6 +70,7 @@ from .app_config import (
     WAIT_KEYS,
     get_db_path,
     get_dump_dir,
+    get_info_path,
     get_log_path,
     get_owner_id,
     get_suggestions_path,
@@ -117,6 +118,37 @@ def _main_menu_markup(user_id):
 
 def _wait_markup():
     return ReplyKeyboardMarkup(WAIT_KEYS, resize_keyboard=True)
+
+
+def _split_text_chunks(text, max_size=3500):
+    text = str(text or "").strip()
+    if not text:
+        return []
+    chunks = []
+    current = []
+    current_len = 0
+    for line in text.splitlines():
+        add = len(line) + 1
+        if current and current_len + add > max_size:
+            chunks.append("\n".join(current).strip())
+            current = [line]
+            current_len = add
+        else:
+            current.append(line)
+            current_len += add
+    if current:
+        chunks.append("\n".join(current).strip())
+    return [c for c in chunks if c]
+
+
+def _load_info_text():
+    path = get_info_path()
+    if path.exists():
+        try:
+            return path.read_text(encoding="utf-8").strip()
+        except OSError:
+            pass
+    return "Info file not found."
 
 
 def _quiz_markup(user_id, article=False):
@@ -484,7 +516,13 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return SETTINGS_MENU
 
     if text == "Info" and not is_owner(user_id):
-        await update.message.reply_text("Info will be added soon.", reply_markup=_main_menu_markup(user_id))
+        chunks = _split_text_chunks(_load_info_text())
+        if not chunks:
+            await update.message.reply_text("Info is empty.", reply_markup=_main_menu_markup(user_id))
+            return MENU
+        for idx, chunk in enumerate(chunks):
+            markup = _main_menu_markup(user_id) if idx == len(chunks) - 1 else None
+            await update.message.reply_text(chunk, reply_markup=markup)
         return MENU
 
     if text == "Stat":

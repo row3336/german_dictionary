@@ -133,6 +133,10 @@ def get_suggestions_path():
     return Path(os.getenv("SUGGESTIONS_PATH", "./data/suggested_words.txt"))
 
 
+def get_info_path():
+    return Path(os.getenv("INFO_PATH", "./docs/info_ru.md"))
+
+
 def get_owner_id():
     try:
         return int(os.getenv("OWNER_ID", "0"))
