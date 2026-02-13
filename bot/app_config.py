@@ -19,7 +19,12 @@ ADD_KEYS = [[BACK_TEXT]]
 AI_KEYS = [[AI_CONFIRM, AI_CLARIFY_AI, AI_CLARIFY_FIELD], [AI_REJECT, STOP_TEXT]]
 TESTS_KEYS = [["Quiz RU -> DE", "Quiz DE -> RU"], ["Quiz article", BACK_TEXT]]
 REVIEW_FLAGS_TEXT = "Review Flags \u26A0\uFE0F"
-SETTINGS_KEYS = [["Dump DB", "Dump Logs"], ["Suggested Words", "Auto Dump"], ["Levels"], [REVIEW_FLAGS_TEXT], [BACK_TEXT]]
+SETTINGS_KEYS = [
+    ["Suggested Words", REVIEW_FLAGS_TEXT],
+    ["Levels", "Auto Dump"],
+    ["Dump Logs", "Dump DB"],
+    [BACK_TEXT],
+]
 AUTO_DUMP_KEYS = [["Daily", "Weekly"], ["Off", BACK_TEXT]]
 LEVELS_BACK_TEXT = "Back"
 FLAG_TEXT = "\u26A0\uFE0F"
