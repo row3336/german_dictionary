@@ -1185,31 +1185,29 @@ def _format_feedback_ru_de(entry, ok):
     else:
         base = _low_word(entry.get("german", ""))
 
-    headline = f"{status} >>>     "
-    if article:
-        headline += f"{_md_escape(article)} "
-    headline += _md_escape(base)
+    answer = f"{article} {base}".strip() if article else base
+    headline = f"{status} >>>     *{_md_escape(answer)}*"
     lines = [headline]
 
     if word_type == "nomen":
         plural = _cap_word(entry.get("plural", ""))
         if plural:
             lines.append("")
-            lines.append(f"*pl. die {_md_escape(plural)}*")
+            lines.append(f"_pl. die {_md_escape(plural)}_")
     elif word_type == "verb":
         pr = _low_word(entry.get("prateritum", ""))
         p2 = _low_word(entry.get("partizip2", ""))
         forms = ", ".join([x for x in [pr, p2] if x])
         if forms:
             lines.append("")
-            lines.append(f"*{_md_escape(forms)}*")
+            lines.append(f"_{_md_escape(forms)}_")
 
     return "\n".join(lines)
 
 
 def _format_feedback_de_ru(entry, ok):
     status = "Correct ✅" if ok else "Wrong ❌"
-    return f"{status} >>>     {_md_escape(_low_word(entry.get('russian', '')))}"
+    return f"{status} >>>     *{_md_escape(_low_word(entry.get('russian', '')))}*"
 
 
 def _format_feedback_article(entry, ok):
@@ -1217,10 +1215,10 @@ def _format_feedback_article(entry, ok):
     article = str(entry.get("article", "")).strip()
     german = _cap_word(entry.get("german", ""))
     plural = _cap_word(entry.get("plural", ""))
-    lines = [f"{status} >>>     {_md_escape((article + ' ' + german).strip())}".strip()]
+    lines = [f"{status} >>>     *{_md_escape((article + ' ' + german).strip())}*".strip()]
     if plural:
         lines.append("")
-        lines.append(f"*pl. die {_md_escape(plural)}*")
+        lines.append(f"_pl. die {_md_escape(plural)}_")
     return "\n".join(lines)
 
 
