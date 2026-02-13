@@ -86,11 +86,23 @@ def init_db(db_path):
                 PRIMARY KEY (user_id, level),
                 FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
             );
+
+            CREATE TABLE IF NOT EXISTS word_flags (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                word_id TEXT NOT NULL,
+                user_id INTEGER NOT NULL,
+                comment TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                reviewed_at TEXT NOT NULL DEFAULT '',
+                FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
+            );
             """
         )
         _ensure_schema(conn)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_words_cefr ON words(cefr_level)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_user_levels_user ON user_levels(user_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_word_flags_status_created ON word_flags(status, created_at)")
 
 
 def _ensure_schema(conn):
@@ -640,6 +652,69 @@ def update_word_fields(db_path, word_id, fields):
     init_db(db_path)
     with _connect(db_path) as conn:
         conn.execute(query, tuple(params))
+
+
+def add_word_flag(db_path, word_id, user_id, comment):
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO word_flags (word_id, user_id, comment, status, created_at, reviewed_at)
+            VALUES (?, ?, ?, 'pending', CURRENT_TIMESTAMP, '')
+            """,
+            (_safe_text(word_id), int(user_id), _safe_text(comment)),
+        )
+
+
+def set_word_flag_status(db_path, flag_id, status):
+    safe = _safe_text(status).strip().lower()
+    if safe not in {"pending", "reviewed"}:
+        raise ValueError("Invalid flag status.")
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        conn.execute(
+            """
+            UPDATE word_flags
+            SET status = ?, reviewed_at = CASE WHEN ? = 'reviewed' THEN CURRENT_TIMESTAMP ELSE '' END
+            WHERE id = ?
+            """,
+            (safe, safe, int(flag_id)),
+        )
+
+
+def list_pending_word_flags(db_path, limit=0):
+    init_db(db_path)
+    query = """
+        SELECT
+            f.id AS flag_id,
+            f.word_id AS flag_word_id,
+            f.user_id AS flag_user_id,
+            f.comment AS flag_comment,
+            f.created_at AS flag_created_at,
+            w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.russian, w.cefr_level
+        FROM word_flags f
+        JOIN words w ON w.id = f.word_id
+        WHERE f.status = 'pending'
+        ORDER BY f.created_at ASC
+    """
+    params = ()
+    if int(limit) > 0:
+        query += " LIMIT ?"
+        params = (int(limit),)
+
+    with _connect(db_path) as conn:
+        rows = conn.execute(query, params).fetchall()
+
+    result = []
+    for row in rows:
+        item = _row_to_entry(row)
+        item["flag_id"] = int(row["flag_id"])
+        item["flag_word_id"] = row["flag_word_id"]
+        item["flag_user_id"] = int(row["flag_user_id"])
+        item["flag_comment"] = row["flag_comment"] or ""
+        item["flag_created_at"] = row["flag_created_at"] or ""
+        result.append(item)
+    return result
 
 
 def create_template_from_word(raw_word):

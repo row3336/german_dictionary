@@ -29,6 +29,7 @@ from .storage import (
     QUIZ_ARTICLE as MODE_ARTICLE,
     QUIZ_DE_RU as MODE_DE_RU,
     QUIZ_RU_DE as MODE_RU_DE,
+    add_word_flag,
     add_word,
     count_words,
     find_existing_word,
@@ -41,9 +42,11 @@ from .storage import (
     select_due,
     set_setting,
     set_user_status,
+    set_word_flag_status,
     toggle_user_level,
     update_progress,
     update_word_fields,
+    list_pending_word_flags,
 )
 
 (
@@ -56,10 +59,12 @@ from .storage import (
     ADD_CONFIRM,
     ADD_CLARIFY,
     ADD_EDIT,
+    FLAG_COMMENT,
+    REVIEW_FLAGS,
     QUIZ_RU_DE,
     QUIZ_DE_RU,
     QUIZ_ARTICLE,
-) = range(12)
+) = range(14)
 
 BACK_TEXT = "Back"
 STOP_TEXT = "Stop"
@@ -75,12 +80,22 @@ WAIT_KEYS = [[START_TEXT]]
 ADD_KEYS = [[BACK_TEXT]]
 AI_KEYS = [[AI_CONFIRM, AI_CLARIFY_AI, AI_CLARIFY_FIELD], [AI_REJECT, STOP_TEXT]]
 TESTS_KEYS = [["Quiz RU -> DE", "Quiz DE -> RU"], ["Quiz article", BACK_TEXT]]
-SETTINGS_KEYS = [["Dump DB", "Dump Logs"], ["Suggested Words", "Auto Dump"], ["Levels", BACK_TEXT]]
+SETTINGS_KEYS = [["Dump DB", "Dump Logs"], ["Suggested Words", "Review Flags"], ["Auto Dump", "Levels"], [BACK_TEXT]]
 AUTO_DUMP_KEYS = [["Daily", "Weekly"], ["Off", BACK_TEXT]]
 LEVELS_BACK_TEXT = "Back"
+FLAG_TEXT = "⚠️"
+REVIEW_MARK_TEXT = "Mark Reviewed"
+REVIEW_SKIP_TEXT = "Skip"
 EDIT_FIELDS_KEYS = [
     ["russian", "level"],
     [BACK_TEXT],
+]
+EDIT_FIELDS_KEYS_FULL = [
+    ["russian", "level"],
+    ["article", "plural"],
+    ["prateritum", "partizip2"],
+    ["german", "infinitive"],
+    ["type", BACK_TEXT],
 ]
 EDIT_LEVEL_KEYS = [["A1", "A2", "B1"], ["B2", "C1", "C2"], [BACK_TEXT]]
 QUIZ_KEYS = [[STOP_TEXT]]
@@ -211,9 +226,9 @@ def _quiz_markup(user_id, article=False):
     if article:
         rows.append(["der", "die", "das"])
     if is_owner(user_id):
-        rows.append([AI_CLARIFY_FIELD, STOP_TEXT])
+        rows.append([AI_CLARIFY_FIELD, FLAG_TEXT, STOP_TEXT])
     else:
-        rows.append([STOP_TEXT])
+        rows.append([FLAG_TEXT, STOP_TEXT])
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 
@@ -236,6 +251,18 @@ def _levels_markup(user_id):
 def _parse_level_toggle(text):
     token = (text or "").strip().split(" ", 1)[0].upper()
     return token if token in CEFR_LEVELS else ""
+
+
+def _edit_fields_markup(source):
+    if source == "review":
+        return ReplyKeyboardMarkup(EDIT_FIELDS_KEYS_FULL, resize_keyboard=True)
+    return ReplyKeyboardMarkup(EDIT_FIELDS_KEYS, resize_keyboard=True)
+
+
+def _allowed_edit_fields(source):
+    if source == "review":
+        return {"russian", "level", "article", "plural", "prateritum", "partizip2", "german", "infinitive", "type"}
+    return {"russian", "level"}
 
 
 def _normalize_answer(text):
@@ -322,8 +349,8 @@ async def _start_quiz_edit(update: Update, context: ContextTypes.DEFAULT_TYPE, r
     return ADD_EDIT
 
 
-async def _show_quiz_prompt_after_edit(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
-    state = context.user_data.get("edit_return_state")
+async def _show_quiz_prompt_after_edit(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text, state_override=None):
+    state = state_override or context.user_data.get("edit_return_state")
     entry = context.user_data.get("quiz_entry")
     if not entry:
         return await _back_to_tests(update)
@@ -365,6 +392,61 @@ async def _show_quiz_prompt_after_edit(update: Update, context: ContextTypes.DEF
         return QUIZ_ARTICLE
 
     return await _back_to_tests(update)
+
+
+def _review_markup():
+    return ReplyKeyboardMarkup(
+        [[AI_CLARIFY_FIELD, REVIEW_MARK_TEXT], [REVIEW_SKIP_TEXT, STOP_TEXT]],
+        resize_keyboard=True,
+    )
+
+
+def _format_review_card(entry):
+    lines = [
+        "Review flagged word:",
+        f"id: {entry.get('id', '')}",
+        f"type: {entry.get('type', '')}",
+        f"level: {entry.get('cefr_level', '') or '-'}",
+        f"article: {entry.get('article', '') or '-'}",
+        f"german: {entry.get('german', '') or '-'}",
+        f"infinitive: {entry.get('infinitive', '') or '-'}",
+        f"plural: {entry.get('plural', '') or '-'}",
+        f"prateritum: {entry.get('prateritum', '') or '-'}",
+        f"partizip2: {entry.get('partizip2', '') or '-'}",
+        f"russian: {entry.get('russian', '') or '-'}",
+        "",
+        f"flag from user: {entry.get('flag_user_id', '')}",
+        f"comment: {entry.get('flag_comment', '') or '-'}",
+        f"created: {entry.get('flag_created_at', '') or '-'}",
+    ]
+    return "\n".join(lines)
+
+
+async def _show_current_review_card(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text=None):
+    item = context.user_data.get("review_current")
+    if not item:
+        return await _send_next_review_flag(update, context)
+    text = _format_review_card(item)
+    if prefix_text:
+        text = f"{prefix_text}\n\n{text}"
+    await update.message.reply_text(text, reply_markup=_review_markup())
+    return REVIEW_FLAGS
+
+
+async def _send_next_review_flag(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    queue = context.user_data.get("review_queue") or []
+    while queue:
+        item = queue.pop(0)
+        context.user_data["review_queue"] = queue
+        context.user_data["review_current"] = item
+        context.user_data["quiz_entry"] = item
+        await update.message.reply_text(_format_review_card(item), reply_markup=_review_markup())
+        return REVIEW_FLAGS
+
+    context.user_data.pop("review_current", None)
+    context.user_data.pop("review_queue", None)
+    await update.message.reply_text("✅ No more flagged words.", reply_markup=ReplyKeyboardMarkup(SETTINGS_KEYS, resize_keyboard=True))
+    return SETTINGS_MENU
 
 
 def _md_escape(text):
@@ -596,6 +678,15 @@ async def settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         return SETTINGS_MENU
 
+    if text == "Review Flags":
+        items = list_pending_word_flags(get_db_path(), limit=500)
+        if not items:
+            await update.message.reply_text("✅ No flagged words.", reply_markup=ReplyKeyboardMarkup(SETTINGS_KEYS, resize_keyboard=True))
+            return SETTINGS_MENU
+        context.user_data["review_queue"] = items
+        context.user_data["review_current"] = None
+        return await _send_next_review_flag(update, context)
+
     if text == "Auto Dump":
         mode = get_setting(get_db_path(), AUTO_DUMP_SETTING_KEY, "off")
         await update.message.reply_text(
@@ -814,7 +905,7 @@ async def add_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["edit_stage"] = "pick_field"
         await update.message.reply_text(
             "Choose field to edit:",
-            reply_markup=ReplyKeyboardMarkup(EDIT_FIELDS_KEYS, resize_keyboard=True),
+            reply_markup=_edit_fields_markup("add"),
         )
         return ADD_EDIT
 
@@ -870,28 +961,30 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if stage == "pick_field":
             if source == "quiz":
                 return await _show_quiz_prompt_after_edit(update, context, "✅ Edit canceled.")
+            if source == "review":
+                return await _show_current_review_card(update, context, "✅ Edit canceled.")
             return await _show_ai_preview(update, entry)
         if stage == "pick_level":
             context.user_data["edit_stage"] = "pick_field"
             await update.message.reply_text(
                 "Choose field to edit:",
-                reply_markup=ReplyKeyboardMarkup(EDIT_FIELDS_KEYS, resize_keyboard=True),
+                reply_markup=_edit_fields_markup(source),
             )
             return ADD_EDIT
         context.user_data["edit_stage"] = "pick_field"
         await update.message.reply_text(
             "Choose field to edit:",
-            reply_markup=ReplyKeyboardMarkup(EDIT_FIELDS_KEYS, resize_keyboard=True),
+            reply_markup=_edit_fields_markup(source),
         )
         return ADD_EDIT
 
     if stage == "pick_field":
         field = text.strip().lower()
-        allowed_fields = {"russian", "level"}
+        allowed_fields = _allowed_edit_fields(source)
         if field not in allowed_fields:
             await update.message.reply_text(
                 "Use field buttons.",
-                reply_markup=ReplyKeyboardMarkup(EDIT_FIELDS_KEYS, resize_keyboard=True),
+                reply_markup=_edit_fields_markup(source),
             )
             return ADD_EDIT
         context.user_data["edit_field"] = field
@@ -938,7 +1031,7 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["edit_stage"] = "pick_field"
         await update.message.reply_text(
             "Choose field to edit:",
-            reply_markup=ReplyKeyboardMarkup(EDIT_FIELDS_KEYS, resize_keyboard=True),
+            reply_markup=_edit_fields_markup(source),
         )
         return ADD_EDIT
 
@@ -956,13 +1049,90 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if source == "quiz":
         update_word_fields(get_db_path(), updated.get("id"), updated)
         return await _show_quiz_prompt_after_edit(update, context, "✅ Updated.")
+    if source == "review":
+        update_word_fields(get_db_path(), updated.get("id"), updated)
+        return await _show_current_review_card(update, context, "✅ Updated.")
     return await _show_ai_preview(update, updated)
+
+
+async def _start_flag_comment(update: Update, context: ContextTypes.DEFAULT_TYPE, return_state):
+    entry = context.user_data.get("quiz_entry")
+    if not entry:
+        return await _back_to_tests(update)
+    context.user_data["flag_word_id"] = entry.get("id")
+    context.user_data["flag_return_state"] = return_state
+    await update.message.reply_text(
+        "Send comment for this word flag:",
+        reply_markup=ReplyKeyboardMarkup([[STOP_TEXT]], resize_keyboard=True),
+    )
+    return FLAG_COMMENT
+
+
+async def flag_comment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    if text == STOP_TEXT:
+        context.user_data.pop("flag_word_id", None)
+        context.user_data.pop("flag_return_state", None)
+        return await _back_to_tests(update)
+
+    word_id = context.user_data.get("flag_word_id")
+    return_state = context.user_data.get("flag_return_state")
+    if not word_id or not return_state:
+        return await _back_to_tests(update)
+
+    add_word_flag(get_db_path(), word_id=word_id, user_id=update.effective_user.id, comment=text)
+    context.user_data.pop("flag_word_id", None)
+    context.user_data.pop("flag_return_state", None)
+
+    if return_state == QUIZ_RU_DE:
+        return await _show_quiz_prompt_after_edit(update, context, "✅ Flag saved.", state_override=QUIZ_RU_DE)
+    if return_state == QUIZ_DE_RU:
+        return await _show_quiz_prompt_after_edit(update, context, "✅ Flag saved.", state_override=QUIZ_DE_RU)
+    if return_state == QUIZ_ARTICLE:
+        return await _show_quiz_prompt_after_edit(update, context, "✅ Flag saved.", state_override=QUIZ_ARTICLE)
+    return await _back_to_tests(update)
+
+
+async def review_flags(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    if text == STOP_TEXT:
+        context.user_data.pop("review_queue", None)
+        context.user_data.pop("review_current", None)
+        return await _back_to_main_menu(update)
+
+    current = context.user_data.get("review_current")
+    if not current:
+        return await _send_next_review_flag(update, context)
+
+    if text == REVIEW_MARK_TEXT:
+        set_word_flag_status(get_db_path(), current.get("flag_id"), "reviewed")
+        return await _send_next_review_flag(update, context)
+
+    if text == REVIEW_SKIP_TEXT:
+        return await _send_next_review_flag(update, context)
+
+    if text == AI_CLARIFY_FIELD:
+        context.user_data["edit_source"] = "review"
+        context.user_data["edit_stage"] = "pick_field"
+        await update.message.reply_text(
+            "Choose field to edit:",
+            reply_markup=_edit_fields_markup("review"),
+        )
+        return ADD_EDIT
+
+    await update.message.reply_text(
+        "Use review buttons.",
+        reply_markup=_review_markup(),
+    )
+    return REVIEW_FLAGS
 
 
 async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     if text == STOP_TEXT:
         return await _back_to_tests(update)
+    if text == FLAG_TEXT:
+        return await _start_flag_comment(update, context, QUIZ_RU_DE)
     if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
         return await _start_quiz_edit(update, context, QUIZ_RU_DE)
 
@@ -982,6 +1152,8 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     if text == STOP_TEXT:
         return await _back_to_tests(update)
+    if text == FLAG_TEXT:
+        return await _start_flag_comment(update, context, QUIZ_DE_RU)
     if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
         return await _start_quiz_edit(update, context, QUIZ_DE_RU)
 
@@ -1002,6 +1174,8 @@ async def quiz_article(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     if text == STOP_TEXT:
         return await _back_to_tests(update)
+    if text == FLAG_TEXT:
+        return await _start_flag_comment(update, context, QUIZ_ARTICLE)
     if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
         return await _start_quiz_edit(update, context, QUIZ_ARTICLE)
 
@@ -1372,6 +1546,8 @@ async def _stop_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop("edit_field", None)
     context.user_data.pop("edit_source", None)
     context.user_data.pop("edit_return_state", None)
+    context.user_data.pop("flag_word_id", None)
+    context.user_data.pop("flag_return_state", None)
     await update.message.reply_text(
         "❌ Stopped.",
         reply_markup=_main_menu_markup(update.effective_user.id),
@@ -1603,6 +1779,8 @@ def main():
             ADD_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_confirm)],
             ADD_CLARIFY: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_clarify)],
             ADD_EDIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_edit)],
+            FLAG_COMMENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, flag_comment)],
+            REVIEW_FLAGS: [MessageHandler(filters.TEXT & ~filters.COMMAND, review_flags)],
             QUIZ_RU_DE: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_ru_de)],
             QUIZ_DE_RU: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_de_ru)],
             QUIZ_ARTICLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_article)],
