@@ -971,6 +971,16 @@ def update_word_fields(db_path, word_id, fields):
         conn.execute(query, tuple(params))
 
 
+def delete_word(db_path, word_id):
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        cur = conn.execute(
+            "DELETE FROM words WHERE id = ?",
+            (_safe_text(word_id),),
+        )
+        return cur.rowcount > 0
+
+
 def add_word_flag(db_path, word_id, user_id, comment):
     init_db(db_path)
     with _connect(db_path) as conn:

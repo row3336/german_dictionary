@@ -89,6 +89,7 @@ from .storage import (
     add_word,
     add_banned_word,
     count_words,
+    delete_word,
     ensure_default_languages_for_existing_users,
     find_existing_word,
     get_setting,
@@ -363,6 +364,8 @@ def _edit_fields_markup(source):
         return ReplyKeyboardMarkup(EDIT_FIELDS_KEYS_FULL, resize_keyboard=True)
     if source == "add":
         return ReplyKeyboardMarkup([["russian", "ukrainian", "english"], ["level", BACK_TEXT]], resize_keyboard=True)
+    if source == "quiz":
+        return ReplyKeyboardMarkup([["russian", "level"], ["delete", BACK_TEXT]], resize_keyboard=True)
     return ReplyKeyboardMarkup(EDIT_FIELDS_KEYS, resize_keyboard=True)
 
 
@@ -371,6 +374,8 @@ def _allowed_edit_fields(source):
         return {"russian", "ukrainian", "english", "level", "article", "plural", "prateritum", "partizip2", "german", "infinitive", "type"}
     if source == "add":
         return {"russian", "ukrainian", "english", "level"}
+    if source == "quiz":
+        return {"russian", "level", "delete"}
     return {"russian", "level"}
 
 
@@ -1219,6 +1224,31 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=_edit_fields_markup(source),
             )
             return ADD_EDIT
+        if source == "quiz" and field == "delete":
+            word_id = entry.get("id")
+            if not word_id:
+                await update.message.reply_text(
+                    "❌ Cannot delete: missing word id.",
+                    reply_markup=_edit_fields_markup(source),
+                )
+                return ADD_EDIT
+            removed = delete_word(get_db_path(), word_id)
+            context.user_data.pop("quiz_edit_entry", None)
+            context.user_data.pop("quiz_entry", None)
+            last_answered = context.user_data.get("quiz_last_answered_entry")
+            if last_answered and last_answered.get("id") == word_id:
+                context.user_data.pop("quiz_last_answered_entry", None)
+            context.user_data["edit_stage"] = "pick_field"
+            context.user_data.pop("edit_field", None)
+            state = context.user_data.get("edit_return_state")
+            prefix = "✅ Deleted." if removed else "❌ Word not found."
+            if state == QUIZ_RU_DE:
+                return await _send_ru_de_prompt(update, context, prefix)
+            if state == QUIZ_DE_RU:
+                return await _send_de_ru_prompt(update, context, prefix)
+            if state == QUIZ_ARTICLE:
+                return await _send_article_prompt(update, context, prefix)
+            return await _back_to_tests(update)
         context.user_data["edit_field"] = field
         if field == "level":
             context.user_data["edit_stage"] = "pick_level"
