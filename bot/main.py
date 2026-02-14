@@ -361,7 +361,7 @@ def _parse_level_toggle(text):
 
 def _edit_fields_markup(source):
     if source == "review":
-        return ReplyKeyboardMarkup(EDIT_FIELDS_KEYS_FULL, resize_keyboard=True)
+        return ReplyKeyboardMarkup(EDIT_FIELDS_KEYS_FULL + [["delete"]], resize_keyboard=True)
     if source == "add":
         return ReplyKeyboardMarkup([["russian", "ukrainian", "english"], ["level", BACK_TEXT]], resize_keyboard=True)
     if source == "quiz":
@@ -371,7 +371,7 @@ def _edit_fields_markup(source):
 
 def _allowed_edit_fields(source):
     if source == "review":
-        return {"russian", "ukrainian", "english", "level", "article", "plural", "prateritum", "partizip2", "german", "infinitive", "type"}
+        return {"russian", "ukrainian", "english", "level", "article", "plural", "prateritum", "partizip2", "german", "infinitive", "type", "delete"}
     if source == "add":
         return {"russian", "ukrainian", "english", "level"}
     if source == "quiz":
@@ -1249,6 +1249,23 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if state == QUIZ_ARTICLE:
                 return await _send_article_prompt(update, context, prefix)
             return await _back_to_tests(update)
+        if source == "review" and field == "delete":
+            word_id = entry.get("id")
+            if not word_id:
+                await update.message.reply_text(
+                    "❌ Cannot delete: missing word id.",
+                    reply_markup=_edit_fields_markup(source),
+                )
+                return ADD_EDIT
+            removed = delete_word(get_db_path(), word_id)
+            current = context.user_data.get("review_current")
+            if current and current.get("id") == word_id:
+                context.user_data.pop("review_current", None)
+            context.user_data["edit_stage"] = "pick_field"
+            context.user_data.pop("edit_field", None)
+            prefix = "✅ Deleted." if removed else "❌ Word not found."
+            await update.message.reply_text(prefix)
+            return await _send_next_review_flag(update, context)
         context.user_data["edit_field"] = field
         if field == "level":
             context.user_data["edit_stage"] = "pick_level"
