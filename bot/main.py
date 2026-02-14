@@ -449,7 +449,7 @@ async def _start_quiz_edit(update: Update, context: ContextTypes.DEFAULT_TYPE, r
     await update.message.reply_text(_format_word_card(entry, title))
     await update.message.reply_text(
         "Choose field to edit:",
-        reply_markup=ReplyKeyboardMarkup(EDIT_FIELDS_KEYS, resize_keyboard=True),
+        reply_markup=_edit_fields_markup("quiz"),
     )
     return ADD_EDIT
 
