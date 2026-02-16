@@ -41,15 +41,26 @@ from .app_config import (
     AUTO_DUMP_SETTING_KEY,
     BACK_TEXT,
     FLAG_TEXT,
+    I_DONT_KNOW_TEXT,
     MENU,
     NUMERAL_SET,
     NUMERIC_RE,
     QUIZ_ARTICLE,
+    QUIZ_ARTICLE_WEAK,
     QUIZ_DE_RU,
+    QUIZ_PARTIZIP2_WEAK,
+    QUIZ_PLURAL_WEAK,
+    QUIZ_PRATERITUM_WEAK,
     QUIZ_RU_DE,
+    QUIZ_VERB_WEAK_MENU,
     SETTINGS_MENU,
     SELECT_DICT_LANG,
     SELECT_UI_LANG,
+    SYN_ADD_INPUT,
+    SYN_AUTO_CONFIRM,
+    SYN_CLEAR_CONFIRM,
+    SYN_MENU,
+    SYN_REMOVE_INPUT,
     START_TEXT,
     STOP_TEXT,
     TESTS_MENU,
@@ -68,13 +79,22 @@ from .storage import (
     add_word_flag,
     add_word,
     add_banned_word,
+    add_synonym_link,
     count_words,
+    list_weak_words,
     delete_word,
+    find_word_by_value,
     find_existing_word,
+    get_word_by_id,
+    get_synonym_group,
     get_setting,
     init_db,
+    list_synonym_candidates_by_ru,
     select_due,
+    remove_synonym_link,
+    clear_synonym_group,
     set_setting,
+    update_form_stats,
     update_progress,
     update_word_fields,
     list_pending_word_flags,
@@ -107,6 +127,19 @@ from .text_utils import (
 DAILY_STATS_JOB_NAME = "daily_stats_report"
 OWNER_INTERFACE_LANG_KEY = "owner_interface_lang"
 OWNER_DICT_LANG_KEY = "owner_dict_lang"
+TEST_ARTICLE_WEAK_TEXT = "Article Weak Mode"
+TEST_PLURAL_WEAK_TEXT = "Plural Weak Mode"
+TEST_VERB_WEAK_TEXT = "Verb Forms Weak Mode"
+TEST_PRATERITUM_WEAK_TEXT = "Prateritum Weak Mode"
+TEST_PARTIZIP2_WEAK_TEXT = "Partizip2 Weak Mode"
+SYNONYMS_TEXT = "synonyms"
+SYN_ADD_TEXT = "Add"
+SYN_REMOVE_TEXT = "Remove"
+SYN_AUTO_TEXT = "Auto by RU"
+SYN_CLEAR_TEXT = "Clear group"
+SYN_FLAG_TEXT = "flag!"
+SYN_CONFIRM_TEXT = "Confirm"
+SYN_CANCEL_TEXT = "Cancel"
 
 
 def _main_menu_keys(user_id):
@@ -156,7 +189,9 @@ def _tests_menu_keys(user_id):
     label = _dict_label(user_id)
     return [
         [f"{t(lang, 'quiz_l1_de').replace('L1', label)}", f"{t(lang, 'quiz_de_l1').replace('L1', label)}"],
-        [t(lang, "quiz_article"), t(lang, "back")],
+        [t(lang, "quiz_article"), TEST_ARTICLE_WEAK_TEXT],
+        [TEST_PLURAL_WEAK_TEXT, TEST_VERB_WEAK_TEXT],
+        [t(lang, "back")],
     ]
 
 
@@ -264,11 +299,13 @@ def _load_info_text(lang="en"):
     return "Info file not found."
 
 
-def _quiz_markup(user_id, article=False):
+def _quiz_markup(user_id, article=False, allow_idk=True):
     lang = _user_interface_lang(user_id)
     rows = []
     if article:
         rows.append(["der", "die", "das"])
+    elif allow_idk:
+        rows.append([I_DONT_KNOW_TEXT])
     if is_owner(user_id):
         rows.append([AI_CLARIFY_FIELD, FLAG_TEXT, t(lang, "stop")])
     else:
@@ -285,7 +322,7 @@ def _edit_fields_markup(source):
     if source == "add":
         return ReplyKeyboardMarkup([["russian", "ukrainian", "english"], [BACK_TEXT]], resize_keyboard=True)
     if source == "quiz":
-        return ReplyKeyboardMarkup([["russian", "ukrainian", "english"], ["article", "plural"], ["prateritum", "partizip2"], ["german", "infinitive"], ["type", "delete"], [BACK_TEXT]], resize_keyboard=True)
+        return ReplyKeyboardMarkup([["russian", "ukrainian", "english"], ["article", "plural"], ["prateritum", "partizip2"], ["german", "infinitive"], ["type", SYNONYMS_TEXT], ["delete", BACK_TEXT]], resize_keyboard=True)
     return ReplyKeyboardMarkup([["russian", BACK_TEXT]], resize_keyboard=True)
 
 
@@ -293,7 +330,7 @@ def _allowed_edit_fields(source):
     if source == "add":
         return {"russian", "ukrainian", "english"}
     if source == "quiz":
-        return {"russian", "ukrainian", "english", "article", "plural", "prateritum", "partizip2", "german", "infinitive", "type", "delete"}
+        return {"russian", "ukrainian", "english", "article", "plural", "prateritum", "partizip2", "german", "infinitive", "type", "delete", SYNONYMS_TEXT}
     return {"russian", "level"}
 
 
@@ -412,6 +449,15 @@ async def _show_quiz_prompt_after_edit(update: Update, context: ContextTypes.DEF
         )
         return QUIZ_ARTICLE
 
+    if state == QUIZ_ARTICLE_WEAK:
+        return await _send_article_weak_prompt(update, context, prefix_text)
+    if state == QUIZ_PLURAL_WEAK:
+        return await _send_plural_weak_prompt(update, context, prefix_text)
+    if state == QUIZ_PRATERITUM_WEAK:
+        return await _send_prateritum_weak_prompt(update, context, prefix_text)
+    if state == QUIZ_PARTIZIP2_WEAK:
+        return await _send_partizip2_weak_prompt(update, context, prefix_text)
+
     return await _back_to_tests(update)
 
 
@@ -433,6 +479,50 @@ def _format_word_card(entry, title="Word card:"):
     ]
     return "\n".join(lines)
 
+
+def _syn_menu_markup():
+    return ReplyKeyboardMarkup(
+        [
+            [SYN_ADD_TEXT, SYN_REMOVE_TEXT],
+            [SYN_AUTO_TEXT, SYN_CLEAR_TEXT],
+            [SYN_FLAG_TEXT, BACK_TEXT],
+        ],
+        resize_keyboard=True,
+    )
+
+
+def _syn_confirm_markup():
+    return ReplyKeyboardMarkup([[SYN_CONFIRM_TEXT, SYN_CANCEL_TEXT]], resize_keyboard=True)
+
+
+def _format_syn_group(anchor_entry, group_entries, dict_lang):
+    anchor_type = anchor_entry.get("type", "")
+    anchor_base = anchor_entry.get("infinitive", "") if anchor_type == "verb" else anchor_entry.get("german", "")
+    lines = [f"Synonyms for: {anchor_base} ({anchor_type})"]
+    if not group_entries:
+        lines.append("- no linked synonyms")
+        return "\n".join(lines)
+    for idx, item in enumerate(group_entries, start=1):
+        item_type = item.get("type", "")
+        base = item.get("infinitive", "") if item_type == "verb" else item.get("german", "")
+        article = (item.get("article", "") or "").strip()
+        left = f"{article} {base}".strip()
+        right = _entry_translation(item, dict_lang)
+        lines.append(f"{idx}. {left} >> {right}")
+    return "\n".join(lines)
+
+
+async def _open_synonyms_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, anchor_entry, return_state):
+    if not anchor_entry or not anchor_entry.get("id"):
+        return await _back_to_tests(update)
+    context.user_data["syn_anchor_id"] = anchor_entry.get("id")
+    context.user_data["syn_return_state"] = return_state
+    group_entries = get_synonym_group(get_db_path(), anchor_entry.get("id"))
+    await update.message.reply_text(
+        _format_syn_group(anchor_entry, group_entries, _user_dict_lang(update.effective_user.id)),
+        reply_markup=_syn_menu_markup(),
+    )
+    return SYN_MENU
 
 async def _reply_text_with_retry(message, text, max_retries=2, **kwargs):
     attempts = 0
@@ -619,12 +709,41 @@ async def tests_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await _send_de_ru_prompt(update, context, None)
     if action == "quiz_article":
         return await _send_article_prompt(update, context, None)
+    if text == TEST_ARTICLE_WEAK_TEXT:
+        return await _send_article_weak_prompt(update, context, None)
+    if text == TEST_PLURAL_WEAK_TEXT:
+        return await _send_plural_weak_prompt(update, context, None)
+    if text == TEST_VERB_WEAK_TEXT:
+        await update.message.reply_text(
+            "Choose verb weak mode:",
+            reply_markup=ReplyKeyboardMarkup([[TEST_PRATERITUM_WEAK_TEXT, TEST_PARTIZIP2_WEAK_TEXT], [t(_user_interface_lang(user_id), "back")]], resize_keyboard=True),
+        )
+        return QUIZ_VERB_WEAK_MENU
 
     await update.message.reply_text(
         "Use tests menu buttons.",
         reply_markup=ReplyKeyboardMarkup(_tests_menu_keys(user_id), resize_keyboard=True),
     )
     return TESTS_MENU
+
+
+async def quiz_verb_weak_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    if _action_key_from_text(text, update.effective_user.id) == "back":
+        await update.message.reply_text(
+            t(_user_interface_lang(update.effective_user.id), "choose_test"),
+            reply_markup=ReplyKeyboardMarkup(_tests_menu_keys(update.effective_user.id), resize_keyboard=True),
+        )
+        return TESTS_MENU
+    if text == TEST_PRATERITUM_WEAK_TEXT:
+        return await _send_prateritum_weak_prompt(update, context, None)
+    if text == TEST_PARTIZIP2_WEAK_TEXT:
+        return await _send_partizip2_weak_prompt(update, context, None)
+    await update.message.reply_text(
+        "Use verb weak mode buttons.",
+        reply_markup=ReplyKeyboardMarkup([[TEST_PRATERITUM_WEAK_TEXT, TEST_PARTIZIP2_WEAK_TEXT], [t(_user_interface_lang(update.effective_user.id), "back")]], resize_keyboard=True),
+    )
+    return QUIZ_VERB_WEAK_MENU
 
 
 async def settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -972,6 +1091,9 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if state == QUIZ_ARTICLE:
                 return await _send_article_prompt(update, context, prefix)
             return await _back_to_tests(update)
+        if source == "quiz" and field == SYNONYMS_TEXT:
+            state = context.user_data.get("edit_return_state")
+            return await _open_synonyms_menu(update, context, entry, state)
         context.user_data["edit_field"] = field
 
         context.user_data["edit_stage"] = "enter_value"
@@ -1013,6 +1135,165 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return await _show_ai_preview(update, updated)
 
 
+async def _return_from_synonyms(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix="✅ Done."):
+    anchor_id = context.user_data.get("syn_anchor_id")
+    return_state = context.user_data.get("syn_return_state")
+    context.user_data.pop("syn_auto_candidates", None)
+    context.user_data.pop("syn_anchor_id", None)
+    context.user_data.pop("syn_return_state", None)
+    entry = get_word_by_id(get_db_path(), anchor_id) if anchor_id else None
+    if entry:
+        context.user_data["quiz_entry"] = entry
+    if return_state == QUIZ_RU_DE:
+        return await _send_ru_de_prompt(update, context, prefix)
+    if return_state == QUIZ_DE_RU:
+        return await _send_de_ru_prompt(update, context, prefix)
+    if return_state == QUIZ_ARTICLE:
+        return await _send_article_prompt(update, context, prefix)
+    if return_state == QUIZ_ARTICLE_WEAK:
+        return await _send_article_weak_prompt(update, context, prefix)
+    if return_state == QUIZ_PLURAL_WEAK:
+        return await _send_plural_weak_prompt(update, context, prefix)
+    if return_state == QUIZ_PRATERITUM_WEAK:
+        return await _send_prateritum_weak_prompt(update, context, prefix)
+    if return_state == QUIZ_PARTIZIP2_WEAK:
+        return await _send_partizip2_weak_prompt(update, context, prefix)
+    return await _back_to_tests(update)
+
+
+async def synonyms_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    if _action_key_from_text(text, update.effective_user.id) == "stop":
+        return await _back_to_tests(update)
+    if _action_key_from_text(text, update.effective_user.id) == "back":
+        return await _return_from_synonyms(update, context, "✅ Back.")
+    anchor_id = context.user_data.get("syn_anchor_id")
+    anchor_entry = get_word_by_id(get_db_path(), anchor_id) if anchor_id else None
+    if not anchor_entry:
+        return await _back_to_tests(update)
+    if text == SYN_ADD_TEXT:
+        await update.message.reply_text("Send German word or id to add:", reply_markup=ReplyKeyboardMarkup([[BACK_TEXT]], resize_keyboard=True))
+        return SYN_ADD_INPUT
+    if text == SYN_REMOVE_TEXT:
+        group = get_synonym_group(get_db_path(), anchor_id)
+        await update.message.reply_text(
+            _format_syn_group(anchor_entry, group, _user_dict_lang(update.effective_user.id)) + "\n\nSend number, word, or id to remove.",
+            reply_markup=ReplyKeyboardMarkup([[BACK_TEXT]], resize_keyboard=True),
+        )
+        return SYN_REMOVE_INPUT
+    if text == SYN_AUTO_TEXT:
+        candidates = list_synonym_candidates_by_ru(get_db_path(), anchor_id)
+        if not candidates:
+            await update.message.reply_text("No auto candidates by RU.", reply_markup=_syn_menu_markup())
+            return SYN_MENU
+        context.user_data["syn_auto_candidates"] = [x.get("id") for x in candidates]
+        preview = _format_syn_group(anchor_entry, candidates, _user_dict_lang(update.effective_user.id))
+        await update.message.reply_text(
+            f"Will add {len(candidates)} candidate(s):\n\n{preview}",
+            reply_markup=_syn_confirm_markup(),
+        )
+        return SYN_AUTO_CONFIRM
+    if text == SYN_CLEAR_TEXT:
+        await update.message.reply_text("Clear whole synonym group?", reply_markup=_syn_confirm_markup())
+        return SYN_CLEAR_CONFIRM
+    if text == SYN_FLAG_TEXT:
+        add_word_flag(get_db_path(), word_id=anchor_id, user_id=update.effective_user.id, comment="synonym_review")
+        await update.message.reply_text("✅ Flag saved.", reply_markup=_syn_menu_markup())
+        return SYN_MENU
+    await update.message.reply_text("Use synonyms buttons.", reply_markup=_syn_menu_markup())
+    return SYN_MENU
+
+
+async def synonyms_add_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    if _action_key_from_text(text, update.effective_user.id) == "back":
+        anchor_entry = get_word_by_id(get_db_path(), context.user_data.get("syn_anchor_id"))
+        group = get_synonym_group(get_db_path(), context.user_data.get("syn_anchor_id"))
+        await update.message.reply_text(_format_syn_group(anchor_entry or {}, group, _user_dict_lang(update.effective_user.id)), reply_markup=_syn_menu_markup())
+        return SYN_MENU
+    anchor_id = context.user_data.get("syn_anchor_id")
+    anchor_entry = get_word_by_id(get_db_path(), anchor_id)
+    target = find_word_by_value(get_db_path(), text)
+    if not anchor_entry or not target:
+        await update.message.reply_text("Target not found. Send German word or id.", reply_markup=ReplyKeyboardMarkup([[BACK_TEXT]], resize_keyboard=True))
+        return SYN_ADD_INPUT
+    if (anchor_entry.get("type", "") or "").lower() != (target.get("type", "") or "").lower():
+        await update.message.reply_text("Type mismatch. Only same type is allowed.", reply_markup=ReplyKeyboardMarkup([[BACK_TEXT]], resize_keyboard=True))
+        return SYN_ADD_INPUT
+    changed, _ = add_synonym_link(get_db_path(), anchor_id, target.get("id"))
+    msg = "✅ Linked." if changed else "✅ Already linked."
+    group = get_synonym_group(get_db_path(), anchor_id)
+    await update.message.reply_text(f"{msg}\n\n{_format_syn_group(anchor_entry, group, _user_dict_lang(update.effective_user.id))}", reply_markup=_syn_menu_markup())
+    return SYN_MENU
+
+
+async def synonyms_remove_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    if _action_key_from_text(text, update.effective_user.id) == "back":
+        return SYN_MENU
+    anchor_id = context.user_data.get("syn_anchor_id")
+    anchor = get_word_by_id(get_db_path(), anchor_id)
+    group = get_synonym_group(get_db_path(), anchor_id)
+    if not anchor or not group:
+        return await _return_from_synonyms(update, context, "✅ Back.")
+    target = None
+    if text.isdigit():
+        idx = int(text)
+        if 1 <= idx <= len(group):
+            target = group[idx - 1]
+    if target is None:
+        target = find_word_by_value(get_db_path(), text)
+    if not target:
+        await update.message.reply_text("Target not found in group.", reply_markup=ReplyKeyboardMarkup([[BACK_TEXT]], resize_keyboard=True))
+        return SYN_REMOVE_INPUT
+    if target.get("id") == anchor_id:
+        await update.message.reply_text("Cannot remove anchor word from itself. Use Clear group.", reply_markup=ReplyKeyboardMarkup([[BACK_TEXT]], resize_keyboard=True))
+        return SYN_REMOVE_INPUT
+    removed = remove_synonym_link(get_db_path(), target.get("id"))
+    msg = "✅ Removed." if removed else "❌ Not linked."
+    group_new = get_synonym_group(get_db_path(), anchor_id)
+    await update.message.reply_text(f"{msg}\n\n{_format_syn_group(anchor, group_new, _user_dict_lang(update.effective_user.id))}", reply_markup=_syn_menu_markup())
+    return SYN_MENU
+
+
+async def synonyms_auto_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    if text == SYN_CANCEL_TEXT or _action_key_from_text(text, update.effective_user.id) == "back":
+        anchor_id = context.user_data.get("syn_anchor_id")
+        anchor = get_word_by_id(get_db_path(), anchor_id)
+        group = get_synonym_group(get_db_path(), anchor_id)
+        await update.message.reply_text(_format_syn_group(anchor or {}, group, _user_dict_lang(update.effective_user.id)), reply_markup=_syn_menu_markup())
+        return SYN_MENU
+    if text != SYN_CONFIRM_TEXT:
+        await update.message.reply_text("Use Confirm or Cancel.", reply_markup=_syn_confirm_markup())
+        return SYN_AUTO_CONFIRM
+    anchor_id = context.user_data.get("syn_anchor_id")
+    ids = context.user_data.get("syn_auto_candidates") or []
+    added = 0
+    for wid in ids:
+        changed, _ = add_synonym_link(get_db_path(), anchor_id, wid)
+        if changed:
+            added += 1
+    anchor = get_word_by_id(get_db_path(), anchor_id)
+    group = get_synonym_group(get_db_path(), anchor_id)
+    await update.message.reply_text(f"✅ Auto linked: {added}", reply_markup=_syn_menu_markup())
+    await update.message.reply_text(_format_syn_group(anchor or {}, group, _user_dict_lang(update.effective_user.id)), reply_markup=_syn_menu_markup())
+    return SYN_MENU
+
+
+async def synonyms_clear_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    if text == SYN_CANCEL_TEXT or _action_key_from_text(text, update.effective_user.id) == "back":
+        return SYN_MENU
+    if text != SYN_CONFIRM_TEXT:
+        await update.message.reply_text("Use Confirm or Cancel.", reply_markup=_syn_confirm_markup())
+        return SYN_CLEAR_CONFIRM
+    anchor_id = context.user_data.get("syn_anchor_id")
+    cleared = clear_synonym_group(get_db_path(), anchor_id)
+    await update.message.reply_text("✅ Group cleared." if cleared else "✅ Group already empty.", reply_markup=_syn_menu_markup())
+    return SYN_MENU
+
+
 async def _flag_current_word(update: Update, context: ContextTypes.DEFAULT_TYPE, return_state):
     entry, _ = _get_quiz_action_entry(context)
     if not entry:
@@ -1027,6 +1308,14 @@ async def _flag_current_word(update: Update, context: ContextTypes.DEFAULT_TYPE,
         return await _show_quiz_prompt_after_edit(update, context, "✅ Flag saved.", state_override=QUIZ_DE_RU)
     if return_state == QUIZ_ARTICLE:
         return await _show_quiz_prompt_after_edit(update, context, "✅ Flag saved.", state_override=QUIZ_ARTICLE)
+    if return_state == QUIZ_ARTICLE_WEAK:
+        return await _show_quiz_prompt_after_edit(update, context, "✅ Flag saved.", state_override=QUIZ_ARTICLE_WEAK)
+    if return_state == QUIZ_PLURAL_WEAK:
+        return await _show_quiz_prompt_after_edit(update, context, "✅ Flag saved.", state_override=QUIZ_PLURAL_WEAK)
+    if return_state == QUIZ_PRATERITUM_WEAK:
+        return await _show_quiz_prompt_after_edit(update, context, "✅ Flag saved.", state_override=QUIZ_PRATERITUM_WEAK)
+    if return_state == QUIZ_PARTIZIP2_WEAK:
+        return await _show_quiz_prompt_after_edit(update, context, "✅ Flag saved.", state_override=QUIZ_PARTIZIP2_WEAK)
     return await _back_to_tests(update)
 
 
@@ -1042,10 +1331,14 @@ async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
     entry = context.user_data.get("quiz_entry")
     if not entry:
         return await _send_ru_de_prompt(update, context, None)
-
-    expected = _get_ru_de_answer(entry)
-    ok = _normalize_answer(text) == _normalize_answer(expected)
+    if text == I_DONT_KNOW_TEXT:
+        ok = False
+        form_checks = {}
+    else:
+        ok, form_checks = _check_ru_de_strict(entry, text)
     _update_srs_for_entry(update.effective_user.id, entry, _mode_l1_de(update.effective_user.id), ok)
+    if form_checks:
+        update_form_stats(get_db_path(), update.effective_user.id, entry.get("id"), form_checks)
     context.user_data["quiz_last_answered_entry"] = entry
 
     feedback = _format_feedback_ru_de(entry, ok)
@@ -1065,9 +1358,12 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not entry:
         return await _send_de_ru_prompt(update, context, None)
 
-    answer = _normalize_answer(text)
-    variants = _russian_variants(_entry_translation(entry, _user_dict_lang(update.effective_user.id)))
-    ok = answer in variants
+    if text == I_DONT_KNOW_TEXT:
+        ok = False
+    else:
+        answer = _normalize_answer(text)
+        variants = _russian_variants(_entry_translation(entry, _user_dict_lang(update.effective_user.id)))
+        ok = answer in variants
     _update_srs_for_entry(update.effective_user.id, entry, _mode_de_l1(update.effective_user.id), ok)
     context.user_data["quiz_last_answered_entry"] = entry
 
@@ -1088,13 +1384,165 @@ async def quiz_article(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not entry:
         return await _send_article_prompt(update, context, None)
 
-    expected = entry.get("article", "")
-    ok = _normalize_answer(text) == _normalize_answer(expected)
+    if text == I_DONT_KNOW_TEXT:
+        ok = False
+    else:
+        expected = entry.get("article", "")
+        ok = _normalize_answer(text) == _normalize_answer(expected)
     _update_srs_for_entry(update.effective_user.id, entry, MODE_ARTICLE, ok)
     context.user_data["quiz_last_answered_entry"] = entry
 
     feedback = _format_feedback_article(entry, ok, _user_dict_lang(update.effective_user.id))
     return await _send_article_prompt(update, context, feedback)
+
+
+def _weak_status(ok):
+    return "Correct ✅" if ok else "Wrong ❌"
+
+
+def _format_feedback_plural_weak(entry, ok):
+    article = str(entry.get("article", "")).strip()
+    german = _cap_word(entry.get("german", ""))
+    plural = _cap_word(entry.get("plural", ""))
+    headline = f"{_weak_status(ok)} >>>     *{_md_escape((article + ' ' + german).strip())}*"
+    if plural:
+        return f"{headline}\n\n_pl. die {_md_escape(plural)}_"
+    return headline
+
+
+def _format_feedback_prateritum_weak(entry, ok):
+    infinitive = _low_word(entry.get("infinitive", ""))
+    pr = _low_word(entry.get("prateritum", ""))
+    headline = f"{_weak_status(ok)} >>>     *{_md_escape(infinitive)}*"
+    if pr:
+        return f"{headline}\n\n_{_md_escape(pr)}_"
+    return headline
+
+
+def _format_feedback_partizip2_weak(entry, ok):
+    infinitive = _low_word(entry.get("infinitive", ""))
+    p2 = _expected_partizip2(entry)
+    headline = f"{_weak_status(ok)} >>>     *{_md_escape(infinitive)}*"
+    if p2:
+        return f"{headline}\n\n_{_md_escape(p2)}_"
+    return headline
+
+
+async def quiz_article_weak(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    if _action_key_from_text(text, update.effective_user.id) == "stop":
+        return await _back_to_tests(update)
+    if text == FLAG_TEXT:
+        return await _flag_current_word(update, context, QUIZ_ARTICLE_WEAK)
+    if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
+        return await _start_quiz_edit(update, context, QUIZ_ARTICLE_WEAK)
+
+    entry = context.user_data.get("quiz_entry")
+    if not entry:
+        return await _send_article_weak_prompt(update, context, None)
+
+    ok = _normalize_answer(text) == _normalize_answer(entry.get("article", ""))
+    update_form_stats(get_db_path(), update.effective_user.id, entry.get("id"), {"article": ok})
+    log_quiz_event(
+        get_db_path(),
+        user_id=update.effective_user.id,
+        word_id=entry.get("id"),
+        mode="weak_article",
+        is_correct=ok,
+    )
+    context.user_data["quiz_last_answered_entry"] = entry
+    feedback = _format_feedback_article(entry, ok, _user_dict_lang(update.effective_user.id))
+    return await _send_article_weak_prompt(update, context, feedback)
+
+
+async def quiz_plural_weak(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    if _action_key_from_text(text, update.effective_user.id) == "stop":
+        return await _back_to_tests(update)
+    if text == FLAG_TEXT:
+        return await _flag_current_word(update, context, QUIZ_PLURAL_WEAK)
+    if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
+        return await _start_quiz_edit(update, context, QUIZ_PLURAL_WEAK)
+
+    entry = context.user_data.get("quiz_entry")
+    if not entry:
+        return await _send_plural_weak_prompt(update, context, None)
+
+    if text == I_DONT_KNOW_TEXT:
+        ok = False
+    else:
+        ok = _normalize_plural_value(text) == _normalize_plural_value(entry.get("plural", ""))
+    update_form_stats(get_db_path(), update.effective_user.id, entry.get("id"), {"plural": ok})
+    log_quiz_event(
+        get_db_path(),
+        user_id=update.effective_user.id,
+        word_id=entry.get("id"),
+        mode="weak_plural",
+        is_correct=ok,
+    )
+    context.user_data["quiz_last_answered_entry"] = entry
+    feedback = _format_feedback_plural_weak(entry, ok)
+    return await _send_plural_weak_prompt(update, context, feedback)
+
+
+async def quiz_prateritum_weak(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    if _action_key_from_text(text, update.effective_user.id) == "stop":
+        return await _back_to_tests(update)
+    if text == FLAG_TEXT:
+        return await _flag_current_word(update, context, QUIZ_PRATERITUM_WEAK)
+    if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
+        return await _start_quiz_edit(update, context, QUIZ_PRATERITUM_WEAK)
+
+    entry = context.user_data.get("quiz_entry")
+    if not entry:
+        return await _send_prateritum_weak_prompt(update, context, None)
+
+    if text == I_DONT_KNOW_TEXT:
+        ok = False
+    else:
+        ok = _normalize_answer(text) == _normalize_answer(entry.get("prateritum", ""))
+    update_form_stats(get_db_path(), update.effective_user.id, entry.get("id"), {"prateritum": ok})
+    log_quiz_event(
+        get_db_path(),
+        user_id=update.effective_user.id,
+        word_id=entry.get("id"),
+        mode="weak_prateritum",
+        is_correct=ok,
+    )
+    context.user_data["quiz_last_answered_entry"] = entry
+    feedback = _format_feedback_prateritum_weak(entry, ok)
+    return await _send_prateritum_weak_prompt(update, context, feedback)
+
+
+async def quiz_partizip2_weak(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    if _action_key_from_text(text, update.effective_user.id) == "stop":
+        return await _back_to_tests(update)
+    if text == FLAG_TEXT:
+        return await _flag_current_word(update, context, QUIZ_PARTIZIP2_WEAK)
+    if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
+        return await _start_quiz_edit(update, context, QUIZ_PARTIZIP2_WEAK)
+
+    entry = context.user_data.get("quiz_entry")
+    if not entry:
+        return await _send_partizip2_weak_prompt(update, context, None)
+
+    if text == I_DONT_KNOW_TEXT:
+        ok = False
+    else:
+        ok = _normalize_answer(text) == _expected_partizip2(entry)
+    update_form_stats(get_db_path(), update.effective_user.id, entry.get("id"), {"partizip2": ok})
+    log_quiz_event(
+        get_db_path(),
+        user_id=update.effective_user.id,
+        word_id=entry.get("id"),
+        mode="weak_partizip2",
+        is_correct=ok,
+    )
+    context.user_data["quiz_last_answered_entry"] = entry
+    feedback = _format_feedback_partizip2_weak(entry, ok)
+    return await _send_partizip2_weak_prompt(update, context, feedback)
 
 
 async def _save_entry(update: Update, entry):
@@ -1114,6 +1562,100 @@ def _get_ru_de_answer(entry):
     if entry.get("type") == "verb":
         return entry.get("infinitive", "")
     return entry.get("german", "")
+
+
+def _split_answer_parts(text):
+    raw = str(text or "").strip()
+    if not raw:
+        return []
+    if "," in raw:
+        return [p.strip() for p in raw.split(",") if p.strip()]
+    return [p.strip() for p in raw.split() if p.strip()]
+
+
+def _normalize_plural_value(value):
+    token = _normalize_answer(value)
+    if token.startswith("die "):
+        token = token[4:].strip()
+    return token
+
+
+def _expected_partizip2(entry):
+    part = _normalize_answer(entry.get("partizip2", ""))
+    aux = _normalize_answer(
+        entry.get("perfect_aux")
+        or entry.get("hilfsverb")
+        or entry.get("aux")
+        or ""
+    )
+    if aux in {"hat", "ist"}:
+        if part.startswith("hat ") or part.startswith("ist "):
+            return part
+        return f"{aux} {part}".strip()
+    return part
+
+
+def _synonym_entries(entry):
+    wid = entry.get("id")
+    if not wid:
+        return [entry]
+    group = get_synonym_group(get_db_path(), wid)
+    if not group:
+        return [entry]
+    return group
+
+
+def _check_ru_de_strict(entry, answer_text):
+    entry_type = (entry.get("type") or "").strip().lower()
+    parts = _split_answer_parts(answer_text)
+    synonyms = _synonym_entries(entry)
+
+    if entry_type == "nomen":
+        if len(parts) < 3:
+            return False, {"article": False, "plural": False}
+        article_in = _normalize_answer(parts[0])
+        german_in = _normalize_answer(parts[1])
+        plural_in = _normalize_plural_value(" ".join(parts[2:]))
+        for cand in synonyms:
+            if (cand.get("type") or "").strip().lower() != "nomen":
+                continue
+            article_ok = article_in == _normalize_answer(cand.get("article", ""))
+            german_ok = german_in == _normalize_answer(cand.get("german", ""))
+            plural_ok = plural_in == _normalize_plural_value(cand.get("plural", ""))
+            if article_ok and german_ok and plural_ok:
+                return True, {"article": True, "plural": True}
+        return False, {
+            "article": article_in == _normalize_answer(entry.get("article", "")),
+            "plural": plural_in == _normalize_plural_value(entry.get("plural", "")),
+        }
+
+    if entry_type == "verb":
+        if len(parts) < 3:
+            return False, {"prateritum": False, "partizip2": False}
+        infinitive_in = _normalize_answer(parts[0])
+        pr_in = _normalize_answer(parts[1])
+        p2_in = _normalize_answer(" ".join(parts[2:]))
+        for cand in synonyms:
+            if (cand.get("type") or "").strip().lower() != "verb":
+                continue
+            inf_ok = infinitive_in == _normalize_answer(cand.get("infinitive", ""))
+            pr_ok = pr_in == _normalize_answer(cand.get("prateritum", ""))
+            p2_ok = p2_in == _expected_partizip2(cand)
+            if inf_ok and pr_ok and p2_ok:
+                return True, {"prateritum": True, "partizip2": True}
+        return False, {
+            "prateritum": pr_in == _normalize_answer(entry.get("prateritum", "")),
+            "partizip2": p2_in == _expected_partizip2(entry),
+        }
+
+    answer = _normalize_answer(answer_text)
+    expected_values = []
+    for cand in synonyms:
+        if (cand.get("type") or "").strip().lower() == "verb":
+            expected_values.append(_normalize_answer(cand.get("infinitive", "")))
+        else:
+            expected_values.append(_normalize_answer(cand.get("german", "")))
+    return answer in expected_values, {}
 
 
 def _entry_translation(entry, dict_lang):
@@ -1234,6 +1776,21 @@ def _pick_due_entry(context, user_id, mode, word_type=None):
     return entry
 
 
+def _pick_weak_entry(context, user_id, weak_field, word_type=None):
+    due = list_weak_words(get_db_path(), user_id=user_id, weak_field=weak_field, word_type=word_type, limit=300)
+    if not due:
+        return None
+    last_ids = context.user_data.setdefault("last_quiz_ids", {})
+    mode = f"weak_{weak_field}"
+    last_id = last_ids.get(mode)
+    pool = [w for w in due if w.get("id") != last_id] if len(due) > 1 else due
+    if not pool:
+        pool = due
+    entry = random.choice(pool)
+    last_ids[mode] = entry.get("id")
+    return entry
+
+
 async def _send_ru_de_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
     mode = _mode_l1_de(update.effective_user.id)
     entry = _pick_due_entry(context, update.effective_user.id, mode)
@@ -1300,6 +1857,83 @@ async def _send_article_prompt(update: Update, context: ContextTypes.DEFAULT_TYP
         parse_mode="Markdown",
     )
     return QUIZ_ARTICLE
+
+
+async def _send_article_weak_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
+    entry = _pick_weak_entry(context, update.effective_user.id, "article", word_type="nomen")
+    if not entry:
+        await update.message.reply_text(
+            "No weak article words.",
+            reply_markup=ReplyKeyboardMarkup(_tests_menu_keys(update.effective_user.id), resize_keyboard=True),
+        )
+        return TESTS_MENU
+    context.user_data["quiz_entry"] = entry
+    text = f">>    {_normalize_russian_singular(_entry_translation(entry, _user_dict_lang(update.effective_user.id)))} -> ____ {_cap_word(entry.get('german', ''))}?"
+    if prefix_text:
+        text = f"{prefix_text}\n\n{text}"
+    await update.message.reply_text(
+        text,
+        reply_markup=_quiz_markup(update.effective_user.id, article=True, allow_idk=False),
+    )
+    return QUIZ_ARTICLE_WEAK
+
+
+async def _send_plural_weak_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
+    entry = _pick_weak_entry(context, update.effective_user.id, "plural", word_type="nomen")
+    if not entry:
+        await update.message.reply_text(
+            "No weak plural words.",
+            reply_markup=ReplyKeyboardMarkup(_tests_menu_keys(update.effective_user.id), resize_keyboard=True),
+        )
+        return TESTS_MENU
+    context.user_data["quiz_entry"] = entry
+    article = (entry.get("article", "") or "").strip()
+    text = f">>    {article} {_cap_word(entry.get('german', ''))} -> plural?"
+    if prefix_text:
+        text = f"{prefix_text}\n\n{text}"
+    await update.message.reply_text(
+        text,
+        reply_markup=_quiz_markup(update.effective_user.id, article=False, allow_idk=True),
+    )
+    return QUIZ_PLURAL_WEAK
+
+
+async def _send_prateritum_weak_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
+    entry = _pick_weak_entry(context, update.effective_user.id, "prateritum", word_type="verb")
+    if not entry:
+        await update.message.reply_text(
+            "No weak prateritum words.",
+            reply_markup=ReplyKeyboardMarkup([[TEST_PRATERITUM_WEAK_TEXT, TEST_PARTIZIP2_WEAK_TEXT], [t(_user_interface_lang(update.effective_user.id), "back")]], resize_keyboard=True),
+        )
+        return QUIZ_VERB_WEAK_MENU
+    context.user_data["quiz_entry"] = entry
+    text = f">>    {_low_word(entry.get('infinitive', ''))} -> Prateritum?"
+    if prefix_text:
+        text = f"{prefix_text}\n\n{text}"
+    await update.message.reply_text(
+        text,
+        reply_markup=_quiz_markup(update.effective_user.id, article=False, allow_idk=True),
+    )
+    return QUIZ_PRATERITUM_WEAK
+
+
+async def _send_partizip2_weak_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
+    entry = _pick_weak_entry(context, update.effective_user.id, "partizip2", word_type="verb")
+    if not entry:
+        await update.message.reply_text(
+            "No weak partizip2 words.",
+            reply_markup=ReplyKeyboardMarkup([[TEST_PRATERITUM_WEAK_TEXT, TEST_PARTIZIP2_WEAK_TEXT], [t(_user_interface_lang(update.effective_user.id), "back")]], resize_keyboard=True),
+        )
+        return QUIZ_VERB_WEAK_MENU
+    context.user_data["quiz_entry"] = entry
+    text = f">>    {_low_word(entry.get('infinitive', ''))} -> Partizip2?"
+    if prefix_text:
+        text = f"{prefix_text}\n\n{text}"
+    await update.message.reply_text(
+        text,
+        reply_markup=_quiz_markup(update.effective_user.id, article=False, allow_idk=True),
+    )
+    return QUIZ_PARTIZIP2_WEAK
 
 
 def _ai_prompt(word, clarification):
@@ -1871,6 +2505,16 @@ def main():
             QUIZ_RU_DE: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_ru_de)],
             QUIZ_DE_RU: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_de_ru)],
             QUIZ_ARTICLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_article)],
+            QUIZ_ARTICLE_WEAK: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_article_weak)],
+            QUIZ_PLURAL_WEAK: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_plural_weak)],
+            QUIZ_VERB_WEAK_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_verb_weak_menu_choice)],
+            QUIZ_PRATERITUM_WEAK: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_prateritum_weak)],
+            QUIZ_PARTIZIP2_WEAK: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_partizip2_weak)],
+            SYN_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, synonyms_menu)],
+            SYN_ADD_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, synonyms_add_input)],
+            SYN_REMOVE_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, synonyms_remove_input)],
+            SYN_AUTO_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, synonyms_auto_confirm)],
+            SYN_CLEAR_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, synonyms_clear_confirm)],
         },
         fallbacks=[CommandHandler("start", start)],
     )

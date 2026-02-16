@@ -30,6 +30,7 @@ def _connect(db_path):
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
 
@@ -119,6 +120,37 @@ def init_db(db_path):
                 raw_word TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
+
+            CREATE TABLE IF NOT EXISTS form_stats (
+                user_id INTEGER NOT NULL,
+                word_id TEXT NOT NULL,
+                article_errors INTEGER NOT NULL DEFAULT 0,
+                article_streak_wrong INTEGER NOT NULL DEFAULT 0,
+                article_streak_correct INTEGER NOT NULL DEFAULT 0,
+                plural_errors INTEGER NOT NULL DEFAULT 0,
+                plural_streak_wrong INTEGER NOT NULL DEFAULT 0,
+                plural_streak_correct INTEGER NOT NULL DEFAULT 0,
+                prateritum_errors INTEGER NOT NULL DEFAULT 0,
+                prateritum_streak_wrong INTEGER NOT NULL DEFAULT 0,
+                prateritum_streak_correct INTEGER NOT NULL DEFAULT 0,
+                partizip2_errors INTEGER NOT NULL DEFAULT 0,
+                partizip2_streak_wrong INTEGER NOT NULL DEFAULT 0,
+                partizip2_streak_correct INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (user_id, word_id),
+                FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS synonym_groups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS word_synonyms (
+                word_id TEXT PRIMARY KEY,
+                group_id INTEGER NOT NULL,
+                FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE,
+                FOREIGN KEY (group_id) REFERENCES synonym_groups(id) ON DELETE CASCADE
+            );
             """
         )
         _ensure_schema(conn)
@@ -127,6 +159,8 @@ def init_db(db_path):
         conn.execute("CREATE INDEX IF NOT EXISTS idx_word_flags_status_created ON word_flags(status, created_at)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_quiz_events_day_user ON quiz_events(created_at, user_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_quiz_events_user_word_mode ON quiz_events(user_id, word_id, mode, created_at)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_form_stats_user_word ON form_stats(user_id, word_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_word_synonyms_group ON word_synonyms(group_id)")
 
 
 def _ensure_schema(conn):
@@ -979,6 +1013,291 @@ def delete_word(db_path, word_id):
             (_safe_text(word_id),),
         )
         return cur.rowcount > 0
+
+
+def update_form_stats(db_path, user_id, word_id, checks):
+    """
+    checks: dict[field_name -> bool], field_name in:
+      article, plural, prateritum, partizip2
+    """
+    safe_checks = {str(k).strip().lower(): bool(v) for k, v in dict(checks or {}).items()}
+    allowed = {"article", "plural", "prateritum", "partizip2"}
+    fields = [k for k in safe_checks if k in allowed]
+    if not fields:
+        return
+
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO form_stats (user_id, word_id)
+            VALUES (?, ?)
+            ON CONFLICT(user_id, word_id) DO NOTHING
+            """,
+            (int(user_id), _safe_text(word_id)),
+        )
+
+        for field in fields:
+            ok = safe_checks[field]
+            if ok:
+                conn.execute(
+                    f"""
+                    UPDATE form_stats
+                    SET {field}_streak_correct = {field}_streak_correct + 1,
+                        {field}_streak_wrong = 0
+                    WHERE user_id = ? AND word_id = ?
+                    """,
+                    (int(user_id), _safe_text(word_id)),
+                )
+                row = conn.execute(
+                    f"""
+                    SELECT {field}_streak_correct AS s
+                    FROM form_stats
+                    WHERE user_id = ? AND word_id = ?
+                    """,
+                    (int(user_id), _safe_text(word_id)),
+                ).fetchone()
+                streak = int(row["s"] or 0) if row else 0
+                if streak >= 3:
+                    conn.execute(
+                        f"""
+                        UPDATE form_stats
+                        SET {field}_errors = 0,
+                            {field}_streak_wrong = 0,
+                            {field}_streak_correct = 0
+                        WHERE user_id = ? AND word_id = ?
+                        """,
+                        (int(user_id), _safe_text(word_id)),
+                    )
+            else:
+                conn.execute(
+                    f"""
+                    UPDATE form_stats
+                    SET {field}_errors = {field}_errors + 1,
+                        {field}_streak_wrong = {field}_streak_wrong + 1,
+                        {field}_streak_correct = 0
+                    WHERE user_id = ? AND word_id = ?
+                    """,
+                    (int(user_id), _safe_text(word_id)),
+                )
+
+
+def list_weak_words(db_path, user_id, weak_field, word_type=None, limit=200):
+    weak_field = _safe_text(weak_field).strip().lower()
+    if weak_field not in {"article", "plural", "prateritum", "partizip2"}:
+        return []
+    init_db(db_path)
+    where = [
+        "fs.user_id = ?",
+        f"(fs.{weak_field}_errors >= 2 OR fs.{weak_field}_streak_wrong >= 2)",
+        "COALESCE(p.due, ?) <= ?",
+    ]
+    params = [int(user_id), date.today().isoformat(), date.today().isoformat()]
+    if word_type:
+        where.append("w.type = ?")
+        params.append(_safe_text(word_type))
+    query = f"""
+        SELECT
+            w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.russian, w.cefr_level,
+            w.ukrainian, w.english,
+            p.interval AS p_interval, p.repetitions AS p_repetitions, p.ease AS p_ease, p.due AS p_due
+        FROM form_stats fs
+        JOIN words w ON w.id = fs.word_id
+        LEFT JOIN progress p ON p.word_id = w.id AND p.user_id = ? AND p.mode = ?
+        WHERE {' AND '.join(where)}
+        ORDER BY w.created_at ASC
+        LIMIT ?
+    """
+    mode = f"weak_{weak_field}"
+    query_params = [int(user_id), mode] + params + [int(limit)]
+    with _connect(db_path) as conn:
+        rows = conn.execute(query, tuple(query_params)).fetchall()
+    result = []
+    for row in rows:
+        entry = _row_to_entry(row)
+        entry["srs"] = _progress_for_row(row)
+        result.append(entry)
+    return result
+
+
+def _get_or_create_group(conn, word_id):
+    row = conn.execute(
+        "SELECT group_id FROM word_synonyms WHERE word_id = ?",
+        (_safe_text(word_id),),
+    ).fetchone()
+    if row:
+        return int(row["group_id"])
+    cur = conn.execute("INSERT INTO synonym_groups DEFAULT VALUES")
+    group_id = int(cur.lastrowid)
+    conn.execute(
+        "INSERT OR REPLACE INTO word_synonyms (word_id, group_id) VALUES (?, ?)",
+        (_safe_text(word_id), group_id),
+    )
+    return group_id
+
+
+def _cleanup_small_group(conn, group_id):
+    rows = conn.execute(
+        "SELECT word_id FROM word_synonyms WHERE group_id = ?",
+        (int(group_id),),
+    ).fetchall()
+    if len(rows) >= 2:
+        return
+    conn.execute("DELETE FROM word_synonyms WHERE group_id = ?", (int(group_id),))
+    conn.execute("DELETE FROM synonym_groups WHERE id = ?", (int(group_id),))
+
+
+def add_synonym_link(db_path, anchor_word_id, target_word_id):
+    a = _safe_text(anchor_word_id)
+    b = _safe_text(target_word_id)
+    if not a or not b or a == b:
+        return False, None
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        g1 = _get_or_create_group(conn, a)
+        g2 = _get_or_create_group(conn, b)
+        if g1 == g2:
+            return False, g1
+        conn.execute(
+            "UPDATE word_synonyms SET group_id = ? WHERE group_id = ?",
+            (int(g1), int(g2)),
+        )
+        conn.execute("DELETE FROM synonym_groups WHERE id = ?", (int(g2),))
+    return True, g1
+
+
+def get_synonym_group(db_path, word_id):
+    wid = _safe_text(word_id)
+    if not wid:
+        return []
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT group_id FROM word_synonyms WHERE word_id = ?",
+            (wid,),
+        ).fetchone()
+        if not row:
+            return []
+        group_id = int(row["group_id"])
+        rows = conn.execute(
+            """
+            SELECT w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.russian, w.cefr_level
+            , w.ukrainian, w.english
+            FROM word_synonyms s
+            JOIN words w ON w.id = s.word_id
+            WHERE s.group_id = ?
+            ORDER BY w.created_at ASC
+            """,
+            (group_id,),
+        ).fetchall()
+    return [_row_to_entry(x) for x in rows]
+
+
+def remove_synonym_link(db_path, word_id):
+    wid = _safe_text(word_id)
+    if not wid:
+        return False
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT group_id FROM word_synonyms WHERE word_id = ?",
+            (wid,),
+        ).fetchone()
+        if not row:
+            return False
+        group_id = int(row["group_id"])
+        conn.execute("DELETE FROM word_synonyms WHERE word_id = ?", (wid,))
+        _cleanup_small_group(conn, group_id)
+    return True
+
+
+def clear_synonym_group(db_path, word_id):
+    wid = _safe_text(word_id)
+    if not wid:
+        return False
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT group_id FROM word_synonyms WHERE word_id = ?",
+            (wid,),
+        ).fetchone()
+        if not row:
+            return False
+        group_id = int(row["group_id"])
+        conn.execute("DELETE FROM word_synonyms WHERE group_id = ?", (group_id,))
+        conn.execute("DELETE FROM synonym_groups WHERE id = ?", (group_id,))
+    return True
+
+
+def list_synonym_candidates_by_ru(db_path, anchor_word_id):
+    anchor = get_word_by_id(db_path, anchor_word_id)
+    if not anchor:
+        return []
+    anchor_type = _safe_text(anchor.get("type", "")).strip().lower()
+    ru_values = {v for v in _form_variants(anchor.get("russian", "")) if v}
+    if not ru_values:
+        return []
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian, cefr_level
+            , ukrainian, english
+            FROM words
+            WHERE lower(trim(type)) = ?
+            """,
+            (anchor_type,),
+        ).fetchall()
+    result = []
+    for row in rows:
+        entry = _row_to_entry(row)
+        if entry["id"] == anchor["id"]:
+            continue
+        values = {v for v in _form_variants(entry.get("russian", "")) if v}
+        if ru_values.intersection(values):
+            result.append(entry)
+    return result
+
+
+def get_word_by_id(db_path, word_id):
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian, cefr_level
+            , ukrainian, english
+            FROM words
+            WHERE id = ?
+            LIMIT 1
+            """,
+            (_safe_text(word_id),),
+        ).fetchone()
+    if not row:
+        return None
+    return _row_to_entry(row)
+
+
+def find_word_by_value(db_path, token):
+    candidate = _normalize_text(token)
+    if not candidate:
+        return None
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian, cefr_level
+            , ukrainian, english
+            FROM words
+            WHERE id = ?
+               OR lower(trim(german)) = ?
+               OR lower(trim(infinitive)) = ?
+            LIMIT 1
+            """,
+            (_safe_text(token), candidate, candidate),
+        ).fetchone()
+    if not row:
+        return None
+    return _row_to_entry(row)
 
 
 def add_word_flag(db_path, word_id, user_id, comment):
