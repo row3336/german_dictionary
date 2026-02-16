@@ -9,11 +9,10 @@ from datetime import datetime, time, timezone
 from datetime import timedelta
 
 from dotenv import load_dotenv
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, Update
+from telegram import ReplyKeyboardMarkup, Update
 from telegram.error import RetryAfter
 from telegram.ext import (
     Application,
-    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     ConversationHandler,
@@ -27,7 +26,6 @@ from .app_config import (
     ADD_CONFIRM,
     ADD_EDIT,
     ADD_INPUT,
-    ADD_KEYS,
     AI_CLARIFY_AI,
     AI_BAN_WORD,
     AI_CLARIFY_FIELD,
@@ -36,43 +34,25 @@ from .app_config import (
     AI_REJECT,
     AI_SKIP,
     ALLOWED_AI_TYPES,
-    APPROVE_PREFIX,
     ARTICLE_SET,
     AUTO_DUMP_JOB_NAME,
     AUTO_DUMP_KEYS,
     AUTO_DUMP_MENU,
     AUTO_DUMP_SETTING_KEY,
     BACK_TEXT,
-    CEFR_LEVELS,
-    EDIT_FIELDS_KEYS,
-    EDIT_FIELDS_KEYS_FULL,
-    EDIT_LEVEL_KEYS,
-    FLAG_COMMENT,
     FLAG_TEXT,
-    LEVELS_BACK_TEXT,
-    LEVELS_MENU,
     MENU,
     NUMERAL_SET,
     NUMERIC_RE,
-    OWNER_MAIN_KEYS,
     QUIZ_ARTICLE,
     QUIZ_DE_RU,
     QUIZ_RU_DE,
-    REJECT_PREFIX,
-    REVIEW_FLAGS,
-    REVIEW_FLAGS_TEXT,
-    REVIEW_MARK_TEXT,
-    REVIEW_SKIP_TEXT,
-    SETTINGS_KEYS,
     SETTINGS_MENU,
     SELECT_DICT_LANG,
     SELECT_UI_LANG,
     START_TEXT,
     STOP_TEXT,
-    TESTS_KEYS,
     TESTS_MENU,
-    USER_MAIN_KEYS,
-    WAIT_KEYS,
     get_db_path,
     get_dump_dir,
     get_info_path,
@@ -90,21 +70,11 @@ from .storage import (
     add_banned_word,
     count_words,
     delete_word,
-    ensure_default_languages_for_existing_users,
     find_existing_word,
     get_setting,
-    get_user_languages,
-    get_user_levels,
-    get_user_status,
     init_db,
-    register_or_update_user,
     select_due,
     set_setting,
-    set_user_status,
-    set_user_dict_lang,
-    set_user_interface_lang,
-    set_word_flag_status,
-    toggle_user_level,
     update_progress,
     update_word_fields,
     list_pending_word_flags,
@@ -135,31 +105,26 @@ from .text_utils import (
 
 
 DAILY_STATS_JOB_NAME = "daily_stats_report"
+OWNER_INTERFACE_LANG_KEY = "owner_interface_lang"
+OWNER_DICT_LANG_KEY = "owner_dict_lang"
 
 
 def _main_menu_keys(user_id):
     lang = _user_interface_lang(user_id)
-    if is_owner(user_id):
-        return [[t(lang, "add_word"), t(lang, "tests")], [t(lang, "settings"), t(lang, "stat")]]
-    return [[t(lang, "add_word"), t(lang, "tests")], [t(lang, "settings"), t(lang, "stat")], [t(lang, "info")]]
+    return [[t(lang, "add_word"), t(lang, "tests")], [t(lang, "settings"), t(lang, "stat")]]
 
 
 def _main_menu_markup(user_id):
     return ReplyKeyboardMarkup(_main_menu_keys(user_id), resize_keyboard=True)
 
 
-def _wait_markup(user_id):
-    lang = _user_interface_lang(user_id)
-    return ReplyKeyboardMarkup([[t(lang, "start")]], resize_keyboard=True)
-
-
 def _user_interface_lang(user_id):
-    lang, _ = get_user_languages(get_db_path(), user_id)
+    lang = get_setting(get_db_path(), OWNER_INTERFACE_LANG_KEY, "en")
     return normalize_interface_lang(lang, default="en")
 
 
 def _user_dict_lang(user_id):
-    _, dict_lang = get_user_languages(get_db_path(), user_id)
+    dict_lang = get_setting(get_db_path(), OWNER_DICT_LANG_KEY, "ru")
     return normalize_dict_lang(dict_lang, default="ru")
 
 
@@ -197,18 +162,11 @@ def _tests_menu_keys(user_id):
 
 def _settings_menu_keys(user_id):
     lang = _user_interface_lang(user_id)
-    if is_owner(user_id):
-        return [
-            [t(lang, "suggested_words"), t(lang, "review_flags")],
-            [t(lang, "levels"), t(lang, "auto_dump")],
-            [t(lang, "dump_logs"), t(lang, "dump_db")],
-            [t(lang, "interface_lang_btn"), t(lang, "dict_lang_btn")],
-            [t(lang, "back")],
-        ]
     return [
-        [t(lang, "levels")],
+        [t(lang, "suggested_words"), t(lang, "review_flags")],
+        [t(lang, "dump_logs"), t(lang, "dump_db")],
         [t(lang, "interface_lang_btn"), t(lang, "dict_lang_btn")],
-        [t(lang, "info"), t(lang, "back")],
+        [t(lang, "auto_dump"), t(lang, "back")],
     ]
 
 
@@ -229,7 +187,6 @@ def _action_key_from_text(text, user_id):
         ("suggested_words", "suggested_words"),
         ("review_flags", "review_flags"),
         ("auto_dump", "auto_dump"),
-        ("levels", "levels"),
         ("daily", "daily"),
         ("weekly", "weekly"),
         ("off", "off"),
@@ -270,25 +227,7 @@ def _clarify_keys(user_id):
 
 
 def _add_input_markup(user_id):
-    return ReplyKeyboardMarkup(
-        [
-            ["Level: Auto", "Level: A1", "Level: A2"],
-            ["Level: B1", "Level: B2", "Level: C1"],
-            ["Level: C2", t(_user_interface_lang(user_id), "back")],
-        ],
-        resize_keyboard=True,
-    )
-
-
-def _parse_add_level_mode(text):
-    token = str(text or "").strip()
-    if token == "Level: Auto":
-        return ""
-    if token.startswith("Level: "):
-        level = token.replace("Level: ", "", 1).strip().upper()
-        if level in CEFR_LEVELS:
-            return level
-    return None
+    return ReplyKeyboardMarkup([[t(_user_interface_lang(user_id), "back")]], resize_keyboard=True)
 
 
 def _split_text_chunks(text, max_size=3500):
@@ -337,45 +276,24 @@ def _quiz_markup(user_id, article=False):
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 
-def _levels_markup(user_id):
-    lang = _user_interface_lang(user_id)
-    enabled = set(get_user_levels(get_db_path(), user_id))
-    rows = []
-    row = []
-    for idx, level in enumerate(CEFR_LEVELS, start=1):
-        mark = "ON" if level in enabled else "OFF"
-        row.append(f"{level} {mark}")
-        if idx % 2 == 0:
-            rows.append(row)
-            row = []
-    if row:
-        rows.append(row)
-    rows.append([t(lang, "back")])
-    return ReplyKeyboardMarkup(rows, resize_keyboard=True)
-
-
 def _parse_level_toggle(text):
     token = (text or "").strip().split(" ", 1)[0].upper()
-    return token if token in CEFR_LEVELS else ""
+    return token if token in {"A1", "A2", "B1", "B2", "C1", "C2"} else ""
 
 
 def _edit_fields_markup(source):
-    if source == "review":
-        return ReplyKeyboardMarkup(EDIT_FIELDS_KEYS_FULL + [["delete"]], resize_keyboard=True)
     if source == "add":
-        return ReplyKeyboardMarkup([["russian", "ukrainian", "english"], ["level", BACK_TEXT]], resize_keyboard=True)
+        return ReplyKeyboardMarkup([["russian", "ukrainian", "english"], [BACK_TEXT]], resize_keyboard=True)
     if source == "quiz":
-        return ReplyKeyboardMarkup([["russian", "level"], ["delete", BACK_TEXT]], resize_keyboard=True)
-    return ReplyKeyboardMarkup(EDIT_FIELDS_KEYS, resize_keyboard=True)
+        return ReplyKeyboardMarkup([["russian", "ukrainian", "english"], ["article", "plural"], ["prateritum", "partizip2"], ["german", "infinitive"], ["type", "delete"], [BACK_TEXT]], resize_keyboard=True)
+    return ReplyKeyboardMarkup([["russian", BACK_TEXT]], resize_keyboard=True)
 
 
 def _allowed_edit_fields(source):
-    if source == "review":
-        return {"russian", "ukrainian", "english", "level", "article", "plural", "prateritum", "partizip2", "german", "infinitive", "type", "delete"}
     if source == "add":
-        return {"russian", "ukrainian", "english", "level"}
+        return {"russian", "ukrainian", "english"}
     if source == "quiz":
-        return {"russian", "level", "delete"}
+        return {"russian", "ukrainian", "english", "article", "plural", "prateritum", "partizip2", "german", "infinitive", "type", "delete"}
     return {"russian", "level"}
 
 
@@ -497,24 +415,6 @@ async def _show_quiz_prompt_after_edit(update: Update, context: ContextTypes.DEF
     return await _back_to_tests(update)
 
 
-def _review_markup():
-    return ReplyKeyboardMarkup(
-        [[AI_CLARIFY_FIELD, REVIEW_MARK_TEXT], [REVIEW_SKIP_TEXT, t(_user_interface_lang(get_owner_id() or 0), "stop") if get_owner_id() else STOP_TEXT]],
-        resize_keyboard=True,
-    )
-
-
-def _format_review_card(entry):
-    lines = [
-        _format_word_card(entry, "Review flagged word:"),
-        "",
-        f"flag from user: {entry.get('flag_user_id', '')}",
-        f"comment: {entry.get('flag_comment', '') or '-'}",
-        f"created: {entry.get('flag_created_at', '') or '-'}",
-    ]
-    return "\n".join(lines)
-
-
 def _format_word_card(entry, title="Word card:"):
     lines = [
         title,
@@ -532,36 +432,6 @@ def _format_word_card(entry, title="Word card:"):
         f"english: {entry.get('english', '') or '-'}",
     ]
     return "\n".join(lines)
-
-
-async def _show_current_review_card(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text=None):
-    item = context.user_data.get("review_current")
-    if not item:
-        return await _send_next_review_flag(update, context)
-    text = _format_review_card(item)
-    if prefix_text:
-        text = f"{prefix_text}\n\n{text}"
-    await update.message.reply_text(text, reply_markup=_review_markup())
-    return REVIEW_FLAGS
-
-
-async def _send_next_review_flag(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    queue = context.user_data.get("review_queue") or []
-    while queue:
-        item = queue.pop(0)
-        context.user_data["review_queue"] = queue
-        context.user_data["review_current"] = item
-        context.user_data["quiz_entry"] = item
-        await update.message.reply_text(_format_review_card(item), reply_markup=_review_markup())
-        return REVIEW_FLAGS
-
-    context.user_data.pop("review_current", None)
-    context.user_data.pop("review_queue", None)
-    await update.message.reply_text(
-        "✅ No more flagged words.",
-        reply_markup=ReplyKeyboardMarkup(_settings_menu_keys(update.effective_user.id), resize_keyboard=True),
-    )
-    return SETTINGS_MENU
 
 
 async def _reply_text_with_retry(message, text, max_retries=2, **kwargs):
@@ -612,41 +482,8 @@ def _prefilter_reject_reason(word):
     return None
 
 
-def _is_user_approved(user_id):
-    if is_owner(user_id):
-        return True
-    return get_user_status(get_db_path(), user_id) == "approved"
-
-
-async def _request_owner_approval(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id):
-    owner_id = get_owner_id()
-    if owner_id == 0:
-        return
-    user = update.effective_user
-    text = (
-        "New access request:\n"
-        f"user_id: {user_id}\n"
-        f"username: @{user.username if user and user.username else '-'}\n"
-        f"name: {user.first_name if user and user.first_name else '-'}"
-    )
-    keyboard = InlineKeyboardMarkup(
-        [[
-            InlineKeyboardButton("Approve", callback_data=f"{APPROVE_PREFIX}{user_id}"),
-            InlineKeyboardButton("Reject", callback_data=f"{REJECT_PREFIX}{user_id}"),
-        ]]
-    )
-    try:
-        await context.bot.send_message(chat_id=owner_id, text=text, reply_markup=keyboard)
-    except Exception:
-        pass
-
-
-async def _show_waiting(update: Update):
-    user_id = update.effective_user.id
-    await update.message.reply_text(
-        "Access pending owner approval. Tap Start later.",
-        reply_markup=_wait_markup(user_id),
-    )
+def _is_owner_only(user_id):
+    return is_owner(user_id)
 
 
 async def _ask_interface_language(update: Update):
@@ -670,36 +507,14 @@ async def _ask_dictionary_language(update: Update, user_id):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id
-
-    register_or_update_user(
-        get_db_path(),
-        user_id,
-        username=user.username or "",
-        first_name=user.first_name or "",
-    )
-
-    if is_owner(user_id):
-        set_user_status(get_db_path(), user_id, "approved")
-        ui_lang, dict_lang = get_user_languages(get_db_path(), user_id)
-        if not ui_lang or not dict_lang:
-            return await _ask_interface_language(update)
-        await update.message.reply_text(t(_user_interface_lang(user_id), "main_menu"), reply_markup=_main_menu_markup(user_id))
-        return MENU
-
-    status = get_user_status(get_db_path(), user_id)
-    if status == "approved":
-        ui_lang, dict_lang = get_user_languages(get_db_path(), user_id)
-        if not ui_lang or not dict_lang:
-            return await _ask_interface_language(update)
-        await update.message.reply_text(t(_user_interface_lang(user_id), "main_menu"), reply_markup=_main_menu_markup(user_id))
-        return MENU
-
-    if status == "rejected":
-        await update.message.reply_text("Access was rejected by owner.", reply_markup=_wait_markup(user_id))
-        return MENU
-
-    await _request_owner_approval(update, context, user_id)
-    await _show_waiting(update)
+    if not _is_owner_only(user_id):
+        await update.message.reply_text("❌ Owner-only bot.")
+        return ConversationHandler.END
+    ui_lang = get_setting(get_db_path(), OWNER_INTERFACE_LANG_KEY, "")
+    dict_lang = get_setting(get_db_path(), OWNER_DICT_LANG_KEY, "")
+    if not ui_lang or not dict_lang:
+        return await _ask_interface_language(update)
+    await update.message.reply_text(t(_user_interface_lang(user_id), "main_menu"), reply_markup=_main_menu_markup(user_id))
     return MENU
 
 
@@ -711,15 +526,13 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if action == "start":
         return await start(update, context)
 
-    if not _is_user_approved(user_id):
-        await _show_waiting(update)
-        return MENU
+    if not _is_owner_only(user_id):
+        await update.message.reply_text("❌ Owner-only bot.")
+        return ConversationHandler.END
 
     if action == "add_word":
-        level_mode = context.user_data.get("add_level_override", "")
-        level_label = level_mode if level_mode else "Auto"
         await update.message.reply_text(
-            f"Send a word or a list (one per line), or upload a .txt file.\nCurrent level mode: {level_label}",
+            "Send a word or a list (one per line), or upload a .txt file.",
             reply_markup=_add_input_markup(user_id),
         )
         return ADD_INPUT
@@ -759,9 +572,9 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def select_ui_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    if not _is_user_approved(user_id):
-        await _show_waiting(update)
-        return MENU
+    if not _is_owner_only(user_id):
+        await update.message.reply_text("❌ Owner-only bot.")
+        return ConversationHandler.END
 
     interface_lang = parse_interface_choice(update.message.text.strip())
     if not interface_lang:
@@ -771,22 +584,22 @@ async def select_ui_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return SELECT_UI_LANG
 
-    set_user_interface_lang(get_db_path(), user_id, interface_lang)
+    set_setting(get_db_path(), OWNER_INTERFACE_LANG_KEY, interface_lang)
     return await _ask_dictionary_language(update, user_id)
 
 
 async def select_dict_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    if not _is_user_approved(user_id):
-        await _show_waiting(update)
-        return MENU
+    if not _is_owner_only(user_id):
+        await update.message.reply_text("❌ Owner-only bot.")
+        return ConversationHandler.END
 
     lang = _user_interface_lang(user_id)
     dict_lang = parse_dict_choice(update.message.text.strip(), lang)
     if not dict_lang:
         return await _ask_dictionary_language(update, user_id)
 
-    set_user_dict_lang(get_db_path(), user_id, dict_lang)
+    set_setting(get_db_path(), OWNER_DICT_LANG_KEY, dict_lang)
     await update.message.reply_text(
         t(lang, "main_menu"),
         reply_markup=_main_menu_markup(user_id),
@@ -827,20 +640,6 @@ async def settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
 
     if action == "dict_lang":
         return await _ask_dictionary_language(update, user_id)
-
-    if action == "info":
-        chunks = _split_text_chunks(_load_info_text(_user_interface_lang(user_id)))
-        for idx, chunk in enumerate(chunks):
-            markup = ReplyKeyboardMarkup(_settings_menu_keys(user_id), resize_keyboard=True) if idx == len(chunks) - 1 else None
-            await update.message.reply_text(chunk, reply_markup=markup)
-        return SETTINGS_MENU
-
-    if not is_owner(user_id):
-        await update.message.reply_text(
-            t(_user_interface_lang(user_id), "settings_title"),
-            reply_markup=ReplyKeyboardMarkup(_settings_menu_keys(user_id), resize_keyboard=True),
-        )
-        return SETTINGS_MENU
 
     if action == "dump_db":
         dump_path = _create_dump_file()
@@ -883,9 +682,19 @@ async def settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
                 reply_markup=ReplyKeyboardMarkup(_settings_menu_keys(user_id), resize_keyboard=True),
             )
             return SETTINGS_MENU
-        context.user_data["review_queue"] = items
-        context.user_data["review_current"] = None
-        return await _send_next_review_flag(update, context)
+        lines = []
+        for row in items:
+            word_type = row.get("type", "")
+            base = row.get("infinitive", "") if word_type == "verb" else row.get("german", "")
+            article = (row.get("article", "") or "").strip()
+            left = f"{article} {base}".strip()
+            right = _entry_translation(row, _user_dict_lang(user_id))
+            lines.append(f"{left} >> {right}")
+        chunks = _split_text_chunks("\n".join(lines))
+        for idx, chunk in enumerate(chunks):
+            markup = ReplyKeyboardMarkup(_settings_menu_keys(user_id), resize_keyboard=True) if idx == len(chunks) - 1 else None
+            await update.message.reply_text(chunk, reply_markup=markup)
+        return SETTINGS_MENU
 
     if action == "auto_dump":
         mode = get_setting(get_db_path(), AUTO_DUMP_SETTING_KEY, "off")
@@ -895,55 +704,11 @@ async def settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         return AUTO_DUMP_MENU
 
-    if action == "levels":
-        enabled = ", ".join(get_user_levels(get_db_path(), user_id))
-        await update.message.reply_text(
-            f"Enabled levels: {enabled}",
-            reply_markup=_levels_markup(user_id),
-        )
-        return LEVELS_MENU
-
     await update.message.reply_text(
         "Use settings buttons.",
         reply_markup=ReplyKeyboardMarkup(_settings_menu_keys(user_id), resize_keyboard=True),
     )
     return SETTINGS_MENU
-
-
-async def levels_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    user_id = update.effective_user.id
-    if not is_owner(user_id):
-        return await _back_to_main_menu(update)
-
-    if _action_key_from_text(text, user_id) == "back":
-        await update.message.reply_text(
-            t(_user_interface_lang(user_id), "settings_title"),
-            reply_markup=ReplyKeyboardMarkup(_settings_menu_keys(user_id), resize_keyboard=True),
-        )
-        return SETTINGS_MENU
-
-    level = _parse_level_toggle(text)
-    if not level:
-        await update.message.reply_text(
-            "Use level buttons.",
-            reply_markup=_levels_markup(user_id),
-        )
-        return LEVELS_MENU
-
-    changed, levels = toggle_user_level(get_db_path(), user_id, level)
-    if not changed:
-        await update.message.reply_text(
-            "At least one level must stay enabled.",
-            reply_markup=_levels_markup(user_id),
-        )
-        return LEVELS_MENU
-
-    await update.message.reply_text(
-        f"Enabled levels: {', '.join(levels)}",
-        reply_markup=_levels_markup(user_id),
-    )
-    return LEVELS_MENU
 
 
 async def auto_dump_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -981,26 +746,8 @@ async def auto_dump_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def add_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     raw = update.message.text.strip()
     user_id = update.effective_user.id
-    level_mode = _parse_add_level_mode(raw)
-    if level_mode is not None:
-        if level_mode:
-            context.user_data["add_level_override"] = level_mode
-            await update.message.reply_text(f"✅ Level mode set: {level_mode}", reply_markup=_add_input_markup(user_id))
-        else:
-            context.user_data.pop("add_level_override", None)
-            await update.message.reply_text("✅ Level mode set: Auto", reply_markup=_add_input_markup(user_id))
-        return ADD_INPUT
     if _action_key_from_text(raw, user_id) == "back":
-        context.user_data.pop("add_level_override", None)
         return await _back_to_main_menu(update)
-
-    if not is_owner(user_id):
-        _append_suggested_words(update.effective_user, [line.strip() for line in raw.splitlines() if line.strip()])
-        await update.message.reply_text(
-            "✅ Successfully sent to the bot Owner",
-            reply_markup=_main_menu_markup(user_id),
-        )
-        return MENU
 
     if raw.startswith("{"):
         entry = _try_parse_json(raw)
@@ -1052,19 +799,6 @@ async def add_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not doc or not doc.file_name.lower().endswith(".txt"):
         await update.message.reply_text("Please upload a .txt file.")
         return ADD_INPUT
-
-    user_id = update.effective_user.id
-    if not is_owner(user_id):
-        file = await doc.get_file()
-        data = await file.download_as_bytearray()
-        text = data.decode("utf-8", errors="ignore")
-        lines = [line.strip() for line in text.splitlines() if line.strip()]
-        _append_suggested_words(update.effective_user, lines)
-        await update.message.reply_text(
-            "✅ Successfully sent to the bot Owner",
-            reply_markup=_main_menu_markup(user_id),
-        )
-        return MENU
 
     file = await doc.get_file()
     data = await file.download_as_bytearray()
@@ -1184,8 +918,6 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     source = context.user_data.get("edit_source", "add")
     if source == "add":
         entry_key = "pending_entry"
-    elif source == "quiz":
-        entry_key = "quiz_edit_entry"
     else:
         entry_key = "quiz_entry"
     entry = context.user_data.get(entry_key)
@@ -1198,16 +930,7 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if stage == "pick_field":
             if source == "quiz":
                 return await _show_quiz_prompt_after_edit(update, context, "✅ Edit canceled.")
-            if source == "review":
-                return await _show_current_review_card(update, context, "✅ Edit canceled.")
             return await _show_ai_preview(update, entry)
-        if stage == "pick_level":
-            context.user_data["edit_stage"] = "pick_field"
-            await update.message.reply_text(
-                "Choose field to edit:",
-                reply_markup=_edit_fields_markup(source),
-            )
-            return ADD_EDIT
         context.user_data["edit_stage"] = "pick_field"
         await update.message.reply_text(
             "Choose field to edit:",
@@ -1249,31 +972,7 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if state == QUIZ_ARTICLE:
                 return await _send_article_prompt(update, context, prefix)
             return await _back_to_tests(update)
-        if source == "review" and field == "delete":
-            word_id = entry.get("id")
-            if not word_id:
-                await update.message.reply_text(
-                    "❌ Cannot delete: missing word id.",
-                    reply_markup=_edit_fields_markup(source),
-                )
-                return ADD_EDIT
-            removed = delete_word(get_db_path(), word_id)
-            current = context.user_data.get("review_current")
-            if current and current.get("id") == word_id:
-                context.user_data.pop("review_current", None)
-            context.user_data["edit_stage"] = "pick_field"
-            context.user_data.pop("edit_field", None)
-            prefix = "✅ Deleted." if removed else "❌ Word not found."
-            await update.message.reply_text(prefix)
-            return await _send_next_review_flag(update, context)
         context.user_data["edit_field"] = field
-        if field == "level":
-            context.user_data["edit_stage"] = "pick_level"
-            await update.message.reply_text(
-                "Choose CEFR level:",
-                reply_markup=ReplyKeyboardMarkup(EDIT_LEVEL_KEYS, resize_keyboard=True),
-            )
-            return ADD_EDIT
 
         context.user_data["edit_stage"] = "enter_value"
         await update.message.reply_text(
@@ -1281,35 +980,6 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=ReplyKeyboardMarkup([[t(_user_interface_lang(update.effective_user.id), "back"), t(_user_interface_lang(update.effective_user.id), "stop")]], resize_keyboard=True),
         )
         return ADD_EDIT
-
-    if stage == "pick_level":
-        level = _parse_level_toggle(text)
-        if not level:
-            await update.message.reply_text(
-                "Use level buttons.",
-                reply_markup=ReplyKeyboardMarkup(EDIT_LEVEL_KEYS, resize_keyboard=True),
-            )
-            return ADD_EDIT
-        updated, error = _set_entry_field_value(entry, "cefr_level", level)
-        if error:
-            await update.message.reply_text(
-                error,
-                reply_markup=ReplyKeyboardMarkup(EDIT_LEVEL_KEYS, resize_keyboard=True),
-            )
-            return ADD_EDIT
-        context.user_data[entry_key] = updated
-        context.user_data["edit_stage"] = "pick_field"
-        context.user_data.pop("edit_field", None)
-        if source == "quiz":
-            update_word_fields(get_db_path(), updated.get("id"), updated)
-            current_quiz_entry = context.user_data.get("quiz_entry")
-            if current_quiz_entry and current_quiz_entry.get("id") == updated.get("id"):
-                context.user_data["quiz_entry"] = updated
-            last_answered = context.user_data.get("quiz_last_answered_entry")
-            if last_answered and last_answered.get("id") == updated.get("id"):
-                context.user_data["quiz_last_answered_entry"] = updated
-            return await _show_quiz_prompt_after_edit(update, context, "✅ Updated.")
-        return await _show_ai_preview(update, updated)
 
     field = context.user_data.get("edit_field", "")
     if not field:
@@ -1340,49 +1010,17 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if last_answered and last_answered.get("id") == updated.get("id"):
             context.user_data["quiz_last_answered_entry"] = updated
         return await _show_quiz_prompt_after_edit(update, context, "✅ Updated.")
-    if source == "review":
-        update_word_fields(get_db_path(), updated.get("id"), updated)
-        return await _show_current_review_card(update, context, "✅ Updated.")
     return await _show_ai_preview(update, updated)
 
 
-async def _start_flag_comment(update: Update, context: ContextTypes.DEFAULT_TYPE, return_state):
-    entry, title = _get_quiz_action_entry(context)
+async def _flag_current_word(update: Update, context: ContextTypes.DEFAULT_TYPE, return_state):
+    entry, _ = _get_quiz_action_entry(context)
     if not entry:
         return await _back_to_tests(update)
-    context.user_data["flag_word_id"] = entry.get("id")
-    context.user_data["flag_return_state"] = return_state
-    await update.message.reply_text(_format_word_card(entry, title))
-    await update.message.reply_text(
-        "Send comment for this word flag:",
-        reply_markup=ReplyKeyboardMarkup([[t(_user_interface_lang(update.effective_user.id), "back")]], resize_keyboard=True),
-    )
-    return FLAG_COMMENT
-
-
-async def flag_comment(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    if _action_key_from_text(text, update.effective_user.id) == "back":
-        return_state = context.user_data.get("flag_return_state")
-        context.user_data.pop("flag_word_id", None)
-        context.user_data.pop("flag_return_state", None)
-        if return_state == QUIZ_RU_DE:
-            return await _show_quiz_prompt_after_edit(update, context, "✅ Flag canceled.", state_override=QUIZ_RU_DE)
-        if return_state == QUIZ_DE_RU:
-            return await _show_quiz_prompt_after_edit(update, context, "✅ Flag canceled.", state_override=QUIZ_DE_RU)
-        if return_state == QUIZ_ARTICLE:
-            return await _show_quiz_prompt_after_edit(update, context, "✅ Flag canceled.", state_override=QUIZ_ARTICLE)
+    word_id = entry.get("id")
+    if not word_id:
         return await _back_to_tests(update)
-
-    word_id = context.user_data.get("flag_word_id")
-    return_state = context.user_data.get("flag_return_state")
-    if not word_id or not return_state:
-        return await _back_to_tests(update)
-
-    add_word_flag(get_db_path(), word_id=word_id, user_id=update.effective_user.id, comment=text)
-    context.user_data.pop("flag_word_id", None)
-    context.user_data.pop("flag_return_state", None)
-
+    add_word_flag(get_db_path(), word_id=word_id, user_id=update.effective_user.id, comment="")
     if return_state == QUIZ_RU_DE:
         return await _show_quiz_prompt_after_edit(update, context, "✅ Flag saved.", state_override=QUIZ_RU_DE)
     if return_state == QUIZ_DE_RU:
@@ -1392,46 +1030,12 @@ async def flag_comment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return await _back_to_tests(update)
 
 
-async def review_flags(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    if _action_key_from_text(text, update.effective_user.id) == "stop":
-        context.user_data.pop("review_queue", None)
-        context.user_data.pop("review_current", None)
-        return await _back_to_main_menu(update)
-
-    current = context.user_data.get("review_current")
-    if not current:
-        return await _send_next_review_flag(update, context)
-
-    if text == REVIEW_MARK_TEXT:
-        set_word_flag_status(get_db_path(), current.get("flag_id"), "reviewed")
-        return await _send_next_review_flag(update, context)
-
-    if text == REVIEW_SKIP_TEXT:
-        return await _send_next_review_flag(update, context)
-
-    if text == AI_CLARIFY_FIELD:
-        context.user_data["edit_source"] = "review"
-        context.user_data["edit_stage"] = "pick_field"
-        await update.message.reply_text(
-            "Choose field to edit:",
-            reply_markup=_edit_fields_markup("review"),
-        )
-        return ADD_EDIT
-
-    await update.message.reply_text(
-        "Use review buttons.",
-        reply_markup=_review_markup(),
-    )
-    return REVIEW_FLAGS
-
-
 async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "stop":
         return await _back_to_tests(update)
     if text == FLAG_TEXT:
-        return await _start_flag_comment(update, context, QUIZ_RU_DE)
+        return await _flag_current_word(update, context, QUIZ_RU_DE)
     if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
         return await _start_quiz_edit(update, context, QUIZ_RU_DE)
 
@@ -1453,7 +1057,7 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if _action_key_from_text(text, update.effective_user.id) == "stop":
         return await _back_to_tests(update)
     if text == FLAG_TEXT:
-        return await _start_flag_comment(update, context, QUIZ_DE_RU)
+        return await _flag_current_word(update, context, QUIZ_DE_RU)
     if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
         return await _start_quiz_edit(update, context, QUIZ_DE_RU)
 
@@ -1476,7 +1080,7 @@ async def quiz_article(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if _action_key_from_text(text, update.effective_user.id) == "stop":
         return await _back_to_tests(update)
     if text == FLAG_TEXT:
-        return await _start_flag_comment(update, context, QUIZ_ARTICLE)
+        return await _flag_current_word(update, context, QUIZ_ARTICLE)
     if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
         return await _start_quiz_edit(update, context, QUIZ_ARTICLE)
 
@@ -1491,35 +1095,6 @@ async def quiz_article(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     feedback = _format_feedback_article(entry, ok, _user_dict_lang(update.effective_user.id))
     return await _send_article_prompt(update, context, feedback)
-
-
-async def approve_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    if not is_owner(query.from_user.id):
-        await query.edit_message_text("Owner only action.")
-        return
-
-    data = query.data or ""
-    if data.startswith(APPROVE_PREFIX):
-        target_id = int(data.replace(APPROVE_PREFIX, "", 1))
-        set_user_status(get_db_path(), target_id, "approved")
-        await query.edit_message_text(f"Approved user {target_id}")
-        try:
-            await context.bot.send_message(target_id, "✅ Access approved. Tap Start.")
-        except Exception:
-            pass
-        return
-
-    if data.startswith(REJECT_PREFIX):
-        target_id = int(data.replace(REJECT_PREFIX, "", 1))
-        set_user_status(get_db_path(), target_id, "rejected")
-        await query.edit_message_text(f"Rejected user {target_id}")
-        try:
-            await context.bot.send_message(target_id, "❌ Access rejected.")
-        except Exception:
-            pass
 
 
 async def _save_entry(update: Update, entry):
@@ -1565,7 +1140,9 @@ def _low_word(word):
 
 def _format_ru_question(entry, dict_lang):
     value = _normalize_russian_singular(_entry_translation(entry, dict_lang))
-    return f">>    {_md_escape(value)} ?"
+    word_type = _low_word(entry.get("type", ""))
+    type_hint = f" ({word_type})" if word_type else ""
+    return f">>    {_md_escape(value)}{_md_escape(type_hint)} ?"
 
 
 def _format_de_ru_question(entry):
@@ -1642,8 +1219,7 @@ def _format_feedback_article(entry, ok, dict_lang):
 
 
 def _pick_due_entry(context, user_id, mode, word_type=None):
-    levels = get_user_levels(get_db_path(), user_id)
-    due = select_due(get_db_path(), user_id=user_id, mode=mode, word_type=word_type, levels=levels)
+    due = select_due(get_db_path(), user_id=user_id, mode=mode, word_type=word_type)
     if not due:
         return None
 
@@ -1914,10 +1490,6 @@ async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, w
         return ADD_CLARIFY
 
     entry = _normalize_ai_entry(entry)
-    level_override = str(context.user_data.get("add_level_override", "") or "").strip().upper()
-    if level_override in CEFR_LEVELS:
-        entry["cefr_level"] = level_override
-
     if _is_non_infinitive_verb_input(word, entry):
         inf = entry.get("infinitive", "")
         existing_inf = find_existing_word(get_db_path(), inf) if inf else None
@@ -2256,11 +1828,10 @@ def _configure_auto_dump(app: Application, mode: str):
 def _prepare_storage():
     db_path = get_db_path()
     init_db(db_path)
-    ensure_default_languages_for_existing_users(db_path, interface_lang="en", dict_lang="ru")
-
-    owner_id = get_owner_id()
-    if owner_id:
-        set_user_status(db_path, owner_id, "approved")
+    if not get_setting(db_path, OWNER_INTERFACE_LANG_KEY):
+        set_setting(db_path, OWNER_INTERFACE_LANG_KEY, "en")
+    if not get_setting(db_path, OWNER_DICT_LANG_KEY):
+        set_setting(db_path, OWNER_DICT_LANG_KEY, "ru")
 
 
 def main():
@@ -2290,7 +1861,6 @@ def main():
             TESTS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, tests_menu_choice)],
             SETTINGS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, settings_menu_choice)],
             AUTO_DUMP_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, auto_dump_choice)],
-            LEVELS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, levels_choice)],
             ADD_INPUT: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, add_input),
                 MessageHandler(filters.Document.ALL, add_document),
@@ -2298,8 +1868,6 @@ def main():
             ADD_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_confirm)],
             ADD_CLARIFY: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_clarify)],
             ADD_EDIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_edit)],
-            FLAG_COMMENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, flag_comment)],
-            REVIEW_FLAGS: [MessageHandler(filters.TEXT & ~filters.COMMAND, review_flags)],
             QUIZ_RU_DE: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_ru_de)],
             QUIZ_DE_RU: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_de_ru)],
             QUIZ_ARTICLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_article)],
@@ -2308,7 +1876,6 @@ def main():
     )
 
     app.add_handler(conv)
-    app.add_handler(CallbackQueryHandler(approve_callback, pattern=f"^({APPROVE_PREFIX}|{REJECT_PREFIX}).+"))
     app.add_handler(CommandHandler("stats_today", stats_today_command))
     app.add_handler(CommandHandler("leaderboard_today", leaderboard_today_command))
     app.run_polling()
