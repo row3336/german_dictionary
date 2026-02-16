@@ -9,7 +9,7 @@ from datetime import datetime, time, timezone
 from datetime import timedelta
 
 from dotenv import load_dotenv
-from telegram import ReplyKeyboardMarkup, Update
+from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
 from telegram.error import RetryAfter
 from telegram.ext import (
     Application,
@@ -198,7 +198,7 @@ def _tests_menu_keys(user_id):
 def _settings_menu_keys(user_id):
     lang = _user_interface_lang(user_id)
     return [
-        [t(lang, "suggested_words"), t(lang, "review_flags")],
+        [t(lang, "suggested_words"), "flags!"],
         [t(lang, "dump_logs"), t(lang, "dump_db")],
         [t(lang, "interface_lang_btn"), t(lang, "dict_lang_btn")],
         [t(lang, "auto_dump"), t(lang, "back")],
@@ -238,6 +238,7 @@ def _action_key_from_text(text, user_id):
     mapping[quiz_de_l1] = "quiz_de_l1"
     mapping[t("en", "quiz_l1_de").replace("L1", _dict_label(user_id))] = "quiz_l1_de"
     mapping[t("en", "quiz_de_l1").replace("L1", _dict_label(user_id))] = "quiz_de_l1"
+    mapping["flags!"] = "review_flags"
     return mapping.get(text.strip(), "")
 
 
@@ -1172,13 +1173,13 @@ async def synonyms_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not anchor_entry:
         return await _back_to_tests(update)
     if text == SYN_ADD_TEXT:
-        await update.message.reply_text("Send German word or id to add:", reply_markup=ReplyKeyboardMarkup([[BACK_TEXT]], resize_keyboard=True))
+        await update.message.reply_text("Send German word or id to add:", reply_markup=ReplyKeyboardRemove())
         return SYN_ADD_INPUT
     if text == SYN_REMOVE_TEXT:
         group = get_synonym_group(get_db_path(), anchor_id)
         await update.message.reply_text(
             _format_syn_group(anchor_entry, group, _user_dict_lang(update.effective_user.id)) + "\n\nSend number, word, or id to remove.",
-            reply_markup=ReplyKeyboardMarkup([[BACK_TEXT]], resize_keyboard=True),
+            reply_markup=ReplyKeyboardRemove(),
         )
         return SYN_REMOVE_INPUT
     if text == SYN_AUTO_TEXT:
@@ -1215,10 +1216,10 @@ async def synonyms_add_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
     anchor_entry = get_word_by_id(get_db_path(), anchor_id)
     target = find_word_by_value(get_db_path(), text)
     if not anchor_entry or not target:
-        await update.message.reply_text("Target not found. Send German word or id.", reply_markup=ReplyKeyboardMarkup([[BACK_TEXT]], resize_keyboard=True))
+        await update.message.reply_text("Target not found. Send German word or id.")
         return SYN_ADD_INPUT
     if (anchor_entry.get("type", "") or "").lower() != (target.get("type", "") or "").lower():
-        await update.message.reply_text("Type mismatch. Only same type is allowed.", reply_markup=ReplyKeyboardMarkup([[BACK_TEXT]], resize_keyboard=True))
+        await update.message.reply_text("Type mismatch. Only same type is allowed.")
         return SYN_ADD_INPUT
     changed, _ = add_synonym_link(get_db_path(), anchor_id, target.get("id"))
     msg = "✅ Linked." if changed else "✅ Already linked."
@@ -1244,10 +1245,10 @@ async def synonyms_remove_input(update: Update, context: ContextTypes.DEFAULT_TY
     if target is None:
         target = find_word_by_value(get_db_path(), text)
     if not target:
-        await update.message.reply_text("Target not found in group.", reply_markup=ReplyKeyboardMarkup([[BACK_TEXT]], resize_keyboard=True))
+        await update.message.reply_text("Target not found in group.")
         return SYN_REMOVE_INPUT
     if target.get("id") == anchor_id:
-        await update.message.reply_text("Cannot remove anchor word from itself. Use Clear group.", reply_markup=ReplyKeyboardMarkup([[BACK_TEXT]], resize_keyboard=True))
+        await update.message.reply_text("Cannot remove anchor word from itself. Use Clear group.")
         return SYN_REMOVE_INPUT
     removed = remove_synonym_link(get_db_path(), target.get("id"))
     msg = "✅ Removed." if removed else "❌ Not linked."
