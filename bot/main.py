@@ -321,7 +321,15 @@ def _parse_level_toggle(text):
 
 def _edit_fields_markup(source):
     if source == "add":
-        return ReplyKeyboardMarkup([["russian", "ukrainian", "english"], [BACK_TEXT]], resize_keyboard=True)
+        return ReplyKeyboardMarkup(
+            [
+                ["ru", "ukr", "de"],
+                ["article", "plural", "type"],
+                ["prateritum", "partizip2", "infinitive"],
+                [BACK_TEXT],
+            ],
+            resize_keyboard=True,
+        )
     if source == "quiz":
         return ReplyKeyboardMarkup([["russian", "ukrainian", "english"], ["article", "plural"], ["prateritum", "partizip2"], ["german", "infinitive"], ["type", SYNONYMS_TEXT], ["delete", BACK_TEXT]], resize_keyboard=True)
     return ReplyKeyboardMarkup([["russian", BACK_TEXT]], resize_keyboard=True)
@@ -329,7 +337,7 @@ def _edit_fields_markup(source):
 
 def _allowed_edit_fields(source):
     if source == "add":
-        return {"russian", "ukrainian", "english"}
+        return {"ru", "ukr", "de", "article", "plural", "type", "prateritum", "partizip2", "infinitive"}
     if source == "quiz":
         return {"russian", "ukrainian", "english", "article", "plural", "prateritum", "partizip2", "german", "infinitive", "type", "delete", SYNONYMS_TEXT}
     return {"russian", "level"}
@@ -341,6 +349,14 @@ def _set_entry_field(entry, raw_update):
     field, value = raw_update.split("=", 1)
     field = field.strip().lower()
     value = value.strip()
+
+    alias = {
+        "ru": "russian",
+        "ukr": "ukrainian",
+        "en": "english",
+        "de": "german",
+    }
+    field = alias.get(field, field)
 
     allowed = {
         "russian",
