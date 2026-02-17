@@ -198,9 +198,8 @@ def _tests_menu_keys(user_id):
 
 def _ru_de_menu_keys(user_id):
     return [
-        [STANDARD_SM2_TEXT, TEST_ARTICLE_WEAK_TEXT],
-        [TEST_PLURAL_WEAK_TEXT, TEST_VERB_WEAK_TEXT],
-        [t(_user_interface_lang(user_id), "back")],
+        [STANDARD_SM2_TEXT, TEST_PLURAL_WEAK_TEXT],
+        [TEST_VERB_WEAK_TEXT, t(_user_interface_lang(user_id), "back")],
     ]
 
 
@@ -524,9 +523,8 @@ def _format_word_card(entry, title="Word card:"):
 def _syn_menu_markup(user_id):
     return ReplyKeyboardMarkup(
         [
-            [SYN_ADD_TEXT, SYN_REMOVE_TEXT],
-            [_syn_auto_text(user_id), SYN_CLEAR_TEXT],
-            [SYN_FLAG_TEXT, BACK_TEXT],
+            [SYN_ADD_TEXT, SYN_REMOVE_TEXT, _syn_auto_text(user_id)],
+            [SYN_CLEAR_TEXT, SYN_FLAG_TEXT, BACK_TEXT],
         ],
         resize_keyboard=True,
     )
