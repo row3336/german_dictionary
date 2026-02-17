@@ -27,6 +27,7 @@ TEXTS = {
         "quiz_article": "Articles",
         "dump_db": "dump DB",
         "dump_logs": "dump logs",
+        "dump": "dump",
         "suggested_words": "Suggested words",
         "review_flags": "Review Flags ⚠️",
         "auto_dump": "auto dump",
