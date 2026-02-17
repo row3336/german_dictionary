@@ -192,7 +192,7 @@ def _mode_de_l1(user_id):
 def _tests_menu_keys(user_id):
     return [
         [QUIZ_RU_DE_TEXT, QUIZ_DE_RU_TEXT],
-        [t(_user_interface_lang(user_id), "stop")],
+        [t(_user_interface_lang(user_id), "back")],
     ]
 
 
