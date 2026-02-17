@@ -51,6 +51,7 @@ from .app_config import (
     QUIZ_PARTIZIP2_WEAK,
     QUIZ_PLURAL_WEAK,
     QUIZ_PRATERITUM_WEAK,
+    QUIZ_RU_DE_MENU,
     QUIZ_RU_DE,
     QUIZ_VERB_WEAK_MENU,
     SETTINGS_MENU,
@@ -132,14 +133,18 @@ TEST_PLURAL_WEAK_TEXT = "Plural Weak Mode"
 TEST_VERB_WEAK_TEXT = "Verb Forms Weak Mode"
 TEST_PRATERITUM_WEAK_TEXT = "Prateritum Weak Mode"
 TEST_PARTIZIP2_WEAK_TEXT = "Partizip2 Weak Mode"
+STANDARD_SM2_TEXT = "Standart mode SM2"
 SYNONYMS_TEXT = "synonyms"
 SYN_ADD_TEXT = "add"
 SYN_REMOVE_TEXT = "remove"
-SYN_AUTO_TEXT = "auto by RU"
+SYN_AUTO_TEXT = "auto by"
 SYN_CLEAR_TEXT = "clear group"
 SYN_FLAG_TEXT = "flag!"
 SYN_CONFIRM_TEXT = "Confirm"
 SYN_CANCEL_TEXT = "Cancel"
+QUIZ_FIELDS_TEXT = "fields"
+QUIZ_RU_DE_TEXT = "Ru > De"
+QUIZ_DE_RU_TEXT = "De > Ru"
 
 
 def _main_menu_keys(user_id):
@@ -185,13 +190,17 @@ def _mode_de_l1(user_id):
 
 
 def _tests_menu_keys(user_id):
-    lang = _user_interface_lang(user_id)
-    label = _dict_label(user_id)
     return [
-        [f"{t(lang, 'quiz_l1_de').replace('L1', label)}", f"{t(lang, 'quiz_de_l1').replace('L1', label)}"],
-        [t(lang, "quiz_article"), TEST_ARTICLE_WEAK_TEXT],
+        [QUIZ_RU_DE_TEXT, QUIZ_DE_RU_TEXT],
+        [t(_user_interface_lang(user_id), "stop")],
+    ]
+
+
+def _ru_de_menu_keys(user_id):
+    return [
+        [STANDARD_SM2_TEXT, TEST_ARTICLE_WEAK_TEXT],
         [TEST_PLURAL_WEAK_TEXT, TEST_VERB_WEAK_TEXT],
-        [t(lang, "back")],
+        [t(_user_interface_lang(user_id), "back")],
     ]
 
 
@@ -232,12 +241,8 @@ def _action_key_from_text(text, user_id):
     for key, action in keys:
         mapping[t(lang, key)] = action
         mapping[t("en", key)] = action
-    quiz_l1_de = t(lang, "quiz_l1_de").replace("L1", _dict_label(user_id))
-    quiz_de_l1 = t(lang, "quiz_de_l1").replace("L1", _dict_label(user_id))
-    mapping[quiz_l1_de] = "quiz_l1_de"
-    mapping[quiz_de_l1] = "quiz_de_l1"
-    mapping[t("en", "quiz_l1_de").replace("L1", _dict_label(user_id))] = "quiz_l1_de"
-    mapping[t("en", "quiz_de_l1").replace("L1", _dict_label(user_id))] = "quiz_de_l1"
+    mapping[QUIZ_RU_DE_TEXT] = "quiz_l1_de"
+    mapping[QUIZ_DE_RU_TEXT] = "quiz_de_l1"
     mapping["flags!"] = "review_flags"
     return mapping.get(text.strip(), "")
 
@@ -305,9 +310,9 @@ def _quiz_markup(user_id, article=False, allow_idk=True):
     elif allow_idk:
         rows.append([I_DONT_KNOW_TEXT])
     if is_owner(user_id):
-        rows.append([AI_CLARIFY_FIELD, FLAG_TEXT, t(lang, "stop")])
+        rows.append([AI_CLARIFY_FIELD, t(lang, "stop")])
     else:
-        rows.append([FLAG_TEXT, t(lang, "stop")])
+        rows.append([t(lang, "stop")])
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 
@@ -328,7 +333,10 @@ def _edit_fields_markup(source):
             resize_keyboard=True,
         )
     if source == "quiz":
-        return ReplyKeyboardMarkup([["russian", "ukrainian", "english"], ["article", "plural"], ["prateritum", "partizip2"], ["german", "infinitive"], ["type", SYNONYMS_TEXT], ["delete", BACK_TEXT]], resize_keyboard=True)
+        return ReplyKeyboardMarkup(
+            [["ru", "ukr", "de"], ["article", "plural", "type"], ["prateritum", "partizip2", "infinitive"], [SYNONYMS_TEXT, BACK_TEXT]],
+            resize_keyboard=True,
+        )
     return ReplyKeyboardMarkup([["russian", BACK_TEXT]], resize_keyboard=True)
 
 
@@ -336,8 +344,25 @@ def _allowed_edit_fields(source):
     if source == "add":
         return {"ru", "ukr", "de", "article", "plural", "type", "prateritum", "partizip2", "infinitive"}
     if source == "quiz":
-        return {"russian", "ukrainian", "english", "article", "plural", "prateritum", "partizip2", "german", "infinitive", "type", "delete", SYNONYMS_TEXT}
+        return {"ru", "ukr", "de", "article", "plural", "prateritum", "partizip2", "infinitive", "type", SYNONYMS_TEXT}
     return {"russian", "level"}
+
+
+def _quiz_edit_root_markup(user_id):
+    return ReplyKeyboardMarkup([[QUIZ_FIELDS_TEXT], ["delete", t(_user_interface_lang(user_id), "back")]], resize_keyboard=True)
+
+
+def _dict_lang_tag(user_id):
+    dict_lang = _user_dict_lang(user_id)
+    if dict_lang == "uk":
+        return "UA"
+    if dict_lang == "en":
+        return "EN"
+    return "RU"
+
+
+def _syn_auto_text(user_id):
+    return f"{SYN_AUTO_TEXT} {_dict_lang_tag(user_id)}"
 
 
 def _set_entry_field(entry, raw_update):
@@ -413,12 +438,12 @@ async def _start_quiz_edit(update: Update, context: ContextTypes.DEFAULT_TYPE, r
         return await _back_to_tests(update)
     context.user_data["edit_source"] = "quiz"
     context.user_data["quiz_edit_entry"] = entry
-    context.user_data["edit_stage"] = "pick_field"
+    context.user_data["edit_stage"] = "pick_scope"
     context.user_data["edit_return_state"] = return_state
     await update.message.reply_text(_format_word_card(entry, title))
     await update.message.reply_text(
-        "Choose field to edit:",
-        reply_markup=_edit_fields_markup("quiz"),
+        "Choose edit action:",
+        reply_markup=_quiz_edit_root_markup(update.effective_user.id),
     )
     return ADD_EDIT
 
@@ -494,11 +519,11 @@ def _format_word_card(entry, title="Word card:"):
     return "\n".join(lines)
 
 
-def _syn_menu_markup():
+def _syn_menu_markup(user_id):
     return ReplyKeyboardMarkup(
         [
             [SYN_ADD_TEXT, SYN_REMOVE_TEXT],
-            [SYN_AUTO_TEXT, SYN_CLEAR_TEXT],
+            [_syn_auto_text(user_id), SYN_CLEAR_TEXT],
             [SYN_FLAG_TEXT, BACK_TEXT],
         ],
         resize_keyboard=True,
@@ -534,7 +559,7 @@ async def _open_synonyms_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
     group_entries = get_synonym_group(get_db_path(), anchor_entry.get("id"))
     await update.message.reply_text(
         _format_syn_group(anchor_entry, group_entries, _user_dict_lang(update.effective_user.id)),
-        reply_markup=_syn_menu_markup(),
+        reply_markup=_syn_menu_markup(update.effective_user.id),
     )
     return SYN_MENU
 
@@ -612,7 +637,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id
     if not _is_owner_only(user_id):
-        await update.message.reply_text("вќЊ Owner-only bot.")
+        await update.message.reply_text("Р Р†РЎСљР Р‰ Owner-only bot.")
         return ConversationHandler.END
     ui_lang = get_setting(get_db_path(), OWNER_INTERFACE_LANG_KEY, "")
     dict_lang = get_setting(get_db_path(), OWNER_DICT_LANG_KEY, "")
@@ -631,7 +656,7 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await start(update, context)
 
     if not _is_owner_only(user_id):
-        await update.message.reply_text("вќЊ Owner-only bot.")
+        await update.message.reply_text("Р Р†РЎСљР Р‰ Owner-only bot.")
         return ConversationHandler.END
 
     if action == "add_word":
@@ -677,7 +702,7 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def select_ui_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not _is_owner_only(user_id):
-        await update.message.reply_text("вќЊ Owner-only bot.")
+        await update.message.reply_text("Р Р†РЎСљР Р‰ Owner-only bot.")
         return ConversationHandler.END
 
     interface_lang = parse_interface_choice(update.message.text.strip())
@@ -695,7 +720,7 @@ async def select_ui_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def select_dict_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not _is_owner_only(user_id):
-        await update.message.reply_text("вќЊ Owner-only bot.")
+        await update.message.reply_text("Р Р†РЎСљР Р‰ Owner-only bot.")
         return ConversationHandler.END
 
     lang = _user_interface_lang(user_id)
@@ -715,14 +740,38 @@ async def tests_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     user_id = update.effective_user.id
     action = _action_key_from_text(text, user_id)
+    if action == "stop":
+        return await _back_to_main_menu(update)
     if action == "back":
         return await _back_to_main_menu(update)
     if action == "quiz_l1_de":
-        return await _send_ru_de_prompt(update, context, None)
+        await update.message.reply_text(
+            f"{QUIZ_RU_DE_TEXT}:",
+            reply_markup=ReplyKeyboardMarkup(_ru_de_menu_keys(user_id), resize_keyboard=True),
+        )
+        return QUIZ_RU_DE_MENU
     if action == "quiz_de_l1":
         return await _send_de_ru_prompt(update, context, None)
-    if action == "quiz_article":
-        return await _send_article_prompt(update, context, None)
+
+    await update.message.reply_text(
+        "Use tests menu buttons.",
+        reply_markup=ReplyKeyboardMarkup(_tests_menu_keys(user_id), resize_keyboard=True),
+    )
+    return TESTS_MENU
+
+
+async def quiz_ru_de_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    user_id = update.effective_user.id
+    action = _action_key_from_text(text, user_id)
+    if action == "back":
+        await update.message.reply_text(
+            t(_user_interface_lang(user_id), "tests") + ":",
+            reply_markup=ReplyKeyboardMarkup(_tests_menu_keys(user_id), resize_keyboard=True),
+        )
+        return TESTS_MENU
+    if text == STANDARD_SM2_TEXT:
+        return await _send_ru_de_prompt(update, context, None)
     if text == TEST_ARTICLE_WEAK_TEXT:
         return await _send_article_weak_prompt(update, context, None)
     if text == TEST_PLURAL_WEAK_TEXT:
@@ -733,22 +782,21 @@ async def tests_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=ReplyKeyboardMarkup([[TEST_PRATERITUM_WEAK_TEXT, TEST_PARTIZIP2_WEAK_TEXT], [t(_user_interface_lang(user_id), "back")]], resize_keyboard=True),
         )
         return QUIZ_VERB_WEAK_MENU
-
     await update.message.reply_text(
-        "Use tests menu buttons.",
-        reply_markup=ReplyKeyboardMarkup(_tests_menu_keys(user_id), resize_keyboard=True),
+        "Use Ru > De menu buttons.",
+        reply_markup=ReplyKeyboardMarkup(_ru_de_menu_keys(user_id), resize_keyboard=True),
     )
-    return TESTS_MENU
+    return QUIZ_RU_DE_MENU
 
 
 async def quiz_verb_weak_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "back":
         await update.message.reply_text(
-            t(_user_interface_lang(update.effective_user.id), "choose_test"),
-            reply_markup=ReplyKeyboardMarkup(_tests_menu_keys(update.effective_user.id), resize_keyboard=True),
+            f"{QUIZ_RU_DE_TEXT}:",
+            reply_markup=ReplyKeyboardMarkup(_ru_de_menu_keys(update.effective_user.id), resize_keyboard=True),
         )
-        return TESTS_MENU
+        return QUIZ_RU_DE_MENU
     if text == TEST_PRATERITUM_WEAK_TEXT:
         return await _send_prateritum_weak_prompt(update, context, None)
     if text == TEST_PARTIZIP2_WEAK_TEXT:
@@ -779,7 +827,7 @@ async def settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_document(
             document=dump_path.open("rb"),
             filename=dump_path.name,
-            caption="вњ… SQLite dump created.",
+            caption="Р Р†РЎС™РІР‚В¦ SQLite dump created.",
         )
         return SETTINGS_MENU
 
@@ -791,7 +839,7 @@ async def settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_document(
             document=logs_path.open("rb"),
             filename=logs_path.name,
-            caption="вњ… Logs dump created.",
+            caption="Р Р†РЎС™РІР‚В¦ Logs dump created.",
         )
         return SETTINGS_MENU
 
@@ -803,7 +851,7 @@ async def settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_document(
             document=suggestions_path.open("rb"),
             filename=suggestions_path.name,
-            caption="вњ… Suggested words dump created.",
+            caption="Р Р†РЎС™РІР‚В¦ Suggested words dump created.",
         )
         return SETTINGS_MENU
 
@@ -811,7 +859,7 @@ async def settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
         items = list_pending_word_flags(get_db_path(), limit=500)
         if not items:
             await update.message.reply_text(
-                "вњ… No flagged words.",
+                "Р Р†РЎС™РІР‚В¦ No flagged words.",
                 reply_markup=ReplyKeyboardMarkup(_settings_menu_keys(user_id), resize_keyboard=True),
             )
             return SETTINGS_MENU
@@ -870,7 +918,7 @@ async def auto_dump_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     set_setting(get_db_path(), AUTO_DUMP_SETTING_KEY, mode)
     _configure_auto_dump(context.application, mode)
     await update.message.reply_text(
-        f"вњ… Auto dump mode set: {mode}",
+        f"Р Р†РЎС™РІР‚В¦ Auto dump mode set: {mode}",
         reply_markup=ReplyKeyboardMarkup(_settings_menu_keys(user_id), resize_keyboard=True),
     )
     return SETTINGS_MENU
@@ -1064,16 +1112,79 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("No entry to edit.", reply_markup=_main_menu_markup(update.effective_user.id))
         return MENU
 
-    stage = context.user_data.get("edit_stage", "pick_field")
+    stage = context.user_data.get("edit_stage", "pick_scope" if source == "quiz" else "pick_field")
     if _action_key_from_text(text, update.effective_user.id) == "back":
-        if stage == "pick_field":
-            if source == "quiz":
+        if source == "quiz":
+            if stage == "pick_scope":
                 return await _show_quiz_prompt_after_edit(update, context, "вњ… Edit canceled.")
+            if stage == "pick_field":
+                context.user_data["edit_stage"] = "pick_scope"
+                await update.message.reply_text(
+                    "Choose edit action:",
+                    reply_markup=_quiz_edit_root_markup(update.effective_user.id),
+                )
+                return ADD_EDIT
+            context.user_data["edit_stage"] = "pick_field"
+            await update.message.reply_text(
+                "Choose field to edit:",
+                reply_markup=_edit_fields_markup(source),
+            )
+            return ADD_EDIT
+
+        if stage == "pick_field":
             return await _show_ai_preview(update, entry)
         context.user_data["edit_stage"] = "pick_field"
         await update.message.reply_text(
             "Choose field to edit:",
             reply_markup=_edit_fields_markup(source),
+        )
+        return ADD_EDIT
+
+    if source == "quiz" and stage == "pick_scope":
+        token = text.strip().lower()
+        if token == QUIZ_FIELDS_TEXT:
+            context.user_data["edit_stage"] = "pick_field"
+            await update.message.reply_text(
+                "Choose field to edit:",
+                reply_markup=_edit_fields_markup("quiz"),
+            )
+            return ADD_EDIT
+        if token == "delete":
+            word_id = entry.get("id")
+            if not word_id:
+                await update.message.reply_text(
+                    "вќЊ Cannot delete: missing word id.",
+                    reply_markup=_quiz_edit_root_markup(update.effective_user.id),
+                )
+                return ADD_EDIT
+            removed = delete_word(get_db_path(), word_id)
+            context.user_data.pop("quiz_edit_entry", None)
+            context.user_data.pop("quiz_entry", None)
+            last_answered = context.user_data.get("quiz_last_answered_entry")
+            if last_answered and last_answered.get("id") == word_id:
+                context.user_data.pop("quiz_last_answered_entry", None)
+            context.user_data["edit_stage"] = "pick_scope"
+            context.user_data.pop("edit_field", None)
+            state = context.user_data.get("edit_return_state")
+            prefix = "вњ… Deleted." if removed else "вќЊ Word not found."
+            if state == QUIZ_RU_DE:
+                return await _send_ru_de_prompt(update, context, prefix)
+            if state == QUIZ_DE_RU:
+                return await _send_de_ru_prompt(update, context, prefix)
+            if state == QUIZ_ARTICLE:
+                return await _send_article_prompt(update, context, prefix)
+            if state == QUIZ_ARTICLE_WEAK:
+                return await _send_article_weak_prompt(update, context, prefix)
+            if state == QUIZ_PLURAL_WEAK:
+                return await _send_plural_weak_prompt(update, context, prefix)
+            if state == QUIZ_PRATERITUM_WEAK:
+                return await _send_prateritum_weak_prompt(update, context, prefix)
+            if state == QUIZ_PARTIZIP2_WEAK:
+                return await _send_partizip2_weak_prompt(update, context, prefix)
+            return await _back_to_tests(update)
+        await update.message.reply_text(
+            "Use buttons: fields, delete, back.",
+            reply_markup=_quiz_edit_root_markup(update.effective_user.id),
         )
         return ADD_EDIT
 
@@ -1086,31 +1197,6 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=_edit_fields_markup(source),
             )
             return ADD_EDIT
-        if source == "quiz" and field == "delete":
-            word_id = entry.get("id")
-            if not word_id:
-                await update.message.reply_text(
-                    "вќЊ Cannot delete: missing word id.",
-                    reply_markup=_edit_fields_markup(source),
-                )
-                return ADD_EDIT
-            removed = delete_word(get_db_path(), word_id)
-            context.user_data.pop("quiz_edit_entry", None)
-            context.user_data.pop("quiz_entry", None)
-            last_answered = context.user_data.get("quiz_last_answered_entry")
-            if last_answered and last_answered.get("id") == word_id:
-                context.user_data.pop("quiz_last_answered_entry", None)
-            context.user_data["edit_stage"] = "pick_field"
-            context.user_data.pop("edit_field", None)
-            state = context.user_data.get("edit_return_state")
-            prefix = "вњ… Deleted." if removed else "вќЊ Word not found."
-            if state == QUIZ_RU_DE:
-                return await _send_ru_de_prompt(update, context, prefix)
-            if state == QUIZ_DE_RU:
-                return await _send_de_ru_prompt(update, context, prefix)
-            if state == QUIZ_ARTICLE:
-                return await _send_article_prompt(update, context, prefix)
-            return await _back_to_tests(update)
         if source == "quiz" and field == SYNONYMS_TEXT:
             state = context.user_data.get("edit_return_state")
             return await _open_synonyms_menu(update, context, entry, state)
@@ -1141,7 +1227,7 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ADD_EDIT
 
     context.user_data[entry_key] = updated
-    context.user_data["edit_stage"] = "pick_field"
+    context.user_data["edit_stage"] = "pick_scope" if source == "quiz" else "pick_field"
     context.user_data.pop("edit_field", None)
     if source == "quiz":
         update_word_fields(get_db_path(), updated.get("id"), updated)
@@ -1151,11 +1237,10 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         last_answered = context.user_data.get("quiz_last_answered_entry")
         if last_answered and last_answered.get("id") == updated.get("id"):
             context.user_data["quiz_last_answered_entry"] = updated
-        return await _show_quiz_prompt_after_edit(update, context, "вњ… Updated.")
+        return await _show_quiz_prompt_after_edit(update, context, "✅ Updated.")
     return await _show_ai_preview(update, updated)
 
-
-async def _return_from_synonyms(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix="вњ… Done."):
+async def _return_from_synonyms(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix="✅ Done."):
     anchor_id = context.user_data.get("syn_anchor_id")
     return_state = context.user_data.get("syn_return_state")
     context.user_data.pop("syn_auto_candidates", None)
@@ -1186,7 +1271,7 @@ async def synonyms_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if _action_key_from_text(text, update.effective_user.id) == "stop":
         return await _back_to_tests(update)
     if _action_key_from_text(text, update.effective_user.id) == "back":
-        return await _return_from_synonyms(update, context, "вњ… Back.")
+        return await _return_from_synonyms(update, context, "Р Р†РЎС™РІР‚В¦ Back.")
     anchor_id = context.user_data.get("syn_anchor_id")
     anchor_entry = get_word_by_id(get_db_path(), anchor_id) if anchor_id else None
     if not anchor_entry:
@@ -1201,10 +1286,10 @@ async def synonyms_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=ReplyKeyboardRemove(),
         )
         return SYN_REMOVE_INPUT
-    if text == SYN_AUTO_TEXT:
+    if text == _syn_auto_text(update.effective_user.id):
         candidates = list_synonym_candidates_by_ru(get_db_path(), anchor_id)
         if not candidates:
-            await update.message.reply_text("No auto candidates by RU.", reply_markup=_syn_menu_markup())
+            await update.message.reply_text(f"No {_syn_auto_text(update.effective_user.id)} candidates.", reply_markup=_syn_menu_markup(update.effective_user.id))
             return SYN_MENU
         context.user_data["syn_auto_candidates"] = [x.get("id") for x in candidates]
         preview = _format_syn_group(anchor_entry, candidates, _user_dict_lang(update.effective_user.id))
@@ -1218,9 +1303,9 @@ async def synonyms_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return SYN_CLEAR_CONFIRM
     if text == SYN_FLAG_TEXT:
         add_word_flag(get_db_path(), word_id=anchor_id, user_id=update.effective_user.id, comment="synonym_review")
-        await update.message.reply_text("вњ… Flag saved.", reply_markup=_syn_menu_markup())
+        await update.message.reply_text("Р Р†РЎС™РІР‚В¦ Flag saved.", reply_markup=_syn_menu_markup(update.effective_user.id))
         return SYN_MENU
-    await update.message.reply_text("Use synonyms buttons.", reply_markup=_syn_menu_markup())
+    await update.message.reply_text("Use synonyms buttons.", reply_markup=_syn_menu_markup(update.effective_user.id))
     return SYN_MENU
 
 
@@ -1229,7 +1314,7 @@ async def synonyms_add_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if _action_key_from_text(text, update.effective_user.id) == "back":
         anchor_entry = get_word_by_id(get_db_path(), context.user_data.get("syn_anchor_id"))
         group = get_synonym_group(get_db_path(), context.user_data.get("syn_anchor_id"))
-        await update.message.reply_text(_format_syn_group(anchor_entry or {}, group, _user_dict_lang(update.effective_user.id)), reply_markup=_syn_menu_markup())
+        await update.message.reply_text(_format_syn_group(anchor_entry or {}, group, _user_dict_lang(update.effective_user.id)), reply_markup=_syn_menu_markup(update.effective_user.id))
         return SYN_MENU
     anchor_id = context.user_data.get("syn_anchor_id")
     anchor_entry = get_word_by_id(get_db_path(), anchor_id)
@@ -1241,9 +1326,9 @@ async def synonyms_add_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("Type mismatch. Only same type is allowed.")
         return SYN_ADD_INPUT
     changed, _ = add_synonym_link(get_db_path(), anchor_id, target.get("id"))
-    msg = "вњ… Linked." if changed else "вњ… Already linked."
+    msg = "Р Р†РЎС™РІР‚В¦ Linked." if changed else "Р Р†РЎС™РІР‚В¦ Already linked."
     group = get_synonym_group(get_db_path(), anchor_id)
-    await update.message.reply_text(f"{msg}\n\n{_format_syn_group(anchor_entry, group, _user_dict_lang(update.effective_user.id))}", reply_markup=_syn_menu_markup())
+    await update.message.reply_text(f"{msg}\n\n{_format_syn_group(anchor_entry, group, _user_dict_lang(update.effective_user.id))}", reply_markup=_syn_menu_markup(update.effective_user.id))
     return SYN_MENU
 
 
@@ -1255,7 +1340,7 @@ async def synonyms_remove_input(update: Update, context: ContextTypes.DEFAULT_TY
     anchor = get_word_by_id(get_db_path(), anchor_id)
     group = get_synonym_group(get_db_path(), anchor_id)
     if not anchor or not group:
-        return await _return_from_synonyms(update, context, "вњ… Back.")
+        return await _return_from_synonyms(update, context, "Р Р†РЎС™РІР‚В¦ Back.")
     target = None
     if text.isdigit():
         idx = int(text)
@@ -1270,9 +1355,9 @@ async def synonyms_remove_input(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text("Cannot remove anchor word from itself. Use Clear group.")
         return SYN_REMOVE_INPUT
     removed = remove_synonym_link(get_db_path(), target.get("id"))
-    msg = "вњ… Removed." if removed else "вќЊ Not linked."
+    msg = "Р Р†РЎС™РІР‚В¦ Removed." if removed else "Р Р†РЎСљР Р‰ Not linked."
     group_new = get_synonym_group(get_db_path(), anchor_id)
-    await update.message.reply_text(f"{msg}\n\n{_format_syn_group(anchor, group_new, _user_dict_lang(update.effective_user.id))}", reply_markup=_syn_menu_markup())
+    await update.message.reply_text(f"{msg}\n\n{_format_syn_group(anchor, group_new, _user_dict_lang(update.effective_user.id))}", reply_markup=_syn_menu_markup(update.effective_user.id))
     return SYN_MENU
 
 
@@ -1282,7 +1367,7 @@ async def synonyms_auto_confirm(update: Update, context: ContextTypes.DEFAULT_TY
         anchor_id = context.user_data.get("syn_anchor_id")
         anchor = get_word_by_id(get_db_path(), anchor_id)
         group = get_synonym_group(get_db_path(), anchor_id)
-        await update.message.reply_text(_format_syn_group(anchor or {}, group, _user_dict_lang(update.effective_user.id)), reply_markup=_syn_menu_markup())
+        await update.message.reply_text(_format_syn_group(anchor or {}, group, _user_dict_lang(update.effective_user.id)), reply_markup=_syn_menu_markup(update.effective_user.id))
         return SYN_MENU
     if text != SYN_CONFIRM_TEXT:
         await update.message.reply_text("Use Confirm or Cancel.", reply_markup=_syn_confirm_markup())
@@ -1296,8 +1381,8 @@ async def synonyms_auto_confirm(update: Update, context: ContextTypes.DEFAULT_TY
             added += 1
     anchor = get_word_by_id(get_db_path(), anchor_id)
     group = get_synonym_group(get_db_path(), anchor_id)
-    await update.message.reply_text(f"вњ… Auto linked: {added}", reply_markup=_syn_menu_markup())
-    await update.message.reply_text(_format_syn_group(anchor or {}, group, _user_dict_lang(update.effective_user.id)), reply_markup=_syn_menu_markup())
+    await update.message.reply_text(f"Р Р†РЎС™РІР‚В¦ Auto linked: {added}", reply_markup=_syn_menu_markup(update.effective_user.id))
+    await update.message.reply_text(_format_syn_group(anchor or {}, group, _user_dict_lang(update.effective_user.id)), reply_markup=_syn_menu_markup(update.effective_user.id))
     return SYN_MENU
 
 
@@ -1310,7 +1395,7 @@ async def synonyms_clear_confirm(update: Update, context: ContextTypes.DEFAULT_T
         return SYN_CLEAR_CONFIRM
     anchor_id = context.user_data.get("syn_anchor_id")
     cleared = clear_synonym_group(get_db_path(), anchor_id)
-    await update.message.reply_text("вњ… Group cleared." if cleared else "вњ… Group already empty.", reply_markup=_syn_menu_markup())
+    await update.message.reply_text("Р Р†РЎС™РІР‚В¦ Group cleared." if cleared else "Р Р†РЎС™РІР‚В¦ Group already empty.", reply_markup=_syn_menu_markup(update.effective_user.id))
     return SYN_MENU
 
 
@@ -1323,19 +1408,19 @@ async def _flag_current_word(update: Update, context: ContextTypes.DEFAULT_TYPE,
         return await _back_to_tests(update)
     add_word_flag(get_db_path(), word_id=word_id, user_id=update.effective_user.id, comment="")
     if return_state == QUIZ_RU_DE:
-        return await _show_quiz_prompt_after_edit(update, context, "вњ… Flag saved.", state_override=QUIZ_RU_DE)
+        return await _show_quiz_prompt_after_edit(update, context, "Р Р†РЎС™РІР‚В¦ Flag saved.", state_override=QUIZ_RU_DE)
     if return_state == QUIZ_DE_RU:
-        return await _show_quiz_prompt_after_edit(update, context, "вњ… Flag saved.", state_override=QUIZ_DE_RU)
+        return await _show_quiz_prompt_after_edit(update, context, "Р Р†РЎС™РІР‚В¦ Flag saved.", state_override=QUIZ_DE_RU)
     if return_state == QUIZ_ARTICLE:
-        return await _show_quiz_prompt_after_edit(update, context, "вњ… Flag saved.", state_override=QUIZ_ARTICLE)
+        return await _show_quiz_prompt_after_edit(update, context, "Р Р†РЎС™РІР‚В¦ Flag saved.", state_override=QUIZ_ARTICLE)
     if return_state == QUIZ_ARTICLE_WEAK:
-        return await _show_quiz_prompt_after_edit(update, context, "вњ… Flag saved.", state_override=QUIZ_ARTICLE_WEAK)
+        return await _show_quiz_prompt_after_edit(update, context, "Р Р†РЎС™РІР‚В¦ Flag saved.", state_override=QUIZ_ARTICLE_WEAK)
     if return_state == QUIZ_PLURAL_WEAK:
-        return await _show_quiz_prompt_after_edit(update, context, "вњ… Flag saved.", state_override=QUIZ_PLURAL_WEAK)
+        return await _show_quiz_prompt_after_edit(update, context, "Р Р†РЎС™РІР‚В¦ Flag saved.", state_override=QUIZ_PLURAL_WEAK)
     if return_state == QUIZ_PRATERITUM_WEAK:
-        return await _show_quiz_prompt_after_edit(update, context, "вњ… Flag saved.", state_override=QUIZ_PRATERITUM_WEAK)
+        return await _show_quiz_prompt_after_edit(update, context, "Р Р†РЎС™РІР‚В¦ Flag saved.", state_override=QUIZ_PRATERITUM_WEAK)
     if return_state == QUIZ_PARTIZIP2_WEAK:
-        return await _show_quiz_prompt_after_edit(update, context, "вњ… Flag saved.", state_override=QUIZ_PARTIZIP2_WEAK)
+        return await _show_quiz_prompt_after_edit(update, context, "Р Р†РЎС™РІР‚В¦ Flag saved.", state_override=QUIZ_PARTIZIP2_WEAK)
     return await _back_to_tests(update)
 
 
@@ -1417,7 +1502,7 @@ async def quiz_article(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def _weak_status(ok):
-    return "Correct вњ…" if ok else "Wrong вќЊ"
+    return "Correct Р Р†РЎС™РІР‚В¦" if ok else "Wrong Р Р†РЎСљР Р‰"
 
 
 def _format_feedback_plural_weak(entry, ok):
@@ -1578,7 +1663,7 @@ async def _save_entry(update: Update, entry):
         return None
 
     await update.message.reply_text(
-        f"✅ Saved: {saved.get('id')}",
+        f"РІСљвЂ¦ Saved: {saved.get('id')}",
         reply_markup=ReplyKeyboardMarkup(AI_KEYS, resize_keyboard=True),
     )
     return saved
@@ -1727,7 +1812,7 @@ def _format_article_question(entry):
 
 
 def _format_feedback_ru_de(entry, ok):
-    status = "Correct вњ…" if ok else "Wrong вќЊ"
+    status = "Correct Р Р†РЎС™РІР‚В¦" if ok else "Wrong Р Р†РЎСљР Р‰"
     word_type = entry.get("type", "")
     article = str(entry.get("article", "")).strip()
     if word_type == "nomen":
@@ -1766,12 +1851,12 @@ def _format_feedback_ru_de(entry, ok):
 
 
 def _format_feedback_de_ru(entry, ok, dict_lang):
-    status = "Correct вњ…" if ok else "Wrong вќЊ"
+    status = "Correct Р Р†РЎС™РІР‚В¦" if ok else "Wrong Р Р†РЎСљР Р‰"
     return f"{status} >>>     *{_md_escape(_low_word(_entry_translation(entry, dict_lang)))}*"
 
 
 def _format_feedback_article(entry, ok, dict_lang):
-    status = "Correct вњ…" if ok else "Wrong вќЊ"
+    status = "Correct Р Р†РЎС™РІР‚В¦" if ok else "Wrong Р Р†РЎСљР Р‰"
     article = str(entry.get("article", "")).strip()
     german = _cap_word(entry.get("german", ""))
     plural = _cap_word(entry.get("plural", ""))
@@ -1823,9 +1908,9 @@ async def _send_ru_de_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
     if not entry:
         await update.message.reply_text(
             "No due words. Add more or wait until due date.",
-            reply_markup=ReplyKeyboardMarkup(_tests_menu_keys(update.effective_user.id), resize_keyboard=True),
+            reply_markup=ReplyKeyboardMarkup(_ru_de_menu_keys(update.effective_user.id), resize_keyboard=True),
         )
-        return TESTS_MENU
+        return QUIZ_RU_DE_MENU
 
     context.user_data["quiz_entry"] = entry
     prompt_text = _format_ru_question(entry, _user_dict_lang(update.effective_user.id))
@@ -1890,9 +1975,9 @@ async def _send_article_weak_prompt(update: Update, context: ContextTypes.DEFAUL
     if not entry:
         await update.message.reply_text(
             "No weak article words.",
-            reply_markup=ReplyKeyboardMarkup(_tests_menu_keys(update.effective_user.id), resize_keyboard=True),
+            reply_markup=ReplyKeyboardMarkup(_ru_de_menu_keys(update.effective_user.id), resize_keyboard=True),
         )
-        return TESTS_MENU
+        return QUIZ_RU_DE_MENU
     context.user_data["quiz_entry"] = entry
     text = f">>    {_normalize_russian_singular(_entry_translation(entry, _user_dict_lang(update.effective_user.id)))} -> ____ {_cap_word(entry.get('german', ''))}?"
     if prefix_text:
@@ -1909,9 +1994,9 @@ async def _send_plural_weak_prompt(update: Update, context: ContextTypes.DEFAULT
     if not entry:
         await update.message.reply_text(
             "No weak plural words.",
-            reply_markup=ReplyKeyboardMarkup(_tests_menu_keys(update.effective_user.id), resize_keyboard=True),
+            reply_markup=ReplyKeyboardMarkup(_ru_de_menu_keys(update.effective_user.id), resize_keyboard=True),
         )
-        return TESTS_MENU
+        return QUIZ_RU_DE_MENU
     context.user_data["quiz_entry"] = entry
     article = (entry.get("article", "") or "").strip()
     text = f">>    {article} {_cap_word(entry.get('german', ''))} -> plural?"
@@ -2154,7 +2239,7 @@ async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, w
         inf = entry.get("infinitive", "")
         existing_inf = find_existing_word(get_db_path(), inf) if inf else None
         if existing_inf:
-            msg = f"вќЊ Verb form detected: {word}. Base infinitive: {inf}. Already in database, not saved."
+            msg = f"Р Р†РЎСљР Р‰ Verb form detected: {word}. Base infinitive: {inf}. Already in database, not saved."
             if has_queue:
                 await _reply_text_with_retry(update.message, msg)
                 logging.info("Queue skip non-infinitive verb input (existing infinitive): %s -> %s", word, inf)
@@ -2195,7 +2280,7 @@ async def _process_next_ai_word(update: Update, context: ContextTypes.DEFAULT_TY
     context.user_data.pop("pending_entry", None)
     await _reply_text_with_retry(
         update.message,
-        "вњ… Done.",
+        "Р Р†РЎС™РІР‚В¦ Done.",
         reply_markup=_main_menu_markup(update.effective_user.id),
     )
     return MENU
@@ -2203,12 +2288,12 @@ async def _ban_pending_word(update: Update, context: ContextTypes.DEFAULT_TYPE):
     word = (context.user_data.get("pending_word") or "").strip()
     if not word:
         await update.message.reply_text(
-            "вќЊ No word to ban.",
+            "Р Р†РЎСљР Р‰ No word to ban.",
             reply_markup=ReplyKeyboardMarkup(_add_keys(update.effective_user.id), resize_keyboard=True),
         )
         return ADD_INPUT
     created = add_banned_word(get_db_path(), word)
-    status = "вњ… Added to banned list." if created else "вњ… Already in banned list."
+    status = "Р Р†РЎС™РІР‚В¦ Added to banned list." if created else "Р Р†РЎС™РІР‚В¦ Already in banned list."
     await update.message.reply_text(f"{status} ({word})")
     context.user_data.pop("pending_entry", None)
     return await _process_next_ai_word(update, context)
@@ -2225,7 +2310,7 @@ async def _stop_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop("flag_word_id", None)
     context.user_data.pop("flag_return_state", None)
     await update.message.reply_text(
-        "вќЊ Stopped.",
+        "Р Р†РЎСљР Р‰ Stopped.",
         reply_markup=_main_menu_markup(update.effective_user.id),
     )
     return MENU
@@ -2455,7 +2540,7 @@ async def _auto_dump_job(context: ContextTypes.DEFAULT_TYPE):
                 chat_id=owner_id,
                 document=dump_path.open("rb"),
                 filename=dump_path.name,
-                caption=f"вњ… Auto dump created: {dump_path.name}",
+                caption=f"Р Р†РЎС™РІР‚В¦ Auto dump created: {dump_path.name}",
             )
         except Exception:
             pass
@@ -2519,6 +2604,7 @@ def main():
             SELECT_UI_LANG: [MessageHandler(filters.TEXT & ~filters.COMMAND, select_ui_lang)],
             SELECT_DICT_LANG: [MessageHandler(filters.TEXT & ~filters.COMMAND, select_dict_lang)],
             TESTS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, tests_menu_choice)],
+            QUIZ_RU_DE_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_ru_de_menu_choice)],
             SETTINGS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, settings_menu_choice)],
             AUTO_DUMP_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, auto_dump_choice)],
             ADD_INPUT: [
