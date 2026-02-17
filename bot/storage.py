@@ -345,8 +345,94 @@ def get_statistics_snapshot(db_path, user_id, mode):
         wrong = int(touch_row["wrong_cnt"] or 0) if touch_row else 0
         correct = int(touch_row["correct_cnt"] or 0) if touch_row else 0
 
+        retention_row = conn.execute(
+            """
+            WITH first_touch AS (
+                SELECT
+                    word_id,
+                    MIN(created_at) AS first_ts
+                FROM quiz_events
+                WHERE user_id = ? AND mode = ?
+                GROUP BY word_id
+            ),
+            eligible AS (
+                SELECT word_id, first_ts
+                FROM first_touch
+                WHERE julianday('now') - julianday(first_ts) >= 7
+            ),
+            passed AS (
+                SELECT DISTINCT e.word_id
+                FROM eligible ft
+                JOIN quiz_events e
+                  ON e.user_id = ?
+                 AND e.mode = ?
+                 AND e.word_id = ft.word_id
+                 AND e.is_correct = 1
+                 AND julianday(e.created_at) - julianday(ft.first_ts) >= 7
+            )
+            SELECT
+                (SELECT COUNT(*) FROM eligible) AS eligible_cnt,
+                (SELECT COUNT(*) FROM passed) AS passed_cnt
+            """,
+            (user_id, mode, user_id, mode),
+        ).fetchone()
+        retention_eligible = int(retention_row["eligible_cnt"] or 0) if retention_row else 0
+        retention_passed = int(retention_row["passed_cnt"] or 0) if retention_row else 0
+
+        new_words_tested = int(
+            conn.execute(
+                """
+                SELECT COUNT(*) AS cnt
+                FROM words w
+                WHERE date(w.created_at) >= date(?)
+                  AND date(w.created_at) < date(?)
+                  AND EXISTS (
+                      SELECT 1
+                      FROM quiz_events e
+                      WHERE e.user_id = ?
+                        AND e.word_id = w.id
+                        AND date(e.created_at) >= date(?)
+                        AND date(e.created_at) < date(?)
+                  )
+                """,
+                (ws, we, user_id, ws, we),
+            ).fetchone()["cnt"]
+            or 0
+        )
+
+        weak_resolved = int(
+            conn.execute(
+                """
+                WITH solved_candidates AS (
+                    SELECT
+                        word_id,
+                        mode,
+                        SUM(CASE WHEN is_correct = 1 THEN 1 ELSE 0 END) AS c
+                    FROM quiz_events
+                    WHERE user_id = ?
+                      AND mode IN ('weak_article', 'weak_plural', 'weak_partizip2', 'weak_prateritum')
+                      AND date(created_at) >= date(?)
+                      AND date(created_at) < date(?)
+                    GROUP BY word_id, mode
+                    HAVING c >= 3
+                )
+                SELECT COUNT(DISTINCT s.word_id) AS cnt
+                FROM solved_candidates s
+                JOIN form_stats fs ON fs.user_id = ? AND fs.word_id = s.word_id
+                WHERE
+                    (s.mode = 'weak_article' AND fs.article_errors = 0 AND fs.article_streak_wrong = 0)
+                    OR (s.mode = 'weak_plural' AND fs.plural_errors = 0 AND fs.plural_streak_wrong = 0)
+                    OR (s.mode = 'weak_partizip2' AND fs.partizip2_errors = 0 AND fs.partizip2_streak_wrong = 0)
+                    OR (s.mode = 'weak_prateritum' AND fs.prateritum_errors = 0 AND fs.prateritum_streak_wrong = 0)
+                """,
+                (user_id, ws, we, user_id),
+            ).fetchone()["cnt"]
+            or 0
+        )
+
     wrong_pct = round((wrong / first_touch) * 100, 1) if first_touch > 0 else 0.0
     correct_pct = round((correct / first_touch) * 100, 1) if first_touch > 0 else 0.0
+    retention_7d_pct = round((retention_passed / retention_eligible) * 100, 1) if retention_eligible > 0 else 0.0
     return {
         "total_words": total_words,
         "weekly_words": weekly_words,
@@ -362,6 +448,9 @@ def get_statistics_snapshot(db_path, user_id, mode):
         "wrong_pct": wrong_pct,
         "correct": correct,
         "correct_pct": correct_pct,
+        "retention_7d_pct": retention_7d_pct,
+        "new_words_tested_week": new_words_tested,
+        "weak_resolved_week": weak_resolved,
     }
 
 
