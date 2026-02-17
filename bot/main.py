@@ -82,7 +82,7 @@ from .storage import (
     add_word,
     add_banned_word,
     add_synonym_link,
-    count_words,
+    get_statistics_snapshot,
     list_weak_words,
     delete_word,
     find_word_by_value,
@@ -700,8 +700,25 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return MENU
 
     if action == "stat":
-        total = count_words(get_db_path())
-        await update.message.reply_text(f"Total words: {total}", reply_markup=_main_menu_markup(user_id))
+        stats = get_statistics_snapshot(get_db_path(), user_id=user_id, mode=_mode_l1_de(user_id))
+        lines = [
+            f"количество слов в словаре = {stats['total_words']}",
+            f"количество слов weekly = +{stats['weekly_words']}",
+            "",
+            f"3+ correct streak = {stats['streak_3p']}",
+            f"2 correct streak = {stats['streak_2']}",
+            f"1 correct = {stats['streak_1']}",
+            "",
+            f"weak article = {stats['weak_article']}",
+            f"weak plural = {stats['weak_plural']}",
+            f"weak partizip2 = {stats['weak_partizip2']}",
+            f"weak preterium = {stats['weak_prateritum']}",
+            "",
+            f"first touch = {stats['first_touch']}",
+            f"wrong = {stats['wrong']} [{stats['wrong_pct']}%]",
+            f"correct = {stats['correct']} [{stats['correct_pct']}%]",
+        ]
+        await update.message.reply_text("\n".join(lines), reply_markup=_main_menu_markup(user_id))
         return MENU
 
     await update.message.reply_text(t(_user_interface_lang(user_id), "unknown_menu"))

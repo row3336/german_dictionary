@@ -271,6 +271,100 @@ def count_words(db_path):
     return int(row["cnt"])
 
 
+def get_statistics_snapshot(db_path, user_id, mode):
+    init_db(db_path)
+    user_id = int(user_id)
+    mode = _safe_text(mode)
+    today = date.today()
+    week_start = today - timedelta(days=today.weekday())  # Monday
+    week_end = week_start + timedelta(days=7)  # next Monday (exclusive)
+    ws = week_start.isoformat()
+    we = week_end.isoformat()
+
+    with _connect(db_path) as conn:
+        total_words = int(conn.execute("SELECT COUNT(*) AS cnt FROM words").fetchone()["cnt"] or 0)
+        weekly_words = int(
+            conn.execute(
+                """
+                SELECT COUNT(*) AS cnt
+                FROM words
+                WHERE date(created_at) >= date(?) AND date(created_at) < date(?)
+                """,
+                (ws, we),
+            ).fetchone()["cnt"]
+            or 0
+        )
+
+        streak_row = conn.execute(
+            """
+            SELECT
+                SUM(CASE WHEN repetitions >= 3 THEN 1 ELSE 0 END) AS s3,
+                SUM(CASE WHEN repetitions = 2 THEN 1 ELSE 0 END) AS s2,
+                SUM(CASE WHEN repetitions = 1 THEN 1 ELSE 0 END) AS s1
+            FROM progress
+            WHERE user_id = ? AND mode = ?
+            """,
+            (user_id, mode),
+        ).fetchone()
+        streak_3p = int(streak_row["s3"] or 0) if streak_row else 0
+        streak_2 = int(streak_row["s2"] or 0) if streak_row else 0
+        streak_1 = int(streak_row["s1"] or 0) if streak_row else 0
+
+        weak_row = conn.execute(
+            """
+            SELECT
+                SUM(CASE WHEN (article_errors >= 2 OR article_streak_wrong >= 2) THEN 1 ELSE 0 END) AS w_article,
+                SUM(CASE WHEN (plural_errors >= 2 OR plural_streak_wrong >= 2) THEN 1 ELSE 0 END) AS w_plural,
+                SUM(CASE WHEN (partizip2_errors >= 2 OR partizip2_streak_wrong >= 2) THEN 1 ELSE 0 END) AS w_partizip2,
+                SUM(CASE WHEN (prateritum_errors >= 2 OR prateritum_streak_wrong >= 2) THEN 1 ELSE 0 END) AS w_prateritum
+            FROM form_stats
+            WHERE user_id = ?
+            """,
+            (user_id,),
+        ).fetchone()
+        weak_article = int(weak_row["w_article"] or 0) if weak_row else 0
+        weak_plural = int(weak_row["w_plural"] or 0) if weak_row else 0
+        weak_partizip2 = int(weak_row["w_partizip2"] or 0) if weak_row else 0
+        weak_prateritum = int(weak_row["w_prateritum"] or 0) if weak_row else 0
+
+        touch_row = conn.execute(
+            """
+            SELECT
+                COUNT(*) AS first_touch,
+                SUM(CASE WHEN is_correct = 0 THEN 1 ELSE 0 END) AS wrong_cnt,
+                SUM(CASE WHEN is_correct = 1 THEN 1 ELSE 0 END) AS correct_cnt
+            FROM quiz_events
+            WHERE user_id = ?
+              AND prev_is_correct IS NULL
+              AND date(created_at) >= date(?)
+              AND date(created_at) < date(?)
+            """,
+            (user_id, ws, we),
+        ).fetchone()
+        first_touch = int(touch_row["first_touch"] or 0) if touch_row else 0
+        wrong = int(touch_row["wrong_cnt"] or 0) if touch_row else 0
+        correct = int(touch_row["correct_cnt"] or 0) if touch_row else 0
+
+    wrong_pct = round((wrong / first_touch) * 100, 1) if first_touch > 0 else 0.0
+    correct_pct = round((correct / first_touch) * 100, 1) if first_touch > 0 else 0.0
+    return {
+        "total_words": total_words,
+        "weekly_words": weekly_words,
+        "streak_3p": streak_3p,
+        "streak_2": streak_2,
+        "streak_1": streak_1,
+        "weak_article": weak_article,
+        "weak_plural": weak_plural,
+        "weak_partizip2": weak_partizip2,
+        "weak_prateritum": weak_prateritum,
+        "first_touch": first_touch,
+        "wrong": wrong,
+        "wrong_pct": wrong_pct,
+        "correct": correct,
+        "correct_pct": correct_pct,
+    }
+
+
 def register_or_update_user(db_path, user_id, username="", first_name=""):
     init_db(db_path)
     with _connect(db_path) as conn:
