@@ -13,8 +13,8 @@ DICT_LANGS = (DICT_RU, DICT_UK, DICT_EN)
 TEXTS = {
     "en": {
         "start": "Start",
-        "back": "Back",
-        "stop": "Stop",
+        "back": "back",
+        "stop": "stop",
         "add_word": "Add words",
         "tests": "Quiz",
         "settings": "Settings",
