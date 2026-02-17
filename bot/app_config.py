@@ -12,7 +12,7 @@ AI_CLARIFY_AI = "Clarify AI"
 AI_CLARIFY_FIELD = "Clarify Field"
 AI_REJECT = "Reject"
 AI_SKIP = "Skip"
-AI_BAN_WORD = "Ban Word"
+AI_BAN_WORD = "Ban"
 
 OWNER_MAIN_KEYS = [["Add Word", "Tests"], ["Settings", "Stat"]]
 USER_MAIN_KEYS = [["Add Word", "Tests"], ["Info", "Stat"]]

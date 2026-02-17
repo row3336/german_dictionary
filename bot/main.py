@@ -256,10 +256,7 @@ def _stop_keys(user_id):
 
 
 def _clarify_keys(user_id):
-    return [
-        [AI_CLARIFY_AI, AI_CLARIFY_FIELD, AI_BAN_WORD],
-        [AI_SKIP, t(_user_interface_lang(user_id), "stop")],
-    ]
+    return AI_KEYS
 
 
 def _add_input_markup(user_id):
@@ -998,7 +995,7 @@ async def add_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if text != AI_CONFIRM:
         await update.message.reply_text(
-            "Use: Confirm, Clarify AI, Clarify Field, Reject, or Ban Word.",
+            "Use: Confirm, Clarify AI, Clarify Field, Reject, Ban, or Stop.",
             reply_markup=ReplyKeyboardMarkup(AI_KEYS, resize_keyboard=True),
         )
         return ADD_CONFIRM
@@ -2134,7 +2131,7 @@ async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, w
             (
                 f"Error: AI failed to parse for word: {word}\n"
                 f"Clarification: {clarification or '-'}\n"
-                "Use Clarify AI, Clarify Field, Skip, or Ban Word."
+                "Use Confirm, Clarify AI, Clarify Field, Reject, Ban, or Stop."
             ),
             reply_markup=ReplyKeyboardMarkup(_clarify_keys(update.effective_user.id), resize_keyboard=True),
         )
