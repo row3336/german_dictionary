@@ -984,6 +984,9 @@ async def add_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == AI_CLARIFY_FIELD:
         context.user_data["edit_source"] = "add"
         context.user_data["edit_stage"] = "pick_field"
+        entry = context.user_data.get("pending_entry")
+        if entry:
+            await update.message.reply_text(_format_word_card(entry, "AI word card:"))
         await update.message.reply_text(
             "Choose field to edit:",
             reply_markup=_edit_fields_markup("add"),
@@ -1023,6 +1026,9 @@ async def add_clarify(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == AI_CLARIFY_FIELD:
         context.user_data["edit_source"] = "add"
         context.user_data["edit_stage"] = "pick_field"
+        entry = context.user_data.get("pending_entry")
+        if entry:
+            await update.message.reply_text(_format_word_card(entry, "AI word card:"))
         await update.message.reply_text(
             "Choose field to edit:",
             reply_markup=_edit_fields_markup("add"),
