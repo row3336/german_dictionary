@@ -9,17 +9,17 @@ STOP_TEXT = "Stop"
 START_TEXT = "Start"
 AI_CONFIRM = "Confirm"
 AI_CLARIFY_AI = "Clarify AI"
-AI_CLARIFY_FIELD = "Clarify Field"
+AI_CLARIFY_FIELD = "Clarify field"
 AI_REJECT = "Reject"
 AI_SKIP = "Skip"
 AI_BAN_WORD = "Ban"
 
-OWNER_MAIN_KEYS = [["Add Word", "Tests"], ["Settings", "Stat"]]
-USER_MAIN_KEYS = [["Add Word", "Tests"], ["Info", "Stat"]]
+OWNER_MAIN_KEYS = [["Add words", "Quiz"], ["Settings", "Statistics"]]
+USER_MAIN_KEYS = [["Add words", "Quiz"], ["Info", "Statistics"]]
 WAIT_KEYS = [[START_TEXT]]
 ADD_KEYS = [[BACK_TEXT]]
 AI_KEYS = [[AI_CONFIRM, AI_CLARIFY_AI, AI_CLARIFY_FIELD], [AI_REJECT, AI_BAN_WORD, STOP_TEXT]]
-TESTS_KEYS = [["Quiz RU -> DE", "Quiz DE -> RU"], ["Quiz article", BACK_TEXT]]
+TESTS_KEYS = [["Ru > De", "De > Ru"], ["Articles", BACK_TEXT]]
 REVIEW_FLAGS_TEXT = "Review Flags \u26A0\uFE0F"
 SETTINGS_KEYS = [
     ["Suggested Words", REVIEW_FLAGS_TEXT],

@@ -133,10 +133,10 @@ TEST_VERB_WEAK_TEXT = "Verb Forms Weak Mode"
 TEST_PRATERITUM_WEAK_TEXT = "Prateritum Weak Mode"
 TEST_PARTIZIP2_WEAK_TEXT = "Partizip2 Weak Mode"
 SYNONYMS_TEXT = "synonyms"
-SYN_ADD_TEXT = "Add"
-SYN_REMOVE_TEXT = "Remove"
-SYN_AUTO_TEXT = "Auto by RU"
-SYN_CLEAR_TEXT = "Clear group"
+SYN_ADD_TEXT = "add"
+SYN_REMOVE_TEXT = "remove"
+SYN_AUTO_TEXT = "auto by RU"
+SYN_CLEAR_TEXT = "clear group"
 SYN_FLAG_TEXT = "flag!"
 SYN_CONFIRM_TEXT = "Confirm"
 SYN_CANCEL_TEXT = "Cancel"
@@ -164,10 +164,10 @@ def _user_dict_lang(user_id):
 def _dict_label(user_id):
     dict_lang = _user_dict_lang(user_id)
     if dict_lang == "uk":
-        return "UA"
+        return "Ua"
     if dict_lang == "en":
-        return "EN"
-    return "RU"
+        return "En"
+    return "Ru"
 
 
 def _mode_l1_de(user_id):
@@ -995,7 +995,7 @@ async def add_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if text != AI_CONFIRM:
         await update.message.reply_text(
-            "Use: Confirm, Clarify AI, Clarify Field, Reject, Ban, or Stop.",
+            "Use: Confirm, Clarify AI, Clarify field, Reject, Ban, or Stop.",
             reply_markup=ReplyKeyboardMarkup(AI_KEYS, resize_keyboard=True),
         )
         return ADD_CONFIRM
@@ -2137,7 +2137,7 @@ async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, w
             (
                 f"Error: AI failed to parse for word: {word}\n"
                 f"Clarification: {clarification or '-'}\n"
-                "Use Confirm, Clarify AI, Clarify Field, Reject, Ban, or Stop."
+                "Use Confirm, Clarify AI, Clarify field, Reject, Ban, or Stop."
             ),
             reply_markup=ReplyKeyboardMarkup(_clarify_keys(update.effective_user.id), resize_keyboard=True),
         )
