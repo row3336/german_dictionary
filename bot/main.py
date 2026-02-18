@@ -1291,7 +1291,7 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         last_answered = context.user_data.get("quiz_last_answered_entry")
         if last_answered and last_answered.get("id") == updated.get("id"):
             context.user_data["quiz_last_answered_entry"] = updated
-        return await _show_quiz_prompt_after_edit(update, context, "Р Р†РЎС™РІР‚В¦ Updated.")
+        return await _show_quiz_prompt_after_edit(update, context, "✅ Updated.")
     return await _show_ai_preview(update, updated)
 
 async def _return_from_synonyms(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix="Р Р†РЎС™РІР‚В¦ Done."):
