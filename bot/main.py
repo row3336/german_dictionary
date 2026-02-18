@@ -1556,7 +1556,7 @@ async def quiz_article(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def _weak_status(ok):
-    return "Correct U+2705" if ok else "Correct Wrong U+274C"
+    return "Correct ✅" if ok else "Correct Wrong ❌"
 
 
 def _format_feedback_plural_weak(entry, ok):
@@ -1866,7 +1866,7 @@ def _format_article_question(entry):
 
 
 def _format_feedback_ru_de(entry, ok):
-    status = "Correct U+2705" if ok else "Wrong U+274C"
+    status = "Correct ✅" if ok else "Wrong ❌"
     word_type = entry.get("type", "")
     article = str(entry.get("article", "")).strip()
     if word_type == "nomen":
@@ -1905,12 +1905,12 @@ def _format_feedback_ru_de(entry, ok):
 
 
 def _format_feedback_de_ru(entry, ok, dict_lang):
-    status = "Correct U+2705" if ok else "Wrong U+274C"
+    status = "Correct ✅" if ok else "Wrong ❌"
     return f"{status} >>>     *{_md_escape(_low_word(_entry_translation(entry, dict_lang)))}*"
 
 
 def _format_feedback_article(entry, ok, dict_lang):
-    status = "Correct U+2705" if ok else "Wrong U+274C"
+    status = "Correct ✅" if ok else "Wrong ❌"
     article = str(entry.get("article", "")).strip()
     german = _cap_word(entry.get("german", ""))
     plural = _cap_word(entry.get("plural", ""))
