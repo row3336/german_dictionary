@@ -1717,7 +1717,7 @@ async def _save_entry(update: Update, entry):
         return None
 
     await update.message.reply_text(
-        f"Р В Р’В Р В РІР‚В Р В Р Р‹Р РЋРІвЂћСћР В Р вЂ Р В РІР‚С™Р вЂ™Р’В¦ Saved: {saved.get('id')}",
+        f"✅ Saved: {saved.get('id')}",
         reply_markup=ReplyKeyboardMarkup(AI_KEYS, resize_keyboard=True),
     )
     return saved
@@ -2334,7 +2334,7 @@ async def _process_next_ai_word(update: Update, context: ContextTypes.DEFAULT_TY
     context.user_data.pop("pending_entry", None)
     await _reply_text_with_retry(
         update.message,
-        "Р В Р’В Р вЂ™Р’В Р В Р’В Р Р†Р вЂљР’В Р В Р’В Р В Р вЂ№Р В Р Р‹Р Р†РІР‚С›РЎС›Р В Р’В Р В РІР‚В Р В Р’В Р Р†Р вЂљРЎв„ўР В РІР‚в„ўР вЂ™Р’В¦ Done.",
+        "✅ Done.",
         reply_markup=_main_menu_markup(update.effective_user.id),
     )
     return MENU
