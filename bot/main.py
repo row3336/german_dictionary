@@ -199,8 +199,9 @@ def _tests_menu_keys(user_id):
 
 def _ru_de_menu_keys(user_id):
     return [
-        [STANDARD_SM2_TEXT, TEST_PLURAL_WEAK_TEXT],
-        [TEST_VERB_WEAK_TEXT, t(_user_interface_lang(user_id), "back")],
+        [STANDARD_SM2_TEXT, TEST_ARTICLE_WEAK_TEXT],
+        [TEST_PLURAL_WEAK_TEXT, TEST_VERB_WEAK_TEXT],
+        [t(_user_interface_lang(user_id), "back")],
     ]
 
 
@@ -646,7 +647,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id
     if not _is_owner_only(user_id):
-        await update.message.reply_text("Р В Р’В Р вЂ™Р’В Р В Р’В Р Р†Р вЂљР’В Р В Р’В Р В Р вЂ№Р В Р Р‹Р РЋРІвЂћСћР В Р’В Р вЂ™Р’В Р В Р’В Р Р†Р вЂљР’В° Owner-only bot.")
+        await update.message.reply_text("❌ Owner-only bot.")
         return ConversationHandler.END
     ui_lang = get_setting(get_db_path(), OWNER_INTERFACE_LANG_KEY, "")
     dict_lang = get_setting(get_db_path(), OWNER_DICT_LANG_KEY, "")
@@ -665,7 +666,7 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await start(update, context)
 
     if not _is_owner_only(user_id):
-        await update.message.reply_text("Р В Р’В Р вЂ™Р’В Р В Р’В Р Р†Р вЂљР’В Р В Р’В Р В Р вЂ№Р В Р Р‹Р РЋРІвЂћСћР В Р’В Р вЂ™Р’В Р В Р’В Р Р†Р вЂљР’В° Owner-only bot.")
+        await update.message.reply_text("❌ Owner-only bot.")
         return ConversationHandler.END
 
     if action == "add_word":
@@ -728,7 +729,7 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def select_ui_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not _is_owner_only(user_id):
-        await update.message.reply_text("Р В Р’В Р вЂ™Р’В Р В Р’В Р Р†Р вЂљР’В Р В Р’В Р В Р вЂ№Р В Р Р‹Р РЋРІвЂћСћР В Р’В Р вЂ™Р’В Р В Р’В Р Р†Р вЂљР’В° Owner-only bot.")
+        await update.message.reply_text("❌ Owner-only bot.")
         return ConversationHandler.END
 
     interface_lang = parse_interface_choice(update.message.text.strip())
@@ -746,7 +747,7 @@ async def select_ui_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def select_dict_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not _is_owner_only(user_id):
-        await update.message.reply_text("Р В Р’В Р вЂ™Р’В Р В Р’В Р Р†Р вЂљР’В Р В Р’В Р В Р вЂ№Р В Р Р‹Р РЋРІвЂћСћР В Р’В Р вЂ™Р’В Р В Р’В Р Р†Р вЂљР’В° Owner-only bot.")
+        await update.message.reply_text("❌ Owner-only bot.")
         return ConversationHandler.END
 
     lang = _user_interface_lang(user_id)
@@ -1170,7 +1171,7 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if _action_key_from_text(text, update.effective_user.id) == "back":
         if source == "quiz":
             if stage == "pick_scope":
-                return await _show_quiz_prompt_after_edit(update, context, "Р В Р вЂ Р РЋРЎв„ўР Р†Р вЂљР’В¦ Edit canceled.")
+                return await _show_quiz_prompt_after_edit(update, context, "❌ Edit canceled.")
             if stage == "pick_field":
                 context.user_data["edit_stage"] = "pick_scope"
                 await update.message.reply_text(
@@ -1207,7 +1208,7 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
             word_id = entry.get("id")
             if not word_id:
                 await update.message.reply_text(
-                    "Р В Р вЂ Р РЋРЎС™Р В Р вЂ° Cannot delete: missing word id.",
+                    "❌ Cannot delete: missing word id.",
                     reply_markup=_quiz_edit_root_markup(update.effective_user.id),
                 )
                 return ADD_EDIT
@@ -1220,7 +1221,7 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["edit_stage"] = "pick_scope"
             context.user_data.pop("edit_field", None)
             state = context.user_data.get("edit_return_state")
-            prefix = "Р В Р вЂ Р РЋРЎв„ўР Р†Р вЂљР’В¦ Deleted." if removed else "Р В Р вЂ Р РЋРЎС™Р В Р вЂ° Word not found."
+            prefix = "✅ Deleted." if removed else "❌ Word not found."
             if state == QUIZ_RU_DE:
                 return await _send_ru_de_prompt(update, context, prefix)
             if state == QUIZ_DE_RU:
@@ -1294,7 +1295,7 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await _show_quiz_prompt_after_edit(update, context, "✅ Updated.")
     return await _show_ai_preview(update, updated)
 
-async def _return_from_synonyms(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix="Р Р†РЎС™РІР‚В¦ Done."):
+async def _return_from_synonyms(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix="✅ Done."):
     anchor_id = context.user_data.get("syn_anchor_id")
     return_state = context.user_data.get("syn_return_state")
     context.user_data.pop("syn_auto_candidates", None)
@@ -1357,7 +1358,7 @@ async def synonyms_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return SYN_CLEAR_CONFIRM
     if text == SYN_FLAG_TEXT:
         add_word_flag(get_db_path(), word_id=anchor_id, user_id=update.effective_user.id, comment="synonym_review")
-        await update.message.reply_text("вњ… Flag saved.", reply_markup=_syn_menu_markup(update.effective_user.id))
+        await update.message.reply_text("✅ Flag saved.", reply_markup=_syn_menu_markup(update.effective_user.id))
         return SYN_MENU
     await update.message.reply_text("Use synonyms buttons.", reply_markup=_syn_menu_markup(update.effective_user.id))
     return SYN_MENU
@@ -1380,7 +1381,7 @@ async def synonyms_add_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("Type mismatch. Only same type is allowed.")
         return SYN_ADD_INPUT
     changed, _ = add_synonym_link(get_db_path(), anchor_id, target.get("id"))
-    msg = "вњ… Linked." if changed else "вњ… Already linked."
+    msg = "✅ Linked." if changed else "✅ Already linked."
     group = get_synonym_group(get_db_path(), anchor_id)
     await update.message.reply_text(f"{msg}\n\n{_format_syn_group(anchor_entry, group, _user_dict_lang(update.effective_user.id))}", reply_markup=_syn_menu_markup(update.effective_user.id))
     return SYN_MENU
@@ -1409,7 +1410,7 @@ async def synonyms_remove_input(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text("Cannot remove anchor word from itself. Use Clear group.")
         return SYN_REMOVE_INPUT
     removed = remove_synonym_link(get_db_path(), target.get("id"))
-    msg = "Р В Р’В Р вЂ™Р’В Р В Р’В Р Р†Р вЂљР’В Р В Р’В Р В Р вЂ№Р В Р Р‹Р Р†РІР‚С›РЎС›Р В Р’В Р В РІР‚В Р В Р’В Р Р†Р вЂљРЎв„ўР В РІР‚в„ўР вЂ™Р’В¦ Removed." if removed else "Р В Р’В Р вЂ™Р’В Р В Р’В Р Р†Р вЂљР’В Р В Р’В Р В Р вЂ№Р В Р Р‹Р РЋРІвЂћСћР В Р’В Р вЂ™Р’В Р В Р’В Р Р†Р вЂљР’В° Not linked."
+    msg = "✅ Removed." if removed else "❌ Not linked."
     group_new = get_synonym_group(get_db_path(), anchor_id)
     await update.message.reply_text(f"{msg}\n\n{_format_syn_group(anchor, group_new, _user_dict_lang(update.effective_user.id))}", reply_markup=_syn_menu_markup(update.effective_user.id))
     return SYN_MENU
@@ -1435,7 +1436,7 @@ async def synonyms_auto_confirm(update: Update, context: ContextTypes.DEFAULT_TY
             added += 1
     anchor = get_word_by_id(get_db_path(), anchor_id)
     group = get_synonym_group(get_db_path(), anchor_id)
-    await update.message.reply_text(f"Р В Р’В Р вЂ™Р’В Р В Р’В Р Р†Р вЂљР’В Р В Р’В Р В Р вЂ№Р В Р Р‹Р Р†РІР‚С›РЎС›Р В Р’В Р В РІР‚В Р В Р’В Р Р†Р вЂљРЎв„ўР В РІР‚в„ўР вЂ™Р’В¦ Auto linked: {added}", reply_markup=_syn_menu_markup(update.effective_user.id))
+    await update.message.reply_text(f"✅ Auto linked: {added}", reply_markup=_syn_menu_markup(update.effective_user.id))
     await update.message.reply_text(_format_syn_group(anchor or {}, group, _user_dict_lang(update.effective_user.id)), reply_markup=_syn_menu_markup(update.effective_user.id))
     return SYN_MENU
 
@@ -1449,7 +1450,7 @@ async def synonyms_clear_confirm(update: Update, context: ContextTypes.DEFAULT_T
         return SYN_CLEAR_CONFIRM
     anchor_id = context.user_data.get("syn_anchor_id")
     cleared = clear_synonym_group(get_db_path(), anchor_id)
-    await update.message.reply_text("Р В Р’В Р вЂ™Р’В Р В Р’В Р Р†Р вЂљР’В Р В Р’В Р В Р вЂ№Р В Р Р‹Р Р†РІР‚С›РЎС›Р В Р’В Р В РІР‚В Р В Р’В Р Р†Р вЂљРЎв„ўР В РІР‚в„ўР вЂ™Р’В¦ Group cleared." if cleared else "Р В Р’В Р вЂ™Р’В Р В Р’В Р Р†Р вЂљР’В Р В Р’В Р В Р вЂ№Р В Р Р‹Р Р†РІР‚С›РЎС›Р В Р’В Р В РІР‚В Р В Р’В Р Р†Р вЂљРЎв„ўР В РІР‚в„ўР вЂ™Р’В¦ Group already empty.", reply_markup=_syn_menu_markup(update.effective_user.id))
+    await update.message.reply_text("✅ Group cleared." if cleared else "✅ Group already empty.", reply_markup=_syn_menu_markup(update.effective_user.id))
     return SYN_MENU
 
 
@@ -1462,19 +1463,19 @@ async def _flag_current_word(update: Update, context: ContextTypes.DEFAULT_TYPE,
         return await _back_to_tests(update)
     add_word_flag(get_db_path(), word_id=word_id, user_id=update.effective_user.id, comment="")
     if return_state == QUIZ_RU_DE:
-        return await _show_quiz_prompt_after_edit(update, context, "Р В Р’В Р вЂ™Р’В Р В Р’В Р Р†Р вЂљР’В Р В Р’В Р В Р вЂ№Р В Р Р‹Р Р†РІР‚С›РЎС›Р В Р’В Р В РІР‚В Р В Р’В Р Р†Р вЂљРЎв„ўР В РІР‚в„ўР вЂ™Р’В¦ Flag saved.", state_override=QUIZ_RU_DE)
+        return await _show_quiz_prompt_after_edit(update, context, "✅ Flag saved.", state_override=QUIZ_RU_DE)
     if return_state == QUIZ_DE_RU:
-        return await _show_quiz_prompt_after_edit(update, context, "Р В Р’В Р вЂ™Р’В Р В Р’В Р Р†Р вЂљР’В Р В Р’В Р В Р вЂ№Р В Р Р‹Р Р†РІР‚С›РЎС›Р В Р’В Р В РІР‚В Р В Р’В Р Р†Р вЂљРЎв„ўР В РІР‚в„ўР вЂ™Р’В¦ Flag saved.", state_override=QUIZ_DE_RU)
+        return await _show_quiz_prompt_after_edit(update, context, "✅ Flag saved.", state_override=QUIZ_DE_RU)
     if return_state == QUIZ_ARTICLE:
-        return await _show_quiz_prompt_after_edit(update, context, "Р В Р’В Р вЂ™Р’В Р В Р’В Р Р†Р вЂљР’В Р В Р’В Р В Р вЂ№Р В Р Р‹Р Р†РІР‚С›РЎС›Р В Р’В Р В РІР‚В Р В Р’В Р Р†Р вЂљРЎв„ўР В РІР‚в„ўР вЂ™Р’В¦ Flag saved.", state_override=QUIZ_ARTICLE)
+        return await _show_quiz_prompt_after_edit(update, context, "✅ Flag saved.", state_override=QUIZ_ARTICLE)
     if return_state == QUIZ_ARTICLE_WEAK:
-        return await _show_quiz_prompt_after_edit(update, context, "Р В Р’В Р вЂ™Р’В Р В Р’В Р Р†Р вЂљР’В Р В Р’В Р В Р вЂ№Р В Р Р‹Р Р†РІР‚С›РЎС›Р В Р’В Р В РІР‚В Р В Р’В Р Р†Р вЂљРЎв„ўР В РІР‚в„ўР вЂ™Р’В¦ Flag saved.", state_override=QUIZ_ARTICLE_WEAK)
+        return await _show_quiz_prompt_after_edit(update, context, "✅ Flag saved.", state_override=QUIZ_ARTICLE_WEAK)
     if return_state == QUIZ_PLURAL_WEAK:
-        return await _show_quiz_prompt_after_edit(update, context, "Р В Р’В Р вЂ™Р’В Р В Р’В Р Р†Р вЂљР’В Р В Р’В Р В Р вЂ№Р В Р Р‹Р Р†РІР‚С›РЎС›Р В Р’В Р В РІР‚В Р В Р’В Р Р†Р вЂљРЎв„ўР В РІР‚в„ўР вЂ™Р’В¦ Flag saved.", state_override=QUIZ_PLURAL_WEAK)
+        return await _show_quiz_prompt_after_edit(update, context, "✅ Flag saved.", state_override=QUIZ_PLURAL_WEAK)
     if return_state == QUIZ_PRATERITUM_WEAK:
-        return await _show_quiz_prompt_after_edit(update, context, "Р В Р’В Р вЂ™Р’В Р В Р’В Р Р†Р вЂљР’В Р В Р’В Р В Р вЂ№Р В Р Р‹Р Р†РІР‚С›РЎС›Р В Р’В Р В РІР‚В Р В Р’В Р Р†Р вЂљРЎв„ўР В РІР‚в„ўР вЂ™Р’В¦ Flag saved.", state_override=QUIZ_PRATERITUM_WEAK)
+        return await _show_quiz_prompt_after_edit(update, context, "✅ Flag saved.", state_override=QUIZ_PRATERITUM_WEAK)
     if return_state == QUIZ_PARTIZIP2_WEAK:
-        return await _show_quiz_prompt_after_edit(update, context, "Р В Р’В Р вЂ™Р’В Р В Р’В Р Р†Р вЂљР’В Р В Р’В Р В Р вЂ№Р В Р Р‹Р Р†РІР‚С›РЎС›Р В Р’В Р В РІР‚В Р В Р’В Р Р†Р вЂљРЎв„ўР В РІР‚в„ўР вЂ™Р’В¦ Flag saved.", state_override=QUIZ_PARTIZIP2_WEAK)
+        return await _show_quiz_prompt_after_edit(update, context, "✅ Flag saved.", state_override=QUIZ_PARTIZIP2_WEAK)
     return await _back_to_tests(update)
 
 
@@ -1556,7 +1557,7 @@ async def quiz_article(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def _weak_status(ok):
-    return "Correct ✅" if ok else "Correct Wrong ❌"
+    return "Correct ✅" if ok else "Wrong ❌"
 
 
 def _format_feedback_plural_weak(entry, ok):
@@ -2293,7 +2294,7 @@ async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, w
         inf = entry.get("infinitive", "")
         existing_inf = find_existing_word(get_db_path(), inf) if inf else None
         if existing_inf:
-            msg = f"Р В Р’В Р вЂ™Р’В Р В Р’В Р Р†Р вЂљР’В Р В Р’В Р В Р вЂ№Р В Р Р‹Р РЋРІвЂћСћР В Р’В Р вЂ™Р’В Р В Р’В Р Р†Р вЂљР’В° Verb form detected: {word}. Base infinitive: {inf}. Already in database, not saved."
+            msg = f"❌ Verb form detected: {word}. Base infinitive: {inf}. Already in database, not saved."
             if has_queue:
                 await _reply_text_with_retry(update.message, msg)
                 logging.info("Queue skip non-infinitive verb input (existing infinitive): %s -> %s", word, inf)
@@ -2342,12 +2343,12 @@ async def _ban_pending_word(update: Update, context: ContextTypes.DEFAULT_TYPE):
     word = (context.user_data.get("pending_word") or "").strip()
     if not word:
         await update.message.reply_text(
-            "Р В Р’В Р вЂ™Р’В Р В Р’В Р Р†Р вЂљР’В Р В Р’В Р В Р вЂ№Р В Р Р‹Р РЋРІвЂћСћР В Р’В Р вЂ™Р’В Р В Р’В Р Р†Р вЂљР’В° No word to ban.",
+            "❌ No word to ban.",
             reply_markup=ReplyKeyboardMarkup(_add_keys(update.effective_user.id), resize_keyboard=True),
         )
         return ADD_INPUT
     created = add_banned_word(get_db_path(), word)
-    status = "Р В Р’В Р вЂ™Р’В Р В Р’В Р Р†Р вЂљР’В Р В Р’В Р В Р вЂ№Р В Р Р‹Р Р†РІР‚С›РЎС›Р В Р’В Р В РІР‚В Р В Р’В Р Р†Р вЂљРЎв„ўР В РІР‚в„ўР вЂ™Р’В¦ Added to banned list." if created else "Р В Р’В Р вЂ™Р’В Р В Р’В Р Р†Р вЂљР’В Р В Р’В Р В Р вЂ№Р В Р Р‹Р Р†РІР‚С›РЎС›Р В Р’В Р В РІР‚В Р В Р’В Р Р†Р вЂљРЎв„ўР В РІР‚в„ўР вЂ™Р’В¦ Already in banned list."
+    status = "✅ Added to banned list." if created else "✅ Already in banned list."
     await update.message.reply_text(f"{status} ({word})")
     context.user_data.pop("pending_entry", None)
     return await _process_next_ai_word(update, context)
@@ -2364,7 +2365,7 @@ async def _stop_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop("flag_word_id", None)
     context.user_data.pop("flag_return_state", None)
     await update.message.reply_text(
-        "Р В Р’В Р вЂ™Р’В Р В Р’В Р Р†Р вЂљР’В Р В Р’В Р В Р вЂ№Р В Р Р‹Р РЋРІвЂћСћР В Р’В Р вЂ™Р’В Р В Р’В Р Р†Р вЂљР’В° Stopped.",
+        "⏹ Stopped.",
         reply_markup=_main_menu_markup(update.effective_user.id),
     )
     return MENU
@@ -2594,7 +2595,7 @@ async def _auto_dump_job(context: ContextTypes.DEFAULT_TYPE):
                 chat_id=owner_id,
                 document=dump_path.open("rb"),
                 filename=dump_path.name,
-                caption=f"Р В Р’В Р вЂ™Р’В Р В Р’В Р Р†Р вЂљР’В Р В Р’В Р В Р вЂ№Р В Р Р‹Р Р†РІР‚С›РЎС›Р В Р’В Р В РІР‚В Р В Р’В Р Р†Р вЂљРЎв„ўР В РІР‚в„ўР вЂ™Р’В¦ Auto dump created: {dump_path.name}",
+                caption=f"✅ Auto dump created: {dump_path.name}",
             )
         except Exception:
             pass
@@ -2694,5 +2695,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 
