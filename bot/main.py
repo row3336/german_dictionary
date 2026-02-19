@@ -395,8 +395,6 @@ def _set_entry_field(entry, raw_update):
         "russian",
         "ukrainian",
         "english",
-        "level",
-        "cefr_level",
         "article",
         "plural",
         "prateritum",
@@ -409,15 +407,7 @@ def _set_entry_field(entry, raw_update):
         return None, f"Unknown field: {field}"
 
     updated = dict(entry)
-    if field == "level":
-        field = "cefr_level"
-
-    if field == "cefr_level":
-        level = _parse_level_toggle(value)
-        if not level:
-            return None, "level must be one of A1,A2,B1,B2,C1,C2"
-        updated["cefr_level"] = level
-    elif field == "type":
+    if field == "type":
         normalized_type = _type_label(value)
         if normalized_type not in ALLOWED_AI_TYPES:
             return None, "Invalid type."
@@ -516,7 +506,6 @@ def _format_word_card(entry, title="Word card:"):
         title,
         f"id: {entry.get('id', '')}",
         f"type: {entry.get('type', '')}",
-        f"level: {entry.get('cefr_level', '') or '-'}",
         f"article: {entry.get('article', '') or '-'}",
         f"german: {entry.get('german', '') or '-'}",
         f"infinitive: {entry.get('infinitive', '') or '-'}",
@@ -707,6 +696,7 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"количество слов в словаре = {stats['total_words']}",
             "типы слов в словаре:",
             *[f"{k} = {word_types[k]}" for k in sorted(word_types.keys())],
+            f"никогда не отвечались = {stats['never_answered']}",
             f"количество слов weekly = +{stats['weekly_words']}",
             "",
             f"3+ correct streak = {stats['streak_3p']}",
@@ -2113,10 +2103,9 @@ def _ai_prompt(word, clarification):
         "Return only a JSON object and nothing else. "
         "Detect German part of speech. Allowed types: "
         "nomen, verb, adjektiv, pronomen, adverb, praeposition, konjunktion, partikel. "
-        "Set cefr_level from: A1, A2, B1, B2, C1, C2. "
-        "For nomen return: type, article, german, plural, russian, ukrainian, english, cefr_level. "
-        "For verb return: type, infinitive, prateritum, partizip2, russian, ukrainian, english, cefr_level. "
-        "For all other allowed types return: type, german, russian, ukrainian, english, cefr_level. "
+        "For nomen return: type, article, german, plural, russian, ukrainian, english. "
+        "For verb return: type, infinitive, prateritum, partizip2, russian, ukrainian, english. "
+        "For all other allowed types return: type, german, russian, ukrainian, english. "
         "Use Russian/Ukrainian translations in singular only. No extra text."
         f"\nWord: {word}{extra}"
     )
@@ -2141,7 +2130,6 @@ def _normalize_ai_entry(entry):
     entry = dict(entry)
     entry_type = _type_label(entry.get("type", ""))
     entry["type"] = entry_type
-    cefr_level = _parse_level_toggle(entry.get("cefr_level", ""))
 
     if entry_type == "verb":
         return {
@@ -2152,7 +2140,7 @@ def _normalize_ai_entry(entry):
             "russian": _normalize_russian_singular(entry.get("russian", "")),
             "ukrainian": str(entry.get("ukrainian", "")).strip(),
             "english": str(entry.get("english", "")).strip(),
-            "cefr_level": cefr_level,
+            "cefr_level": "",
         }
 
     if entry_type == "nomen":
@@ -2164,7 +2152,7 @@ def _normalize_ai_entry(entry):
             "russian": _normalize_russian_singular(entry.get("russian", "")),
             "ukrainian": str(entry.get("ukrainian", "")).strip(),
             "english": str(entry.get("english", "")).strip(),
-            "cefr_level": cefr_level,
+            "cefr_level": "",
         }
 
     return {
@@ -2173,7 +2161,7 @@ def _normalize_ai_entry(entry):
         "russian": _normalize_russian_singular(entry.get("russian", "")),
         "ukrainian": str(entry.get("ukrainian", "")).strip(),
         "english": str(entry.get("english", "")).strip(),
-        "cefr_level": cefr_level,
+        "cefr_level": "",
     }
 
 
@@ -2189,7 +2177,6 @@ def _is_non_infinitive_verb_input(raw_word, entry):
 
 def _format_ai_preview(entry):
     entry_type = entry.get("type")
-    level = entry.get("cefr_level", "") or "NO_LEVEL"
     if entry_type == "nomen":
         art = entry.get("article", "")
         ger = entry.get("german", "")
@@ -2199,7 +2186,7 @@ def _format_ai_preview(entry):
         eng = entry.get("english", "")
         extras = f" ({plural})" if plural else ""
         return (
-            f"Recognized [Nomen {level}]\n"
+            "Recognized [Nomen]\n"
             f"{art} *{_md_escape(ger)}* - {_md_escape(rus)} / {_md_escape(ukr)} / {_md_escape(eng)}{_md_escape(extras)}"
         )
 
@@ -2213,7 +2200,7 @@ def _format_ai_preview(entry):
         extras = " / ".join([x for x in [pr, p2] if x])
         extras = f" ({extras})" if extras else ""
         return (
-            f"Recognized [Verb {level}]\n"
+            "Recognized [Verb]\n"
             f"*{_md_escape(inf)}* - {_md_escape(rus)} / {_md_escape(ukr)} / {_md_escape(eng)}{_md_escape(extras)}"
         )
 
@@ -2221,7 +2208,7 @@ def _format_ai_preview(entry):
     rus = entry.get("russian", "")
     ukr = entry.get("ukrainian", "")
     eng = entry.get("english", "")
-    return f"Recognized [{entry_type} {level}]\n*{_md_escape(ger)}* - {_md_escape(rus)} / {_md_escape(ukr)} / {_md_escape(eng)}"
+    return f"Recognized [{entry_type}]\n*{_md_escape(ger)}* - {_md_escape(rus)} / {_md_escape(ukr)} / {_md_escape(eng)}"
 
 
 async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, word, clarification):

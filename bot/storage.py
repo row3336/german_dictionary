@@ -340,14 +340,23 @@ def get_statistics_snapshot(db_path, user_id, mode):
 
         touch_row = conn.execute(
             """
+            WITH first_events AS (
+                SELECT word_id, MIN(id) AS first_id
+                FROM quiz_events
+                WHERE user_id = ?
+                GROUP BY word_id
+            ),
+            first_touch AS (
+                SELECT e.word_id, e.is_correct, e.created_at
+                FROM quiz_events e
+                JOIN first_events f ON f.first_id = e.id
+            )
             SELECT
                 COUNT(*) AS first_touch,
                 SUM(CASE WHEN is_correct = 0 THEN 1 ELSE 0 END) AS wrong_cnt,
                 SUM(CASE WHEN is_correct = 1 THEN 1 ELSE 0 END) AS correct_cnt
-            FROM quiz_events
-            WHERE user_id = ?
-              AND prev_is_correct IS NULL
-              AND date(created_at) >= date(?)
+            FROM first_touch
+            WHERE date(created_at) >= date(?)
               AND date(created_at) < date(?)
             """,
             (user_id, ws, we),
@@ -440,6 +449,22 @@ def get_statistics_snapshot(db_path, user_id, mode):
             ).fetchone()["cnt"]
             or 0
         )
+        never_answered = int(
+            conn.execute(
+                """
+                SELECT COUNT(*) AS cnt
+                FROM words w
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM quiz_events e
+                    WHERE e.user_id = ?
+                      AND e.word_id = w.id
+                )
+                """,
+                (user_id,),
+            ).fetchone()["cnt"]
+            or 0
+        )
 
     wrong_pct = round((wrong / first_touch) * 100, 1) if first_touch > 0 else 0.0
     correct_pct = round((correct / first_touch) * 100, 1) if first_touch > 0 else 0.0
@@ -456,6 +481,7 @@ def get_statistics_snapshot(db_path, user_id, mode):
         "weak_partizip2": weak_partizip2,
         "weak_prateritum": weak_prateritum,
         "first_touch": first_touch,
+        "never_answered": never_answered,
         "wrong": wrong,
         "wrong_pct": wrong_pct,
         "correct": correct,
@@ -854,21 +880,31 @@ def select_due(db_path, user_id, mode, word_type=None, levels=None, today=None):
     due_today = today.isoformat()
     init_db(db_path)
 
-    where_clauses = ["COALESCE(p.due, ?) <= ?"]
-    params = [int(user_id), mode, due_today, due_today]
+    where_clauses = ["(COALESCE(p.due, ?) <= ? OR le.is_correct = 0)"]
+    where_params = [due_today, due_today]
     if word_type:
         where_clauses.insert(0, "w.type = ?")
-        params.insert(2, word_type)
+        where_params.insert(0, word_type)
     if levels:
         safe_levels = [lvl for lvl in (_normalize_level(x) for x in levels) if lvl]
         if safe_levels:
             placeholders = ",".join("?" for _ in safe_levels)
             where_clauses.append(f"upper(w.cefr_level) IN ({placeholders})")
-            params.extend(safe_levels)
+            where_params.extend(safe_levels)
 
     where_sql = " AND ".join(where_clauses)
 
     query = f"""
+        WITH last_event AS (
+            SELECT e.word_id, e.is_correct
+            FROM quiz_events e
+            JOIN (
+                SELECT word_id, MAX(id) AS last_id
+                FROM quiz_events
+                WHERE user_id = ? AND mode = ?
+                GROUP BY word_id
+            ) x ON x.last_id = e.id
+        )
         SELECT
             w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.russian, w.cefr_level,
             w.ukrainian, w.english,
@@ -876,9 +912,12 @@ def select_due(db_path, user_id, mode, word_type=None, levels=None, today=None):
         FROM words w
         LEFT JOIN progress p
             ON p.word_id = w.id AND p.user_id = ? AND p.mode = ?
+        LEFT JOIN last_event le
+            ON le.word_id = w.id
         WHERE {where_sql}
     """
 
+    params = [int(user_id), mode, int(user_id), mode] + where_params
     with _connect(db_path) as conn:
         rows = conn.execute(query, tuple(params)).fetchall()
 
