@@ -702,8 +702,11 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if action == "stat":
         stats = get_statistics_snapshot(get_db_path(), user_id=user_id, mode=_mode_l1_de(user_id))
+        word_types = stats.get("word_types") or {}
         lines = [
             f"количество слов в словаре = {stats['total_words']}",
+            "типы слов в словаре:",
+            *[f"{k} = {word_types[k]}" for k in sorted(word_types.keys())],
             f"количество слов weekly = +{stats['weekly_words']}",
             "",
             f"3+ correct streak = {stats['streak_3p']}",
@@ -1161,7 +1164,7 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if source == "add":
         entry_key = "pending_entry"
     else:
-        entry_key = "quiz_entry"
+        entry_key = "quiz_edit_entry"
     entry = context.user_data.get(entry_key)
     if not entry:
         await update.message.reply_text("No entry to edit.", reply_markup=_main_menu_markup(update.effective_user.id))
@@ -1214,7 +1217,9 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return ADD_EDIT
             removed = delete_word(get_db_path(), word_id)
             context.user_data.pop("quiz_edit_entry", None)
-            context.user_data.pop("quiz_entry", None)
+            current_quiz_entry = context.user_data.get("quiz_entry")
+            if current_quiz_entry and current_quiz_entry.get("id") == word_id:
+                context.user_data.pop("quiz_entry", None)
             last_answered = context.user_data.get("quiz_last_answered_entry")
             if last_answered and last_answered.get("id") == word_id:
                 context.user_data.pop("quiz_last_answered_entry", None)
@@ -2695,4 +2700,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

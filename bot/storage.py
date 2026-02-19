@@ -294,6 +294,17 @@ def get_statistics_snapshot(db_path, user_id, mode):
             ).fetchone()["cnt"]
             or 0
         )
+        type_rows = conn.execute(
+            """
+            SELECT
+                COALESCE(NULLIF(TRIM(LOWER(type)), ''), '-') AS t,
+                COUNT(*) AS cnt
+            FROM words
+            GROUP BY t
+            ORDER BY t
+            """
+        ).fetchall()
+        word_types = {row["t"]: int(row["cnt"] or 0) for row in (type_rows or [])}
 
         streak_row = conn.execute(
             """
@@ -436,6 +447,7 @@ def get_statistics_snapshot(db_path, user_id, mode):
     return {
         "total_words": total_words,
         "weekly_words": weekly_words,
+        "word_types": word_types,
         "streak_3p": streak_3p,
         "streak_2": streak_2,
         "streak_1": streak_1,
