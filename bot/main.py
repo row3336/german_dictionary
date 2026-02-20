@@ -1760,9 +1760,9 @@ def _format_feedback_plural_weak(entry, ok):
     article = str(entry.get("article", "")).strip()
     german = _cap_word(entry.get("german", ""))
     plural = _cap_word(entry.get("plural", ""))
-    headline = f"{_weak_status(ok)} >>>     *{_md_escape((article + ' ' + german).strip())}*"
+    headline = f"{_weak_status(ok)} >>>     {_md_escape((article + ' ' + german).strip())}"
     if plural:
-        return f"{headline}\n\n_pl. die {_md_escape(plural)}_"
+        return f"{headline} pl. die {_md_escape(plural)}"
     return headline
 
 
@@ -1770,9 +1770,9 @@ def _format_feedback_prateritum_weak(entry, ok):
     """Handle format feedback prateritum weak."""
     infinitive = _low_word(entry.get("infinitive", ""))
     pr = _low_word(entry.get("prateritum", ""))
-    headline = f"{_weak_status(ok)} >>>     *{_md_escape(infinitive)}*"
+    headline = f"{_weak_status(ok)} >>>     {_md_escape(infinitive)}"
     if pr:
-        return f"{headline}\n\n_{_md_escape(pr)}_"
+        return f"{headline} {_md_escape(pr)}"
     return headline
 
 
@@ -1780,9 +1780,9 @@ def _format_feedback_partizip2_weak(entry, ok):
     """Handle format feedback partizip2 weak."""
     infinitive = _low_word(entry.get("infinitive", ""))
     p2 = _expected_partizip2(entry)
-    headline = f"{_weak_status(ok)} >>>     *{_md_escape(infinitive)}*"
+    headline = f"{_weak_status(ok)} >>>     {_md_escape(infinitive)}"
     if p2:
-        return f"{headline}\n\n_{_md_escape(p2)}_"
+        return f"{headline} {_md_escape(p2)}"
     return headline
 
 
@@ -2155,14 +2155,10 @@ def _format_feedback_article(entry, ok, dict_lang):
     article = str(entry.get("article", "")).strip()
     german = _cap_word(entry.get("german", ""))
     plural = _cap_word(entry.get("plural", ""))
-    russian = _low_word(_entry_translation(entry, dict_lang))
-    headline = f"{status} >>>     *{_md_escape((article + ' ' + german).strip())}*"
-    if russian:
-        headline += f" ({_md_escape(russian)})"
+    headline = f"{status} >>>     {_md_escape((article + ' ' + german).strip())}"
     lines = [headline.strip()]
     if plural:
-        lines.append("")
-        lines.append(f"_pl. die {_md_escape(plural)}_")
+        lines.append(f"pl. die {_md_escape(plural)}")
     return "\n".join(lines)
 
 
