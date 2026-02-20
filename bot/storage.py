@@ -397,23 +397,18 @@ def get_statistics_snapshot(db_path, user_id, mode):
                 GROUP BY word_id
             ),
             first_touch AS (
-                SELECT e.word_id, e.is_correct, e.created_at
+                SELECT e.word_id, e.created_at
                 FROM quiz_events e
                 JOIN first_events f ON f.first_id = e.id
             )
             SELECT
-                COUNT(*) AS first_touch,
-                SUM(CASE WHEN is_correct = 0 THEN 1 ELSE 0 END) AS wrong_cnt,
-                SUM(CASE WHEN is_correct = 1 THEN 1 ELSE 0 END) AS correct_cnt
+                COUNT(*) AS first_touch
             FROM first_touch
-            WHERE date(created_at) >= date(?)
-              AND date(created_at) < date(?)
+            WHERE date(created_at) = date(?)
             """,
-            (user_id, ws, we),
+            (user_id, today.isoformat()),
         ).fetchone()
-        first_touch = int(touch_row["first_touch"] or 0) if touch_row else 0
-        wrong = int(touch_row["wrong_cnt"] or 0) if touch_row else 0
-        correct = int(touch_row["correct_cnt"] or 0) if touch_row else 0
+        today_complete = int(touch_row["first_touch"] or 0) if touch_row else 0
 
         retention_row = conn.execute(
             """
@@ -516,8 +511,6 @@ def get_statistics_snapshot(db_path, user_id, mode):
             or 0
         )
 
-    wrong_pct = round((wrong / first_touch) * 100, 1) if first_touch > 0 else 0.0
-    correct_pct = round((correct / first_touch) * 100, 1) if first_touch > 0 else 0.0
     retention_7d_pct = round((retention_passed / retention_eligible) * 100, 1) if retention_eligible > 0 else 0.0
     return {
         "total_words": total_words,
@@ -530,12 +523,8 @@ def get_statistics_snapshot(db_path, user_id, mode):
         "weak_plural": weak_plural,
         "weak_partizip2": weak_partizip2,
         "weak_prateritum": weak_prateritum,
-        "first_touch": first_touch,
+        "today_complete": today_complete,
         "never_answered": never_answered,
-        "wrong": wrong,
-        "wrong_pct": wrong_pct,
-        "correct": correct,
-        "correct_pct": correct_pct,
         "retention_7d_pct": retention_7d_pct,
         "new_words_tested_week": new_words_tested,
         "weak_resolved_week": weak_resolved,

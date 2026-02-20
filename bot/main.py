@@ -749,12 +749,7 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         stats = get_statistics_snapshot(get_db_path(), user_id=user_id, mode=_mode_l1_de(user_id))
         word_types = stats.get("word_types") or {}
         lines = [
-            f"количество слов в словаре = {stats['total_words']}",
-            "типы слов в словаре:",
-            *[f"{k} = {word_types[k]}" for k in sorted(word_types.keys())],
-            f"никогда не отвечались = {stats['never_answered']}",
-            f"количество слов weekly = +{stats['weekly_words']}",
-            "",
+            f"today complete = {stats['today_complete']}",
             f"3+ correct streak = {stats['streak_3p']}",
             f"2 correct streak = {stats['streak_2']}",
             f"1 correct = {stats['streak_1']}",
@@ -764,9 +759,12 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"weak partizip2 = {stats['weak_partizip2']}",
             f"weak preterium = {stats['weak_prateritum']}",
             "",
-            f"first touch = {stats['first_touch']}",
-            f"wrong = {stats['wrong']} [{stats['wrong_pct']}%]",
-            f"correct = {stats['correct']} [{stats['correct_pct']}%]",
+            f"words in dict = {stats['total_words']}",
+            f"never touched = {stats['never_answered']}",
+            f"words weekly = +{stats['weekly_words']}",
+            "",
+            "word types:",
+            *[f"{k} = {word_types[k]}" for k in sorted(word_types.keys())],
         ]
         await update.message.reply_text("\n".join(lines), reply_markup=_main_menu_markup(user_id))
         return MENU
