@@ -763,8 +763,8 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"never touched = {stats['never_answered']}",
             f"words weekly = +{stats['weekly_words']}",
             "",
-            "word types:",
-            *[f"{k} = {word_types[k]}" for k in sorted(word_types.keys())],
+            "_word types:_",
+            *[f"_{k} = {word_types[k]}_" for k in sorted(word_types.keys())],
         ]
         await update.message.reply_text("\n".join(lines), reply_markup=_main_menu_markup(user_id))
         return MENU
