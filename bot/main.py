@@ -156,6 +156,9 @@ QUIZ_FIELDS_TEXT = "fields"
 QUIZ_RU_DE_TEXT = "Ru > De"
 QUIZ_DE_RU_TEXT = "De > Ru"
 
+RETRY_GAP_QUESTIONS = 3
+RETRY_MAX_REPEATS = 4
+
 
 def _main_menu_keys(user_id):
     """Handle main menu keys."""
@@ -475,7 +478,7 @@ async def _start_quiz_edit(update: Update, context: ContextTypes.DEFAULT_TYPE, r
     """Handle start quiz edit."""
     entry, title = _get_quiz_action_entry(context)
     if not entry:
-        return await _back_to_tests(update)
+        return await _back_to_tests(update, context)
     context.user_data["edit_source"] = "quiz"
     context.user_data["quiz_edit_entry"] = entry
     context.user_data["edit_stage"] = "pick_scope"
@@ -494,7 +497,7 @@ async def _show_quiz_prompt_after_edit(update: Update, context: ContextTypes.DEF
     state = state_override or context.user_data.get("edit_return_state")
     entry = context.user_data.get("quiz_entry")
     if not entry:
-        return await _back_to_tests(update)
+        return await _back_to_tests(update, context)
 
     if state == QUIZ_RU_DE:
         text = _format_ru_question(entry, _user_dict_lang(update.effective_user.id))
@@ -538,7 +541,7 @@ async def _show_quiz_prompt_after_edit(update: Update, context: ContextTypes.DEF
     if state == QUIZ_PARTIZIP2_WEAK:
         return await _send_partizip2_weak_prompt(update, context, prefix_text)
 
-    return await _back_to_tests(update)
+    return await _back_to_tests(update, context)
 
 
 def _format_word_card(entry, title="Word card:"):
@@ -597,7 +600,7 @@ def _format_syn_group(anchor_entry, group_entries, dict_lang):
 async def _open_synonyms_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, anchor_entry, return_state):
     """Handle open synonyms menu."""
     if not anchor_entry or not anchor_entry.get("id"):
-        return await _back_to_tests(update)
+        return await _back_to_tests(update, context)
     context.user_data["syn_anchor_id"] = anchor_entry.get("id")
     context.user_data["syn_return_state"] = return_state
     group_entries = get_synonym_group(get_db_path(), anchor_entry.get("id"))
@@ -1399,7 +1402,7 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return await _send_prateritum_weak_prompt(update, context, prefix)
             if state == QUIZ_PARTIZIP2_WEAK:
                 return await _send_partizip2_weak_prompt(update, context, prefix)
-            return await _back_to_tests(update)
+            return await _back_to_tests(update, context)
         await update.message.reply_text(
             "Use buttons: fields, delete, back.",
             reply_markup=_quiz_edit_root_markup(update.effective_user.id),
@@ -1482,20 +1485,20 @@ async def _return_from_synonyms(update: Update, context: ContextTypes.DEFAULT_TY
         return await _send_prateritum_weak_prompt(update, context, prefix)
     if return_state == QUIZ_PARTIZIP2_WEAK:
         return await _send_partizip2_weak_prompt(update, context, prefix)
-    return await _back_to_tests(update)
+    return await _back_to_tests(update, context)
 
 
 async def synonyms_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle synonyms menu."""
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "stop":
-        return await _back_to_tests(update)
+        return await _back_to_tests(update, context)
     if _action_key_from_text(text, update.effective_user.id) == "back":
         return await _return_from_synonyms(update, context, None)
     anchor_id = context.user_data.get("syn_anchor_id")
     anchor_entry = get_word_by_id(get_db_path(), anchor_id) if anchor_id else None
     if not anchor_entry:
-        return await _back_to_tests(update)
+        return await _back_to_tests(update, context)
     if text == SYN_ADD_TEXT:
         await update.message.reply_text("Send German word or id to add:", reply_markup=ReplyKeyboardRemove())
         return SYN_ADD_INPUT
@@ -1627,10 +1630,10 @@ async def _flag_current_word(update: Update, context: ContextTypes.DEFAULT_TYPE,
     """Handle flag current word."""
     entry, _ = _get_quiz_action_entry(context)
     if not entry:
-        return await _back_to_tests(update)
+        return await _back_to_tests(update, context)
     word_id = entry.get("id")
     if not word_id:
-        return await _back_to_tests(update)
+        return await _back_to_tests(update, context)
     add_word_flag(get_db_path(), word_id=word_id, user_id=update.effective_user.id, comment="")
     if return_state == QUIZ_RU_DE:
         return await _show_quiz_prompt_after_edit(update, context, "✅ Flag saved.", state_override=QUIZ_RU_DE)
@@ -1646,14 +1649,14 @@ async def _flag_current_word(update: Update, context: ContextTypes.DEFAULT_TYPE,
         return await _show_quiz_prompt_after_edit(update, context, "✅ Flag saved.", state_override=QUIZ_PRATERITUM_WEAK)
     if return_state == QUIZ_PARTIZIP2_WEAK:
         return await _show_quiz_prompt_after_edit(update, context, "✅ Flag saved.", state_override=QUIZ_PARTIZIP2_WEAK)
-    return await _back_to_tests(update)
+    return await _back_to_tests(update, context)
 
 
 async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle quiz ru de."""
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "stop":
-        return await _back_to_tests(update)
+        return await _back_to_tests(update, context)
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_RU_DE)
     if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
@@ -1662,15 +1665,21 @@ async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
     entry = context.user_data.get("quiz_entry")
     if not entry:
         return await _send_ru_de_prompt(update, context, None)
+    is_retry = bool(context.user_data.get("quiz_is_retry"))
     if text == I_DONT_KNOW_TEXT:
         ok = False
         form_checks = {}
     else:
         ok, form_checks = _check_ru_de_strict(entry, text)
-    _update_srs_for_entry(update.effective_user.id, entry, _mode_l1_de(update.effective_user.id), ok)
-    if form_checks:
-        update_form_stats(get_db_path(), update.effective_user.id, entry.get("id"), form_checks)
+    mode = _mode_l1_de(update.effective_user.id)
+    if not is_retry:
+        _update_srs_for_entry(update.effective_user.id, entry, mode, ok)
+        if form_checks:
+            update_form_stats(get_db_path(), update.effective_user.id, entry.get("id"), form_checks)
     context.user_data["quiz_last_answered_entry"] = entry
+    _register_retry_result(context, mode, entry.get("id"), ok, is_retry)
+    if not is_retry:
+        _set_retry_since_last(context, mode, _retry_since_last(context, mode) + 1)
 
     feedback = _format_feedback_ru_de(entry, ok)
     return await _send_ru_de_prompt(update, context, feedback)
@@ -1680,7 +1689,7 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle quiz de ru."""
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "stop":
-        return await _back_to_tests(update)
+        return await _back_to_tests(update, context)
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_DE_RU)
     if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
@@ -1689,6 +1698,7 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
     entry = context.user_data.get("quiz_entry")
     if not entry:
         return await _send_de_ru_prompt(update, context, None)
+    is_retry = bool(context.user_data.get("quiz_is_retry"))
 
     if text == I_DONT_KNOW_TEXT:
         ok = False
@@ -1696,8 +1706,13 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
         answer = _normalize_answer(text)
         variants = _russian_variants(_entry_translation(entry, _user_dict_lang(update.effective_user.id)))
         ok = answer in variants
-    _update_srs_for_entry(update.effective_user.id, entry, _mode_de_l1(update.effective_user.id), ok)
+    mode = _mode_de_l1(update.effective_user.id)
+    if not is_retry:
+        _update_srs_for_entry(update.effective_user.id, entry, mode, ok)
     context.user_data["quiz_last_answered_entry"] = entry
+    _register_retry_result(context, mode, entry.get("id"), ok, is_retry)
+    if not is_retry:
+        _set_retry_since_last(context, mode, _retry_since_last(context, mode) + 1)
 
     feedback = _format_feedback_de_ru(entry, ok, _user_dict_lang(update.effective_user.id))
     return await _send_de_ru_prompt(update, context, feedback)
@@ -1707,7 +1722,7 @@ async def quiz_article(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle quiz article."""
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "stop":
-        return await _back_to_tests(update)
+        return await _back_to_tests(update, context)
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_ARTICLE)
     if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
@@ -1716,14 +1731,20 @@ async def quiz_article(update: Update, context: ContextTypes.DEFAULT_TYPE):
     entry = context.user_data.get("quiz_entry")
     if not entry:
         return await _send_article_prompt(update, context, None)
+    is_retry = bool(context.user_data.get("quiz_is_retry"))
 
     if text == I_DONT_KNOW_TEXT:
         ok = False
     else:
         expected = entry.get("article", "")
         ok = _normalize_answer(text) == _normalize_answer(expected)
-    _update_srs_for_entry(update.effective_user.id, entry, MODE_ARTICLE, ok)
+    mode = MODE_ARTICLE
+    if not is_retry:
+        _update_srs_for_entry(update.effective_user.id, entry, mode, ok)
     context.user_data["quiz_last_answered_entry"] = entry
+    _register_retry_result(context, mode, entry.get("id"), ok, is_retry)
+    if not is_retry:
+        _set_retry_since_last(context, mode, _retry_since_last(context, mode) + 1)
 
     feedback = _format_feedback_article(entry, ok, _user_dict_lang(update.effective_user.id))
     return await _send_article_prompt(update, context, feedback)
@@ -1769,7 +1790,7 @@ async def quiz_article_weak(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle quiz article weak."""
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "stop":
-        return await _back_to_tests(update)
+        return await _back_to_tests(update, context)
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_ARTICLE_WEAK)
     if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
@@ -1803,7 +1824,7 @@ async def quiz_plural_weak(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle quiz plural weak."""
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "stop":
-        return await _back_to_tests(update)
+        return await _back_to_tests(update, context)
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_PLURAL_WEAK)
     if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
@@ -1840,7 +1861,7 @@ async def quiz_prateritum_weak(update: Update, context: ContextTypes.DEFAULT_TYP
     """Handle quiz prateritum weak."""
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "stop":
-        return await _back_to_tests(update)
+        return await _back_to_tests(update, context)
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_PRATERITUM_WEAK)
     if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
@@ -1877,7 +1898,7 @@ async def quiz_partizip2_weak(update: Update, context: ContextTypes.DEFAULT_TYPE
     """Handle quiz partizip2 weak."""
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "stop":
-        return await _back_to_tests(update)
+        return await _back_to_tests(update, context)
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_PARTIZIP2_WEAK)
     if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
@@ -2162,6 +2183,76 @@ def _pick_due_entry(context, user_id, mode, word_type=None):
     return entry
 
 
+def _retry_queue(context, mode):
+    """Handle retry queue."""
+    queues = context.user_data.setdefault("retry_queue", {})
+    return queues.setdefault(mode, [])
+
+
+def _retry_counts(context, mode):
+    """Handle retry counts."""
+    counts = context.user_data.setdefault("retry_counts", {})
+    return counts.setdefault(mode, {})
+
+
+def _retry_since_last(context, mode):
+    """Handle retry since last."""
+    counters = context.user_data.setdefault("retry_since_last", {})
+    return counters.get(mode, 0)
+
+
+def _set_retry_since_last(context, mode, value):
+    """Handle set retry since last."""
+    counters = context.user_data.setdefault("retry_since_last", {})
+    counters[mode] = int(value)
+
+
+def _maybe_take_retry_entry(context, mode):
+    """Handle maybe take retry entry."""
+    queue = _retry_queue(context, mode)
+    if not queue:
+        return None
+    if _retry_since_last(context, mode) < RETRY_GAP_QUESTIONS:
+        return None
+    word_id = queue.pop(0)
+    entry = get_word_by_id(get_db_path(), word_id)
+    if not entry:
+        counts = _retry_counts(context, mode)
+        counts.pop(word_id, None)
+        return None
+    counts = _retry_counts(context, mode)
+    counts[word_id] = counts.get(word_id, 0) + 1
+    context.user_data["quiz_is_retry"] = True
+    _set_retry_since_last(context, mode, 0)
+    return entry
+
+
+def _register_retry_result(context, mode, word_id, ok, was_retry):
+    """Handle register retry result."""
+    queue = _retry_queue(context, mode)
+    counts = _retry_counts(context, mode)
+    if was_retry:
+        if counts.get(word_id, 0) >= RETRY_MAX_REPEATS:
+            counts.pop(word_id, None)
+            return
+        if word_id not in queue:
+            queue.append(word_id)
+        return
+    if ok:
+        return
+    counts.setdefault(word_id, 0)
+    if word_id not in queue:
+        queue.append(word_id)
+
+
+def _reset_retry_state(context):
+    """Handle reset retry state."""
+    context.user_data.pop("retry_queue", None)
+    context.user_data.pop("retry_counts", None)
+    context.user_data.pop("retry_since_last", None)
+    context.user_data.pop("quiz_is_retry", None)
+
+
 def _pick_weak_entry(context, user_id, weak_field, word_type=None):
     """Handle pick weak entry."""
     due = list_weak_words(get_db_path(), user_id=user_id, weak_field=weak_field, word_type=word_type, limit=300)
@@ -2183,7 +2274,10 @@ def _pick_weak_entry(context, user_id, weak_field, word_type=None):
 async def _send_ru_de_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
     """Handle send ru de prompt."""
     mode = _mode_l1_de(update.effective_user.id)
-    entry = _pick_due_entry(context, update.effective_user.id, mode)
+    entry = _maybe_take_retry_entry(context, mode)
+    if not entry:
+        context.user_data["quiz_is_retry"] = False
+        entry = _pick_due_entry(context, update.effective_user.id, mode)
     if not entry:
         await update.message.reply_text(
             "No due words. Add more or wait until due date.",
@@ -2207,7 +2301,10 @@ async def _send_ru_de_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
 async def _send_de_ru_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
     """Handle send de ru prompt."""
     mode = _mode_de_l1(update.effective_user.id)
-    entry = _pick_due_entry(context, update.effective_user.id, mode)
+    entry = _maybe_take_retry_entry(context, mode)
+    if not entry:
+        context.user_data["quiz_is_retry"] = False
+        entry = _pick_due_entry(context, update.effective_user.id, mode)
     if not entry:
         await update.message.reply_text(
             "No due words. Add more or wait until due date.",
@@ -2230,7 +2327,11 @@ async def _send_de_ru_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
 async def _send_article_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
     """Handle send article prompt."""
-    entry = _pick_due_entry(context, update.effective_user.id, MODE_ARTICLE, word_type="nomen")
+    mode = MODE_ARTICLE
+    entry = _maybe_take_retry_entry(context, mode)
+    if not entry:
+        context.user_data["quiz_is_retry"] = False
+        entry = _pick_due_entry(context, update.effective_user.id, mode, word_type="nomen")
     if not entry:
         await update.message.reply_text(
             "No due nouns. Add more or wait until due date.",
@@ -2682,8 +2783,10 @@ async def _back_to_main_menu(update: Update):
     return MENU
 
 
-async def _back_to_tests(update: Update):
+async def _back_to_tests(update: Update, context: ContextTypes.DEFAULT_TYPE = None):
     """Handle back to tests."""
+    if context is not None:
+        _reset_retry_state(context)
     user_id = update.effective_user.id
     await update.message.reply_text(
         t(_user_interface_lang(user_id), "tests") + ":",

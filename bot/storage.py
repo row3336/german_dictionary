@@ -952,7 +952,7 @@ def select_due(db_path, user_id, mode, word_type=None, levels=None, today=None):
     due_today = today.isoformat()
     init_db(db_path)
 
-    where_clauses = ["(COALESCE(p.due, ?) <= ? OR le.is_correct = 0)"]
+    where_clauses = ["COALESCE(p.due, ?) <= ?"]
     where_params = [due_today, due_today]
     if word_type:
         where_clauses.insert(0, "w.type = ?")
@@ -967,16 +967,6 @@ def select_due(db_path, user_id, mode, word_type=None, levels=None, today=None):
     where_sql = " AND ".join(where_clauses)
 
     query = f"""
-        WITH last_event AS (
-            SELECT e.word_id, e.is_correct
-            FROM quiz_events e
-            JOIN (
-                SELECT word_id, MAX(id) AS last_id
-                FROM quiz_events
-                WHERE user_id = ? AND mode = ?
-                GROUP BY word_id
-            ) x ON x.last_id = e.id
-        )
         SELECT
             w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.russian, w.cefr_level,
             w.ukrainian, w.english,
@@ -984,12 +974,10 @@ def select_due(db_path, user_id, mode, word_type=None, levels=None, today=None):
         FROM words w
         LEFT JOIN progress p
             ON p.word_id = w.id AND p.user_id = ? AND p.mode = ?
-        LEFT JOIN last_event le
-            ON le.word_id = w.id
         WHERE {where_sql}
     """
 
-    params = [int(user_id), mode, int(user_id), mode] + where_params
+    params = [int(user_id), mode] + where_params
     with _connect(db_path) as conn:
         rows = conn.execute(query, tuple(params)).fetchall()
 
