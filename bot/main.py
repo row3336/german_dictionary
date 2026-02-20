@@ -766,7 +766,7 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "_word types:_",
             *[f"_{k} = {word_types[k]}_" for k in sorted(word_types.keys())],
         ]
-        await update.message.reply_text("\n".join(lines), reply_markup=_main_menu_markup(user_id))
+        await update.message.reply_text("\n".join(lines), reply_markup=_main_menu_markup(user_id), parse_mode="Markdown")
         return MENU
 
     await update.message.reply_text(t(_user_interface_lang(user_id), "unknown_menu"))
