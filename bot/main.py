@@ -26,6 +26,8 @@ from .app_config import (
     ADD_CONFIRM,
     ADD_EDIT,
     ADD_INPUT,
+    ADD_PRECHECK,
+    ADD_PRECHECK_EDIT,
     AI_CLARIFY_AI,
     AI_BAN_WORD,
     AI_CLARIFY_FIELD,
@@ -63,6 +65,10 @@ from .app_config import (
     SYN_CLEAR_CONFIRM,
     SYN_MENU,
     SYN_REMOVE_INPUT,
+    PRECHECK_CONFIRM,
+    PRECHECK_EDIT,
+    PRECHECK_KEYS,
+    PRECHECK_REJECT,
     START_TEXT,
     STOP_TEXT,
     TESTS_MENU,
@@ -83,6 +89,8 @@ from .storage import (
     add_banned_word,
     add_synonym_link,
     get_statistics_snapshot,
+    get_form_state,
+    get_form_review_stage,
     list_weak_words,
     delete_word,
     find_word_by_value,
@@ -97,6 +105,7 @@ from .storage import (
     clear_synonym_group,
     set_setting,
     update_form_stats,
+    update_weak_review_state,
     update_progress,
     update_word_fields,
     list_pending_word_flags,
@@ -149,25 +158,30 @@ QUIZ_DE_RU_TEXT = "De > Ru"
 
 
 def _main_menu_keys(user_id):
+    """Handle main menu keys."""
     lang = _user_interface_lang(user_id)
     return [[t(lang, "add_word"), t(lang, "tests")], [t(lang, "settings"), t(lang, "stat")]]
 
 
 def _main_menu_markup(user_id):
+    """Handle main menu markup."""
     return ReplyKeyboardMarkup(_main_menu_keys(user_id), resize_keyboard=True)
 
 
 def _user_interface_lang(user_id):
+    """Handle user interface lang."""
     lang = get_setting(get_db_path(), OWNER_INTERFACE_LANG_KEY, "en")
     return normalize_interface_lang(lang, default="en")
 
 
 def _user_dict_lang(user_id):
+    """Handle user dict lang."""
     dict_lang = get_setting(get_db_path(), OWNER_DICT_LANG_KEY, "ru")
     return normalize_dict_lang(dict_lang, default="ru")
 
 
 def _dict_label(user_id):
+    """Handle dict label."""
     dict_lang = _user_dict_lang(user_id)
     if dict_lang == "uk":
         return "Ua"
@@ -177,6 +191,7 @@ def _dict_label(user_id):
 
 
 def _mode_l1_de(user_id):
+    """Handle mode l1 de."""
     dict_lang = _user_dict_lang(user_id)
     if dict_lang == "ru":
         return MODE_RU_DE
@@ -184,6 +199,7 @@ def _mode_l1_de(user_id):
 
 
 def _mode_de_l1(user_id):
+    """Handle mode de l1."""
     dict_lang = _user_dict_lang(user_id)
     if dict_lang == "ru":
         return MODE_DE_RU
@@ -191,6 +207,7 @@ def _mode_de_l1(user_id):
 
 
 def _tests_menu_keys(user_id):
+    """Handle tests menu keys."""
     return [
         [QUIZ_RU_DE_TEXT, QUIZ_DE_RU_TEXT],
         [t(_user_interface_lang(user_id), "back")],
@@ -198,6 +215,7 @@ def _tests_menu_keys(user_id):
 
 
 def _ru_de_menu_keys(user_id):
+    """Handle ru de menu keys."""
     return [
         [STANDARD_SM2_TEXT, TEST_ARTICLE_WEAK_TEXT],
         [TEST_PLURAL_WEAK_TEXT, TEST_VERB_WEAK_TEXT],
@@ -206,6 +224,7 @@ def _ru_de_menu_keys(user_id):
 
 
 def _settings_menu_keys(user_id):
+    """Handle settings menu keys."""
     lang = _user_interface_lang(user_id)
     return [
         ["flags!"],
@@ -215,6 +234,7 @@ def _settings_menu_keys(user_id):
 
 
 def _dump_menu_keys(user_id):
+    """Handle dump menu keys."""
     lang = _user_interface_lang(user_id)
     return [
         [t(lang, "dump_logs"), t(lang, "dump_db")],
@@ -223,6 +243,7 @@ def _dump_menu_keys(user_id):
 
 
 def _action_key_from_text(text, user_id):
+    """Handle action key from text."""
     lang = _user_interface_lang(user_id)
     keys = [
         ("start", "start"),
@@ -259,27 +280,33 @@ def _action_key_from_text(text, user_id):
 
 
 def _auto_dump_keys(user_id):
+    """Handle auto dump keys."""
     lang = _user_interface_lang(user_id)
     return [[t(lang, "daily"), t(lang, "weekly")], [t(lang, "off"), t(lang, "back")]]
 
 
 def _add_keys(user_id):
+    """Handle add keys."""
     return [[t(_user_interface_lang(user_id), "back")]]
 
 
 def _stop_keys(user_id):
+    """Handle stop keys."""
     return [[t(_user_interface_lang(user_id), "stop")]]
 
 
 def _clarify_keys(user_id):
+    """Handle clarify keys."""
     return AI_KEYS
 
 
 def _add_input_markup(user_id):
+    """Handle add input markup."""
     return ReplyKeyboardMarkup([[t(_user_interface_lang(user_id), "back")]], resize_keyboard=True)
 
 
 def _split_text_chunks(text, max_size=3500):
+    """Handle split text chunks."""
     text = str(text or "").strip()
     if not text:
         return []
@@ -301,6 +328,7 @@ def _split_text_chunks(text, max_size=3500):
 
 
 def _load_info_text(lang="en"):
+    """Handle load info text."""
     lang = normalize_interface_lang(lang, default="en")
     path = get_info_path().parent / f"info_{lang}.md"
     if not path.exists():
@@ -314,6 +342,7 @@ def _load_info_text(lang="en"):
 
 
 def _quiz_markup(user_id, article=False, allow_idk=True):
+    """Handle quiz markup."""
     lang = _user_interface_lang(user_id)
     rows = []
     if article:
@@ -328,11 +357,13 @@ def _quiz_markup(user_id, article=False, allow_idk=True):
 
 
 def _parse_level_toggle(text):
+    """Handle parse level toggle."""
     token = (text or "").strip().split(" ", 1)[0].upper()
     return token if token in {"A1", "A2", "B1", "B2", "C1", "C2"} else ""
 
 
 def _edit_fields_markup(source):
+    """Handle edit fields markup."""
     if source == "add":
         return ReplyKeyboardMarkup(
             [
@@ -352,6 +383,7 @@ def _edit_fields_markup(source):
 
 
 def _allowed_edit_fields(source):
+    """Handle allowed edit fields."""
     if source == "add":
         return {"ru", "ukr", "de", "article", "plural", "type", "prateritum", "partizip2", "infinitive"}
     if source == "quiz":
@@ -360,10 +392,12 @@ def _allowed_edit_fields(source):
 
 
 def _quiz_edit_root_markup(user_id):
+    """Handle quiz edit root markup."""
     return ReplyKeyboardMarkup([[QUIZ_FIELDS_TEXT], ["delete", t(_user_interface_lang(user_id), "back")]], resize_keyboard=True)
 
 
 def _dict_lang_tag(user_id):
+    """Handle dict lang tag."""
     dict_lang = _user_dict_lang(user_id)
     if dict_lang == "uk":
         return "UA"
@@ -373,10 +407,12 @@ def _dict_lang_tag(user_id):
 
 
 def _syn_auto_text(user_id):
+    """Handle syn auto text."""
     return f"{SYN_AUTO_TEXT} {_dict_lang_tag(user_id)}"
 
 
 def _set_entry_field(entry, raw_update):
+    """Handle set entry field."""
     if "=" not in raw_update:
         return None, "Use format: field=value"
     field, value = raw_update.split("=", 1)
@@ -420,10 +456,12 @@ def _set_entry_field(entry, raw_update):
 
 
 def _set_entry_field_value(entry, field, value):
+    """Handle set entry field value."""
     return _set_entry_field(entry, f"{field}={value}")
 
 
 def _get_quiz_action_entry(context: ContextTypes.DEFAULT_TYPE):
+    """Handle get quiz action entry."""
     last_answered = context.user_data.get("quiz_last_answered_entry")
     if last_answered:
         return last_answered, "Last answered word:"
@@ -434,6 +472,7 @@ def _get_quiz_action_entry(context: ContextTypes.DEFAULT_TYPE):
 
 
 async def _start_quiz_edit(update: Update, context: ContextTypes.DEFAULT_TYPE, return_state):
+    """Handle start quiz edit."""
     entry, title = _get_quiz_action_entry(context)
     if not entry:
         return await _back_to_tests(update)
@@ -450,6 +489,7 @@ async def _start_quiz_edit(update: Update, context: ContextTypes.DEFAULT_TYPE, r
 
 
 async def _show_quiz_prompt_after_edit(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text, state_override=None):
+    """Handle show quiz prompt after edit."""
     context.user_data.pop("quiz_edit_entry", None)
     state = state_override or context.user_data.get("edit_return_state")
     entry = context.user_data.get("quiz_entry")
@@ -502,6 +542,7 @@ async def _show_quiz_prompt_after_edit(update: Update, context: ContextTypes.DEF
 
 
 def _format_word_card(entry, title="Word card:"):
+    """Handle format word card."""
     lines = [
         title,
         f"id: {entry.get('id', '')}",
@@ -520,6 +561,7 @@ def _format_word_card(entry, title="Word card:"):
 
 
 def _syn_menu_markup(user_id):
+    """Handle syn menu markup."""
     return ReplyKeyboardMarkup(
         [
             [SYN_ADD_TEXT, SYN_REMOVE_TEXT, _syn_auto_text(user_id)],
@@ -530,10 +572,12 @@ def _syn_menu_markup(user_id):
 
 
 def _syn_confirm_markup():
+    """Handle syn confirm markup."""
     return ReplyKeyboardMarkup([[SYN_CONFIRM_TEXT, SYN_CANCEL_TEXT]], resize_keyboard=True)
 
 
 def _format_syn_group(anchor_entry, group_entries, dict_lang):
+    """Handle format syn group."""
     anchor_type = anchor_entry.get("type", "")
     anchor_base = anchor_entry.get("infinitive", "") if anchor_type == "verb" else anchor_entry.get("german", "")
     lines = [f"Synonyms for: {anchor_base} ({anchor_type})"]
@@ -551,6 +595,7 @@ def _format_syn_group(anchor_entry, group_entries, dict_lang):
 
 
 async def _open_synonyms_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, anchor_entry, return_state):
+    """Handle open synonyms menu."""
     if not anchor_entry or not anchor_entry.get("id"):
         return await _back_to_tests(update)
     context.user_data["syn_anchor_id"] = anchor_entry.get("id")
@@ -563,6 +608,7 @@ async def _open_synonyms_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
     return SYN_MENU
 
 async def _reply_text_with_retry(message, text, max_retries=2, **kwargs):
+    """Handle reply text with retry."""
     attempts = 0
     while True:
         try:
@@ -575,6 +621,7 @@ async def _reply_text_with_retry(message, text, max_retries=2, **kwargs):
 
 
 def _scan_words_before_ai(lines):
+    """Handle scan words before ai."""
     filtered = []
     existing = []
     recognition = []
@@ -594,6 +641,7 @@ def _scan_words_before_ai(lines):
 
 
 def _prefilter_reject_reason(word):
+    """Handle prefilter reject reason."""
     normalized = _normalize_lookup_text(word)
     if not normalized:
         return "Empty value."
@@ -611,10 +659,12 @@ def _prefilter_reject_reason(word):
 
 
 def _is_owner_only(user_id):
+    """Handle is owner only."""
     return is_owner(user_id)
 
 
 async def _ask_interface_language(update: Update):
+    """Handle ask interface language."""
     await update.message.reply_text(
         "Choose interface language:",
         reply_markup=ReplyKeyboardMarkup([interface_choices()], resize_keyboard=True),
@@ -623,6 +673,7 @@ async def _ask_interface_language(update: Update):
 
 
 async def _ask_dictionary_language(update: Update, user_id):
+    """Handle ask dictionary language."""
     lang = _user_interface_lang(user_id)
     choices = dict_choices(lang)
     await update.message.reply_text(
@@ -633,6 +684,7 @@ async def _ask_dictionary_language(update: Update, user_id):
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle start."""
     user = update.effective_user
     user_id = user.id
     if not _is_owner_only(user_id):
@@ -647,6 +699,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle menu choice."""
     text = update.message.text.strip()
     user_id = update.effective_user.id
     action = _action_key_from_text(text, user_id)
@@ -720,6 +773,7 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def select_ui_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle select ui lang."""
     user_id = update.effective_user.id
     if not _is_owner_only(user_id):
         await update.message.reply_text("❌ Owner-only bot.")
@@ -738,6 +792,7 @@ async def select_ui_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def select_dict_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle select dict lang."""
     user_id = update.effective_user.id
     if not _is_owner_only(user_id):
         await update.message.reply_text("❌ Owner-only bot.")
@@ -757,6 +812,7 @@ async def select_dict_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def tests_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle tests menu choice."""
     text = update.message.text.strip()
     user_id = update.effective_user.id
     action = _action_key_from_text(text, user_id)
@@ -781,6 +837,7 @@ async def tests_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def quiz_ru_de_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle quiz ru de menu choice."""
     text = update.message.text.strip()
     user_id = update.effective_user.id
     action = _action_key_from_text(text, user_id)
@@ -810,6 +867,7 @@ async def quiz_ru_de_menu_choice(update: Update, context: ContextTypes.DEFAULT_T
 
 
 async def quiz_verb_weak_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle quiz verb weak menu choice."""
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "back":
         await update.message.reply_text(
@@ -829,6 +887,7 @@ async def quiz_verb_weak_menu_choice(update: Update, context: ContextTypes.DEFAU
 
 
 async def settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle settings menu choice."""
     text = update.message.text.strip()
     user_id = update.effective_user.id
     action = _action_key_from_text(text, user_id)
@@ -891,6 +950,7 @@ async def settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def dump_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle dump menu choice."""
     text = update.message.text.strip()
     user_id = update.effective_user.id
     action = _action_key_from_text(text, user_id)
@@ -942,6 +1002,7 @@ async def dump_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def auto_dump_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle auto dump choice."""
     text = update.message.text.strip()
     user_id = update.effective_user.id
     if not is_owner(user_id):
@@ -973,6 +1034,7 @@ async def auto_dump_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return DUMP_MENU
 
 async def add_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle add input."""
     raw = update.message.text.strip()
     user_id = update.effective_user.id
     if _action_key_from_text(raw, user_id) == "back":
@@ -994,36 +1056,137 @@ async def add_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Empty input. Send a word or list.")
         return ADD_INPUT
 
-    if len(lines) > 1:
-        filtered, existing, recognition = _scan_words_before_ai(lines)
-        context.user_data["add_queue"] = recognition
-        logging.info(
-            "Batch add scan: total=%s filtered=%s existing=%s recognition=%s",
-            len(lines),
-            len(filtered),
-            len(existing),
-            len(recognition),
-        )
-        logging.info("Batch add details: filtered=%s", filtered)
-        logging.info("Batch add details: existing=%s", existing)
-        logging.info("Batch add details: recognition=%s", recognition)
+    filtered, existing, recognition = _scan_words_before_ai(lines)
+    context.user_data["precheck_filtered"] = filtered
+    context.user_data["precheck_existing"] = existing
+    if not recognition:
         await _reply_text_with_retry(
             update.message,
             (
                 f"Already in database {len(existing)}\n"
                 f"Filtred {len(filtered)}\n"
-                f"For recognition {len(recognition)}\n"
-                "Logs: Settings -> Dump Logs"
+                "Nothing to recognize."
             ),
+            reply_markup=ReplyKeyboardMarkup(_add_keys(update.effective_user.id), resize_keyboard=True),
+        )
+        return ADD_INPUT
+
+    items = await _precheck_words(update, context, recognition)
+    if items is None:
+        return MENU
+    context.user_data["precheck_items"] = items
+    await _reply_text_with_retry(
+        update.message,
+        _format_precheck_list(items),
+        reply_markup=ReplyKeyboardMarkup(PRECHECK_KEYS, resize_keyboard=True),
+    )
+    return ADD_PRECHECK
+
+
+async def add_precheck(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle add precheck."""
+    text = update.message.text.strip()
+    if text == STOP_TEXT or _action_key_from_text(text, update.effective_user.id) == "stop":
+        return await _stop_queue(update, context)
+    if text == PRECHECK_REJECT:
+        context.user_data.pop("precheck_items", None)
+        context.user_data.pop("precheck_filtered", None)
+        context.user_data.pop("precheck_existing", None)
+        await _reply_text_with_retry(
+            update.message,
+            "Precheck rejected. Send a word or list.",
+            reply_markup=ReplyKeyboardMarkup(_add_keys(update.effective_user.id), resize_keyboard=True),
+        )
+        return ADD_INPUT
+    if text == PRECHECK_EDIT:
+        await _reply_text_with_retry(
+            update.message,
+            "Send corrected list (one per line).",
             reply_markup=ReplyKeyboardMarkup(_stop_keys(update.effective_user.id), resize_keyboard=True),
         )
-        return await _process_next_ai_word(update, context)
+        return ADD_PRECHECK_EDIT
+    if text != PRECHECK_CONFIRM:
+        await _reply_text_with_retry(
+            update.message,
+            "Use Approve or Reject list.",
+            reply_markup=ReplyKeyboardMarkup(PRECHECK_KEYS, resize_keyboard=True),
+        )
+        return ADD_PRECHECK
 
-    context.user_data.pop("add_queue", None)
-    return await _process_ai_word(update, context, lines[0], None)
+    items = context.user_data.get("precheck_items") or []
+    recognition = [x.get("word") for x in items if x.get("word")]
+    context.user_data.pop("precheck_items", None)
+    filtered = context.user_data.pop("precheck_filtered", [])
+    existing = context.user_data.pop("precheck_existing", [])
+    context.user_data["add_queue"] = recognition
+    await _reply_text_with_retry(
+        update.message,
+        (
+            f"Already in database {len(existing)}\n"
+            f"Filtred {len(filtered)}\n"
+            f"For recognition {len(recognition)}\n"
+            "Logs: Settings -> Dump Logs"
+        ),
+        reply_markup=ReplyKeyboardMarkup(_stop_keys(update.effective_user.id), resize_keyboard=True),
+    )
+    return await _process_next_ai_word(update, context)
+
+
+def _parse_precheck_edit_lines(lines):
+    """Handle parse precheck edit lines."""
+    result = []
+    for line in lines:
+        raw = str(line or "").strip()
+        if not raw:
+            continue
+        if "[" in raw and "]" in raw:
+            raw = raw.split("[", 1)[0].strip()
+        if " - " in raw:
+            raw = raw.split(" - ", 1)[0].strip()
+        result.append(raw)
+    return result
+
+
+async def add_precheck_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle add precheck edit."""
+    text = update.message.text.strip()
+    if _action_key_from_text(text, update.effective_user.id) == "stop":
+        return await _stop_queue(update, context)
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        await _reply_text_with_retry(
+            update.message,
+            "Empty list. Send corrected list (one per line).",
+            reply_markup=ReplyKeyboardMarkup(_stop_keys(update.effective_user.id), resize_keyboard=True),
+        )
+        return ADD_PRECHECK_EDIT
+    recognition = _parse_precheck_edit_lines(lines)
+    if not recognition:
+        await _reply_text_with_retry(
+            update.message,
+            "No valid words in list.",
+            reply_markup=ReplyKeyboardMarkup(_stop_keys(update.effective_user.id), resize_keyboard=True),
+        )
+        return ADD_PRECHECK_EDIT
+    context.user_data.pop("precheck_items", None)
+    filtered = context.user_data.pop("precheck_filtered", [])
+    existing = context.user_data.pop("precheck_existing", [])
+    context.user_data["add_queue"] = recognition
+    await _reply_text_with_retry(
+        update.message,
+        (
+            f"Already in database {len(existing)}\n"
+            f"Filtred {len(filtered)}\n"
+            f"For recognition {len(recognition)}\n"
+            "Logs: Settings -> Dump Logs"
+        ),
+        reply_markup=ReplyKeyboardMarkup(_stop_keys(update.effective_user.id), resize_keyboard=True),
+    )
+    return await _process_next_ai_word(update, context)
 
 
 async def add_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle add document."""
     doc = update.message.document
     if not doc or not doc.file_name.lower().endswith(".txt"):
         await update.message.reply_text("Please upload a .txt file.")
@@ -1038,31 +1201,34 @@ async def add_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ADD_INPUT
 
     filtered, existing, recognition = _scan_words_before_ai(lines)
-    context.user_data["add_queue"] = recognition
-    logging.info(
-        "Batch add scan: total=%s filtered=%s existing=%s recognition=%s",
-        len(lines),
-        len(filtered),
-        len(existing),
-        len(recognition),
-    )
-    logging.info("Batch add details: filtered=%s", filtered)
-    logging.info("Batch add details: existing=%s", existing)
-    logging.info("Batch add details: recognition=%s", recognition)
+    context.user_data["precheck_filtered"] = filtered
+    context.user_data["precheck_existing"] = existing
+    if not recognition:
+        await _reply_text_with_retry(
+            update.message,
+            (
+                f"Already in database {len(existing)}\n"
+                f"Filtred {len(filtered)}\n"
+                "Nothing to recognize."
+            ),
+            reply_markup=ReplyKeyboardMarkup(_add_keys(update.effective_user.id), resize_keyboard=True),
+        )
+        return ADD_INPUT
+
+    items = await _precheck_words(update, context, recognition)
+    if items is None:
+        return MENU
+    context.user_data["precheck_items"] = items
     await _reply_text_with_retry(
         update.message,
-        (
-            f"Already in database {len(existing)}\n"
-            f"Filtred {len(filtered)}\n"
-            f"For recognition {len(recognition)}\n"
-            "Logs: Settings -> Dump Logs"
-        ),
-        reply_markup=ReplyKeyboardMarkup(_stop_keys(update.effective_user.id), resize_keyboard=True),
+        _format_precheck_list(items),
+        reply_markup=ReplyKeyboardMarkup(PRECHECK_KEYS, resize_keyboard=True),
     )
-    return await _process_next_ai_word(update, context)
+    return ADD_PRECHECK
 
 
 async def add_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle add confirm."""
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "stop":
         return await _stop_queue(update, context)
@@ -1112,6 +1278,7 @@ async def add_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def add_clarify(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle add clarify."""
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "stop":
         return await _stop_queue(update, context)
@@ -1146,6 +1313,7 @@ async def add_clarify(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle add edit."""
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "stop":
         return await _stop_queue(update, context)
@@ -1291,6 +1459,7 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return await _show_ai_preview(update, updated)
 
 async def _return_from_synonyms(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix="✅ Done."):
+    """Handle return from synonyms."""
     anchor_id = context.user_data.get("syn_anchor_id")
     return_state = context.user_data.get("syn_return_state")
     context.user_data.pop("syn_auto_candidates", None)
@@ -1317,6 +1486,7 @@ async def _return_from_synonyms(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def synonyms_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle synonyms menu."""
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "stop":
         return await _back_to_tests(update)
@@ -1360,6 +1530,7 @@ async def synonyms_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def synonyms_add_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle synonyms add input."""
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "back":
         anchor_entry = get_word_by_id(get_db_path(), context.user_data.get("syn_anchor_id"))
@@ -1383,6 +1554,7 @@ async def synonyms_add_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def synonyms_remove_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle synonyms remove input."""
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "back":
         return SYN_MENU
@@ -1412,6 +1584,7 @@ async def synonyms_remove_input(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def synonyms_auto_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle synonyms auto confirm."""
     text = update.message.text.strip()
     if text == SYN_CANCEL_TEXT or _action_key_from_text(text, update.effective_user.id) == "back":
         anchor_id = context.user_data.get("syn_anchor_id")
@@ -1437,6 +1610,7 @@ async def synonyms_auto_confirm(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def synonyms_clear_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle synonyms clear confirm."""
     text = update.message.text.strip()
     if text == SYN_CANCEL_TEXT or _action_key_from_text(text, update.effective_user.id) == "back":
         return SYN_MENU
@@ -1450,6 +1624,7 @@ async def synonyms_clear_confirm(update: Update, context: ContextTypes.DEFAULT_T
 
 
 async def _flag_current_word(update: Update, context: ContextTypes.DEFAULT_TYPE, return_state):
+    """Handle flag current word."""
     entry, _ = _get_quiz_action_entry(context)
     if not entry:
         return await _back_to_tests(update)
@@ -1475,6 +1650,7 @@ async def _flag_current_word(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
 
 async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle quiz ru de."""
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "stop":
         return await _back_to_tests(update)
@@ -1501,6 +1677,7 @@ async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle quiz de ru."""
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "stop":
         return await _back_to_tests(update)
@@ -1527,6 +1704,7 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def quiz_article(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle quiz article."""
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "stop":
         return await _back_to_tests(update)
@@ -1552,10 +1730,12 @@ async def quiz_article(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def _weak_status(ok):
+    """Handle weak status."""
     return "Correct ✅" if ok else "Wrong ❌"
 
 
 def _format_feedback_plural_weak(entry, ok):
+    """Handle format feedback plural weak."""
     article = str(entry.get("article", "")).strip()
     german = _cap_word(entry.get("german", ""))
     plural = _cap_word(entry.get("plural", ""))
@@ -1566,6 +1746,7 @@ def _format_feedback_plural_weak(entry, ok):
 
 
 def _format_feedback_prateritum_weak(entry, ok):
+    """Handle format feedback prateritum weak."""
     infinitive = _low_word(entry.get("infinitive", ""))
     pr = _low_word(entry.get("prateritum", ""))
     headline = f"{_weak_status(ok)} >>>     *{_md_escape(infinitive)}*"
@@ -1575,6 +1756,7 @@ def _format_feedback_prateritum_weak(entry, ok):
 
 
 def _format_feedback_partizip2_weak(entry, ok):
+    """Handle format feedback partizip2 weak."""
     infinitive = _low_word(entry.get("infinitive", ""))
     p2 = _expected_partizip2(entry)
     headline = f"{_weak_status(ok)} >>>     *{_md_escape(infinitive)}*"
@@ -1584,6 +1766,7 @@ def _format_feedback_partizip2_weak(entry, ok):
 
 
 async def quiz_article_weak(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle quiz article weak."""
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "stop":
         return await _back_to_tests(update)
@@ -1596,14 +1779,20 @@ async def quiz_article_weak(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not entry:
         return await _send_article_weak_prompt(update, context, None)
 
+    state = get_form_state(get_db_path(), update.effective_user.id, entry.get("id"), "article")
     ok = _normalize_answer(text) == _normalize_answer(entry.get("article", ""))
     update_form_stats(get_db_path(), update.effective_user.id, entry.get("id"), {"article": ok})
+    if not state["active"] and state["review_stage"] > 0:
+        stage_snapshot = update_weak_review_state(get_db_path(), update.effective_user.id, entry.get("id"), "article", ok)
+    else:
+        stage_snapshot = get_form_review_stage(get_db_path(), update.effective_user.id, entry.get("id"), "article")
     log_quiz_event(
         get_db_path(),
         user_id=update.effective_user.id,
         word_id=entry.get("id"),
         mode="weak_article",
         is_correct=ok,
+        review_stage_snapshot=stage_snapshot,
     )
     context.user_data["quiz_last_answered_entry"] = entry
     feedback = _format_feedback_article(entry, ok, _user_dict_lang(update.effective_user.id))
@@ -1611,6 +1800,7 @@ async def quiz_article_weak(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def quiz_plural_weak(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle quiz plural weak."""
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "stop":
         return await _back_to_tests(update)
@@ -1623,17 +1813,23 @@ async def quiz_plural_weak(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not entry:
         return await _send_plural_weak_prompt(update, context, None)
 
+    state = get_form_state(get_db_path(), update.effective_user.id, entry.get("id"), "plural")
     if text == I_DONT_KNOW_TEXT:
         ok = False
     else:
         ok = _normalize_plural_value(text) == _normalize_plural_value(entry.get("plural", ""))
     update_form_stats(get_db_path(), update.effective_user.id, entry.get("id"), {"plural": ok})
+    if not state["active"] and state["review_stage"] > 0:
+        stage_snapshot = update_weak_review_state(get_db_path(), update.effective_user.id, entry.get("id"), "plural", ok)
+    else:
+        stage_snapshot = get_form_review_stage(get_db_path(), update.effective_user.id, entry.get("id"), "plural")
     log_quiz_event(
         get_db_path(),
         user_id=update.effective_user.id,
         word_id=entry.get("id"),
         mode="weak_plural",
         is_correct=ok,
+        review_stage_snapshot=stage_snapshot,
     )
     context.user_data["quiz_last_answered_entry"] = entry
     feedback = _format_feedback_plural_weak(entry, ok)
@@ -1641,6 +1837,7 @@ async def quiz_plural_weak(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def quiz_prateritum_weak(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle quiz prateritum weak."""
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "stop":
         return await _back_to_tests(update)
@@ -1653,17 +1850,23 @@ async def quiz_prateritum_weak(update: Update, context: ContextTypes.DEFAULT_TYP
     if not entry:
         return await _send_prateritum_weak_prompt(update, context, None)
 
+    state = get_form_state(get_db_path(), update.effective_user.id, entry.get("id"), "prateritum")
     if text == I_DONT_KNOW_TEXT:
         ok = False
     else:
         ok = _normalize_answer(text) == _normalize_answer(entry.get("prateritum", ""))
     update_form_stats(get_db_path(), update.effective_user.id, entry.get("id"), {"prateritum": ok})
+    if not state["active"] and state["review_stage"] > 0:
+        stage_snapshot = update_weak_review_state(get_db_path(), update.effective_user.id, entry.get("id"), "prateritum", ok)
+    else:
+        stage_snapshot = get_form_review_stage(get_db_path(), update.effective_user.id, entry.get("id"), "prateritum")
     log_quiz_event(
         get_db_path(),
         user_id=update.effective_user.id,
         word_id=entry.get("id"),
         mode="weak_prateritum",
         is_correct=ok,
+        review_stage_snapshot=stage_snapshot,
     )
     context.user_data["quiz_last_answered_entry"] = entry
     feedback = _format_feedback_prateritum_weak(entry, ok)
@@ -1671,6 +1874,7 @@ async def quiz_prateritum_weak(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def quiz_partizip2_weak(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle quiz partizip2 weak."""
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "stop":
         return await _back_to_tests(update)
@@ -1683,17 +1887,23 @@ async def quiz_partizip2_weak(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not entry:
         return await _send_partizip2_weak_prompt(update, context, None)
 
+    state = get_form_state(get_db_path(), update.effective_user.id, entry.get("id"), "partizip2")
     if text == I_DONT_KNOW_TEXT:
         ok = False
     else:
         ok = _normalize_answer(text) == _expected_partizip2(entry)
     update_form_stats(get_db_path(), update.effective_user.id, entry.get("id"), {"partizip2": ok})
+    if not state["active"] and state["review_stage"] > 0:
+        stage_snapshot = update_weak_review_state(get_db_path(), update.effective_user.id, entry.get("id"), "partizip2", ok)
+    else:
+        stage_snapshot = get_form_review_stage(get_db_path(), update.effective_user.id, entry.get("id"), "partizip2")
     log_quiz_event(
         get_db_path(),
         user_id=update.effective_user.id,
         word_id=entry.get("id"),
         mode="weak_partizip2",
         is_correct=ok,
+        review_stage_snapshot=stage_snapshot,
     )
     context.user_data["quiz_last_answered_entry"] = entry
     feedback = _format_feedback_partizip2_weak(entry, ok)
@@ -1701,6 +1911,7 @@ async def quiz_partizip2_weak(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def _save_entry(update: Update, entry):
+    """Handle save entry."""
     if "russian" in entry:
         entry["russian"] = _normalize_russian_singular(entry["russian"])
     try:
@@ -1720,12 +1931,14 @@ async def _save_entry(update: Update, entry):
 
 
 def _get_ru_de_answer(entry):
+    """Handle get ru de answer."""
     if entry.get("type") == "verb":
         return entry.get("infinitive", "")
     return entry.get("german", "")
 
 
 def _split_answer_parts(text):
+    """Handle split answer parts."""
     raw = str(text or "").strip()
     if not raw:
         return []
@@ -1735,6 +1948,7 @@ def _split_answer_parts(text):
 
 
 def _normalize_plural_value(value):
+    """Handle normalize plural value."""
     token = _normalize_answer(value)
     if token.startswith("die "):
         token = token[4:].strip()
@@ -1742,6 +1956,7 @@ def _normalize_plural_value(value):
 
 
 def _expected_partizip2(entry):
+    """Handle expected partizip2."""
     part = _normalize_answer(entry.get("partizip2", ""))
     aux = _normalize_answer(
         entry.get("perfect_aux")
@@ -1757,6 +1972,7 @@ def _expected_partizip2(entry):
 
 
 def _synonym_entries(entry):
+    """Handle synonym entries."""
     wid = entry.get("id")
     if not wid:
         return [entry]
@@ -1767,6 +1983,7 @@ def _synonym_entries(entry):
 
 
 def _check_ru_de_strict(entry, answer_text):
+    """Handle check ru de strict."""
     entry_type = (entry.get("type") or "").strip().lower()
     parts = _split_answer_parts(answer_text)
     synonyms = _synonym_entries(entry)
@@ -1791,23 +2008,21 @@ def _check_ru_de_strict(entry, answer_text):
         }
 
     if entry_type == "verb":
-        if len(parts) < 3:
-            return False, {"prateritum": False, "partizip2": False}
+        if len(parts) < 2:
+            return False, {"partizip2": False}
         infinitive_in = _normalize_answer(parts[0])
-        pr_in = _normalize_answer(parts[1])
-        p2_in = _normalize_answer(" ".join(parts[2:]))
+        if len(parts) == 2:
+            p2_in = _normalize_answer(parts[1])
+        else:
+            p2_in = _normalize_answer(" ".join(parts[2:]))
         for cand in synonyms:
             if (cand.get("type") or "").strip().lower() != "verb":
                 continue
             inf_ok = infinitive_in == _normalize_answer(cand.get("infinitive", ""))
-            pr_ok = pr_in == _normalize_answer(cand.get("prateritum", ""))
             p2_ok = p2_in == _expected_partizip2(cand)
-            if inf_ok and pr_ok and p2_ok:
-                return True, {"prateritum": True, "partizip2": True}
-        return False, {
-            "prateritum": pr_in == _normalize_answer(entry.get("prateritum", "")),
-            "partizip2": p2_in == _expected_partizip2(entry),
-        }
+            if inf_ok and p2_ok:
+                return True, {"partizip2": True}
+        return False, {"partizip2": p2_in == _expected_partizip2(entry)}
 
     answer = _normalize_answer(answer_text)
     expected_values = []
@@ -1820,6 +2035,7 @@ def _check_ru_de_strict(entry, answer_text):
 
 
 def _entry_translation(entry, dict_lang):
+    """Handle entry translation."""
     ru = str(entry.get("russian", "") or "").strip()
     ukr = str(entry.get("ukrainian", "") or "").strip()
     eng = str(entry.get("english", "") or "").strip()
@@ -1831,6 +2047,7 @@ def _entry_translation(entry, dict_lang):
 
 
 def _cap_word(word):
+    """Handle cap word."""
     word = str(word or "").strip()
     if not word:
         return ""
@@ -1838,10 +2055,12 @@ def _cap_word(word):
 
 
 def _low_word(word):
+    """Handle low word."""
     return str(word or "").strip().lower()
 
 
 def _format_ru_question(entry, dict_lang):
+    """Handle format ru question."""
     value = _normalize_russian_singular(_entry_translation(entry, dict_lang))
     word_type = _low_word(entry.get("type", ""))
     type_hint = f" ({word_type})" if word_type else ""
@@ -1849,6 +2068,7 @@ def _format_ru_question(entry, dict_lang):
 
 
 def _format_de_ru_question(entry):
+    """Handle format de ru question."""
     word_type = entry.get("type", "")
     article = str(entry.get("article", "")).strip()
     base = entry.get("infinitive", "") if word_type == "verb" else entry.get("german", "")
@@ -1858,10 +2078,12 @@ def _format_de_ru_question(entry):
 
 
 def _format_article_question(entry):
+    """Handle format article question."""
     return f">>     {_md_escape(_cap_word(entry.get('german', '')))} ?"
 
 
 def _format_feedback_ru_de(entry, ok):
+    """Handle format feedback ru de."""
     status = "Correct ✅" if ok else "Wrong ❌"
     word_type = entry.get("type", "")
     article = str(entry.get("article", "")).strip()
@@ -1901,11 +2123,13 @@ def _format_feedback_ru_de(entry, ok):
 
 
 def _format_feedback_de_ru(entry, ok, dict_lang):
+    """Handle format feedback de ru."""
     status = "Correct ✅" if ok else "Wrong ❌"
     return f"{status} >>>     *{_md_escape(_low_word(_entry_translation(entry, dict_lang)))}*"
 
 
 def _format_feedback_article(entry, ok, dict_lang):
+    """Handle format feedback article."""
     status = "Correct ✅" if ok else "Wrong ❌"
     article = str(entry.get("article", "")).strip()
     german = _cap_word(entry.get("german", ""))
@@ -1922,6 +2146,7 @@ def _format_feedback_article(entry, ok, dict_lang):
 
 
 def _pick_due_entry(context, user_id, mode, word_type=None):
+    """Handle pick due entry."""
     due = select_due(get_db_path(), user_id=user_id, mode=mode, word_type=word_type)
     if not due:
         return None
@@ -1938,21 +2163,25 @@ def _pick_due_entry(context, user_id, mode, word_type=None):
 
 
 def _pick_weak_entry(context, user_id, weak_field, word_type=None):
+    """Handle pick weak entry."""
     due = list_weak_words(get_db_path(), user_id=user_id, weak_field=weak_field, word_type=word_type, limit=300)
     if not due:
         return None
+    active = [w for w in due if w.get("is_active")]
+    pool_src = active if active else due
     last_ids = context.user_data.setdefault("last_quiz_ids", {})
     mode = f"weak_{weak_field}"
     last_id = last_ids.get(mode)
-    pool = [w for w in due if w.get("id") != last_id] if len(due) > 1 else due
+    pool = [w for w in pool_src if w.get("id") != last_id] if len(pool_src) > 1 else pool_src
     if not pool:
-        pool = due
+        pool = pool_src
     entry = random.choice(pool)
     last_ids[mode] = entry.get("id")
     return entry
 
 
 async def _send_ru_de_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
+    """Handle send ru de prompt."""
     mode = _mode_l1_de(update.effective_user.id)
     entry = _pick_due_entry(context, update.effective_user.id, mode)
     if not entry:
@@ -1976,6 +2205,7 @@ async def _send_ru_de_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
 
 async def _send_de_ru_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
+    """Handle send de ru prompt."""
     mode = _mode_de_l1(update.effective_user.id)
     entry = _pick_due_entry(context, update.effective_user.id, mode)
     if not entry:
@@ -1999,6 +2229,7 @@ async def _send_de_ru_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
 
 async def _send_article_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
+    """Handle send article prompt."""
     entry = _pick_due_entry(context, update.effective_user.id, MODE_ARTICLE, word_type="nomen")
     if not entry:
         await update.message.reply_text(
@@ -2021,6 +2252,7 @@ async def _send_article_prompt(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def _send_article_weak_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
+    """Handle send article weak prompt."""
     entry = _pick_weak_entry(context, update.effective_user.id, "article", word_type="nomen")
     if not entry:
         await update.message.reply_text(
@@ -2040,6 +2272,7 @@ async def _send_article_weak_prompt(update: Update, context: ContextTypes.DEFAUL
 
 
 async def _send_plural_weak_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
+    """Handle send plural weak prompt."""
     entry = _pick_weak_entry(context, update.effective_user.id, "plural", word_type="nomen")
     if not entry:
         await update.message.reply_text(
@@ -2060,6 +2293,7 @@ async def _send_plural_weak_prompt(update: Update, context: ContextTypes.DEFAULT
 
 
 async def _send_prateritum_weak_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
+    """Handle send prateritum weak prompt."""
     entry = _pick_weak_entry(context, update.effective_user.id, "prateritum", word_type="verb")
     if not entry:
         await update.message.reply_text(
@@ -2079,6 +2313,7 @@ async def _send_prateritum_weak_prompt(update: Update, context: ContextTypes.DEF
 
 
 async def _send_partizip2_weak_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
+    """Handle send partizip2 weak prompt."""
     entry = _pick_weak_entry(context, update.effective_user.id, "partizip2", word_type="verb")
     if not entry:
         await update.message.reply_text(
@@ -2098,20 +2333,92 @@ async def _send_partizip2_weak_prompt(update: Update, context: ContextTypes.DEFA
 
 
 def _ai_prompt(word, clarification):
+    """Handle ai prompt."""
     extra = f"\nClarification: {clarification}" if clarification else ""
     return (
         "Return only a JSON object and nothing else. "
         "Detect German part of speech. Allowed types: "
         "nomen, verb, adjektiv, pronomen, adverb, praeposition, konjunktion, partikel. "
-        "For nomen return: type, article, german, plural, russian, ukrainian, english. "
-        "For verb return: type, infinitive, prateritum, partizip2, russian, ukrainian, english. "
-        "For all other allowed types return: type, german, russian, ukrainian, english. "
-        "Use Russian/Ukrainian translations in singular only. No extra text."
+        "For nomen return: type, article, german, plural, russian. "
+        "For verb return: type, infinitive, prateritum, partizip2, russian. "
+        "For all other allowed types return: type, german, russian. "
+        "Use Russian translations in singular only. No extra text."
         f"\nWord: {word}{extra}"
     )
 
 
+def _ai_precheck_prompt(word):
+    """Handle ai precheck prompt."""
+    return (
+        "Return only a JSON object and nothing else. "
+        "Detect German part of speech. Allowed types: "
+        "nomen, verb, adjektiv, pronomen, adverb, praeposition, konjunktion, partikel. "
+        "Correct spelling if needed. "
+        "Return JSON fields: type, value (corrected base form). "
+        "For nouns, value is the singular base form (no article). "
+        "For verbs, value is the infinitive. "
+        "For other types, value is the base German form. "
+        f"\nWord: {word}"
+    )
+
+
+def _parse_precheck_entry(entry):
+    """Handle parse precheck entry."""
+    if not isinstance(entry, dict):
+        return None
+    entry_type = _type_label(entry.get("type", ""))
+    if entry_type not in ALLOWED_AI_TYPES:
+        return None
+    value = entry.get("value") or entry.get("german") or entry.get("infinitive") or entry.get("word")
+    value = str(value or "").strip()
+    if not value:
+        return None
+    return {"type": entry_type, "word": value}
+
+
+def _format_precheck_list(items):
+    """Handle format precheck list."""
+    lines = ["Precheck list:"]
+    for idx, item in enumerate(items, start=1):
+        word = item.get("word", "")
+        item_type = item.get("type", "?")
+        original = item.get("original", "")
+        if original and _normalize_lookup_text(original) != _normalize_lookup_text(word):
+            lines.append(f"{idx}. {word} [{item_type}] (from {original})")
+        else:
+            lines.append(f"{idx}. {word} [{item_type}]")
+    return "\n".join(lines)
+
+
+async def _precheck_words(update: Update, context: ContextTypes.DEFAULT_TYPE, words):
+    """Handle precheck words."""
+    if not os.getenv("OPENAI_API_KEY"):
+        await _reply_text_with_retry(
+            update.message,
+            "AI is not configured. Set OPENAI_API_KEY in .env.",
+            reply_markup=_main_menu_markup(update.effective_user.id),
+        )
+        return None
+
+    items = []
+    for raw in words:
+        prompt_text = _ai_precheck_prompt(raw)
+        try:
+            response_text = generate_fields(prompt_text)
+        except Exception:
+            items.append({"original": raw, "word": raw, "type": "?"})
+            continue
+        entry = _try_parse_json(response_text)
+        parsed = _parse_precheck_entry(entry)
+        if not parsed:
+            items.append({"original": raw, "word": raw, "type": "?"})
+            continue
+        items.append({"original": raw, "word": parsed["word"], "type": parsed["type"]})
+    return items
+
+
 def _validate_ai_entry(entry):
+    """Handle validate ai entry."""
     if not isinstance(entry, dict):
         return False
 
@@ -2127,6 +2434,7 @@ def _validate_ai_entry(entry):
 
 
 def _normalize_ai_entry(entry):
+    """Handle normalize ai entry."""
     entry = dict(entry)
     entry_type = _type_label(entry.get("type", ""))
     entry["type"] = entry_type
@@ -2166,6 +2474,7 @@ def _normalize_ai_entry(entry):
 
 
 def _is_non_infinitive_verb_input(raw_word, entry):
+    """Handle is non infinitive verb input."""
     if entry.get("type") != "verb":
         return False
     source = _normalize_lookup_text(raw_word)
@@ -2176,18 +2485,17 @@ def _is_non_infinitive_verb_input(raw_word, entry):
 
 
 def _format_ai_preview(entry):
+    """Handle format ai preview."""
     entry_type = entry.get("type")
     if entry_type == "nomen":
         art = entry.get("article", "")
         ger = entry.get("german", "")
         plural = entry.get("plural", "")
         rus = entry.get("russian", "")
-        ukr = entry.get("ukrainian", "")
-        eng = entry.get("english", "")
         extras = f" ({plural})" if plural else ""
         return (
             "Recognized [Nomen]\n"
-            f"{art} *{_md_escape(ger)}* - {_md_escape(rus)} / {_md_escape(ukr)} / {_md_escape(eng)}{_md_escape(extras)}"
+            f"{art} *{_md_escape(ger)}*{_md_escape(extras)} - {_md_escape(rus)}"
         )
 
     if entry_type == "verb":
@@ -2195,23 +2503,20 @@ def _format_ai_preview(entry):
         pr = entry.get("prateritum", "")
         p2 = entry.get("partizip2", "")
         rus = entry.get("russian", "")
-        ukr = entry.get("ukrainian", "")
-        eng = entry.get("english", "")
         extras = " / ".join([x for x in [pr, p2] if x])
         extras = f" ({extras})" if extras else ""
         return (
             "Recognized [Verb]\n"
-            f"*{_md_escape(inf)}* - {_md_escape(rus)} / {_md_escape(ukr)} / {_md_escape(eng)}{_md_escape(extras)}"
+            f"*{_md_escape(inf)}*{_md_escape(extras)} - {_md_escape(rus)}"
         )
 
     ger = entry.get("german", "")
     rus = entry.get("russian", "")
-    ukr = entry.get("ukrainian", "")
-    eng = entry.get("english", "")
-    return f"Recognized [{entry_type}]\n*{_md_escape(ger)}* - {_md_escape(rus)} / {_md_escape(ukr)} / {_md_escape(eng)}"
+    return f"Recognized [{entry_type}]\n*{_md_escape(ger)}* - {_md_escape(rus)}"
 
 
 async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, word, clarification):
+    """Handle process ai word."""
     has_queue = bool(context.user_data.get("add_queue"))
 
     reject_reason = _prefilter_reject_reason(word)
@@ -2303,6 +2608,7 @@ async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, w
 
 
 async def _show_ai_preview(update: Update, entry):
+    """Handle show ai preview."""
     preview = _format_ai_preview(entry)
     await _reply_text_with_retry(
         update.message,
@@ -2314,6 +2620,7 @@ async def _show_ai_preview(update: Update, entry):
 
 
 async def _process_next_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle process next ai word."""
     queue = context.user_data.get("add_queue") or []
     while queue:
         word = queue.pop(0)
@@ -2332,6 +2639,7 @@ async def _process_next_ai_word(update: Update, context: ContextTypes.DEFAULT_TY
     )
     return MENU
 async def _ban_pending_word(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle ban pending word."""
     word = (context.user_data.get("pending_word") or "").strip()
     if not word:
         await update.message.reply_text(
@@ -2347,6 +2655,7 @@ async def _ban_pending_word(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def _stop_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle stop queue."""
     context.user_data.pop("add_queue", None)
     context.user_data.pop("pending_word", None)
     context.user_data.pop("pending_entry", None)
@@ -2364,6 +2673,7 @@ async def _stop_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def _back_to_main_menu(update: Update):
+    """Handle back to main menu."""
     user_id = update.effective_user.id
     await update.message.reply_text(
         t(_user_interface_lang(user_id), "main_menu"),
@@ -2373,6 +2683,7 @@ async def _back_to_main_menu(update: Update):
 
 
 async def _back_to_tests(update: Update):
+    """Handle back to tests."""
     user_id = update.effective_user.id
     await update.message.reply_text(
         t(_user_interface_lang(user_id), "tests") + ":",
@@ -2382,6 +2693,7 @@ async def _back_to_tests(update: Update):
 
 
 def _user_display(row):
+    """Handle user display."""
     username = str(row.get("username") or "").strip()
     first_name = str(row.get("first_name") or "").strip()
     if username:
@@ -2392,6 +2704,7 @@ def _user_display(row):
 
 
 def _format_daily_stats_text(day_iso, totals, per_user):
+    """Handle format daily stats text."""
     lines = [
         f"Daily stats ({day_iso})",
         f"Users: {totals.get('unique_users', 0)}",
@@ -2416,6 +2729,7 @@ def _format_daily_stats_text(day_iso, totals, per_user):
 
 
 def _format_leaderboard_text(day_iso, rows):
+    """Handle format leaderboard text."""
     lines = [f"Leaderboard ({day_iso})"]
     if not rows:
         lines.append("No data.")
@@ -2428,6 +2742,7 @@ def _format_leaderboard_text(day_iso, rows):
 
 
 async def stats_today_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle stats today command."""
     if not is_owner(update.effective_user.id):
         return
     day_iso = datetime.now(timezone.utc).date().isoformat()
@@ -2437,6 +2752,7 @@ async def stats_today_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def leaderboard_today_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle leaderboard today command."""
     if not is_owner(update.effective_user.id):
         return
     day_iso = datetime.now(timezone.utc).date().isoformat()
@@ -2445,6 +2761,7 @@ async def leaderboard_today_command(update: Update, context: ContextTypes.DEFAUL
 
 
 async def _daily_stats_job(context: ContextTypes.DEFAULT_TYPE):
+    """Handle daily stats job."""
     owner_id = get_owner_id()
     if not owner_id:
         return
@@ -2462,6 +2779,7 @@ async def _daily_stats_job(context: ContextTypes.DEFAULT_TYPE):
 
 
 def _configure_daily_stats_report(app: Application):
+    """Handle configure daily stats report."""
     job_queue = app.job_queue
     if job_queue is None:
         return
@@ -2475,12 +2793,14 @@ def _configure_daily_stats_report(app: Application):
 
 
 def _update_srs_for_entry(user_id, entry, mode, ok):
+    """Handle update srs for entry."""
     quality = 5 if ok else 2
     update_progress(get_db_path(), user_id=user_id, word_id=entry.get("id"), mode=mode, quality=quality)
     log_quiz_event(get_db_path(), user_id=user_id, word_id=entry.get("id"), mode=mode, is_correct=ok)
 
 
 def _create_dump_file():
+    """Handle create dump file."""
     db_path = get_db_path()
     dump_dir = get_dump_dir()
     dump_dir.mkdir(parents=True, exist_ok=True)
@@ -2491,6 +2811,7 @@ def _create_dump_file():
 
 
 def _create_logs_dump_file():
+    """Handle create logs dump file."""
     log_path = get_log_path()
     if not log_path.exists() or log_path.stat().st_size == 0:
         return None
@@ -2504,6 +2825,7 @@ def _create_logs_dump_file():
 
 
 def _create_suggestions_dump_file():
+    """Handle create suggestions dump file."""
     src = get_suggestions_path()
     if not src.exists() or src.stat().st_size == 0:
         return None
@@ -2517,6 +2839,7 @@ def _create_suggestions_dump_file():
 
 
 def _append_suggested_words(user, words):
+    """Handle append suggested words."""
     items = [str(x).strip() for x in (words or []) if str(x).strip()]
     if not items:
         return
@@ -2535,6 +2858,7 @@ def _append_suggested_words(user, words):
 
 
 def _configure_logging():
+    """Handle configure logging."""
     log_path = get_log_path()
     log_path.parent.mkdir(parents=True, exist_ok=True)
     formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -2562,6 +2886,7 @@ def _configure_logging():
 
 
 def _cleanup_old_dump_logs(days=14):
+    """Handle cleanup old dump logs."""
     cutoff = datetime.now(timezone.utc).timestamp() - (days * 24 * 60 * 60)
     dump_dir = get_dump_dir()
     if not dump_dir.exists():
@@ -2575,6 +2900,7 @@ def _cleanup_old_dump_logs(days=14):
 
 
 async def _auto_dump_job(context: ContextTypes.DEFAULT_TYPE):
+    """Handle auto dump job."""
     try:
         dump_path = _create_dump_file()
     except Exception:
@@ -2594,6 +2920,7 @@ async def _auto_dump_job(context: ContextTypes.DEFAULT_TYPE):
 
 
 def _configure_auto_dump(app: Application, mode: str):
+    """Handle configure auto dump."""
     job_queue = app.job_queue
     if job_queue is None:
         return
@@ -2618,6 +2945,7 @@ def _configure_auto_dump(app: Application, mode: str):
 
 
 def _prepare_storage():
+    """Handle prepare storage."""
     db_path = get_db_path()
     init_db(db_path)
     if not get_setting(db_path, OWNER_INTERFACE_LANG_KEY):
@@ -2627,6 +2955,7 @@ def _prepare_storage():
 
 
 def main():
+    """Handle main."""
     load_dotenv()
     _configure_logging()
     token = os.getenv("BOT_TOKEN")
@@ -2659,6 +2988,8 @@ def main():
                 MessageHandler(filters.TEXT & ~filters.COMMAND, add_input),
                 MessageHandler(filters.Document.ALL, add_document),
             ],
+            ADD_PRECHECK: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_precheck)],
+            ADD_PRECHECK_EDIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_precheck_edit)],
             ADD_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_confirm)],
             ADD_CLARIFY: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_clarify)],
             ADD_EDIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_edit)],

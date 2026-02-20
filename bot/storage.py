@@ -15,6 +15,7 @@ DICT_LANGS = ("ru", "uk", "en")
 
 
 def default_srs(today=None):
+    """Handle default srs."""
     if today is None:
         today = date.today()
     return {
@@ -26,6 +27,7 @@ def default_srs(today=None):
 
 
 def _connect(db_path):
+    """Handle connect."""
     path = Path(db_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)
@@ -35,6 +37,7 @@ def _connect(db_path):
 
 
 def init_db(db_path):
+    """Handle init db."""
     with _connect(db_path) as conn:
         conn.executescript(
             """
@@ -111,6 +114,7 @@ def init_db(db_path):
                 mode TEXT NOT NULL,
                 is_correct INTEGER NOT NULL,
                 prev_is_correct INTEGER,
+                review_stage_snapshot INTEGER,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
             );
@@ -127,15 +131,23 @@ def init_db(db_path):
                 article_errors INTEGER NOT NULL DEFAULT 0,
                 article_streak_wrong INTEGER NOT NULL DEFAULT 0,
                 article_streak_correct INTEGER NOT NULL DEFAULT 0,
+                article_review_stage INTEGER NOT NULL DEFAULT 0,
+                article_next_review TEXT DEFAULT NULL,
                 plural_errors INTEGER NOT NULL DEFAULT 0,
                 plural_streak_wrong INTEGER NOT NULL DEFAULT 0,
                 plural_streak_correct INTEGER NOT NULL DEFAULT 0,
+                plural_review_stage INTEGER NOT NULL DEFAULT 0,
+                plural_next_review TEXT DEFAULT NULL,
                 prateritum_errors INTEGER NOT NULL DEFAULT 0,
                 prateritum_streak_wrong INTEGER NOT NULL DEFAULT 0,
                 prateritum_streak_correct INTEGER NOT NULL DEFAULT 0,
+                prateritum_review_stage INTEGER NOT NULL DEFAULT 0,
+                prateritum_next_review TEXT DEFAULT NULL,
                 partizip2_errors INTEGER NOT NULL DEFAULT 0,
                 partizip2_streak_wrong INTEGER NOT NULL DEFAULT 0,
                 partizip2_streak_correct INTEGER NOT NULL DEFAULT 0,
+                partizip2_review_stage INTEGER NOT NULL DEFAULT 0,
+                partizip2_next_review TEXT DEFAULT NULL,
                 PRIMARY KEY (user_id, word_id),
                 FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
             );
@@ -164,6 +176,7 @@ def init_db(db_path):
 
 
 def _ensure_schema(conn):
+    """Handle ensure schema."""
     word_cols = {
         row["name"] if isinstance(row, sqlite3.Row) else row[1]
         for row in conn.execute("PRAGMA table_info(words)").fetchall()
@@ -184,12 +197,33 @@ def _ensure_schema(conn):
     if "dict_lang" not in user_cols:
         conn.execute("ALTER TABLE users ADD COLUMN dict_lang TEXT NOT NULL DEFAULT 'ru'")
 
+    form_cols = {
+        row["name"] if isinstance(row, sqlite3.Row) else row[1]
+        for row in conn.execute("PRAGMA table_info(form_stats)").fetchall()
+    }
+    for field in ("article", "plural", "prateritum", "partizip2"):
+        stage_col = f"{field}_review_stage"
+        next_col = f"{field}_next_review"
+        if stage_col not in form_cols:
+            conn.execute(f"ALTER TABLE form_stats ADD COLUMN {stage_col} INTEGER NOT NULL DEFAULT 0")
+        if next_col not in form_cols:
+            conn.execute(f"ALTER TABLE form_stats ADD COLUMN {next_col} TEXT DEFAULT NULL")
+
+    quiz_cols = {
+        row["name"] if isinstance(row, sqlite3.Row) else row[1]
+        for row in conn.execute("PRAGMA table_info(quiz_events)").fetchall()
+    }
+    if "review_stage_snapshot" not in quiz_cols:
+        conn.execute("ALTER TABLE quiz_events ADD COLUMN review_stage_snapshot INTEGER")
+
 
 def _normalize_text(text):
+    """Handle normalize text."""
     return " ".join(str(text).strip().lower().split())
 
 
 def _split_variants(text):
+    """Handle split variants."""
     raw = _safe_text(text)
     for delim in (",", ";", "/"):
         raw = raw.replace(delim, "|")
@@ -197,6 +231,7 @@ def _split_variants(text):
 
 
 def _form_variants(text):
+    """Handle form variants."""
     values = set()
     for part in _split_variants(text):
         normalized = _normalize_text(part)
@@ -209,12 +244,14 @@ def _form_variants(text):
 
 
 def _safe_text(value):
+    """Handle safe text."""
     if value is None:
         return ""
     return str(value)
 
 
 def _safe_int(value, default=0):
+    """Handle safe int."""
     try:
         return int(value)
     except (TypeError, ValueError):
@@ -222,11 +259,13 @@ def _safe_int(value, default=0):
 
 
 def _normalize_level(level):
+    """Handle normalize level."""
     value = _safe_text(level).strip().upper()
     return value if value in CEFR_LEVELS else ""
 
 
 def _entry_key(entry):
+    """Handle entry key."""
     entry_type = _normalize_text(entry.get("type", ""))
     if entry_type == "verb":
         return ("verb", _normalize_text(entry.get("infinitive", "")))
@@ -234,7 +273,8 @@ def _entry_key(entry):
 
 
 def _row_to_entry(row):
-    return {
+    """Handle row to entry."""
+    entry = {
         "id": row["id"],
         "type": row["type"],
         "article": row["article"] or "",
@@ -248,9 +288,17 @@ def _row_to_entry(row):
         "english": row["english"] or "",
         "cefr_level": row["cefr_level"] or "",
     }
+    if "review_stage" in row.keys():
+        entry["review_stage"] = int(row["review_stage"] or 0)
+    if "next_review" in row.keys():
+        entry["next_review"] = row["next_review"]
+    if "is_active" in row.keys():
+        entry["is_active"] = bool(row["is_active"])
+    return entry
 
 
 def load_words(db_path):
+    """Handle load words."""
     init_db(db_path)
     with _connect(db_path) as conn:
         rows = conn.execute(
@@ -265,6 +313,7 @@ def load_words(db_path):
 
 
 def count_words(db_path):
+    """Handle count words."""
     init_db(db_path)
     with _connect(db_path) as conn:
         row = conn.execute("SELECT COUNT(*) AS cnt FROM words").fetchone()
@@ -272,6 +321,7 @@ def count_words(db_path):
 
 
 def get_statistics_snapshot(db_path, user_id, mode):
+    """Handle get statistics snapshot."""
     init_db(db_path)
     user_id = int(user_id)
     mode = _safe_text(mode)
@@ -493,6 +543,7 @@ def get_statistics_snapshot(db_path, user_id, mode):
 
 
 def register_or_update_user(db_path, user_id, username="", first_name=""):
+    """Handle register or update user."""
     init_db(db_path)
     with _connect(db_path) as conn:
         existing = conn.execute(
@@ -525,6 +576,7 @@ def register_or_update_user(db_path, user_id, username="", first_name=""):
 
 
 def get_user_status(db_path, user_id):
+    """Handle get user status."""
     init_db(db_path)
     with _connect(db_path) as conn:
         row = conn.execute(
@@ -537,6 +589,7 @@ def get_user_status(db_path, user_id):
 
 
 def set_user_status(db_path, user_id, status):
+    """Handle set user status."""
     init_db(db_path)
     status = _safe_text(status).strip().lower()
     if status not in {"pending", "approved", "rejected"}:
@@ -556,6 +609,7 @@ def set_user_status(db_path, user_id, status):
 
 
 def _ensure_default_user_levels(conn, user_id):
+    """Handle ensure default user levels."""
     rows = conn.execute(
         "SELECT level FROM user_levels WHERE user_id = ?",
         (int(user_id),),
@@ -569,6 +623,7 @@ def _ensure_default_user_levels(conn, user_id):
 
 
 def get_user_levels(db_path, user_id):
+    """Handle get user levels."""
     init_db(db_path)
     with _connect(db_path) as conn:
         _ensure_default_user_levels(conn, int(user_id))
@@ -581,6 +636,7 @@ def get_user_levels(db_path, user_id):
 
 
 def toggle_user_level(db_path, user_id, level):
+    """Handle toggle user level."""
     level = _normalize_level(level)
     if not level:
         raise ValueError("Invalid CEFR level.")
@@ -612,6 +668,7 @@ def toggle_user_level(db_path, user_id, level):
 
 
 def get_user_info(db_path, user_id):
+    """Handle get user info."""
     init_db(db_path)
     with _connect(db_path) as conn:
         row = conn.execute(
@@ -636,16 +693,19 @@ def get_user_info(db_path, user_id):
 
 
 def _normalize_interface_lang(value):
+    """Handle normalize interface lang."""
     token = _safe_text(value).strip().lower()
     return token if token in INTERFACE_LANGS else ""
 
 
 def _normalize_dict_lang(value):
+    """Handle normalize dict lang."""
     token = _safe_text(value).strip().lower()
     return token if token in DICT_LANGS else ""
 
 
 def get_user_languages(db_path, user_id):
+    """Handle get user languages."""
     init_db(db_path)
     with _connect(db_path) as conn:
         row = conn.execute(
@@ -658,6 +718,7 @@ def get_user_languages(db_path, user_id):
 
 
 def set_user_interface_lang(db_path, user_id, interface_lang):
+    """Handle set user interface lang."""
     value = _normalize_interface_lang(interface_lang)
     if not value:
         raise ValueError("Invalid interface language.")
@@ -677,6 +738,7 @@ def set_user_interface_lang(db_path, user_id, interface_lang):
 
 
 def set_user_dict_lang(db_path, user_id, dict_lang):
+    """Handle set user dict lang."""
     value = _normalize_dict_lang(dict_lang)
     if not value:
         raise ValueError("Invalid dictionary language.")
@@ -696,6 +758,7 @@ def set_user_dict_lang(db_path, user_id, dict_lang):
 
 
 def ensure_default_languages_for_existing_users(db_path, interface_lang="en", dict_lang="ru"):
+    """Handle ensure default languages for existing users."""
     ui = _normalize_interface_lang(interface_lang) or "en"
     dl = _normalize_dict_lang(dict_lang) or "ru"
     init_db(db_path)
@@ -714,6 +777,7 @@ def ensure_default_languages_for_existing_users(db_path, interface_lang="en", di
 
 
 def set_setting(db_path, key, value):
+    """Handle set setting."""
     init_db(db_path)
     with _connect(db_path) as conn:
         conn.execute(
@@ -726,6 +790,7 @@ def set_setting(db_path, key, value):
 
 
 def get_setting(db_path, key, default=None):
+    """Handle get setting."""
     init_db(db_path)
     with _connect(db_path) as conn:
         row = conn.execute(
@@ -738,6 +803,7 @@ def get_setting(db_path, key, default=None):
 
 
 def add_banned_word(db_path, raw_word):
+    """Handle add banned word."""
     normalized = _normalize_text(raw_word)
     if not normalized:
         return False
@@ -757,6 +823,7 @@ def add_banned_word(db_path, raw_word):
 
 
 def is_banned_word(db_path, raw_word):
+    """Handle is banned word."""
     normalized = _normalize_text(raw_word)
     if not normalized:
         return False
@@ -770,6 +837,7 @@ def is_banned_word(db_path, raw_word):
 
 
 def find_existing_word(db_path, raw_word):
+    """Handle find existing word."""
     candidate = _normalize_text(raw_word)
     if not candidate:
         return None
@@ -816,6 +884,7 @@ def find_existing_word(db_path, raw_word):
 
 
 def _dedupe_entry(conn, entry):
+    """Handle dedupe entry."""
     key_type, key_value = _entry_key(entry)
     if key_type == "verb":
         row = conn.execute(
@@ -832,6 +901,7 @@ def _dedupe_entry(conn, entry):
 
 
 def add_word(db_path, entry):
+    """Handle add word."""
     init_db(db_path)
     entry = dict(entry)
     if entry.get("id") in (None, "", "unique"):
@@ -864,6 +934,7 @@ def add_word(db_path, entry):
 
 
 def _progress_for_row(row):
+    """Handle progress for row."""
     if not row["p_due"]:
         return default_srs()
     return {
@@ -875,6 +946,7 @@ def _progress_for_row(row):
 
 
 def select_due(db_path, user_id, mode, word_type=None, levels=None, today=None):
+    """Handle select due."""
     if today is None:
         today = date.today()
     due_today = today.isoformat()
@@ -930,6 +1002,7 @@ def select_due(db_path, user_id, mode, word_type=None, levels=None, today=None):
 
 
 def update_sm2(srs, quality, today=None):
+    """Handle update sm2."""
     if today is None:
         today = date.today()
 
@@ -963,6 +1036,7 @@ def update_sm2(srs, quality, today=None):
 
 
 def update_progress(db_path, user_id, word_id, mode, quality):
+    """Handle update progress."""
     init_db(db_path)
     with _connect(db_path) as conn:
         row = conn.execute(
@@ -1009,7 +1083,8 @@ def update_progress(db_path, user_id, word_id, mode, quality):
         )
 
 
-def log_quiz_event(db_path, user_id, word_id, mode, is_correct):
+def log_quiz_event(db_path, user_id, word_id, mode, is_correct, review_stage_snapshot=None):
+    """Handle log quiz event."""
     init_db(db_path)
     with _connect(db_path) as conn:
         prev = conn.execute(
@@ -1025,8 +1100,8 @@ def log_quiz_event(db_path, user_id, word_id, mode, is_correct):
         prev_is_correct = None if not prev else int(prev["is_correct"])
         conn.execute(
             """
-            INSERT INTO quiz_events (user_id, word_id, mode, is_correct, prev_is_correct, created_at)
-            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            INSERT INTO quiz_events (user_id, word_id, mode, is_correct, prev_is_correct, review_stage_snapshot, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             """,
             (
                 int(user_id),
@@ -1034,11 +1109,13 @@ def log_quiz_event(db_path, user_id, word_id, mode, is_correct):
                 _safe_text(mode),
                 1 if bool(is_correct) else 0,
                 prev_is_correct,
+                None if review_stage_snapshot is None else int(review_stage_snapshot),
             ),
         )
 
 
 def list_daily_user_stats(db_path, day_iso, user_id=None):
+    """Handle list daily user stats."""
     init_db(db_path)
     params = [str(day_iso)]
     where = "date(e.created_at) = date(?)"
@@ -1097,6 +1174,7 @@ def list_daily_user_stats(db_path, day_iso, user_id=None):
 
 
 def get_daily_totals(db_path, day_iso):
+    """Handle get daily totals."""
     rows = list_daily_user_stats(db_path, day_iso=day_iso)
     if not rows:
         return {
@@ -1132,6 +1210,7 @@ def get_daily_totals(db_path, day_iso):
 
 
 def list_daily_leaderboard(db_path, day_iso, min_attempts=1, limit=20):
+    """Handle list daily leaderboard."""
     rows = list_daily_user_stats(db_path, day_iso=day_iso)
     filtered = [r for r in rows if r["total_attempts"] >= int(min_attempts)]
     filtered.sort(key=lambda x: (x["win_rate"], x["total_attempts"], x["memory_score"]), reverse=True)
@@ -1139,6 +1218,7 @@ def list_daily_leaderboard(db_path, day_iso, min_attempts=1, limit=20):
 
 
 def list_words_for_cefr_backfill(db_path, limit=0):
+    """Handle list words for cefr backfill."""
     init_db(db_path)
     query = """
         SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian, cefr_level
@@ -1158,6 +1238,7 @@ def list_words_for_cefr_backfill(db_path, limit=0):
 
 
 def list_words_for_translations_backfill(db_path, limit=0):
+    """Handle list words for translations backfill."""
     init_db(db_path)
     query = """
         SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian, ukrainian, english, cefr_level
@@ -1176,6 +1257,7 @@ def list_words_for_translations_backfill(db_path, limit=0):
 
 
 def update_word_translations(db_path, word_id, ukrainian=None, english=None):
+    """Handle update word translations."""
     init_db(db_path)
     with _connect(db_path) as conn:
         conn.execute(
@@ -1194,6 +1276,7 @@ def update_word_translations(db_path, word_id, ukrainian=None, english=None):
 
 
 def update_word_cefr_level(db_path, word_id, level):
+    """Handle update word cefr level."""
     safe_level = _normalize_level(level)
     if not safe_level:
         raise ValueError("Invalid CEFR level.")
@@ -1206,6 +1289,7 @@ def update_word_cefr_level(db_path, word_id, level):
 
 
 def update_word_fields(db_path, word_id, fields):
+    """Handle update word fields."""
     allowed = {
         "type",
         "article",
@@ -1240,6 +1324,7 @@ def update_word_fields(db_path, word_id, fields):
 
 
 def delete_word(db_path, word_id):
+    """Handle delete word."""
     init_db(db_path)
     with _connect(db_path) as conn:
         cur = conn.execute(
@@ -1271,6 +1356,7 @@ def update_form_stats(db_path, user_id, word_id, checks):
             (int(user_id), _safe_text(word_id)),
         )
 
+        today_iso = (date.today() + timedelta(days=1)).isoformat()
         for field in fields:
             ok = safe_checks[field]
             if ok:
@@ -1293,6 +1379,21 @@ def update_form_stats(db_path, user_id, word_id, checks):
                 ).fetchone()
                 streak = int(row["s"] or 0) if row else 0
                 if streak >= 3:
+                    stage_row = conn.execute(
+                        f"""
+                        SELECT
+                            {field}_review_stage AS stage,
+                            {field}_errors AS errors,
+                            {field}_streak_wrong AS streak_wrong
+                        FROM form_stats
+                        WHERE user_id = ? AND word_id = ?
+                        """,
+                        (int(user_id), _safe_text(word_id)),
+                    ).fetchone()
+                    stage = int(stage_row["stage"] or 0) if stage_row else 0
+                    errors = int(stage_row["errors"] or 0) if stage_row else 0
+                    streak_wrong = int(stage_row["streak_wrong"] or 0) if stage_row else 0
+                    active_before = errors >= 2 or streak_wrong >= 2
                     conn.execute(
                         f"""
                         UPDATE form_stats
@@ -1303,6 +1404,16 @@ def update_form_stats(db_path, user_id, word_id, checks):
                         """,
                         (int(user_id), _safe_text(word_id)),
                     )
+                    if stage == 0 and active_before:
+                        conn.execute(
+                            f"""
+                            UPDATE form_stats
+                            SET {field}_review_stage = 1,
+                                {field}_next_review = ?
+                            WHERE user_id = ? AND word_id = ?
+                            """,
+                            (today_iso, int(user_id), _safe_text(word_id)),
+                        )
             else:
                 conn.execute(
                     f"""
@@ -1316,17 +1427,141 @@ def update_form_stats(db_path, user_id, word_id, checks):
                 )
 
 
+def update_weak_review_state(db_path, user_id, word_id, field, ok):
+    """Handle update weak review state."""
+    field = _safe_text(field).strip().lower()
+    if field not in {"article", "plural", "prateritum", "partizip2"}:
+        return 0
+    init_db(db_path)
+    today = date.today()
+    today_iso = today.isoformat()
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            f"""
+            SELECT
+                {field}_errors AS errors,
+                {field}_streak_wrong AS streak_wrong,
+                {field}_review_stage AS stage
+            FROM form_stats
+            WHERE user_id = ? AND word_id = ?
+            """,
+            (int(user_id), _safe_text(word_id)),
+        ).fetchone()
+        if not row:
+            return 0
+        errors = int(row["errors"] or 0)
+        streak_wrong = int(row["streak_wrong"] or 0)
+        stage = int(row["stage"] or 0)
+        active = errors >= 2 or streak_wrong >= 2
+        if active or stage <= 0:
+            return stage
+        if ok:
+            if stage == 1:
+                next_review = (today + timedelta(days=2)).isoformat()
+                conn.execute(
+                    f"""
+                    UPDATE form_stats
+                    SET {field}_review_stage = 2,
+                        {field}_next_review = ?
+                    WHERE user_id = ? AND word_id = ?
+                    """,
+                    (next_review, int(user_id), _safe_text(word_id)),
+                )
+                return 2
+            if stage == 2:
+                next_review = (today + timedelta(days=5)).isoformat()
+                conn.execute(
+                    f"""
+                    UPDATE form_stats
+                    SET {field}_review_stage = 3,
+                        {field}_next_review = ?
+                    WHERE user_id = ? AND word_id = ?
+                    """,
+                    (next_review, int(user_id), _safe_text(word_id)),
+                )
+                return 3
+            conn.execute(
+                f"""
+                UPDATE form_stats
+                SET {field}_review_stage = 0,
+                    {field}_next_review = NULL
+                WHERE user_id = ? AND word_id = ?
+                """,
+                (int(user_id), _safe_text(word_id)),
+            )
+            return 0
+        next_review = (today + timedelta(days=1)).isoformat()
+        conn.execute(
+            f"""
+            UPDATE form_stats
+            SET {field}_review_stage = 1,
+                {field}_next_review = ?
+            WHERE user_id = ? AND word_id = ?
+            """,
+            (next_review, int(user_id), _safe_text(word_id)),
+        )
+        return 1
+
+
+def get_form_state(db_path, user_id, word_id, field):
+    """Handle get form state."""
+    field = _safe_text(field).strip().lower()
+    if field not in {"article", "plural", "prateritum", "partizip2"}:
+        return {"errors": 0, "streak_wrong": 0, "review_stage": 0, "active": False}
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            f"""
+            SELECT
+                {field}_errors AS errors,
+                {field}_streak_wrong AS streak_wrong,
+                {field}_review_stage AS stage
+            FROM form_stats
+            WHERE user_id = ? AND word_id = ?
+            """,
+            (int(user_id), _safe_text(word_id)),
+        ).fetchone()
+    if not row:
+        return {"errors": 0, "streak_wrong": 0, "review_stage": 0, "active": False}
+    errors = int(row["errors"] or 0)
+    streak_wrong = int(row["streak_wrong"] or 0)
+    stage = int(row["stage"] or 0)
+    active = errors >= 2 or streak_wrong >= 2
+    return {"errors": errors, "streak_wrong": streak_wrong, "review_stage": stage, "active": active}
+
+
+def get_form_review_stage(db_path, user_id, word_id, field):
+    """Handle get form review stage."""
+    field = _safe_text(field).strip().lower()
+    if field not in {"article", "plural", "prateritum", "partizip2"}:
+        return 0
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            f"""
+            SELECT {field}_review_stage AS stage
+            FROM form_stats
+            WHERE user_id = ? AND word_id = ?
+            """,
+            (int(user_id), _safe_text(word_id)),
+        ).fetchone()
+    return int(row["stage"] or 0) if row else 0
+
+
 def list_weak_words(db_path, user_id, weak_field, word_type=None, limit=200):
+    """Handle list weak words."""
     weak_field = _safe_text(weak_field).strip().lower()
     if weak_field not in {"article", "plural", "prateritum", "partizip2"}:
         return []
     init_db(db_path)
+    today = date.today().isoformat()
+    active_cond = f"(fs.{weak_field}_errors >= 2 OR fs.{weak_field}_streak_wrong >= 2)"
+    review_cond = f"(fs.{weak_field}_review_stage > 0 AND date(fs.{weak_field}_next_review) <= date(?))"
     where = [
         "fs.user_id = ?",
-        f"(fs.{weak_field}_errors >= 2 OR fs.{weak_field}_streak_wrong >= 2)",
-        "COALESCE(p.due, ?) <= ?",
+        f"({active_cond} OR {review_cond})",
     ]
-    params = [int(user_id), date.today().isoformat(), date.today().isoformat()]
+    params = [int(user_id), today]
     if word_type:
         where.append("w.type = ?")
         params.append(_safe_text(word_type))
@@ -1334,12 +1569,15 @@ def list_weak_words(db_path, user_id, weak_field, word_type=None, limit=200):
         SELECT
             w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.russian, w.cefr_level,
             w.ukrainian, w.english,
-            p.interval AS p_interval, p.repetitions AS p_repetitions, p.ease AS p_ease, p.due AS p_due
+            fs.{weak_field}_review_stage AS review_stage,
+            fs.{weak_field}_next_review AS next_review,
+            p.interval AS p_interval, p.repetitions AS p_repetitions, p.ease AS p_ease, p.due AS p_due,
+            CASE WHEN {active_cond} THEN 1 ELSE 0 END AS is_active
         FROM form_stats fs
         JOIN words w ON w.id = fs.word_id
         LEFT JOIN progress p ON p.word_id = w.id AND p.user_id = ? AND p.mode = ?
         WHERE {' AND '.join(where)}
-        ORDER BY w.created_at ASC
+        ORDER BY is_active DESC, COALESCE(fs.{weak_field}_next_review, '') ASC, w.created_at ASC
         LIMIT ?
     """
     mode = f"weak_{weak_field}"
@@ -1355,6 +1593,7 @@ def list_weak_words(db_path, user_id, weak_field, word_type=None, limit=200):
 
 
 def _get_or_create_group(conn, word_id):
+    """Handle get or create group."""
     row = conn.execute(
         "SELECT group_id FROM word_synonyms WHERE word_id = ?",
         (_safe_text(word_id),),
@@ -1371,6 +1610,7 @@ def _get_or_create_group(conn, word_id):
 
 
 def _cleanup_small_group(conn, group_id):
+    """Handle cleanup small group."""
     rows = conn.execute(
         "SELECT word_id FROM word_synonyms WHERE group_id = ?",
         (int(group_id),),
@@ -1382,6 +1622,7 @@ def _cleanup_small_group(conn, group_id):
 
 
 def add_synonym_link(db_path, anchor_word_id, target_word_id):
+    """Handle add synonym link."""
     a = _safe_text(anchor_word_id)
     b = _safe_text(target_word_id)
     if not a or not b or a == b:
@@ -1401,6 +1642,7 @@ def add_synonym_link(db_path, anchor_word_id, target_word_id):
 
 
 def get_synonym_group(db_path, word_id):
+    """Handle get synonym group."""
     wid = _safe_text(word_id)
     if not wid:
         return []
@@ -1428,6 +1670,7 @@ def get_synonym_group(db_path, word_id):
 
 
 def remove_synonym_link(db_path, word_id):
+    """Handle remove synonym link."""
     wid = _safe_text(word_id)
     if not wid:
         return False
@@ -1446,6 +1689,7 @@ def remove_synonym_link(db_path, word_id):
 
 
 def clear_synonym_group(db_path, word_id):
+    """Handle clear synonym group."""
     wid = _safe_text(word_id)
     if not wid:
         return False
@@ -1464,6 +1708,7 @@ def clear_synonym_group(db_path, word_id):
 
 
 def list_synonym_candidates_by_ru(db_path, anchor_word_id):
+    """Handle list synonym candidates by ru."""
     anchor = get_word_by_id(db_path, anchor_word_id)
     if not anchor:
         return []
@@ -1494,6 +1739,7 @@ def list_synonym_candidates_by_ru(db_path, anchor_word_id):
 
 
 def get_word_by_id(db_path, word_id):
+    """Handle get word by id."""
     init_db(db_path)
     with _connect(db_path) as conn:
         row = conn.execute(
@@ -1512,6 +1758,7 @@ def get_word_by_id(db_path, word_id):
 
 
 def find_word_by_value(db_path, token):
+    """Handle find word by value."""
     candidate = _normalize_text(token)
     if not candidate:
         return None
@@ -1535,6 +1782,7 @@ def find_word_by_value(db_path, token):
 
 
 def add_word_flag(db_path, word_id, user_id, comment):
+    """Handle add word flag."""
     init_db(db_path)
     with _connect(db_path) as conn:
         conn.execute(
@@ -1547,6 +1795,7 @@ def add_word_flag(db_path, word_id, user_id, comment):
 
 
 def set_word_flag_status(db_path, flag_id, status):
+    """Handle set word flag status."""
     safe = _safe_text(status).strip().lower()
     if safe not in {"pending", "reviewed"}:
         raise ValueError("Invalid flag status.")
@@ -1563,6 +1812,7 @@ def set_word_flag_status(db_path, flag_id, status):
 
 
 def list_pending_word_flags(db_path, limit=0):
+    """Handle list pending word flags."""
     init_db(db_path)
     query = """
         SELECT
@@ -1599,6 +1849,7 @@ def list_pending_word_flags(db_path, limit=0):
 
 
 def create_template_from_word(raw_word):
+    """Handle create template from word."""
     raw_word = raw_word.strip()
     if not raw_word:
         return None

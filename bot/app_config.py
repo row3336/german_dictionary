@@ -2,7 +2,7 @@ import os
 import re
 from pathlib import Path
 
-MENU, TESTS_MENU, SETTINGS_MENU, DUMP_MENU, AUTO_DUMP_MENU, LEVELS_MENU, ADD_INPUT, ADD_CONFIRM, ADD_CLARIFY, ADD_EDIT, FLAG_COMMENT, REVIEW_FLAGS, QUIZ_RU_DE, QUIZ_DE_RU, QUIZ_ARTICLE, SELECT_UI_LANG, SELECT_DICT_LANG, SYN_MENU, SYN_ADD_INPUT, SYN_REMOVE_INPUT, SYN_AUTO_CONFIRM, SYN_CLEAR_CONFIRM, QUIZ_ARTICLE_WEAK, QUIZ_PLURAL_WEAK, QUIZ_VERB_WEAK_MENU, QUIZ_PRATERITUM_WEAK, QUIZ_PARTIZIP2_WEAK, QUIZ_RU_DE_MENU = range(28)
+MENU, TESTS_MENU, SETTINGS_MENU, DUMP_MENU, AUTO_DUMP_MENU, LEVELS_MENU, ADD_INPUT, ADD_PRECHECK, ADD_PRECHECK_EDIT, ADD_CONFIRM, ADD_CLARIFY, ADD_EDIT, FLAG_COMMENT, REVIEW_FLAGS, QUIZ_RU_DE, QUIZ_DE_RU, QUIZ_ARTICLE, SELECT_UI_LANG, SELECT_DICT_LANG, SYN_MENU, SYN_ADD_INPUT, SYN_REMOVE_INPUT, SYN_AUTO_CONFIRM, SYN_CLEAR_CONFIRM, QUIZ_ARTICLE_WEAK, QUIZ_PLURAL_WEAK, QUIZ_VERB_WEAK_MENU, QUIZ_PRATERITUM_WEAK, QUIZ_PARTIZIP2_WEAK, QUIZ_RU_DE_MENU = range(30)
 
 BACK_TEXT = "back"
 STOP_TEXT = "stop"
@@ -13,12 +13,16 @@ AI_CLARIFY_FIELD = "Clarify field"
 AI_REJECT = "Reject"
 AI_SKIP = "Skip"
 AI_BAN_WORD = "Ban"
+PRECHECK_CONFIRM = "Approve"
+PRECHECK_EDIT = "Edit list"
+PRECHECK_REJECT = "Reject list"
 
 OWNER_MAIN_KEYS = [["Add words", "Quiz"], ["Settings", "Statistics"]]
 USER_MAIN_KEYS = [["Add words", "Quiz"], ["Info", "Statistics"]]
 WAIT_KEYS = [[START_TEXT]]
 ADD_KEYS = [[BACK_TEXT]]
 AI_KEYS = [[AI_CONFIRM, AI_CLARIFY_AI, AI_CLARIFY_FIELD], [AI_REJECT, AI_BAN_WORD, STOP_TEXT]]
+PRECHECK_KEYS = [[PRECHECK_CONFIRM, PRECHECK_EDIT, PRECHECK_REJECT], [STOP_TEXT]]
 TESTS_KEYS = [["Ru > De", "De > Ru"], ["Articles", BACK_TEXT]]
 REVIEW_FLAGS_TEXT = "Review Flags \u26A0\uFE0F"
 SETTINGS_KEYS = [
@@ -121,26 +125,32 @@ CEFR_LEVELS = ("A1", "A2", "B1", "B2", "C1", "C2")
 
 
 def get_db_path():
+    """Handle get db path."""
     return Path(os.getenv("DB_PATH", "./data/words.db"))
 
 
 def get_dump_dir():
+    """Handle get dump dir."""
     return Path(os.getenv("DUMP_DIR", "./data/backups"))
 
 
 def get_log_path():
+    """Handle get log path."""
     return Path(os.getenv("LOG_PATH", "./data/bot.log"))
 
 
 def get_suggestions_path():
+    """Handle get suggestions path."""
     return Path(os.getenv("SUGGESTIONS_PATH", "./data/suggested_words.txt"))
 
 
 def get_info_path():
+    """Handle get info path."""
     return Path(os.getenv("INFO_PATH", "./docs/info_ru.md"))
 
 
 def get_owner_id():
+    """Handle get owner id."""
     try:
         return int(os.getenv("OWNER_ID", "0"))
     except ValueError:
@@ -148,5 +158,6 @@ def get_owner_id():
 
 
 def is_owner(user_id):
+    """Handle is owner."""
     owner_id = get_owner_id()
     return owner_id != 0 and user_id == owner_id
