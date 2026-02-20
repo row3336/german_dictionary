@@ -1760,7 +1760,7 @@ def _format_feedback_plural_weak(entry, ok):
     plural = _cap_word(entry.get("plural", ""))
     headline = f"{_weak_status(ok)} >>>     {_md_escape((article + ' ' + german).strip())}"
     if plural:
-        return f"{headline} pl. die {_md_escape(plural)}"
+        return f"{headline}\n\n_pl. die {_md_escape(plural)}_"
     return headline
 
 
@@ -1770,7 +1770,7 @@ def _format_feedback_prateritum_weak(entry, ok):
     pr = _low_word(entry.get("prateritum", ""))
     headline = f"{_weak_status(ok)} >>>     {_md_escape(infinitive)}"
     if pr:
-        return f"{headline} {_md_escape(pr)}"
+        return f"{headline}\n\n_{_md_escape(pr)}_"
     return headline
 
 
@@ -1780,7 +1780,7 @@ def _format_feedback_partizip2_weak(entry, ok):
     p2 = _expected_partizip2(entry)
     headline = f"{_weak_status(ok)} >>>     {_md_escape(infinitive)}"
     if p2:
-        return f"{headline} {_md_escape(p2)}"
+        return f"{headline}\n\n_{_md_escape(p2)}_"
     return headline
 
 
@@ -2156,7 +2156,8 @@ def _format_feedback_article(entry, ok, dict_lang):
     headline = f"{status} >>>     {_md_escape((article + ' ' + german).strip())}"
     lines = [headline.strip()]
     if plural:
-        lines.append(f"pl. die {_md_escape(plural)}")
+        lines.append("")
+        lines.append(f"_pl. die {_md_escape(plural)}_")
     return "\n".join(lines)
 
 
@@ -2357,11 +2358,13 @@ async def _send_article_weak_prompt(update: Update, context: ContextTypes.DEFAUL
         return QUIZ_RU_DE_MENU
     context.user_data["quiz_entry"] = entry
     text = f">>    {_normalize_russian_singular(_entry_translation(entry, _user_dict_lang(update.effective_user.id)))} -> ____ {_cap_word(entry.get('german', ''))}?"
+    text = _md_escape(text)
     if prefix_text:
         text = f"{prefix_text}\n\n{text}"
     await update.message.reply_text(
         text,
         reply_markup=_quiz_markup(update.effective_user.id, article=True, allow_idk=False),
+        parse_mode="Markdown",
     )
     return QUIZ_ARTICLE_WEAK
 
@@ -2378,11 +2381,13 @@ async def _send_plural_weak_prompt(update: Update, context: ContextTypes.DEFAULT
     context.user_data["quiz_entry"] = entry
     article = (entry.get("article", "") or "").strip()
     text = f">>    {article} {_cap_word(entry.get('german', ''))} -> plural?"
+    text = _md_escape(text)
     if prefix_text:
         text = f"{prefix_text}\n\n{text}"
     await update.message.reply_text(
         text,
         reply_markup=_quiz_markup(update.effective_user.id, article=False, allow_idk=True),
+        parse_mode="Markdown",
     )
     return QUIZ_PLURAL_WEAK
 
@@ -2398,11 +2403,13 @@ async def _send_prateritum_weak_prompt(update: Update, context: ContextTypes.DEF
         return QUIZ_VERB_WEAK_MENU
     context.user_data["quiz_entry"] = entry
     text = f">>    {_low_word(entry.get('infinitive', ''))} -> Prateritum?"
+    text = _md_escape(text)
     if prefix_text:
         text = f"{prefix_text}\n\n{text}"
     await update.message.reply_text(
         text,
         reply_markup=_quiz_markup(update.effective_user.id, article=False, allow_idk=True),
+        parse_mode="Markdown",
     )
     return QUIZ_PRATERITUM_WEAK
 
@@ -2418,11 +2425,13 @@ async def _send_partizip2_weak_prompt(update: Update, context: ContextTypes.DEFA
         return QUIZ_VERB_WEAK_MENU
     context.user_data["quiz_entry"] = entry
     text = f">>    {_low_word(entry.get('infinitive', ''))} -> Partizip2?"
+    text = _md_escape(text)
     if prefix_text:
         text = f"{prefix_text}\n\n{text}"
     await update.message.reply_text(
         text,
         reply_markup=_quiz_markup(update.effective_user.id, article=False, allow_idk=True),
+        parse_mode="Markdown",
     )
     return QUIZ_PARTIZIP2_WEAK
 
