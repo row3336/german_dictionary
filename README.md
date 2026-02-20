@@ -27,7 +27,13 @@ python -m bot.main
 ```
 
 ## Access Control
-The bot is owner-only. All actions require `OWNER_ID` to be set and match the user.
+The bot is owner-only. All actions are available only to the owner.
+
+## Dictionary Languages
+Supported dictionary pairs:
+- German → Russian
+- German → Ukrainian
+- German → English
 
 ## Main Menus
 **Main menu**
@@ -35,10 +41,9 @@ The bot is owner-only. All actions require `OWNER_ID` to be set and match the us
 - Quiz
 - Settings
 - Statistics
-- Info
 
 **Quiz menu**
-- L1 > De
+- L1 > De (L1 = выбранный язык словаря: RU/UK/EN)
 - De > L1
 
 **L1 > De submenu**
@@ -70,7 +75,7 @@ After approval:
 ### 3) Confirm / Clarify / Reject / Ban
 - Confirm saves the word.
 - Clarify AI / Clarify field allow edits.
-- Reject or Ban drops it.
+- Reject / Ban drops it.
 
 ## Quiz Modes
 ### L1 > De (SM2)
@@ -82,13 +87,11 @@ After approval:
 ### De > L1 (SM2)
 - Expect translation in L1 (with variants normalized).
 
-### Article Quiz (SM2)
-- Nouns only: check article.
-
 ## SM2 Scheduling (Long-term)
-- `select_due()` returns only `due <= today`.
-- Wrong answer sets `interval=1`, `due=today+1`.
-- No same-day reappearance via SM2.
+SM2 is a spaced repetition algorithm.
+- Correct answers grow the interval between repeats.
+- Wrong answer resets interval to 1 day.
+- Only due words (`due <= today`) appear.
 
 ## Session Retry (Short-term)
 Purpose: immediate reinforcement within the current session.
@@ -96,23 +99,22 @@ Purpose: immediate reinforcement within the current session.
 - Wrong answer (non-retry): word id added to queue.
 - After each normal question, if `>= 3` other questions passed, one retry is shown.
 - Retry does **not** update SM2.
-- Total repeats per word: **4** (configurable).
-- Correctness during retry does not stop repeats early.
+- Total repeats per word: **4**.
 - Queue resets when leaving Quiz.
 
 ## Weak Modes (Forms)
-### Active Weak
-A word is active weak if:
+Active weak:
 - `{form}_errors >= 2` OR `{form}_streak_wrong >= 2`.
 
-### Review Weak (Post-fix reinforcement)
-If a word exits active weak:
-- Review starts with stage 1.
-- Schedule: `+1 day` → `+2 days` → `+5 days` → finish.
-- Wrong in review resets to stage 1 (+1 day).
+Review weak:
+- After leaving active weak:
+  - stage 1: +1 day
+  - stage 2: +2 days
+  - stage 3: +5 days
+  - then finish
+- Wrong in review resets to stage 1.
 
-### Sources for Weak Modes
-`list_weak_words()` returns:
+Sources:
 - Active weak words
 - Review weak words due today
 
