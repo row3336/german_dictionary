@@ -236,8 +236,7 @@ def _settings_menu_keys(user_id):
     """Handle settings menu keys."""
     lang = _user_interface_lang(user_id)
     return [
-        ["flags!"],
-        [t(lang, "algo_settings")],
+        ["flags!", t(lang, "algo_settings")],
         [t(lang, "interface_lang_btn"), t(lang, "dict_lang_btn")],
         [t(lang, "dump"), t(lang, "back")],
     ]
