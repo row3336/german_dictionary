@@ -782,6 +782,13 @@ def get_setting(db_path, key, default=None):
     return row["value"]
 
 
+def reset_periodicity(db_path):
+    """Handle reset periodicity."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        conn.execute("DELETE FROM progress")
+
+
 def add_banned_word(db_path, raw_word):
     """Handle add banned word."""
     normalized = _normalize_text(raw_word)

@@ -36,6 +36,9 @@ from .app_config import (
     AI_REJECT,
     AI_SKIP,
     ALLOWED_AI_TYPES,
+    ALGO_SETTINGS_CONFIRM,
+    ALGO_SETTINGS_EDIT,
+    ALGO_SETTINGS_MENU,
     ARTICLE_SET,
     AUTO_DUMP_JOB_NAME,
     AUTO_DUMP_KEYS,
@@ -77,6 +80,8 @@ from .app_config import (
     get_info_path,
     get_log_path,
     get_owner_id,
+    SESSION_RETRY_GAP_KEY,
+    SESSION_RETRY_IT_KEY,
     get_suggestions_path,
     is_owner,
 )
@@ -114,6 +119,7 @@ from .storage import (
     get_daily_totals,
     is_banned_word,
     log_quiz_event,
+    reset_periodicity,
 )
 from .i18n import (
     dict_choices,
@@ -231,9 +237,61 @@ def _settings_menu_keys(user_id):
     lang = _user_interface_lang(user_id)
     return [
         ["flags!"],
+        [t(lang, "algo_settings")],
         [t(lang, "interface_lang_btn"), t(lang, "dict_lang_btn")],
         [t(lang, "dump"), t(lang, "back")],
     ]
+
+
+def _algo_settings_menu_keys(user_id):
+    """Handle algo settings menu keys."""
+    lang = _user_interface_lang(user_id)
+    return [
+        [t(lang, "ses_rtr_gap"), t(lang, "ses_rtr_it")],
+        [t(lang, "reset_periodicity")],
+        [t(lang, "back")],
+    ]
+
+
+def _get_int_setting(db_path, key, default):
+    """Handle get int setting."""
+    raw = get_setting(db_path, key, None)
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = int(default)
+    return value
+
+
+def _session_retry_gap(db_path):
+    """Handle session retry gap."""
+    value = _get_int_setting(db_path, SESSION_RETRY_GAP_KEY, RETRY_GAP_QUESTIONS)
+    return max(1, value)
+
+
+def _session_retry_iterations(db_path):
+    """Handle session retry iterations."""
+    value = _get_int_setting(db_path, SESSION_RETRY_IT_KEY, RETRY_MAX_REPEATS)
+    return max(1, value)
+
+
+async def _send_algo_settings_menu(update: Update, user_id):
+    """Handle send algo settings menu."""
+    lang = _user_interface_lang(user_id)
+    gap = _session_retry_gap(get_db_path())
+    iterations = _session_retry_iterations(get_db_path())
+    msg = "\n".join(
+        [
+            f"{t(lang, 'algo_settings')}:",
+            f"{t(lang, 'ses_rtr_gap')} = {gap}",
+            f"{t(lang, 'ses_rtr_it')} = {iterations}",
+        ]
+    )
+    await update.message.reply_text(
+        msg,
+        reply_markup=ReplyKeyboardMarkup(_algo_settings_menu_keys(user_id), resize_keyboard=True),
+    )
+    return ALGO_SETTINGS_MENU
 
 
 def _dump_menu_keys(user_id):
@@ -263,6 +321,7 @@ def _action_key_from_text(text, user_id):
         ("dump", "dump"),
         ("suggested_words", "suggested_words"),
         ("review_flags", "review_flags"),
+        ("algo_settings", "algo_settings"),
         ("auto_dump", "auto_dump"),
         ("daily", "daily"),
         ("weekly", "weekly"),
@@ -902,6 +961,9 @@ async def settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
     if action == "dict_lang":
         return await _ask_dictionary_language(update, user_id)
 
+    if action == "algo_settings":
+        return await _send_algo_settings_menu(update, user_id)
+
     if action == "dump":
         await update.message.reply_text(
             "dump:",
@@ -948,6 +1010,89 @@ async def settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
         reply_markup=ReplyKeyboardMarkup(_settings_menu_keys(user_id), resize_keyboard=True),
     )
     return SETTINGS_MENU
+
+
+async def algo_settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle algo settings menu choice."""
+    text = update.message.text.strip()
+    user_id = update.effective_user.id
+    lang = _user_interface_lang(user_id)
+    action = _action_key_from_text(text, user_id)
+
+    if action == "back":
+        await update.message.reply_text(
+            t(lang, "settings_title"),
+            reply_markup=ReplyKeyboardMarkup(_settings_menu_keys(user_id), resize_keyboard=True),
+        )
+        return SETTINGS_MENU
+
+    if text == t(lang, "ses_rtr_gap"):
+        context.user_data["algo_setting_edit"] = SESSION_RETRY_GAP_KEY
+        await update.message.reply_text(
+            "Enter ses.rtr_gap (number of SM2 questions between retries):",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        return ALGO_SETTINGS_EDIT
+
+    if text == t(lang, "ses_rtr_it"):
+        context.user_data["algo_setting_edit"] = SESSION_RETRY_IT_KEY
+        await update.message.reply_text(
+            "Enter ses.rtr_it (retry repetitions per word):",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        return ALGO_SETTINGS_EDIT
+
+    if text == t(lang, "reset_periodicity"):
+        context.user_data["algo_setting_edit"] = "reset_periodicity"
+        await update.message.reply_text(
+            'Type "yes" to reset periodicity:',
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        return ALGO_SETTINGS_CONFIRM
+
+    await update.message.reply_text(
+        "Use algo settings buttons.",
+        reply_markup=ReplyKeyboardMarkup(_algo_settings_menu_keys(user_id), resize_keyboard=True),
+    )
+    return ALGO_SETTINGS_MENU
+
+
+async def algo_settings_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle algo settings edit."""
+    text = update.message.text.strip()
+    user_id = update.effective_user.id
+    if _action_key_from_text(text, user_id) == "back":
+        return await _send_algo_settings_menu(update, user_id)
+
+    key = context.user_data.get("algo_setting_edit")
+    if key not in {SESSION_RETRY_GAP_KEY, SESSION_RETRY_IT_KEY}:
+        return await _send_algo_settings_menu(update, user_id)
+
+    try:
+        value = int(text)
+    except ValueError:
+        await update.message.reply_text("Enter a number.")
+        return ALGO_SETTINGS_EDIT
+
+    if value < 1:
+        await update.message.reply_text("Value must be >= 1.")
+        return ALGO_SETTINGS_EDIT
+
+    set_setting(get_db_path(), key, str(value))
+    return await _send_algo_settings_menu(update, user_id)
+
+
+async def algo_settings_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle algo settings confirm."""
+    text = update.message.text.strip().lower()
+    user_id = update.effective_user.id
+    if text == "yes":
+        reset_periodicity(get_db_path())
+        await update.message.reply_text("✅ Periodicity reset.")
+        return await _send_algo_settings_menu(update, user_id)
+
+    await update.message.reply_text("Canceled.")
+    return await _send_algo_settings_menu(update, user_id)
 
 
 async def dump_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2207,7 +2352,8 @@ def _maybe_take_retry_entry(context, mode):
     queue = _retry_queue(context, mode)
     if not queue:
         return None
-    if _retry_since_last(context, mode) < RETRY_GAP_QUESTIONS:
+    gap = _session_retry_gap(get_db_path())
+    if _retry_since_last(context, mode) < gap:
         return None
     word_id = queue.pop(0)
     entry = get_word_by_id(get_db_path(), word_id)
@@ -2227,7 +2373,8 @@ def _register_retry_result(context, mode, word_id, ok, was_retry):
     queue = _retry_queue(context, mode)
     counts = _retry_counts(context, mode)
     if was_retry:
-        if counts.get(word_id, 0) >= RETRY_MAX_REPEATS:
+        max_repeats = _session_retry_iterations(get_db_path())
+        if counts.get(word_id, 0) >= max_repeats:
             counts.pop(word_id, None)
             return
         if word_id not in queue:
@@ -3088,6 +3235,9 @@ def main():
             TESTS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, tests_menu_choice)],
             QUIZ_RU_DE_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_ru_de_menu_choice)],
             SETTINGS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, settings_menu_choice)],
+            ALGO_SETTINGS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, algo_settings_menu_choice)],
+            ALGO_SETTINGS_EDIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, algo_settings_edit)],
+            ALGO_SETTINGS_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, algo_settings_confirm)],
             DUMP_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, dump_menu_choice)],
             AUTO_DUMP_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, auto_dump_choice)],
             ADD_INPUT: [

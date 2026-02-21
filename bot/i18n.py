@@ -44,6 +44,10 @@ TEXTS = {
         "dict_en": "DE->EN (German + English)",
         "unknown_menu": "Unknown command. Use the menu buttons.",
         "settings_title": "Settings:",
+        "algo_settings": "algo settings",
+        "ses_rtr_gap": "ses.rtr_gap",
+        "ses_rtr_it": "ses.rtr_it",
+        "reset_periodicity": "reset periodicity",
     },
     "ru": {
         "start": "Старт",
@@ -77,6 +81,10 @@ TEXTS = {
         "dict_en": "DE->EN (немецкий + английский)",
         "unknown_menu": "Неизвестная команда. Используйте кнопки меню.",
         "settings_title": "Настройки:",
+        "algo_settings": "algo settings",
+        "ses_rtr_gap": "ses.rtr_gap",
+        "ses_rtr_it": "ses.rtr_it",
+        "reset_periodicity": "reset periodicity",
     },
     "uk": {
         "start": "Старт",
@@ -110,6 +118,10 @@ TEXTS = {
         "dict_en": "DE->EN (німецька + англійська)",
         "unknown_menu": "Невідома команда. Використайте кнопки меню.",
         "settings_title": "Налаштування:",
+        "algo_settings": "algo settings",
+        "ses_rtr_gap": "ses.rtr_gap",
+        "ses_rtr_it": "ses.rtr_it",
+        "reset_periodicity": "reset periodicity",
     },
 }
 
