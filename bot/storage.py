@@ -390,25 +390,16 @@ def get_statistics_snapshot(db_path, user_id, mode):
 
         touch_row = conn.execute(
             """
-            WITH first_events AS (
-                SELECT word_id, MIN(id) AS first_id
-                FROM quiz_events
-                WHERE user_id = ?
-                GROUP BY word_id
-            ),
-            first_touch AS (
-                SELECT e.word_id, e.created_at
-                FROM quiz_events e
-                JOIN first_events f ON f.first_id = e.id
-            )
             SELECT
-                COUNT(*) AS first_touch
-            FROM first_touch
-            WHERE date(created_at) = date(?)
+                COUNT(DISTINCT e.word_id) AS cnt
+            FROM quiz_events e
+            WHERE e.user_id = ?
+              AND e.mode IN ('ru_de', 'de_ru', 'article')
+              AND date(e.created_at) = date(?)
             """,
             (user_id, today.isoformat()),
         ).fetchone()
-        today_complete = int(touch_row["first_touch"] or 0) if touch_row else 0
+        today_complete = int(touch_row["cnt"] or 0) if touch_row else 0
 
         retention_row = conn.execute(
             """
