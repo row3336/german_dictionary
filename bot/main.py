@@ -2384,6 +2384,7 @@ def _register_retry_result(context, mode, word_id, ok, was_retry):
     counts.setdefault(word_id, 0)
     if word_id not in queue:
         queue.append(word_id)
+    _set_retry_since_last(context, mode, 0)
 
 
 def _reset_retry_state(context):
