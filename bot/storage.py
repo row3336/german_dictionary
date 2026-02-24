@@ -64,18 +64,13 @@ def _repair_word_fk_tables(conn):
         if _table_exists(table_name):
             conn.execute(f"DROP TABLE {table_name}")
 
-    if not _fk_targets_words_old("progress"):
+    tables = ("progress", "word_flags", "quiz_events", "form_stats", "word_synonyms")
+    if not any(_table_exists(t) and _fk_targets_words_old(t) for t in tables):
         return
 
     conn.execute("PRAGMA foreign_keys = OFF")
 
-    for old_name in (
-        "progress_old",
-        "word_flags_old",
-        "quiz_events_old",
-        "form_stats_old",
-        "word_synonyms_old",
-    ):
+    for old_name in ("progress_old", "word_flags_old", "quiz_events_old", "form_stats_old", "word_synonyms_old"):
         _drop_if_exists(old_name)
 
     if _table_exists("progress"):
