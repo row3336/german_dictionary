@@ -73,6 +73,7 @@ from .app_config import (
     PRECHECK_EDIT,
     PRECHECK_KEYS,
     PRECHECK_REJECT,
+    PRECHECK_TOPIC,
     START_TEXT,
     STOP_TEXT,
     TESTS_MENU,
@@ -1145,6 +1146,16 @@ async def topic_filter_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return TOPIC_FILTER_EDIT
 
     set_setting(get_db_path(), TOPIC_FILTER_KEY, value)
+    return_to = context.user_data.pop("topic_return", "")
+    if return_to == "precheck":
+        items = context.user_data.get("precheck_items") or []
+        await _reply_text_with_retry(
+            update.message,
+            _format_precheck_list(items),
+            reply_markup=ReplyKeyboardMarkup(PRECHECK_KEYS, resize_keyboard=True),
+        )
+        return ADD_PRECHECK
+
     await update.message.reply_text(
         f"✅ Topic set to: {value}",
         reply_markup=ReplyKeyboardMarkup(_settings_menu_keys(user_id), resize_keyboard=True),
@@ -1301,6 +1312,14 @@ async def add_precheck(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=ReplyKeyboardMarkup(_add_keys(update.effective_user.id), resize_keyboard=True),
         )
         return ADD_INPUT
+    if text == PRECHECK_TOPIC:
+        context.user_data["topic_return"] = "precheck"
+        await _reply_text_with_retry(
+            update.message,
+            f"Current topic: {_current_topic_value()}\nSend topic label or 'all' for no filter.",
+            reply_markup=ReplyKeyboardMarkup(_stop_keys(update.effective_user.id), resize_keyboard=True),
+        )
+        return TOPIC_FILTER_EDIT
     if text == PRECHECK_EDIT:
         await _reply_text_with_retry(
             update.message,
@@ -2706,7 +2725,7 @@ def _parse_precheck_entry(entry):
 
 def _format_precheck_list(items):
     """Handle format precheck list."""
-    lines = ["Precheck list:"]
+    lines = [f"Precheck list (topic: {_current_topic_value()}):"]
     for idx, item in enumerate(items, start=1):
         word = item.get("word", "")
         item_type = item.get("type", "?")

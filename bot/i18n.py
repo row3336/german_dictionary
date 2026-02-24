@@ -49,6 +49,7 @@ TEXTS = {
         "ses_rtr_it": "ses.rtr_it",
         "reset_periodicity": "reset periodicity",
         "topic_filter": "topic filter",
+        "set_topic": "set topic",
     },
     "ru": {
         "start": "Старт",
@@ -87,6 +88,7 @@ TEXTS = {
         "ses_rtr_it": "ses.rtr_it",
         "reset_periodicity": "reset periodicity",
         "topic_filter": "topic filter",
+        "set_topic": "set topic",
     },
     "uk": {
         "start": "Старт",
@@ -125,6 +127,7 @@ TEXTS = {
         "ses_rtr_it": "ses.rtr_it",
         "reset_periodicity": "reset periodicity",
         "topic_filter": "topic filter",
+        "set_topic": "set topic",
     },
 }
 
