@@ -35,6 +35,119 @@ def _connect(db_path):
     return conn
 
 
+def _ensure_indexes(conn):
+    """Handle ensure indexes."""
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_words_type ON words(type)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_progress_due ON progress(user_id, mode, due)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_user_levels_user ON user_levels(user_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_word_flags_status_created ON word_flags(status, created_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_quiz_events_day_user ON quiz_events(created_at, user_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_quiz_events_user_word_mode ON quiz_events(user_id, word_id, mode, created_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_form_stats_user_word ON form_stats(user_id, word_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_word_synonyms_group ON word_synonyms(group_id)")
+
+
+def _repair_word_fk_tables(conn):
+    """Handle repair word foreign keys."""
+    def _fk_targets_words_old(table_name):
+        rows = conn.execute(f"PRAGMA foreign_key_list({table_name})").fetchall()
+        return any(row[2] == "words_old" for row in rows)
+
+    if not _fk_targets_words_old("progress"):
+        return
+
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.executescript(
+        """
+        ALTER TABLE progress RENAME TO progress_old;
+        CREATE TABLE progress (
+            user_id INTEGER NOT NULL,
+            word_id TEXT NOT NULL,
+            mode TEXT NOT NULL,
+            interval INTEGER NOT NULL,
+            repetitions INTEGER NOT NULL,
+            ease REAL NOT NULL,
+            due TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_id, word_id, mode),
+            FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
+        );
+        INSERT INTO progress SELECT * FROM progress_old;
+        DROP TABLE progress_old;
+
+        ALTER TABLE word_flags RENAME TO word_flags_old;
+        CREATE TABLE word_flags (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            word_id TEXT NOT NULL,
+            user_id INTEGER NOT NULL,
+            comment TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'pending',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            reviewed_at TEXT NOT NULL DEFAULT '',
+            FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
+        );
+        INSERT INTO word_flags SELECT * FROM word_flags_old;
+        DROP TABLE word_flags_old;
+
+        ALTER TABLE quiz_events RENAME TO quiz_events_old;
+        CREATE TABLE quiz_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            word_id TEXT NOT NULL,
+            mode TEXT NOT NULL,
+            is_correct INTEGER NOT NULL,
+            prev_is_correct INTEGER,
+            review_stage_snapshot INTEGER,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
+        );
+        INSERT INTO quiz_events SELECT * FROM quiz_events_old;
+        DROP TABLE quiz_events_old;
+
+        ALTER TABLE form_stats RENAME TO form_stats_old;
+        CREATE TABLE form_stats (
+            user_id INTEGER NOT NULL,
+            word_id TEXT NOT NULL,
+            article_errors INTEGER NOT NULL DEFAULT 0,
+            article_streak_wrong INTEGER NOT NULL DEFAULT 0,
+            article_streak_correct INTEGER NOT NULL DEFAULT 0,
+            article_review_stage INTEGER NOT NULL DEFAULT 0,
+            article_next_review TEXT DEFAULT NULL,
+            plural_errors INTEGER NOT NULL DEFAULT 0,
+            plural_streak_wrong INTEGER NOT NULL DEFAULT 0,
+            plural_streak_correct INTEGER NOT NULL DEFAULT 0,
+            plural_review_stage INTEGER NOT NULL DEFAULT 0,
+            plural_next_review TEXT DEFAULT NULL,
+            prateritum_errors INTEGER NOT NULL DEFAULT 0,
+            prateritum_streak_wrong INTEGER NOT NULL DEFAULT 0,
+            prateritum_streak_correct INTEGER NOT NULL DEFAULT 0,
+            prateritum_review_stage INTEGER NOT NULL DEFAULT 0,
+            prateritum_next_review TEXT DEFAULT NULL,
+            partizip2_errors INTEGER NOT NULL DEFAULT 0,
+            partizip2_streak_wrong INTEGER NOT NULL DEFAULT 0,
+            partizip2_streak_correct INTEGER NOT NULL DEFAULT 0,
+            partizip2_review_stage INTEGER NOT NULL DEFAULT 0,
+            partizip2_next_review TEXT DEFAULT NULL,
+            PRIMARY KEY (user_id, word_id),
+            FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
+        );
+        INSERT INTO form_stats SELECT * FROM form_stats_old;
+        DROP TABLE form_stats_old;
+
+        ALTER TABLE word_synonyms RENAME TO word_synonyms_old;
+        CREATE TABLE word_synonyms (
+            word_id TEXT PRIMARY KEY,
+            group_id INTEGER NOT NULL,
+            FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE,
+            FOREIGN KEY (group_id) REFERENCES synonym_groups(id) ON DELETE CASCADE
+        );
+        INSERT INTO word_synonyms SELECT * FROM word_synonyms_old;
+        DROP TABLE word_synonyms_old;
+        """
+    )
+    conn.execute("PRAGMA foreign_keys = ON")
+
+
 def init_db(db_path):
     """Handle init db."""
     with _connect(db_path) as conn:
@@ -165,12 +278,6 @@ def init_db(db_path):
             """
         )
         _ensure_schema(conn)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_user_levels_user ON user_levels(user_id)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_word_flags_status_created ON word_flags(status, created_at)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_quiz_events_day_user ON quiz_events(created_at, user_id)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_quiz_events_user_word_mode ON quiz_events(user_id, word_id, mode, created_at)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_form_stats_user_word ON form_stats(user_id, word_id)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_word_synonyms_group ON word_synonyms(group_id)")
 
 
 def _ensure_schema(conn):
@@ -183,8 +290,7 @@ def _ensure_schema(conn):
         conn.execute("PRAGMA foreign_keys = OFF")
         conn.executescript(
             """
-            ALTER TABLE words RENAME TO words_old;
-            CREATE TABLE words (
+            CREATE TABLE words_new (
                 id TEXT PRIMARY KEY,
                 type TEXT NOT NULL,
                 article TEXT NOT NULL DEFAULT '',
@@ -199,15 +305,16 @@ def _ensure_schema(conn):
                 topic TEXT NOT NULL DEFAULT '1',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
-            INSERT INTO words (
+            INSERT INTO words_new (
                 id, type, article, german, plural, infinitive, prateritum, partizip2,
                 russian, ukrainian, english, topic, created_at
             )
             SELECT
                 id, type, article, german, plural, infinitive, prateritum, partizip2,
                 russian, ukrainian, english, '1', created_at
-            FROM words_old;
-            DROP TABLE words_old;
+            FROM words;
+            DROP TABLE words;
+            ALTER TABLE words_new RENAME TO words;
             """
         )
         conn.execute("PRAGMA foreign_keys = ON")
@@ -222,7 +329,8 @@ def _ensure_schema(conn):
     if "topic" not in word_cols:
         conn.execute("ALTER TABLE words ADD COLUMN topic TEXT NOT NULL DEFAULT '1'")
     conn.execute("UPDATE words SET topic = '1' WHERE trim(coalesce(topic, '')) = ''")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_words_type ON words(type)")
+    _repair_word_fk_tables(conn)
+    _ensure_indexes(conn)
 
     user_cols = {
         row["name"] if isinstance(row, sqlite3.Row) else row[1]
