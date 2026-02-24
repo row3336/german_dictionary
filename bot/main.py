@@ -1822,7 +1822,7 @@ async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
             update_form_stats(get_db_path(), update.effective_user.id, entry.get("id"), form_checks)
     context.user_data["quiz_last_answered_entry"] = entry
     _register_retry_result(context, mode, entry.get("id"), ok, is_retry)
-    if not is_retry:
+    if not is_retry and ok:
         _set_retry_since_last(context, mode, _retry_since_last(context, mode) + 1)
 
     feedback = _format_feedback_ru_de(entry, ok)
@@ -1855,7 +1855,7 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _update_srs_for_entry(update.effective_user.id, entry, mode, ok)
     context.user_data["quiz_last_answered_entry"] = entry
     _register_retry_result(context, mode, entry.get("id"), ok, is_retry)
-    if not is_retry:
+    if not is_retry and ok:
         _set_retry_since_last(context, mode, _retry_since_last(context, mode) + 1)
 
     feedback = _format_feedback_de_ru(entry, ok, _user_dict_lang(update.effective_user.id))
@@ -2415,6 +2415,8 @@ async def _send_ru_de_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
         context.user_data["quiz_is_retry"] = False
         entry = _pick_due_entry(context, update.effective_user.id, mode)
     if not entry:
+        if prefix_text:
+            await update.message.reply_text(prefix_text, parse_mode="Markdown")
         await update.message.reply_text(
             "No due words. Add more or wait until due date.",
             reply_markup=ReplyKeyboardMarkup(_ru_de_menu_keys(update.effective_user.id), resize_keyboard=True),
@@ -2442,6 +2444,8 @@ async def _send_de_ru_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
         context.user_data["quiz_is_retry"] = False
         entry = _pick_due_entry(context, update.effective_user.id, mode)
     if not entry:
+        if prefix_text:
+            await update.message.reply_text(prefix_text, parse_mode="Markdown")
         await update.message.reply_text(
             "No due words. Add more or wait until due date.",
             reply_markup=ReplyKeyboardMarkup(_tests_menu_keys(update.effective_user.id), resize_keyboard=True),
@@ -2469,6 +2473,8 @@ async def _send_article_prompt(update: Update, context: ContextTypes.DEFAULT_TYP
         context.user_data["quiz_is_retry"] = False
         entry = _pick_due_entry(context, update.effective_user.id, mode, word_type="nomen")
     if not entry:
+        if prefix_text:
+            await update.message.reply_text(prefix_text, parse_mode="Markdown")
         await update.message.reply_text(
             "No due nouns. Add more or wait until due date.",
             reply_markup=ReplyKeyboardMarkup(_tests_menu_keys(update.effective_user.id), resize_keyboard=True),
@@ -2492,6 +2498,8 @@ async def _send_article_weak_prompt(update: Update, context: ContextTypes.DEFAUL
     """Handle send article weak prompt."""
     entry = _pick_weak_entry(context, update.effective_user.id, "article", word_type="nomen")
     if not entry:
+        if prefix_text:
+            await update.message.reply_text(prefix_text, parse_mode="Markdown")
         await update.message.reply_text(
             "No weak article words.",
             reply_markup=ReplyKeyboardMarkup(_ru_de_menu_keys(update.effective_user.id), resize_keyboard=True),
@@ -2514,6 +2522,8 @@ async def _send_plural_weak_prompt(update: Update, context: ContextTypes.DEFAULT
     """Handle send plural weak prompt."""
     entry = _pick_weak_entry(context, update.effective_user.id, "plural", word_type="nomen")
     if not entry:
+        if prefix_text:
+            await update.message.reply_text(prefix_text, parse_mode="Markdown")
         await update.message.reply_text(
             "No weak plural words.",
             reply_markup=ReplyKeyboardMarkup(_ru_de_menu_keys(update.effective_user.id), resize_keyboard=True),
@@ -2537,6 +2547,8 @@ async def _send_prateritum_weak_prompt(update: Update, context: ContextTypes.DEF
     """Handle send prateritum weak prompt."""
     entry = _pick_weak_entry(context, update.effective_user.id, "prateritum", word_type="verb")
     if not entry:
+        if prefix_text:
+            await update.message.reply_text(prefix_text, parse_mode="Markdown")
         await update.message.reply_text(
             "No weak prateritum words.",
             reply_markup=ReplyKeyboardMarkup([[TEST_PRATERITUM_WEAK_TEXT, TEST_PARTIZIP2_WEAK_TEXT], [t(_user_interface_lang(update.effective_user.id), "back")]], resize_keyboard=True),
@@ -2559,6 +2571,8 @@ async def _send_partizip2_weak_prompt(update: Update, context: ContextTypes.DEFA
     """Handle send partizip2 weak prompt."""
     entry = _pick_weak_entry(context, update.effective_user.id, "partizip2", word_type="verb")
     if not entry:
+        if prefix_text:
+            await update.message.reply_text(prefix_text, parse_mode="Markdown")
         await update.message.reply_text(
             "No weak partizip2 words.",
             reply_markup=ReplyKeyboardMarkup([[TEST_PRATERITUM_WEAK_TEXT, TEST_PARTIZIP2_WEAK_TEXT], [t(_user_interface_lang(update.effective_user.id), "back")]], resize_keyboard=True),
@@ -3128,6 +3142,8 @@ def _configure_logging():
     root_logger.handlers.clear()
     root_logger.addHandler(file_handler)
     root_logger.addHandler(stream_handler)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
 
     _cleanup_old_dump_logs()
 
