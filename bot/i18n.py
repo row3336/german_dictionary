@@ -48,6 +48,7 @@ TEXTS = {
         "ses_rtr_gap": "ses.rtr_gap",
         "ses_rtr_it": "ses.rtr_it",
         "reset_periodicity": "reset periodicity",
+        "topic_filter": "topic filter",
     },
     "ru": {
         "start": "Старт",
@@ -85,6 +86,7 @@ TEXTS = {
         "ses_rtr_gap": "ses.rtr_gap",
         "ses_rtr_it": "ses.rtr_it",
         "reset_periodicity": "reset periodicity",
+        "topic_filter": "topic filter",
     },
     "uk": {
         "start": "Старт",
@@ -122,6 +124,7 @@ TEXTS = {
         "ses_rtr_gap": "ses.rtr_gap",
         "ses_rtr_it": "ses.rtr_it",
         "reset_periodicity": "reset periodicity",
+        "topic_filter": "topic filter",
     },
 }
 

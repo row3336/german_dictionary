@@ -26,7 +26,7 @@ def _add_noun(db_path, german, russian):
         "russian": russian,
         "ukrainian": "",
         "english": "",
-        "cefr_level": "",
+        "topic": "1",
     }
     return add_word(db_path, entry)
 

@@ -38,6 +38,11 @@ Supported dictionary pairs:
 - German → Ukrainian
 - German → English
 
+## Topics
+Each word belongs to a `topic` label (string). Default for existing data is `1`.
+Use Settings → `topic filter` to set the active topic or `all` to disable filtering.
+New words are saved under the current topic label.
+
 ## Main Menus
 **Main menu**
 - Add words

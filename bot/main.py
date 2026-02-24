@@ -39,6 +39,7 @@ from .app_config import (
     ALGO_SETTINGS_CONFIRM,
     ALGO_SETTINGS_EDIT,
     ALGO_SETTINGS_MENU,
+    TOPIC_FILTER_EDIT,
     ARTICLE_SET,
     AUTO_DUMP_JOB_NAME,
     AUTO_DUMP_KEYS,
@@ -82,6 +83,7 @@ from .app_config import (
     get_owner_id,
     SESSION_RETRY_GAP_KEY,
     SESSION_RETRY_IT_KEY,
+    TOPIC_FILTER_KEY,
     get_suggestions_path,
     is_owner,
 )
@@ -238,6 +240,7 @@ def _settings_menu_keys(user_id):
     lang = _user_interface_lang(user_id)
     return [
         ["flags!", t(lang, "algo_settings")],
+        [t(lang, "topic_filter")],
         [t(lang, "interface_lang_btn"), t(lang, "dict_lang_btn")],
         [t(lang, "dump"), t(lang, "back")],
     ]
@@ -273,6 +276,26 @@ def _session_retry_iterations(db_path):
     """Handle session retry iterations."""
     value = _get_int_setting(db_path, SESSION_RETRY_IT_KEY, RETRY_MAX_REPEATS)
     return max(1, value)
+
+
+def _topic_filter_value():
+    """Handle topic filter value."""
+    raw = str(get_setting(get_db_path(), TOPIC_FILTER_KEY, "1") or "").strip()
+    return raw or "1"
+
+
+def _topic_filter_for_query():
+    """Handle topic filter for query."""
+    raw = _topic_filter_value()
+    if raw.lower() == "all":
+        return None
+    return raw
+
+
+def _current_topic_value():
+    """Handle current topic value."""
+    raw = _topic_filter_value()
+    return "1" if raw.lower() == "all" else raw
 
 
 async def _send_algo_settings_menu(update: Update, user_id):
@@ -322,6 +345,7 @@ def _action_key_from_text(text, user_id):
         ("suggested_words", "suggested_words"),
         ("review_flags", "review_flags"),
         ("algo_settings", "algo_settings"),
+        ("topic_filter", "topic_filter"),
         ("auto_dump", "auto_dump"),
         ("daily", "daily"),
         ("weekly", "weekly"),
@@ -965,6 +989,14 @@ async def settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
     if action == "algo_settings":
         return await _send_algo_settings_menu(update, user_id)
 
+    if action == "topic_filter":
+        current = _topic_filter_value()
+        await update.message.reply_text(
+            f"Current topic: {current}\nSend topic label or 'all' for no filter.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        return TOPIC_FILTER_EDIT
+
     if action == "dump":
         await update.message.reply_text(
             "dump:",
@@ -1094,6 +1126,30 @@ async def algo_settings_confirm(update: Update, context: ContextTypes.DEFAULT_TY
 
     await update.message.reply_text("Canceled.")
     return await _send_algo_settings_menu(update, user_id)
+
+
+async def topic_filter_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle topic filter edit."""
+    text = update.message.text.strip()
+    user_id = update.effective_user.id
+    if _action_key_from_text(text, user_id) == "back":
+        await update.message.reply_text(
+            t(_user_interface_lang(user_id), "settings_title"),
+            reply_markup=ReplyKeyboardMarkup(_settings_menu_keys(user_id), resize_keyboard=True),
+        )
+        return SETTINGS_MENU
+
+    value = text.strip()
+    if not value:
+        await update.message.reply_text("Send a non-empty topic or 'all'.")
+        return TOPIC_FILTER_EDIT
+
+    set_setting(get_db_path(), TOPIC_FILTER_KEY, value)
+    await update.message.reply_text(
+        f"✅ Topic set to: {value}",
+        reply_markup=ReplyKeyboardMarkup(_settings_menu_keys(user_id), resize_keyboard=True),
+    )
+    return SETTINGS_MENU
 
 
 async def dump_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2309,7 +2365,13 @@ def _format_feedback_article(entry, ok, dict_lang):
 
 def _pick_due_entry(context, user_id, mode, word_type=None):
     """Handle pick due entry."""
-    due = select_due(get_db_path(), user_id=user_id, mode=mode, word_type=word_type)
+    due = select_due(
+        get_db_path(),
+        user_id=user_id,
+        mode=mode,
+        word_type=word_type,
+        topic=_topic_filter_for_query(),
+    )
     if not due:
         return None
 
@@ -2391,7 +2453,14 @@ def _reset_retry_state(context):
 
 def _pick_weak_entry(context, user_id, weak_field, word_type=None):
     """Handle pick weak entry."""
-    due = list_weak_words(get_db_path(), user_id=user_id, weak_field=weak_field, word_type=word_type, limit=300)
+    due = list_weak_words(
+        get_db_path(),
+        user_id=user_id,
+        weak_field=weak_field,
+        word_type=word_type,
+        topic=_topic_filter_for_query(),
+        limit=300,
+    )
     if not due:
         return None
     active = [w for w in due if w.get("is_active")]
@@ -2697,6 +2766,7 @@ def _normalize_ai_entry(entry):
     entry = dict(entry)
     entry_type = _type_label(entry.get("type", ""))
     entry["type"] = entry_type
+    topic = _current_topic_value()
 
     if entry_type == "verb":
         return {
@@ -2707,7 +2777,7 @@ def _normalize_ai_entry(entry):
             "russian": _normalize_russian_singular(entry.get("russian", "")),
             "ukrainian": str(entry.get("ukrainian", "")).strip(),
             "english": str(entry.get("english", "")).strip(),
-            "cefr_level": "",
+            "topic": topic,
         }
 
     if entry_type == "nomen":
@@ -2719,7 +2789,7 @@ def _normalize_ai_entry(entry):
             "russian": _normalize_russian_singular(entry.get("russian", "")),
             "ukrainian": str(entry.get("ukrainian", "")).strip(),
             "english": str(entry.get("english", "")).strip(),
-            "cefr_level": "",
+            "topic": topic,
         }
 
     return {
@@ -2728,7 +2798,7 @@ def _normalize_ai_entry(entry):
         "russian": _normalize_russian_singular(entry.get("russian", "")),
         "ukrainian": str(entry.get("ukrainian", "")).strip(),
         "english": str(entry.get("english", "")).strip(),
-        "cefr_level": "",
+        "topic": topic,
     }
 
 
@@ -3215,6 +3285,8 @@ def _prepare_storage():
         set_setting(db_path, OWNER_INTERFACE_LANG_KEY, "en")
     if not get_setting(db_path, OWNER_DICT_LANG_KEY):
         set_setting(db_path, OWNER_DICT_LANG_KEY, "ru")
+    if not get_setting(db_path, TOPIC_FILTER_KEY):
+        set_setting(db_path, TOPIC_FILTER_KEY, "1")
 
 
 def main():
@@ -3248,6 +3320,7 @@ def main():
             ALGO_SETTINGS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, algo_settings_menu_choice)],
             ALGO_SETTINGS_EDIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, algo_settings_edit)],
             ALGO_SETTINGS_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, algo_settings_confirm)],
+            TOPIC_FILTER_EDIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, topic_filter_edit)],
             DUMP_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, dump_menu_choice)],
             AUTO_DUMP_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, auto_dump_choice)],
             ADD_INPUT: [

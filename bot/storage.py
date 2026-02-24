@@ -9,7 +9,6 @@ MIN_EASE = 1.3
 QUIZ_RU_DE = "ru_de"
 QUIZ_DE_RU = "de_ru"
 QUIZ_ARTICLE = "article"
-CEFR_LEVELS = ("A1", "A2", "B1", "B2", "C1", "C2")
 INTERFACE_LANGS = ("en", "ru", "uk")
 DICT_LANGS = ("ru", "uk", "en")
 
@@ -53,7 +52,7 @@ def init_db(db_path):
                 russian TEXT NOT NULL DEFAULT '',
                 ukrainian TEXT NOT NULL DEFAULT '',
                 english TEXT NOT NULL DEFAULT '',
-                cefr_level TEXT NOT NULL DEFAULT '',
+                topic TEXT NOT NULL DEFAULT '1',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -166,7 +165,6 @@ def init_db(db_path):
             """
         )
         _ensure_schema(conn)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_words_cefr ON words(cefr_level)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_user_levels_user ON user_levels(user_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_word_flags_status_created ON word_flags(status, created_at)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_quiz_events_day_user ON quiz_events(created_at, user_id)")
@@ -181,12 +179,50 @@ def _ensure_schema(conn):
         row["name"] if isinstance(row, sqlite3.Row) else row[1]
         for row in conn.execute("PRAGMA table_info(words)").fetchall()
     }
-    if "cefr_level" not in word_cols:
-        conn.execute("ALTER TABLE words ADD COLUMN cefr_level TEXT NOT NULL DEFAULT ''")
+    if "cefr_level" in word_cols:
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.executescript(
+            """
+            ALTER TABLE words RENAME TO words_old;
+            CREATE TABLE words (
+                id TEXT PRIMARY KEY,
+                type TEXT NOT NULL,
+                article TEXT NOT NULL DEFAULT '',
+                german TEXT NOT NULL DEFAULT '',
+                plural TEXT NOT NULL DEFAULT '',
+                infinitive TEXT NOT NULL DEFAULT '',
+                prateritum TEXT NOT NULL DEFAULT '',
+                partizip2 TEXT NOT NULL DEFAULT '',
+                russian TEXT NOT NULL DEFAULT '',
+                ukrainian TEXT NOT NULL DEFAULT '',
+                english TEXT NOT NULL DEFAULT '',
+                topic TEXT NOT NULL DEFAULT '1',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            INSERT INTO words (
+                id, type, article, german, plural, infinitive, prateritum, partizip2,
+                russian, ukrainian, english, topic, created_at
+            )
+            SELECT
+                id, type, article, german, plural, infinitive, prateritum, partizip2,
+                russian, ukrainian, english, '1', created_at
+            FROM words_old;
+            DROP TABLE words_old;
+            """
+        )
+        conn.execute("PRAGMA foreign_keys = ON")
+        word_cols = {
+            row["name"] if isinstance(row, sqlite3.Row) else row[1]
+            for row in conn.execute("PRAGMA table_info(words)").fetchall()
+        }
     if "ukrainian" not in word_cols:
         conn.execute("ALTER TABLE words ADD COLUMN ukrainian TEXT NOT NULL DEFAULT ''")
     if "english" not in word_cols:
         conn.execute("ALTER TABLE words ADD COLUMN english TEXT NOT NULL DEFAULT ''")
+    if "topic" not in word_cols:
+        conn.execute("ALTER TABLE words ADD COLUMN topic TEXT NOT NULL DEFAULT '1'")
+    conn.execute("UPDATE words SET topic = '1' WHERE trim(coalesce(topic, '')) = ''")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_words_type ON words(type)")
 
     user_cols = {
         row["name"] if isinstance(row, sqlite3.Row) else row[1]
@@ -258,12 +294,6 @@ def _safe_int(value, default=0):
         return default
 
 
-def _normalize_level(level):
-    """Handle normalize level."""
-    value = _safe_text(level).strip().upper()
-    return value if value in CEFR_LEVELS else ""
-
-
 def _entry_key(entry):
     """Handle entry key."""
     entry_type = _normalize_text(entry.get("type", ""))
@@ -286,7 +316,7 @@ def _row_to_entry(row):
         "russian": row["russian"] or "",
         "ukrainian": row["ukrainian"] or "",
         "english": row["english"] or "",
-        "cefr_level": row["cefr_level"] or "",
+        "topic": row["topic"] or "",
     }
     if "review_stage" in row.keys():
         entry["review_stage"] = int(row["review_stage"] or 0)
@@ -303,8 +333,8 @@ def load_words(db_path):
     with _connect(db_path) as conn:
         rows = conn.execute(
             """
-            SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian, cefr_level
-            , ukrainian, english
+            SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian,
+            ukrainian, english, topic
             FROM words
             ORDER BY created_at ASC
             """
@@ -833,8 +863,8 @@ def find_existing_word(db_path, raw_word):
     with _connect(db_path) as conn:
         row = conn.execute(
             """
-            SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian, cefr_level
-            , ukrainian, english
+            SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian,
+            ukrainian, english, topic
             FROM words
             WHERE lower(trim(german)) = ?
                OR lower(trim(infinitive)) = ?
@@ -851,8 +881,8 @@ def find_existing_word(db_path, raw_word):
         # Fallback for composite verb forms like "hat gesehen" and multi-value fields.
         rows = conn.execute(
             """
-            SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian, cefr_level
-            , ukrainian, english
+            SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian,
+            ukrainian, english, topic
             FROM words
             """
         ).fetchall()
@@ -899,7 +929,7 @@ def add_word(db_path, entry):
         conn.execute(
             """
             INSERT INTO words (
-                id, type, article, german, plural, infinitive, prateritum, partizip2, russian, ukrainian, english, cefr_level
+                id, type, article, german, plural, infinitive, prateritum, partizip2, russian, ukrainian, english, topic
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
@@ -914,7 +944,7 @@ def add_word(db_path, entry):
                 _safe_text(entry.get("russian", "")),
                 _safe_text(entry.get("ukrainian", "")),
                 _safe_text(entry.get("english", "")),
-                _normalize_level(entry.get("cefr_level", "")),
+                _safe_text(entry.get("topic", "1")) or "1",
             ),
         )
     return entry
@@ -932,7 +962,7 @@ def _progress_for_row(row):
     }
 
 
-def select_due(db_path, user_id, mode, word_type=None, levels=None, today=None):
+def select_due(db_path, user_id, mode, word_type=None, topic=None, today=None):
     """Handle select due."""
     if today is None:
         today = date.today()
@@ -944,19 +974,16 @@ def select_due(db_path, user_id, mode, word_type=None, levels=None, today=None):
     if word_type:
         where_clauses.insert(0, "w.type = ?")
         where_params.insert(0, word_type)
-    if levels:
-        safe_levels = [lvl for lvl in (_normalize_level(x) for x in levels) if lvl]
-        if safe_levels:
-            placeholders = ",".join("?" for _ in safe_levels)
-            where_clauses.append(f"upper(w.cefr_level) IN ({placeholders})")
-            where_params.extend(safe_levels)
+    if topic:
+        where_clauses.append("w.topic = ?")
+        where_params.append(_safe_text(topic))
 
     where_sql = " AND ".join(where_clauses)
 
     query = f"""
         SELECT
-            w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.russian, w.cefr_level,
-            w.ukrainian, w.english,
+            w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.russian,
+            w.ukrainian, w.english, w.topic,
             p.interval AS p_interval, p.repetitions AS p_repetitions, p.ease AS p_ease, p.due AS p_due
         FROM words w
         LEFT JOIN progress p
@@ -1192,31 +1219,11 @@ def list_daily_leaderboard(db_path, day_iso, min_attempts=1, limit=20):
     return filtered[: int(limit)]
 
 
-def list_words_for_cefr_backfill(db_path, limit=0):
-    """Handle list words for cefr backfill."""
-    init_db(db_path)
-    query = """
-        SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian, cefr_level
-        , ukrainian, english
-        FROM words
-        WHERE trim(coalesce(cefr_level, '')) = ''
-        ORDER BY created_at ASC
-    """
-    params = ()
-    if int(limit) > 0:
-        query += " LIMIT ?"
-        params = (int(limit),)
-
-    with _connect(db_path) as conn:
-        rows = conn.execute(query, params).fetchall()
-    return [_row_to_entry(row) for row in rows]
-
-
 def list_words_for_translations_backfill(db_path, limit=0):
     """Handle list words for translations backfill."""
     init_db(db_path)
     query = """
-        SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian, ukrainian, english, cefr_level
+        SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian, ukrainian, english, topic
         FROM words
         WHERE trim(coalesce(ukrainian, '')) = '' OR trim(coalesce(english, '')) = ''
         ORDER BY created_at ASC
@@ -1250,19 +1257,6 @@ def update_word_translations(db_path, word_id, ukrainian=None, english=None):
         )
 
 
-def update_word_cefr_level(db_path, word_id, level):
-    """Handle update word cefr level."""
-    safe_level = _normalize_level(level)
-    if not safe_level:
-        raise ValueError("Invalid CEFR level.")
-    init_db(db_path)
-    with _connect(db_path) as conn:
-        conn.execute(
-            "UPDATE words SET cefr_level = ? WHERE id = ?",
-            (safe_level, _safe_text(word_id)),
-        )
-
-
 def update_word_fields(db_path, word_id, fields):
     """Handle update word fields."""
     allowed = {
@@ -1276,16 +1270,13 @@ def update_word_fields(db_path, word_id, fields):
         "russian",
         "ukrainian",
         "english",
-        "cefr_level",
+        "topic",
     }
     values = {}
     for key, value in dict(fields or {}).items():
         if key not in allowed:
             continue
-        if key == "cefr_level":
-            values[key] = _normalize_level(value)
-        else:
-            values[key] = _safe_text(value)
+        values[key] = _safe_text(value)
     if not values:
         return
 
@@ -1523,7 +1514,7 @@ def get_form_review_stage(db_path, user_id, word_id, field):
     return int(row["stage"] or 0) if row else 0
 
 
-def list_weak_words(db_path, user_id, weak_field, word_type=None, limit=200):
+def list_weak_words(db_path, user_id, weak_field, word_type=None, topic=None, limit=200):
     """Handle list weak words."""
     weak_field = _safe_text(weak_field).strip().lower()
     if weak_field not in {"article", "plural", "prateritum", "partizip2"}:
@@ -1540,10 +1531,13 @@ def list_weak_words(db_path, user_id, weak_field, word_type=None, limit=200):
     if word_type:
         where.append("w.type = ?")
         params.append(_safe_text(word_type))
+    if topic:
+        where.append("w.topic = ?")
+        params.append(_safe_text(topic))
     query = f"""
         SELECT
-            w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.russian, w.cefr_level,
-            w.ukrainian, w.english,
+            w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.russian,
+            w.ukrainian, w.english, w.topic,
             fs.{weak_field}_review_stage AS review_stage,
             fs.{weak_field}_next_review AS next_review,
             p.interval AS p_interval, p.repetitions AS p_repetitions, p.ease AS p_ease, p.due AS p_due,
@@ -1632,8 +1626,8 @@ def get_synonym_group(db_path, word_id):
         group_id = int(row["group_id"])
         rows = conn.execute(
             """
-            SELECT w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.russian, w.cefr_level
-            , w.ukrainian, w.english
+            SELECT w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.russian
+            , w.ukrainian, w.english, w.topic
             FROM word_synonyms s
             JOIN words w ON w.id = s.word_id
             WHERE s.group_id = ?
@@ -1695,8 +1689,8 @@ def list_synonym_candidates_by_ru(db_path, anchor_word_id):
     with _connect(db_path) as conn:
         rows = conn.execute(
             """
-            SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian, cefr_level
-            , ukrainian, english
+            SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian
+            , ukrainian, english, topic
             FROM words
             WHERE lower(trim(type)) = ?
             """,
@@ -1719,8 +1713,8 @@ def get_word_by_id(db_path, word_id):
     with _connect(db_path) as conn:
         row = conn.execute(
             """
-            SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian, cefr_level
-            , ukrainian, english
+            SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian
+            , ukrainian, english, topic
             FROM words
             WHERE id = ?
             LIMIT 1
@@ -1741,8 +1735,8 @@ def find_word_by_value(db_path, token):
     with _connect(db_path) as conn:
         row = conn.execute(
             """
-            SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian, cefr_level
-            , ukrainian, english
+            SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian
+            , ukrainian, english, topic
             FROM words
             WHERE id = ?
                OR lower(trim(german)) = ?
@@ -1796,8 +1790,8 @@ def list_pending_word_flags(db_path, limit=0):
             f.user_id AS flag_user_id,
             f.comment AS flag_comment,
             f.created_at AS flag_created_at,
-            w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.russian, w.cefr_level
-            , w.ukrainian, w.english
+            w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.russian
+            , w.ukrainian, w.english, w.topic
         FROM word_flags f
         JOIN words w ON w.id = f.word_id
         WHERE f.status = 'pending'
