@@ -2,9 +2,12 @@ import os
 import sqlite3
 import tempfile
 import unittest
+import warnings
 from datetime import date, timedelta
 
-from bot.storage import init_db, add_word, select_due, update_sm2
+from bot.storage import init_db, add_word, select_due, update_sm2, list_topics
+
+warnings.filterwarnings("ignore", category=ResourceWarning)
 
 
 def _mk_db():
@@ -13,7 +16,7 @@ def _mk_db():
     return tmp.name
 
 
-def _add_noun(db_path, german, russian):
+def _add_noun(db_path, german, russian, topic="1"):
     entry = {
         "id": "unique",
         "type": "nomen",
@@ -26,7 +29,7 @@ def _add_noun(db_path, german, russian):
         "russian": russian,
         "ukrainian": "",
         "english": "",
-        "topic": "1",
+        "topic": topic,
     }
     return add_word(db_path, entry)
 
@@ -72,6 +75,25 @@ class Sm2LogicTests(unittest.TestCase):
         self.assertEqual(updated["interval"], 2)
         self.assertEqual(updated["repetitions"], 1)
         self.assertEqual(updated["due"], (today + timedelta(days=2)).isoformat())
+
+    def test_select_due_filters_topics(self):
+        db_path = _mk_db()
+        self.addCleanup(lambda: os.unlink(db_path))
+        init_db(db_path)
+        _add_noun(db_path, "Apfel", "яблоко", topic="1")
+        _add_noun(db_path, "Jacke", "куртка", topic="2")
+        due = select_due(db_path, user_id=1, mode="ru_de", topics=["2"])
+        self.assertEqual(len(due), 1)
+        self.assertEqual(due[0]["german"], "Jacke")
+
+    def test_list_topics(self):
+        db_path = _mk_db()
+        self.addCleanup(lambda: os.unlink(db_path))
+        init_db(db_path)
+        _add_noun(db_path, "Apfel", "яблоко", topic="1")
+        _add_noun(db_path, "Jacke", "куртка", topic="2")
+        topics = list_topics(db_path)
+        self.assertEqual(topics, ["1", "2"])
 
 
 if __name__ == "__main__":
