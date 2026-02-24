@@ -139,6 +139,7 @@ from .text_utils import (
     try_parse_json as _try_parse_json,
     type_label as _type_label,
 )
+from .retry_logic import maybe_take_retry_entry, register_retry_result
 
 
 DAILY_STATS_JOB_NAME = "daily_stats_report"
@@ -2351,19 +2352,21 @@ def _maybe_take_retry_entry(context, mode):
     queue = _retry_queue(context, mode)
     if not queue:
         return None
-    gap = _session_retry_gap(get_db_path())
-    if _retry_since_last(context, mode) < gap:
-        return None
-    word_id = queue.pop(0)
-    entry = get_word_by_id(get_db_path(), word_id)
-    if not entry:
-        counts = _retry_counts(context, mode)
-        counts.pop(word_id, None)
-        return None
     counts = _retry_counts(context, mode)
-    counts[word_id] = counts.get(word_id, 0) + 1
+    gap = _session_retry_gap(get_db_path())
+    since_last = _retry_since_last(context, mode)
+    entry, new_since, took = maybe_take_retry_entry(
+        queue,
+        counts,
+        since_last,
+        gap,
+        lambda word_id: get_word_by_id(get_db_path(), word_id),
+    )
+    if not entry:
+        return None
     context.user_data["quiz_is_retry"] = True
-    _set_retry_since_last(context, mode, 0)
+    if took:
+        _set_retry_since_last(context, mode, new_since)
     return entry
 
 
@@ -2371,20 +2374,10 @@ def _register_retry_result(context, mode, word_id, ok, was_retry):
     """Handle register retry result."""
     queue = _retry_queue(context, mode)
     counts = _retry_counts(context, mode)
-    if was_retry:
-        max_repeats = _session_retry_iterations(get_db_path())
-        if counts.get(word_id, 0) >= max_repeats:
-            counts.pop(word_id, None)
-            return
-        if word_id not in queue:
-            queue.append(word_id)
-        return
-    if ok:
-        return
-    counts.setdefault(word_id, 0)
-    if word_id not in queue:
-        queue.append(word_id)
-    _set_retry_since_last(context, mode, 0)
+    max_repeats = _session_retry_iterations(get_db_path())
+    register_retry_result(queue, counts, word_id, ok, was_retry, max_repeats)
+    if not was_retry and not ok:
+        _set_retry_since_last(context, mode, 0)
 
 
 def _reset_retry_state(context):
