@@ -26,6 +26,9 @@ pip install -r requirements.txt
 python -m bot.main
 ```
 
+## Tests
+See `docs/tests_ru.md` for detailed explanations of what is covered and how to run the tests.
+
 ## Access Control
 The bot is owner-only. All actions are available only to the owner.
 

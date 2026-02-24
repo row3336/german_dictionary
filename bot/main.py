@@ -908,6 +908,7 @@ async def quiz_ru_de_menu_choice(update: Update, context: ContextTypes.DEFAULT_T
         )
         return TESTS_MENU
     if text == STANDARD_SM2_TEXT:
+        _reset_retry_state(context)
         return await _send_ru_de_prompt(update, context, None)
     if text == TEST_ARTICLE_WEAK_TEXT:
         return await _send_article_weak_prompt(update, context, None)
