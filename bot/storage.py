@@ -60,6 +60,25 @@ def _repair_word_fk_tables(conn):
         ).fetchone()
         return bool(row)
 
+    def _table_columns(table_name):
+        rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+        return [row[1] for row in rows]
+
+    def _copy_table(old_name, create_sql):
+        if not _table_exists(old_name):
+            return
+        conn.execute(f"ALTER TABLE {old_name} RENAME TO {old_name}_old")
+        conn.execute(create_sql)
+        new_cols = _table_columns(old_name)
+        old_cols = _table_columns(f"{old_name}_old")
+        cols = [c for c in new_cols if c in old_cols]
+        if cols:
+            col_list = ", ".join(cols)
+            conn.execute(
+                f"INSERT INTO {old_name} ({col_list}) SELECT {col_list} FROM {old_name}_old"
+            )
+        conn.execute(f"DROP TABLE {old_name}_old")
+
     def _drop_if_exists(table_name):
         if _table_exists(table_name):
             conn.execute(f"DROP TABLE {table_name}")
@@ -73,115 +92,100 @@ def _repair_word_fk_tables(conn):
     for old_name in ("progress_old", "word_flags_old", "quiz_events_old", "form_stats_old", "word_synonyms_old"):
         _drop_if_exists(old_name)
 
-    if _table_exists("progress"):
-        conn.execute("ALTER TABLE progress RENAME TO progress_old")
-        conn.execute(
-            """
-            CREATE TABLE progress (
-                user_id INTEGER NOT NULL,
-                word_id TEXT NOT NULL,
-                mode TEXT NOT NULL,
-                interval INTEGER NOT NULL,
-                repetitions INTEGER NOT NULL,
-                ease REAL NOT NULL,
-                due TEXT NOT NULL,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (user_id, word_id, mode),
-                FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
-            )
-            """
+    _copy_table(
+        "progress",
+        """
+        CREATE TABLE progress (
+            user_id INTEGER NOT NULL,
+            word_id TEXT NOT NULL,
+            mode TEXT NOT NULL,
+            interval INTEGER NOT NULL,
+            repetitions INTEGER NOT NULL,
+            ease REAL NOT NULL,
+            due TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_id, word_id, mode),
+            FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
         )
-        conn.execute("INSERT INTO progress SELECT * FROM progress_old")
-        conn.execute("DROP TABLE progress_old")
+        """,
+    )
 
-    if _table_exists("word_flags"):
-        conn.execute("ALTER TABLE word_flags RENAME TO word_flags_old")
-        conn.execute(
-            """
-            CREATE TABLE word_flags (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                word_id TEXT NOT NULL,
-                user_id INTEGER NOT NULL,
-                comment TEXT NOT NULL DEFAULT '',
-                status TEXT NOT NULL DEFAULT 'pending',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                reviewed_at TEXT NOT NULL DEFAULT '',
-                FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
-            )
-            """
+    _copy_table(
+        "word_flags",
+        """
+        CREATE TABLE word_flags (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            word_id TEXT NOT NULL,
+            user_id INTEGER NOT NULL,
+            comment TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'pending',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            reviewed_at TEXT NOT NULL DEFAULT '',
+            FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
         )
-        conn.execute("INSERT INTO word_flags SELECT * FROM word_flags_old")
-        conn.execute("DROP TABLE word_flags_old")
+        """,
+    )
 
-    if _table_exists("quiz_events"):
-        conn.execute("ALTER TABLE quiz_events RENAME TO quiz_events_old")
-        conn.execute(
-            """
-            CREATE TABLE quiz_events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                word_id TEXT NOT NULL,
-                mode TEXT NOT NULL,
-                is_correct INTEGER NOT NULL,
-                prev_is_correct INTEGER,
-                review_stage_snapshot INTEGER,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
-            )
-            """
+    _copy_table(
+        "quiz_events",
+        """
+        CREATE TABLE quiz_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            word_id TEXT NOT NULL,
+            mode TEXT NOT NULL,
+            is_correct INTEGER NOT NULL,
+            prev_is_correct INTEGER,
+            review_stage_snapshot INTEGER,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
         )
-        conn.execute("INSERT INTO quiz_events SELECT * FROM quiz_events_old")
-        conn.execute("DROP TABLE quiz_events_old")
+        """,
+    )
 
-    if _table_exists("form_stats"):
-        conn.execute("ALTER TABLE form_stats RENAME TO form_stats_old")
-        conn.execute(
-            """
-            CREATE TABLE form_stats (
-                user_id INTEGER NOT NULL,
-                word_id TEXT NOT NULL,
-                article_errors INTEGER NOT NULL DEFAULT 0,
-                article_streak_wrong INTEGER NOT NULL DEFAULT 0,
-                article_streak_correct INTEGER NOT NULL DEFAULT 0,
-                article_review_stage INTEGER NOT NULL DEFAULT 0,
-                article_next_review TEXT DEFAULT NULL,
-                plural_errors INTEGER NOT NULL DEFAULT 0,
-                plural_streak_wrong INTEGER NOT NULL DEFAULT 0,
-                plural_streak_correct INTEGER NOT NULL DEFAULT 0,
-                plural_review_stage INTEGER NOT NULL DEFAULT 0,
-                plural_next_review TEXT DEFAULT NULL,
-                prateritum_errors INTEGER NOT NULL DEFAULT 0,
-                prateritum_streak_wrong INTEGER NOT NULL DEFAULT 0,
-                prateritum_streak_correct INTEGER NOT NULL DEFAULT 0,
-                prateritum_review_stage INTEGER NOT NULL DEFAULT 0,
-                prateritum_next_review TEXT DEFAULT NULL,
-                partizip2_errors INTEGER NOT NULL DEFAULT 0,
-                partizip2_streak_wrong INTEGER NOT NULL DEFAULT 0,
-                partizip2_streak_correct INTEGER NOT NULL DEFAULT 0,
-                partizip2_review_stage INTEGER NOT NULL DEFAULT 0,
-                partizip2_next_review TEXT DEFAULT NULL,
-                PRIMARY KEY (user_id, word_id),
-                FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
-            )
-            """
+    _copy_table(
+        "form_stats",
+        """
+        CREATE TABLE form_stats (
+            user_id INTEGER NOT NULL,
+            word_id TEXT NOT NULL,
+            article_errors INTEGER NOT NULL DEFAULT 0,
+            article_streak_wrong INTEGER NOT NULL DEFAULT 0,
+            article_streak_correct INTEGER NOT NULL DEFAULT 0,
+            article_review_stage INTEGER NOT NULL DEFAULT 0,
+            article_next_review TEXT DEFAULT NULL,
+            plural_errors INTEGER NOT NULL DEFAULT 0,
+            plural_streak_wrong INTEGER NOT NULL DEFAULT 0,
+            plural_streak_correct INTEGER NOT NULL DEFAULT 0,
+            plural_review_stage INTEGER NOT NULL DEFAULT 0,
+            plural_next_review TEXT DEFAULT NULL,
+            prateritum_errors INTEGER NOT NULL DEFAULT 0,
+            prateritum_streak_wrong INTEGER NOT NULL DEFAULT 0,
+            prateritum_streak_correct INTEGER NOT NULL DEFAULT 0,
+            prateritum_review_stage INTEGER NOT NULL DEFAULT 0,
+            prateritum_next_review TEXT DEFAULT NULL,
+            partizip2_errors INTEGER NOT NULL DEFAULT 0,
+            partizip2_streak_wrong INTEGER NOT NULL DEFAULT 0,
+            partizip2_streak_correct INTEGER NOT NULL DEFAULT 0,
+            partizip2_review_stage INTEGER NOT NULL DEFAULT 0,
+            partizip2_next_review TEXT DEFAULT NULL,
+            PRIMARY KEY (user_id, word_id),
+            FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
         )
-        conn.execute("INSERT INTO form_stats SELECT * FROM form_stats_old")
-        conn.execute("DROP TABLE form_stats_old")
+        """,
+    )
 
-    if _table_exists("word_synonyms"):
-        conn.execute("ALTER TABLE word_synonyms RENAME TO word_synonyms_old")
-        conn.execute(
-            """
-            CREATE TABLE word_synonyms (
-                word_id TEXT PRIMARY KEY,
-                group_id INTEGER NOT NULL,
-                FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE,
-                FOREIGN KEY (group_id) REFERENCES synonym_groups(id) ON DELETE CASCADE
-            )
-            """
+    _copy_table(
+        "word_synonyms",
+        """
+        CREATE TABLE word_synonyms (
+            word_id TEXT PRIMARY KEY,
+            group_id INTEGER NOT NULL,
+            FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE,
+            FOREIGN KEY (group_id) REFERENCES synonym_groups(id) ON DELETE CASCADE
         )
-        conn.execute("INSERT INTO word_synonyms SELECT * FROM word_synonyms_old")
-        conn.execute("DROP TABLE word_synonyms_old")
+        """,
+    )
 
     conn.execute("PRAGMA foreign_keys = ON")
 
