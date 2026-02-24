@@ -500,6 +500,21 @@ def count_words(db_path):
     return int(row["cnt"])
 
 
+def list_topics(db_path):
+    """Handle list topics."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT topic
+            FROM words
+            WHERE trim(coalesce(topic, '')) != ''
+            ORDER BY topic
+            """
+        ).fetchall()
+    return [row["topic"] for row in rows]
+
+
 def get_statistics_snapshot(db_path, user_id, mode):
     """Handle get statistics snapshot."""
     init_db(db_path)
@@ -1112,7 +1127,7 @@ def _progress_for_row(row):
     }
 
 
-def select_due(db_path, user_id, mode, word_type=None, topic=None, today=None):
+def select_due(db_path, user_id, mode, word_type=None, topics=None, today=None):
     """Handle select due."""
     if today is None:
         today = date.today()
@@ -1124,9 +1139,12 @@ def select_due(db_path, user_id, mode, word_type=None, topic=None, today=None):
     if word_type:
         where_clauses.insert(0, "w.type = ?")
         where_params.insert(0, word_type)
-    if topic:
-        where_clauses.append("w.topic = ?")
-        where_params.append(_safe_text(topic))
+    if topics:
+        clean_topics = [_safe_text(x) for x in topics if _safe_text(x)]
+        if clean_topics:
+            placeholders = ",".join("?" for _ in clean_topics)
+            where_clauses.append(f"w.topic IN ({placeholders})")
+            where_params.extend(clean_topics)
 
     where_sql = " AND ".join(where_clauses)
 
@@ -1664,7 +1682,7 @@ def get_form_review_stage(db_path, user_id, word_id, field):
     return int(row["stage"] or 0) if row else 0
 
 
-def list_weak_words(db_path, user_id, weak_field, word_type=None, topic=None, limit=200):
+def list_weak_words(db_path, user_id, weak_field, word_type=None, topics=None, limit=200):
     """Handle list weak words."""
     weak_field = _safe_text(weak_field).strip().lower()
     if weak_field not in {"article", "plural", "prateritum", "partizip2"}:
@@ -1681,9 +1699,12 @@ def list_weak_words(db_path, user_id, weak_field, word_type=None, topic=None, li
     if word_type:
         where.append("w.type = ?")
         params.append(_safe_text(word_type))
-    if topic:
-        where.append("w.topic = ?")
-        params.append(_safe_text(topic))
+    if topics:
+        clean_topics = [_safe_text(x) for x in topics if _safe_text(x)]
+        if clean_topics:
+            placeholders = ",".join("?" for _ in clean_topics)
+            where.append(f"w.topic IN ({placeholders})")
+            params.extend(clean_topics)
     query = f"""
         SELECT
             w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.russian,

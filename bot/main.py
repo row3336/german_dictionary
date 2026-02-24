@@ -123,6 +123,7 @@ from .storage import (
     is_banned_word,
     log_quiz_event,
     reset_periodicity,
+    list_topics,
 )
 from .i18n import (
     dict_choices,
@@ -285,18 +286,34 @@ def _topic_filter_value():
     return raw or "1"
 
 
+def _parse_topic_filter(raw):
+    """Handle parse topic filter."""
+    if not raw:
+        return []
+    if raw.lower() == "all":
+        return []
+    tokens = []
+    for chunk in raw.replace(",", "+").split("+"):
+        token = chunk.strip()
+        if token:
+            tokens.append(token)
+    return tokens
+
+
 def _topic_filter_for_query():
     """Handle topic filter for query."""
     raw = _topic_filter_value()
-    if raw.lower() == "all":
-        return None
-    return raw
+    topics = _parse_topic_filter(raw)
+    return topics or None
 
 
 def _current_topic_value():
     """Handle current topic value."""
     raw = _topic_filter_value()
-    return "1" if raw.lower() == "all" else raw
+    topics = _parse_topic_filter(raw)
+    if not topics:
+        return "1"
+    return topics[0]
 
 
 async def _send_algo_settings_menu(update: Update, user_id):
@@ -992,8 +1009,10 @@ async def settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
 
     if action == "topic_filter":
         current = _topic_filter_value()
+        topics = list_topics(get_db_path())
+        topics_line = ", ".join(topics) if topics else "-"
         await update.message.reply_text(
-            f"Current topic: {current}\nSend topic label or 'all' for no filter.",
+            f"Current topic filter: {current}\nTopics: {topics_line}\nSend e.g. 1+2+food or 'all'.",
             reply_markup=ReplyKeyboardRemove(),
         )
         return TOPIC_FILTER_EDIT
@@ -1157,7 +1176,7 @@ async def topic_filter_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ADD_PRECHECK
 
     await update.message.reply_text(
-        f"✅ Topic set to: {value}",
+        f"✅ Topic filter set to: {value}",
         reply_markup=ReplyKeyboardMarkup(_settings_menu_keys(user_id), resize_keyboard=True),
     )
     return SETTINGS_MENU
@@ -2389,7 +2408,7 @@ def _pick_due_entry(context, user_id, mode, word_type=None):
         user_id=user_id,
         mode=mode,
         word_type=word_type,
-        topic=_topic_filter_for_query(),
+        topics=_topic_filter_for_query(),
     )
     if not due:
         return None
@@ -2477,7 +2496,7 @@ def _pick_weak_entry(context, user_id, weak_field, word_type=None):
         user_id=user_id,
         weak_field=weak_field,
         word_type=word_type,
-        topic=_topic_filter_for_query(),
+        topics=_topic_filter_for_query(),
         limit=300,
     )
     if not due:

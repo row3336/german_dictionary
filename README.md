@@ -40,8 +40,8 @@ Supported dictionary pairs:
 
 ## Topics
 Each word belongs to a `topic` label (string). Default for existing data is `1`.
-Use Settings → `topic filter` to set the active topic or `all` to disable filtering.
-New words are saved under the current topic label.
+Use Settings → `topic filter` to set active topics (e.g. `1+2+food`) or `all` to disable filtering.
+New words are saved under the first topic in the filter (or `1` when `all`).
 
 ## Main Menus
 **Main menu**
