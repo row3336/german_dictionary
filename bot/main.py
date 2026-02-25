@@ -1463,7 +1463,7 @@ async def add_precheck(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"For recognition {len(recognition)}\n"
             "Choose topic for this list:"
         ),
-        reply_markup=ReplyKeyboardMarkup([[t(_user_interface_lang(update.effective_user.id), \"back\")]], resize_keyboard=True),
+        reply_markup=ReplyKeyboardMarkup([[t(_user_interface_lang(update.effective_user.id), "back")]], resize_keyboard=True),
     )
     context.user_data["topic_return"] = "add_queue"
     return TOPIC_FILTER_EDIT
