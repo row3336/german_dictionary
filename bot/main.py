@@ -2369,20 +2369,28 @@ def _check_ru_de_strict(entry, answer_text):
 
     if entry_type == "verb":
         if len(parts) < 2:
-            return False, {"partizip2": False}
+            return False, {"partizip2": False, "prateritum": False}
         infinitive_in = _normalize_answer(parts[0])
+        prateritum_in = ""
+        prateritum_provided = False
         if len(parts) == 2:
             p2_in = _normalize_answer(parts[1])
         else:
+            prateritum_in = _normalize_answer(parts[1])
+            prateritum_provided = True
             p2_in = _normalize_answer(" ".join(parts[2:]))
         for cand in synonyms:
             if (cand.get("type") or "").strip().lower() != "verb":
                 continue
             inf_ok = infinitive_in == _normalize_answer(cand.get("infinitive", ""))
             p2_ok = p2_in == _expected_partizip2(cand)
+            pr_ok = prateritum_provided and prateritum_in == _normalize_answer(cand.get("prateritum", ""))
             if inf_ok and p2_ok:
-                return True, {"partizip2": True}
-        return False, {"partizip2": p2_in == _expected_partizip2(entry)}
+                return True, {"partizip2": True, "prateritum": pr_ok}
+        return False, {
+            "partizip2": p2_in == _expected_partizip2(entry),
+            "prateritum": prateritum_provided and prateritum_in == _normalize_answer(entry.get("prateritum", "")),
+        }
 
     answer = _normalize_answer(answer_text)
     expected_values = []
