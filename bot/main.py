@@ -117,9 +117,6 @@ from .storage import (
     update_progress,
     update_word_fields,
     list_pending_word_flags,
-    list_daily_leaderboard,
-    list_daily_user_stats,
-    get_daily_totals,
     is_banned_word,
     log_quiz_event,
     reset_periodicity,
@@ -146,7 +143,6 @@ from .text_utils import (
 from .retry_logic import maybe_take_retry_entry, register_retry_result
 
 
-DAILY_STATS_JOB_NAME = "daily_stats_report"
 OWNER_INTERFACE_LANG_KEY = "owner_interface_lang"
 OWNER_DICT_LANG_KEY = "owner_dict_lang"
 TEST_ARTICLE_WEAK_TEXT = "Article Weak Mode"
@@ -3061,104 +3057,6 @@ async def _back_to_tests(update: Update, context: ContextTypes.DEFAULT_TYPE = No
     return TESTS_MENU
 
 
-def _user_display(row):
-    """Handle user display."""
-    username = str(row.get("username") or "").strip()
-    first_name = str(row.get("first_name") or "").strip()
-    if username:
-        return f"@{username}"
-    if first_name:
-        return first_name
-    return str(row.get("user_id"))
-
-
-def _format_daily_stats_text(day_iso, totals, per_user):
-    """Handle format daily stats text."""
-    lines = [
-        f"Daily stats ({day_iso})",
-        f"Users: {totals.get('unique_users', 0)}",
-        f"Attempts: {totals.get('total_attempts', 0)}",
-        f"Correct: {totals.get('correct_attempts', 0)}",
-        f"Win rate: {totals.get('win_rate', 0.0)}%",
-        f"Words touched: {totals.get('unique_words', 0)}",
-        f"Wrong->Correct: {totals.get('wrong_to_correct', 0)}",
-        f"Correct->Correct: {totals.get('correct_to_correct', 0)}",
-        f"First-time correct: {totals.get('first_time_correct', 0)}",
-        f"Memory score: {totals.get('memory_score', 0.0)}",
-    ]
-    if per_user:
-        lines.append("")
-        lines.append("Per user:")
-        for row in per_user:
-            lines.append(
-                f"- {_user_display(row)} | attempts={row['total_attempts']} | win={row['win_rate']}% | "
-                f"W->C={row['wrong_to_correct']} | C->C={row['correct_to_correct']} | score={row['memory_score']}"
-            )
-    return "\n".join(lines)
-
-
-def _format_leaderboard_text(day_iso, rows):
-    """Handle format leaderboard text."""
-    lines = [f"Leaderboard ({day_iso})"]
-    if not rows:
-        lines.append("No data.")
-        return "\n".join(lines)
-    for idx, row in enumerate(rows, start=1):
-        lines.append(
-            f"{idx}. {_user_display(row)} | win={row['win_rate']}% | attempts={row['total_attempts']} | score={row['memory_score']}"
-        )
-    return "\n".join(lines)
-
-
-async def stats_today_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle stats today command."""
-    if not is_owner(update.effective_user.id):
-        return
-    day_iso = datetime.now(timezone.utc).date().isoformat()
-    totals = get_daily_totals(get_db_path(), day_iso)
-    per_user = list_daily_user_stats(get_db_path(), day_iso)
-    await update.message.reply_text(_format_daily_stats_text(day_iso, totals, per_user))
-
-
-async def leaderboard_today_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle leaderboard today command."""
-    if not is_owner(update.effective_user.id):
-        return
-    day_iso = datetime.now(timezone.utc).date().isoformat()
-    rows = list_daily_leaderboard(get_db_path(), day_iso, min_attempts=1, limit=20)
-    await update.message.reply_text(_format_leaderboard_text(day_iso, rows))
-
-
-async def _daily_stats_job(context: ContextTypes.DEFAULT_TYPE):
-    """Handle daily stats job."""
-    owner_id = get_owner_id()
-    if not owner_id:
-        return
-    day_iso = (datetime.now(timezone.utc).date() - timedelta(days=1)).isoformat()
-    totals = get_daily_totals(get_db_path(), day_iso)
-    per_user = list_daily_user_stats(get_db_path(), day_iso)
-    leaderboard = list_daily_leaderboard(get_db_path(), day_iso, min_attempts=1, limit=10)
-    text = _format_daily_stats_text(day_iso, totals, per_user)
-    board = _format_leaderboard_text(day_iso, leaderboard)
-    try:
-        await context.bot.send_message(chat_id=owner_id, text=text)
-        await context.bot.send_message(chat_id=owner_id, text=board)
-    except Exception:
-        pass
-
-
-def _configure_daily_stats_report(app: Application):
-    """Handle configure daily stats report."""
-    job_queue = app.job_queue
-    if job_queue is None:
-        return
-    for job in job_queue.get_jobs_by_name(DAILY_STATS_JOB_NAME):
-        job.schedule_removal()
-    job_queue.run_daily(
-        _daily_stats_job,
-        time=time(hour=0, minute=0, tzinfo=timezone.utc),
-        name=DAILY_STATS_JOB_NAME,
-    )
 
 
 def _update_srs_for_entry(user_id, entry, mode, ok):
@@ -3341,8 +3239,6 @@ def main():
 
     mode = get_setting(get_db_path(), AUTO_DUMP_SETTING_KEY, "off")
     _configure_auto_dump(app, mode)
-    _configure_daily_stats_report(app)
-
     conv = ConversationHandler(
         entry_points=[
             CommandHandler("start", start),
@@ -3388,8 +3284,6 @@ def main():
     )
 
     app.add_handler(conv)
-    app.add_handler(CommandHandler("stats_today", stats_today_command))
-    app.add_handler(CommandHandler("leaderboard_today", leaderboard_today_command))
     app.run_polling()
 
 
