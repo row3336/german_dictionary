@@ -1253,6 +1253,33 @@ def update_progress(db_path, user_id, word_id, mode, quality):
         )
 
 
+def set_progress(db_path, user_id, word_id, mode, srs):
+    """Handle set progress."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO progress (user_id, word_id, mode, interval, repetitions, ease, due, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(user_id, word_id, mode) DO UPDATE SET
+                interval = excluded.interval,
+                repetitions = excluded.repetitions,
+                ease = excluded.ease,
+                due = excluded.due,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (
+                int(user_id),
+                _safe_text(word_id),
+                _safe_text(mode),
+                int(srs.get("interval", 1)),
+                int(srs.get("repetitions", 0)),
+                float(srs.get("ease", DEFAULT_EASE)),
+                _safe_text(srs.get("due", date.today().isoformat())),
+            ),
+        )
+
+
 def log_quiz_event(db_path, user_id, word_id, mode, is_correct, review_stage_snapshot=None):
     """Handle log quiz event."""
     init_db(db_path)

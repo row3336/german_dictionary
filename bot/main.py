@@ -49,6 +49,7 @@ from .app_config import (
     BACK_TEXT,
     FLAG_TEXT,
     I_DONT_KNOW_TEXT,
+    INPUT_ERR_TEXT,
     MENU,
     NUMERAL_SET,
     NUMERIC_RE,
@@ -114,6 +115,7 @@ from .storage import (
     update_form_stats,
     update_weak_review_state,
     update_progress,
+    set_progress,
     update_word_fields,
     list_pending_word_flags,
     is_banned_word,
@@ -445,7 +447,7 @@ def _quiz_markup(user_id, article=False, allow_idk=True):
     if article:
         rows.append(["der", "die", "das"])
     elif allow_idk:
-        rows.append([I_DONT_KNOW_TEXT])
+        rows.append([I_DONT_KNOW_TEXT, INPUT_ERR_TEXT])
     if is_owner(user_id):
         rows.append([AI_CLARIFY_FIELD, t(lang, "stop")])
     else:
@@ -583,6 +585,84 @@ async def _start_quiz_edit(update: Update, context: ContextTypes.DEFAULT_TYPE, r
         reply_markup=_quiz_edit_root_markup(update.effective_user.id),
     )
     return ADD_EDIT
+
+
+def _remember_last_answer(context, entry, mode, ok):
+    """Handle remember last answer."""
+    context.user_data["last_answered_entry"] = entry
+    context.user_data["last_answered_mode"] = mode
+    context.user_data["last_answered_ok"] = bool(ok)
+    context.user_data["last_answered_srs"] = dict(entry.get("srs") or {})
+
+
+def _clear_last_answer(context):
+    """Handle clear last answer."""
+    context.user_data.pop("last_answered_entry", None)
+    context.user_data.pop("last_answered_mode", None)
+    context.user_data.pop("last_answered_ok", None)
+    context.user_data.pop("last_answered_srs", None)
+
+
+def _remove_from_retry(context, mode, word_id):
+    """Handle remove from retry."""
+    queue = _retry_queue(context, mode)
+    counts = _retry_counts(context, mode)
+    if word_id in queue:
+        queue[:] = [x for x in queue if x != word_id]
+    counts.pop(word_id, None)
+
+
+async def _repeat_current_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
+    """Handle repeat current ru de."""
+    entry = context.user_data.get("quiz_entry")
+    if not entry:
+        return await _send_ru_de_prompt(update, context, prefix_text)
+    prompt_text = _format_ru_question(entry, _user_dict_lang(update.effective_user.id))
+    if prefix_text:
+        prompt_text = f"{prefix_text}\n\n{prompt_text}"
+    await update.message.reply_text(
+        prompt_text,
+        reply_markup=_quiz_markup(update.effective_user.id, article=False),
+        parse_mode="Markdown",
+    )
+    return QUIZ_RU_DE
+
+
+async def _repeat_current_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
+    """Handle repeat current de ru."""
+    entry = context.user_data.get("quiz_entry")
+    if not entry:
+        return await _send_de_ru_prompt(update, context, prefix_text)
+    prompt_text = _format_de_ru_question(entry)
+    if prefix_text:
+        prompt_text = f"{prefix_text}\n\n{prompt_text}"
+    await update.message.reply_text(
+        prompt_text,
+        reply_markup=_quiz_markup(update.effective_user.id, article=False),
+        parse_mode="Markdown",
+    )
+    return QUIZ_DE_RU
+
+
+def _apply_input_err(update, context, mode):
+    """Handle apply input error correction."""
+    last_entry = context.user_data.get("last_answered_entry")
+    last_mode = context.user_data.get("last_answered_mode")
+    last_ok = context.user_data.get("last_answered_ok")
+    last_srs = context.user_data.get("last_answered_srs")
+    if not last_entry or last_mode != mode or last_ok is None:
+        return False
+    if last_ok:
+        return False
+    if not last_srs:
+        return False
+    set_progress(get_db_path(), update.effective_user.id, last_entry.get("id"), mode, last_srs)
+    update_progress(get_db_path(), update.effective_user.id, last_entry.get("id"), mode, quality=5)
+    log_quiz_event(get_db_path(), user_id=update.effective_user.id, word_id=last_entry.get("id"), mode=mode, is_correct=True)
+    _remove_from_retry(context, mode, last_entry.get("id"))
+    _set_retry_since_last(context, mode, _retry_since_last(context, mode) + 1)
+    context.user_data["last_answered_ok"] = True
+    return True
 
 
 async def _show_quiz_prompt_after_edit(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text, state_override=None):
@@ -944,6 +1024,7 @@ async def quiz_ru_de_menu_choice(update: Update, context: ContextTypes.DEFAULT_T
         return TESTS_MENU
     if text == STANDARD_SM2_TEXT:
         _reset_retry_state(context)
+        _clear_last_answer(context)
         return await _send_ru_de_prompt(update, context, None)
     if text == TEST_ARTICLE_WEAK_TEXT:
         return await _send_article_weak_prompt(update, context, None)
@@ -1915,6 +1996,10 @@ async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "stop":
         return await _back_to_tests(update, context)
+    if text == INPUT_ERR_TEXT:
+        applied = _apply_input_err(update, context, _mode_l1_de(update.effective_user.id))
+        prefix = "✅ Fixed previous answer." if applied else "Nothing to fix."
+        return await _repeat_current_ru_de(update, context, prefix)
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_RU_DE)
     if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
@@ -1931,6 +2016,7 @@ async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ok, form_checks = _check_ru_de_strict(entry, text)
     mode = _mode_l1_de(update.effective_user.id)
     if not is_retry:
+        _remember_last_answer(context, entry, mode, ok)
         _update_srs_for_entry(update.effective_user.id, entry, mode, ok)
         if form_checks:
             update_form_stats(get_db_path(), update.effective_user.id, entry.get("id"), form_checks)
@@ -1948,6 +2034,10 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "stop":
         return await _back_to_tests(update, context)
+    if text == INPUT_ERR_TEXT:
+        applied = _apply_input_err(update, context, _mode_de_l1(update.effective_user.id))
+        prefix = "✅ Fixed previous answer." if applied else "Nothing to fix."
+        return await _repeat_current_de_ru(update, context, prefix)
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_DE_RU)
     if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
@@ -1966,6 +2056,7 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ok = answer in variants
     mode = _mode_de_l1(update.effective_user.id)
     if not is_retry:
+        _remember_last_answer(context, entry, mode, ok)
         _update_srs_for_entry(update.effective_user.id, entry, mode, ok)
     context.user_data["quiz_last_answered_entry"] = entry
     _register_retry_result(context, mode, entry.get("id"), ok, is_retry)
@@ -3073,6 +3164,7 @@ async def _back_to_tests(update: Update, context: ContextTypes.DEFAULT_TYPE = No
     """Handle back to tests."""
     if context is not None:
         _reset_retry_state(context)
+        _clear_last_answer(context)
     user_id = update.effective_user.id
     await update.message.reply_text(
         t(_user_interface_lang(user_id), "tests") + ":",
