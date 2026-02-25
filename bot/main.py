@@ -1256,16 +1256,6 @@ async def topic_filter_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pending = context.user_data.pop("pending_add_queue", [])
         stats = context.user_data.pop("pending_add_stats", {})
         context.user_data["add_queue"] = pending
-        await _reply_text_with_retry(
-            update.message,
-            (
-                f"Already in database {stats.get('existing', 0)}\n"
-                f"Filtred {stats.get('filtered', 0)}\n"
-                f"For recognition {len(pending)}\n"
-                "Logs: Settings -> Dump Logs"
-            ),
-            reply_markup=ReplyKeyboardMarkup(_stop_keys(update.effective_user.id), resize_keyboard=True),
-        )
         return await _process_next_ai_word(update, context)
     if return_to == "algo":
         await update.message.reply_text(
