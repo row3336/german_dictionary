@@ -73,7 +73,6 @@ from .app_config import (
     PRECHECK_EDIT,
     PRECHECK_KEYS,
     PRECHECK_REJECT,
-    PRECHECK_TOPIC,
     START_TEXT,
     STOP_TEXT,
     TESTS_MENU,
@@ -238,7 +237,6 @@ def _settings_menu_keys(user_id):
     lang = _user_interface_lang(user_id)
     return [
         ["flags!", t(lang, "algo_settings")],
-        [t(lang, "topic_filter")],
         [t(lang, "interface_lang_btn"), t(lang, "dict_lang_btn")],
         [t(lang, "dump"), t(lang, "back")],
     ]
@@ -248,9 +246,8 @@ def _algo_settings_menu_keys(user_id):
     """Handle algo settings menu keys."""
     lang = _user_interface_lang(user_id)
     return [
-        [t(lang, "ses_rtr_gap"), t(lang, "ses_rtr_it")],
-        [t(lang, "reset_periodicity")],
-        [t(lang, "back")],
+        [t(lang, "topic_filter"), t(lang, "ses_rtr_gap"), t(lang, "ses_rtr_it")],
+        [t(lang, "reset_periodicity"), t(lang, "back")],
     ]
 
 
@@ -1003,16 +1000,6 @@ async def settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
     if action == "algo_settings":
         return await _send_algo_settings_menu(update, user_id)
 
-    if action == "topic_filter":
-        current = _topic_filter_value()
-        topics = list_topics(get_db_path())
-        topics_line = ", ".join(topics) if topics else "-"
-        await update.message.reply_text(
-            f"Current topic filter: {current}\nTopics: {topics_line}\nSend e.g. 1+2+food or 'all'.",
-            reply_markup=ReplyKeyboardRemove(),
-        )
-        return TOPIC_FILTER_EDIT
-
     if action == "dump":
         await update.message.reply_text(
             "dump:",
@@ -1091,6 +1078,17 @@ async def algo_settings_menu_choice(update: Update, context: ContextTypes.DEFAUL
         )
         return ALGO_SETTINGS_EDIT
 
+    if text == t(lang, "topic_filter"):
+        current = _topic_filter_value()
+        topics = list_topics(get_db_path())
+        topics_line = ", ".join(topics) if topics else "-"
+        await update.message.reply_text(
+            f"Current topic filter: {current}\nTopics: {topics_line}\nSend e.g. 1+2+food or 'all'.",
+            reply_markup=ReplyKeyboardMarkup([[t(lang, "back")]], resize_keyboard=True),
+        )
+        context.user_data["topic_return"] = "algo"
+        return TOPIC_FILTER_EDIT
+
     if text == t(lang, "reset_periodicity"):
         context.user_data["algo_setting_edit"] = "reset_periodicity"
         await update.message.reply_text(
@@ -1149,6 +1147,17 @@ async def topic_filter_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     user_id = update.effective_user.id
     if _action_key_from_text(text, user_id) == "back":
+        return_to = context.user_data.pop("topic_return", "")
+        if return_to == "add_queue":
+            await update.message.reply_text(
+                "Topic selection canceled. Send a word or list.",
+                reply_markup=ReplyKeyboardMarkup(_add_keys(user_id), resize_keyboard=True),
+            )
+            context.user_data.pop("pending_add_queue", None)
+            context.user_data.pop("pending_add_stats", None)
+            return ADD_INPUT
+        if return_to == "algo":
+            return await _send_algo_settings_menu(update, user_id)
         await update.message.reply_text(
             t(_user_interface_lang(user_id), "settings_title"),
             reply_markup=ReplyKeyboardMarkup(_settings_menu_keys(user_id), resize_keyboard=True),
@@ -1162,14 +1171,27 @@ async def topic_filter_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     set_setting(get_db_path(), TOPIC_FILTER_KEY, value)
     return_to = context.user_data.pop("topic_return", "")
-    if return_to == "precheck":
-        items = context.user_data.get("precheck_items") or []
+    if return_to == "add_queue":
+        pending = context.user_data.pop("pending_add_queue", [])
+        stats = context.user_data.pop("pending_add_stats", {})
+        context.user_data["add_queue"] = pending
         await _reply_text_with_retry(
             update.message,
-            _format_precheck_list(items),
-            reply_markup=ReplyKeyboardMarkup(PRECHECK_KEYS, resize_keyboard=True),
+            (
+                f"Already in database {stats.get('existing', 0)}\n"
+                f"Filtred {stats.get('filtered', 0)}\n"
+                f"For recognition {len(pending)}\n"
+                "Logs: Settings -> Dump Logs"
+            ),
+            reply_markup=ReplyKeyboardMarkup(_stop_keys(update.effective_user.id), resize_keyboard=True),
         )
-        return ADD_PRECHECK
+        return await _process_next_ai_word(update, context)
+    if return_to == "algo":
+        await update.message.reply_text(
+            f"✅ Topic filter set to: {value}",
+            reply_markup=ReplyKeyboardMarkup(_algo_settings_menu_keys(user_id), resize_keyboard=True),
+        )
+        return ALGO_SETTINGS_MENU
 
     await update.message.reply_text(
         f"✅ Topic filter set to: {value}",
@@ -1327,14 +1349,6 @@ async def add_precheck(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=ReplyKeyboardMarkup(_add_keys(update.effective_user.id), resize_keyboard=True),
         )
         return ADD_INPUT
-    if text == PRECHECK_TOPIC:
-        context.user_data["topic_return"] = "precheck"
-        await _reply_text_with_retry(
-            update.message,
-            f"Current topic: {_current_topic_value()}\nSend topic label or 'all' for no filter.",
-            reply_markup=ReplyKeyboardMarkup(_stop_keys(update.effective_user.id), resize_keyboard=True),
-        )
-        return TOPIC_FILTER_EDIT
     if text == PRECHECK_EDIT:
         await _reply_text_with_retry(
             update.message,
@@ -1355,18 +1369,23 @@ async def add_precheck(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop("precheck_items", None)
     filtered = context.user_data.pop("precheck_filtered", [])
     existing = context.user_data.pop("precheck_existing", [])
-    context.user_data["add_queue"] = recognition
+    context.user_data["pending_add_queue"] = recognition
+    context.user_data["pending_add_stats"] = {
+        "existing": len(existing),
+        "filtered": len(filtered),
+    }
     await _reply_text_with_retry(
         update.message,
         (
             f"Already in database {len(existing)}\n"
             f"Filtred {len(filtered)}\n"
             f"For recognition {len(recognition)}\n"
-            "Logs: Settings -> Dump Logs"
+            "Choose topic for this list:"
         ),
-        reply_markup=ReplyKeyboardMarkup(_stop_keys(update.effective_user.id), resize_keyboard=True),
+        reply_markup=ReplyKeyboardMarkup([[t(_user_interface_lang(update.effective_user.id), \"back\")]], resize_keyboard=True),
     )
-    return await _process_next_ai_word(update, context)
+    context.user_data["topic_return"] = "add_queue"
+    return TOPIC_FILTER_EDIT
 
 
 def _parse_precheck_edit_lines(lines):
@@ -1408,18 +1427,23 @@ async def add_precheck_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop("precheck_items", None)
     filtered = context.user_data.pop("precheck_filtered", [])
     existing = context.user_data.pop("precheck_existing", [])
-    context.user_data["add_queue"] = recognition
+    context.user_data["pending_add_queue"] = recognition
+    context.user_data["pending_add_stats"] = {
+        "existing": len(existing),
+        "filtered": len(filtered),
+    }
     await _reply_text_with_retry(
         update.message,
         (
             f"Already in database {len(existing)}\n"
             f"Filtred {len(filtered)}\n"
             f"For recognition {len(recognition)}\n"
-            "Logs: Settings -> Dump Logs"
+            "Choose topic for this list:"
         ),
-        reply_markup=ReplyKeyboardMarkup(_stop_keys(update.effective_user.id), resize_keyboard=True),
+        reply_markup=ReplyKeyboardMarkup([[t(_user_interface_lang(update.effective_user.id), \"back\")]], resize_keyboard=True),
     )
-    return await _process_next_ai_word(update, context)
+    context.user_data["topic_return"] = "add_queue"
+    return TOPIC_FILTER_EDIT
 
 
 async def add_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
