@@ -1,5 +1,6 @@
 import sqlite3
 import uuid
+from contextlib import contextmanager
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -25,14 +26,22 @@ def default_srs(today=None):
     }
 
 
+@contextmanager
 def _connect(db_path):
     """Handle connect."""
     path = Path(db_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def _ensure_indexes(conn):
