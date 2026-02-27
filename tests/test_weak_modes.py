@@ -9,6 +9,7 @@ from bot.storage import (
     add_word,
     get_form_review_stage,
     get_form_state,
+    get_statistics_snapshot,
     init_db,
     list_weak_words,
     update_form_stats,
@@ -36,6 +37,26 @@ def _add_noun(db_path, german="Jacke", russian="куртка"):
             "infinitive": "",
             "prateritum": "",
             "partizip2": "",
+            "russian": russian,
+            "ukrainian": "",
+            "english": "",
+            "topic": "1",
+        },
+    )
+
+
+def _add_verb(db_path, infinitive="gehen", russian="идти"):
+    return add_word(
+        db_path,
+        {
+            "id": "unique",
+            "type": "verb",
+            "article": "",
+            "german": infinitive,
+            "plural": "",
+            "infinitive": infinitive,
+            "prateritum": "ging",
+            "partizip2": "gegangen",
             "russian": russian,
             "ukrainian": "",
             "english": "",
@@ -100,6 +121,44 @@ class WeakModesTests(unittest.TestCase):
         self.assertEqual(update_weak_review_state(db_path, 1, entry["id"], "article", True), 2)
         self.assertEqual(update_weak_review_state(db_path, 1, entry["id"], "article", True), 3)
         self.assertEqual(update_weak_review_state(db_path, 1, entry["id"], "article", True), 0)
+
+    def test_statistics_weak_breakdown_active_has_priority_over_review_stages(self):
+        db_path = _mk_db()
+        self.addCleanup(lambda: os.unlink(db_path))
+        init_db(db_path)
+
+        active = _add_noun(db_path, german="Apfel", russian="яблоко")
+        stage1 = _add_noun(db_path, german="Katze", russian="кошка")
+        active_with_stage = _add_noun(db_path, german="Jacke", russian="куртка")
+        verb = _add_verb(db_path, infinitive="sehen", russian="видеть")
+
+        update_form_stats(db_path, 1, active["id"], {"article": False})
+        update_form_stats(db_path, 1, active["id"], {"article": False})
+
+        update_form_stats(db_path, 1, stage1["id"], {"article": False})
+        update_form_stats(db_path, 1, stage1["id"], {"article": False})
+        update_form_stats(db_path, 1, stage1["id"], {"article": True})
+        update_form_stats(db_path, 1, stage1["id"], {"article": True})
+        update_form_stats(db_path, 1, stage1["id"], {"article": True})
+
+        update_form_stats(db_path, 1, active_with_stage["id"], {"article": False})
+        update_form_stats(db_path, 1, active_with_stage["id"], {"article": False})
+
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(
+                "UPDATE form_stats SET article_review_stage = 2 WHERE user_id = ? AND word_id = ?",
+                (1, active_with_stage["id"]),
+            )
+            conn.execute(
+                "INSERT INTO form_stats (user_id, word_id, article_review_stage) VALUES (?, ?, ?)",
+                (1, verb["id"], 1),
+            )
+
+        stats = get_statistics_snapshot(db_path, user_id=1, mode="ru_de")
+        self.assertEqual(stats["weak_article"], 2)
+        self.assertEqual(stats["weak_article_stage1"], 1)
+        self.assertEqual(stats["weak_article_stage2"], 0)
+        self.assertEqual(stats["weak_article_stage3"], 0)
 
 
 if __name__ == "__main__":

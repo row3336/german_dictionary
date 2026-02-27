@@ -971,10 +971,30 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"1 correct = {stats['streak_1']}",
             f"wrong sm2 = {stats['wrong_sm2']}",
             "",
-            f"weak article = {stats['weak_article']}",
-            f"weak plural = {stats['weak_plural']}",
-            f"weak partizip2 = {stats['weak_partizip2']}",
-            f"weak preterium = {stats['weak_prateritum']}",
+            (
+                f"weak article = {stats['weak_article']} "
+                f"({stats['weak_article_stage1']}) "
+                f"({stats['weak_article_stage2']}) "
+                f"({stats['weak_article_stage3']})"
+            ),
+            (
+                f"weak plural = {stats['weak_plural']} "
+                f"({stats['weak_plural_stage1']}) "
+                f"({stats['weak_plural_stage2']}) "
+                f"({stats['weak_plural_stage3']})"
+            ),
+            (
+                f"weak partizip2 = {stats['weak_partizip2']} "
+                f"({stats['weak_partizip2_stage1']}) "
+                f"({stats['weak_partizip2_stage2']}) "
+                f"({stats['weak_partizip2_stage3']})"
+            ),
+            (
+                f"weak preterium = {stats['weak_prateritum']} "
+                f"({stats['weak_prateritum_stage1']}) "
+                f"({stats['weak_prateritum_stage2']}) "
+                f"({stats['weak_prateritum_stage3']})"
+            ),
             "",
             f"words in dict = {stats['total_words']}",
             f"never touched = {stats['never_answered']}",

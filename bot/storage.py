@@ -600,19 +600,155 @@ def get_statistics_snapshot(db_path, user_id, mode):
         weak_row = conn.execute(
             """
             SELECT
-                SUM(CASE WHEN (article_errors >= 2 OR article_streak_wrong >= 2) THEN 1 ELSE 0 END) AS w_article,
-                SUM(CASE WHEN (plural_errors >= 2 OR plural_streak_wrong >= 2) THEN 1 ELSE 0 END) AS w_plural,
-                SUM(CASE WHEN (partizip2_errors >= 2 OR partizip2_streak_wrong >= 2) THEN 1 ELSE 0 END) AS w_partizip2,
-                SUM(CASE WHEN (prateritum_errors >= 2 OR prateritum_streak_wrong >= 2) THEN 1 ELSE 0 END) AS w_prateritum
-            FROM form_stats
-            WHERE user_id = ?
+                SUM(
+                    CASE
+                        WHEN w.type = 'nomen' AND (fs.article_errors >= 2 OR fs.article_streak_wrong >= 2) THEN 1
+                        ELSE 0
+                    END
+                ) AS article_active,
+                SUM(
+                    CASE
+                        WHEN w.type = 'nomen'
+                         AND fs.article_review_stage = 1
+                         AND NOT (fs.article_errors >= 2 OR fs.article_streak_wrong >= 2) THEN 1
+                        ELSE 0
+                    END
+                ) AS article_stage1,
+                SUM(
+                    CASE
+                        WHEN w.type = 'nomen'
+                         AND fs.article_review_stage = 2
+                         AND NOT (fs.article_errors >= 2 OR fs.article_streak_wrong >= 2) THEN 1
+                        ELSE 0
+                    END
+                ) AS article_stage2,
+                SUM(
+                    CASE
+                        WHEN w.type = 'nomen'
+                         AND fs.article_review_stage = 3
+                         AND NOT (fs.article_errors >= 2 OR fs.article_streak_wrong >= 2) THEN 1
+                        ELSE 0
+                    END
+                ) AS article_stage3,
+
+                SUM(
+                    CASE
+                        WHEN w.type = 'nomen' AND (fs.plural_errors >= 2 OR fs.plural_streak_wrong >= 2) THEN 1
+                        ELSE 0
+                    END
+                ) AS plural_active,
+                SUM(
+                    CASE
+                        WHEN w.type = 'nomen'
+                         AND fs.plural_review_stage = 1
+                         AND NOT (fs.plural_errors >= 2 OR fs.plural_streak_wrong >= 2) THEN 1
+                        ELSE 0
+                    END
+                ) AS plural_stage1,
+                SUM(
+                    CASE
+                        WHEN w.type = 'nomen'
+                         AND fs.plural_review_stage = 2
+                         AND NOT (fs.plural_errors >= 2 OR fs.plural_streak_wrong >= 2) THEN 1
+                        ELSE 0
+                    END
+                ) AS plural_stage2,
+                SUM(
+                    CASE
+                        WHEN w.type = 'nomen'
+                         AND fs.plural_review_stage = 3
+                         AND NOT (fs.plural_errors >= 2 OR fs.plural_streak_wrong >= 2) THEN 1
+                        ELSE 0
+                    END
+                ) AS plural_stage3,
+
+                SUM(
+                    CASE
+                        WHEN w.type = 'verb' AND (fs.partizip2_errors >= 2 OR fs.partizip2_streak_wrong >= 2) THEN 1
+                        ELSE 0
+                    END
+                ) AS partizip2_active,
+                SUM(
+                    CASE
+                        WHEN w.type = 'verb'
+                         AND fs.partizip2_review_stage = 1
+                         AND NOT (fs.partizip2_errors >= 2 OR fs.partizip2_streak_wrong >= 2) THEN 1
+                        ELSE 0
+                    END
+                ) AS partizip2_stage1,
+                SUM(
+                    CASE
+                        WHEN w.type = 'verb'
+                         AND fs.partizip2_review_stage = 2
+                         AND NOT (fs.partizip2_errors >= 2 OR fs.partizip2_streak_wrong >= 2) THEN 1
+                        ELSE 0
+                    END
+                ) AS partizip2_stage2,
+                SUM(
+                    CASE
+                        WHEN w.type = 'verb'
+                         AND fs.partizip2_review_stage = 3
+                         AND NOT (fs.partizip2_errors >= 2 OR fs.partizip2_streak_wrong >= 2) THEN 1
+                        ELSE 0
+                    END
+                ) AS partizip2_stage3,
+
+                SUM(
+                    CASE
+                        WHEN w.type = 'verb' AND (fs.prateritum_errors >= 2 OR fs.prateritum_streak_wrong >= 2) THEN 1
+                        ELSE 0
+                    END
+                ) AS prateritum_active,
+                SUM(
+                    CASE
+                        WHEN w.type = 'verb'
+                         AND fs.prateritum_review_stage = 1
+                         AND NOT (fs.prateritum_errors >= 2 OR fs.prateritum_streak_wrong >= 2) THEN 1
+                        ELSE 0
+                    END
+                ) AS prateritum_stage1,
+                SUM(
+                    CASE
+                        WHEN w.type = 'verb'
+                         AND fs.prateritum_review_stage = 2
+                         AND NOT (fs.prateritum_errors >= 2 OR fs.prateritum_streak_wrong >= 2) THEN 1
+                        ELSE 0
+                    END
+                ) AS prateritum_stage2,
+                SUM(
+                    CASE
+                        WHEN w.type = 'verb'
+                         AND fs.prateritum_review_stage = 3
+                         AND NOT (fs.prateritum_errors >= 2 OR fs.prateritum_streak_wrong >= 2) THEN 1
+                        ELSE 0
+                    END
+                ) AS prateritum_stage3
+            FROM form_stats fs
+            JOIN words w ON w.id = fs.word_id
+            WHERE fs.user_id = ?
             """,
             (user_id,),
         ).fetchone()
-        weak_article = int(weak_row["w_article"] or 0) if weak_row else 0
-        weak_plural = int(weak_row["w_plural"] or 0) if weak_row else 0
-        weak_partizip2 = int(weak_row["w_partizip2"] or 0) if weak_row else 0
-        weak_prateritum = int(weak_row["w_prateritum"] or 0) if weak_row else 0
+        weak_article = int(weak_row["article_active"] or 0) if weak_row else 0
+        weak_plural = int(weak_row["plural_active"] or 0) if weak_row else 0
+        weak_partizip2 = int(weak_row["partizip2_active"] or 0) if weak_row else 0
+        weak_prateritum = int(weak_row["prateritum_active"] or 0) if weak_row else 0
+
+        weak_article_stage1 = int(weak_row["article_stage1"] or 0) if weak_row else 0
+        weak_article_stage2 = int(weak_row["article_stage2"] or 0) if weak_row else 0
+        weak_article_stage3 = int(weak_row["article_stage3"] or 0) if weak_row else 0
+
+        weak_plural_stage1 = int(weak_row["plural_stage1"] or 0) if weak_row else 0
+        weak_plural_stage2 = int(weak_row["plural_stage2"] or 0) if weak_row else 0
+        weak_plural_stage3 = int(weak_row["plural_stage3"] or 0) if weak_row else 0
+
+        weak_partizip2_stage1 = int(weak_row["partizip2_stage1"] or 0) if weak_row else 0
+        weak_partizip2_stage2 = int(weak_row["partizip2_stage2"] or 0) if weak_row else 0
+        weak_partizip2_stage3 = int(weak_row["partizip2_stage3"] or 0) if weak_row else 0
+
+        weak_prateritum_stage1 = int(weak_row["prateritum_stage1"] or 0) if weak_row else 0
+        weak_prateritum_stage2 = int(weak_row["prateritum_stage2"] or 0) if weak_row else 0
+        weak_prateritum_stage3 = int(weak_row["prateritum_stage3"] or 0) if weak_row else 0
 
         touch_row = conn.execute(
             """
@@ -738,9 +874,21 @@ def get_statistics_snapshot(db_path, user_id, mode):
         "streak_1": streak_1,
         "wrong_sm2": wrong_sm2,
         "weak_article": weak_article,
+        "weak_article_stage1": weak_article_stage1,
+        "weak_article_stage2": weak_article_stage2,
+        "weak_article_stage3": weak_article_stage3,
         "weak_plural": weak_plural,
+        "weak_plural_stage1": weak_plural_stage1,
+        "weak_plural_stage2": weak_plural_stage2,
+        "weak_plural_stage3": weak_plural_stage3,
         "weak_partizip2": weak_partizip2,
+        "weak_partizip2_stage1": weak_partizip2_stage1,
+        "weak_partizip2_stage2": weak_partizip2_stage2,
+        "weak_partizip2_stage3": weak_partizip2_stage3,
         "weak_prateritum": weak_prateritum,
+        "weak_prateritum_stage1": weak_prateritum_stage1,
+        "weak_prateritum_stage2": weak_prateritum_stage2,
+        "weak_prateritum_stage3": weak_prateritum_stage3,
         "today_complete": today_complete,
         "never_answered": never_answered,
         "retention_7d_pct": retention_7d_pct,
