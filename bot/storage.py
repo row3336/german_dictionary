@@ -568,11 +568,20 @@ def get_statistics_snapshot(db_path, user_id, mode):
         wrong_sm2 = int(
             conn.execute(
                 """
-                SELECT COUNT(DISTINCT word_id) AS cnt
-                FROM quiz_events
-                WHERE user_id = ?
-                  AND mode = ?
-                  AND is_correct = 0
+                WITH last_events AS (
+                    SELECT
+                        e.word_id AS word_id,
+                        MAX(e.id) AS last_id
+                    FROM quiz_events e
+                    JOIN words w ON w.id = e.word_id
+                    WHERE e.user_id = ?
+                      AND e.mode = ?
+                    GROUP BY e.word_id
+                )
+                SELECT COUNT(*) AS cnt
+                FROM last_events le
+                JOIN quiz_events e ON e.id = le.last_id
+                WHERE e.is_correct = 0
                 """,
                 (user_id, mode),
             ).fetchone()["cnt"]
