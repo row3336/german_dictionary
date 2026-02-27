@@ -16,46 +16,12 @@ AI_BAN_WORD = "Ban"
 PRECHECK_CONFIRM = "Approve"
 PRECHECK_EDIT = "Edit list"
 PRECHECK_REJECT = "Reject list"
-ALGO_SETTINGS_TEXT = "algo settings"
-SES_RTR_GAP_TEXT = "ses.rtr_gap"
-SES_RTR_IT_TEXT = "ses.rtr_it"
-RESET_PERIODICITY_TEXT = "reset periodicity"
-TOPIC_FILTER_TEXT = "topic filter"
-UNIT_TESTS_TEXT = "unit tests"
-
-OWNER_MAIN_KEYS = [["Add words", "Quiz"], ["Settings", "Statistics"]]
-USER_MAIN_KEYS = [["Add words", "Quiz"], ["Info", "Statistics"]]
-WAIT_KEYS = [[START_TEXT]]
-ADD_KEYS = [[BACK_TEXT]]
 AI_KEYS = [[AI_CONFIRM, AI_CLARIFY_AI, AI_CLARIFY_FIELD], [AI_REJECT, AI_BAN_WORD, STOP_TEXT]]
 PRECHECK_KEYS = [[PRECHECK_CONFIRM, PRECHECK_EDIT, PRECHECK_REJECT], [STOP_TEXT]]
-TESTS_KEYS = [["Ru > De", "De > Ru"], ["Articles", BACK_TEXT]]
 REVIEW_FLAGS_TEXT = "Review Flags \u26A0\uFE0F"
-SETTINGS_KEYS = [
-    ["Suggested Words", REVIEW_FLAGS_TEXT],
-    ["Levels", "Auto Dump"],
-    ["Dump Logs", "Dump DB"],
-    [BACK_TEXT],
-]
-AUTO_DUMP_KEYS = [["Daily", "Weekly"], ["Off", BACK_TEXT]]
-LEVELS_BACK_TEXT = "Back"
 FLAG_TEXT = "\u26A0\uFE0F"
 I_DONT_KNOW_TEXT = "idk ;("
 INPUT_ERR_TEXT = "input_err"
-REVIEW_MARK_TEXT = "Mark Reviewed"
-REVIEW_SKIP_TEXT = "Skip"
-EDIT_FIELDS_KEYS = [["russian", "level"], [BACK_TEXT]]
-EDIT_FIELDS_KEYS_FULL = [
-    ["russian", "level"],
-    ["article", "plural"],
-    ["prateritum", "partizip2"],
-    ["german", "infinitive"],
-    ["type", BACK_TEXT],
-]
-EDIT_LEVEL_KEYS = [["A1", "A2", "B1"], ["B2", "C1", "C2"], [BACK_TEXT]]
-
-APPROVE_PREFIX = "approve_user:"
-REJECT_PREFIX = "reject_user:"
 AUTO_DUMP_SETTING_KEY = "auto_dump_mode"
 AUTO_DUMP_JOB_NAME = "auto_db_dump"
 SESSION_RETRY_GAP_KEY = "session_retry_gap"

@@ -8,7 +8,6 @@ import shutil
 import subprocess
 from logging.handlers import TimedRotatingFileHandler
 from datetime import datetime, time, timezone
-from datetime import timedelta
 
 from dotenv import load_dotenv
 from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
@@ -44,7 +43,6 @@ from .app_config import (
     TOPIC_FILTER_EDIT,
     ARTICLE_SET,
     AUTO_DUMP_JOB_NAME,
-    AUTO_DUMP_KEYS,
     DUMP_MENU,
     AUTO_DUMP_MENU,
     AUTO_DUMP_SETTING_KEY,
