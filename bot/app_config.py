@@ -21,6 +21,7 @@ SES_RTR_GAP_TEXT = "ses.rtr_gap"
 SES_RTR_IT_TEXT = "ses.rtr_it"
 RESET_PERIODICITY_TEXT = "reset periodicity"
 TOPIC_FILTER_TEXT = "topic filter"
+UNIT_TESTS_TEXT = "unit tests"
 
 OWNER_MAIN_KEYS = [["Add words", "Quiz"], ["Settings", "Statistics"]]
 USER_MAIN_KEYS = [["Add words", "Quiz"], ["Info", "Statistics"]]

@@ -565,6 +565,19 @@ def get_statistics_snapshot(db_path, user_id, mode):
         streak_3p = int(streak_row["s3"] or 0) if streak_row else 0
         streak_2 = int(streak_row["s2"] or 0) if streak_row else 0
         streak_1 = int(streak_row["s1"] or 0) if streak_row else 0
+        wrong_sm2 = int(
+            conn.execute(
+                """
+                SELECT COUNT(DISTINCT word_id) AS cnt
+                FROM quiz_events
+                WHERE user_id = ?
+                  AND mode = ?
+                  AND is_correct = 0
+                """,
+                (user_id, mode),
+            ).fetchone()["cnt"]
+            or 0
+        )
 
         weak_row = conn.execute(
             """
@@ -705,6 +718,7 @@ def get_statistics_snapshot(db_path, user_id, mode):
         "streak_3p": streak_3p,
         "streak_2": streak_2,
         "streak_1": streak_1,
+        "wrong_sm2": wrong_sm2,
         "weak_article": weak_article,
         "weak_plural": weak_plural,
         "weak_partizip2": weak_partizip2,

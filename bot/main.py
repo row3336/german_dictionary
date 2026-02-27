@@ -4,6 +4,7 @@ import logging
 import os
 import random
 import shutil
+import subprocess
 from logging.handlers import TimedRotatingFileHandler
 from datetime import datetime, time, timezone
 from datetime import timedelta
@@ -249,7 +250,7 @@ def _algo_settings_menu_keys(user_id):
     lang = _user_interface_lang(user_id)
     return [
         [t(lang, "topic_filter"), t(lang, "ses_rtr_gap"), t(lang, "ses_rtr_it")],
-        [t(lang, "reset_periodicity"), t(lang, "back")],
+        [t(lang, "reset_periodicity"), t(lang, "unit_tests"), t(lang, "back")],
     ]
 
 
@@ -321,6 +322,7 @@ async def _send_algo_settings_menu(update: Update, user_id):
             f"{t(lang, 'algo_settings')}:",
             f"{t(lang, 'ses_rtr_gap')} = {gap}",
             f"{t(lang, 'ses_rtr_it')} = {iterations}",
+            f"{t(lang, 'topic_filter')} = {_topic_filter_value()}",
         ]
     )
     await update.message.reply_text(
@@ -328,6 +330,44 @@ async def _send_algo_settings_menu(update: Update, user_id):
         reply_markup=ReplyKeyboardMarkup(_algo_settings_menu_keys(user_id), resize_keyboard=True),
     )
     return ALGO_SETTINGS_MENU
+
+
+def _run_unit_tests_report():
+    """Handle run unit tests report."""
+    root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    cmd = [
+        "python3",
+        "-m",
+        "unittest",
+        "-q",
+        "tests.test_retry_logic",
+        "tests.test_sm2_logic",
+        "tests.test_weak_modes",
+    ]
+    try:
+        env = dict(os.environ)
+        env["PYTHONWARNINGS"] = "ignore::ResourceWarning"
+        proc = subprocess.run(
+            cmd,
+            cwd=root_dir,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+            env=env,
+        )
+    except Exception as exc:
+        return f"unit tests failed to run: {exc}"
+    out = (proc.stdout or "").strip()
+    err = (proc.stderr or "").strip()
+    text = out
+    if err:
+        text = f"{text}\n{err}".strip()
+    if not text:
+        text = f"exit_code={proc.returncode}"
+    if len(text) > 3500:
+        text = text[:3500] + "\n...truncated..."
+    return text.replace("```", "'''")
 
 
 def _dump_menu_keys(user_id):
@@ -927,6 +967,7 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"3+ correct streak = {stats['streak_3p']}",
             f"2 correct streak = {stats['streak_2']}",
             f"1 correct = {stats['streak_1']}",
+            f"wrong sm2 = {stats['wrong_sm2']}",
             "",
             f"weak article = {stats['weak_article']}",
             f"weak plural = {stats['weak_plural']}",
@@ -1169,6 +1210,15 @@ async def algo_settings_menu_choice(update: Update, context: ContextTypes.DEFAUL
         )
         context.user_data["topic_return"] = "algo"
         return TOPIC_FILTER_EDIT
+
+    if text == t(lang, "unit_tests"):
+        report = _run_unit_tests_report()
+        await update.message.reply_text(
+            f"```text\n{report}\n```",
+            parse_mode="Markdown",
+            reply_markup=ReplyKeyboardMarkup(_algo_settings_menu_keys(user_id), resize_keyboard=True),
+        )
+        return ALGO_SETTINGS_MENU
 
     if text == t(lang, "reset_periodicity"):
         context.user_data["algo_setting_edit"] = "reset_periodicity"
