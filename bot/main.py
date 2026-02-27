@@ -3,6 +3,7 @@ import asyncio
 import logging
 import os
 import random
+import re
 import shutil
 import subprocess
 from logging.handlers import TimedRotatingFileHandler
@@ -317,12 +318,15 @@ async def _send_algo_settings_menu(update: Update, user_id):
     lang = _user_interface_lang(user_id)
     gap = _session_retry_gap(get_db_path())
     iterations = _session_retry_iterations(get_db_path())
+    topics = list_topics(get_db_path())
+    topics_line = ", ".join(topics) if topics else "-"
     msg = "\n".join(
         [
             f"{t(lang, 'algo_settings')}:",
             f"{t(lang, 'ses_rtr_gap')} = {gap}",
             f"{t(lang, 'ses_rtr_it')} = {iterations}",
             f"{t(lang, 'topic_filter')} = {_topic_filter_value()}",
+            f"topics = {topics_line}",
         ]
     )
     await update.message.reply_text(
@@ -1516,10 +1520,20 @@ def _parse_precheck_edit_lines(lines):
         raw = str(line or "").strip()
         if not raw:
             continue
+        low = raw.lower()
+        if low.startswith("precheck list"):
+            continue
+        raw = re.sub(r"^\d+\.\s*", "", raw).strip()
+        if not raw:
+            continue
         if "[" in raw and "]" in raw:
             raw = raw.split("[", 1)[0].strip()
+        if "(from " in raw:
+            raw = raw.split("(from ", 1)[0].strip()
         if " - " in raw:
             raw = raw.split(" - ", 1)[0].strip()
+        if not raw:
+            continue
         result.append(raw)
     return result
 
@@ -1664,6 +1678,16 @@ async def add_clarify(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "stop":
         return await _stop_queue(update, context)
+    if text == AI_REJECT:
+        return await _process_next_ai_word(update, context)
+    if text == AI_CONFIRM:
+        entry = context.user_data.pop("pending_entry", None)
+        if not entry:
+            return await _process_next_ai_word(update, context)
+        saved = await _save_entry(update, entry)
+        if saved is None:
+            return await _process_next_ai_word(update, context)
+        return await _process_next_ai_word(update, context)
     if text == AI_SKIP:
         return await _process_next_ai_word(update, context)
     if text == AI_BAN_WORD:
@@ -2399,11 +2423,11 @@ def _check_ru_de_strict(entry, answer_text):
     synonyms = _synonym_entries(entry)
 
     if entry_type == "nomen":
-        if len(parts) < 3:
+        if len(parts) < 2:
             return False, {"article": False, "plural": False}
         article_in = _normalize_answer(parts[0])
         german_in = _normalize_answer(parts[1])
-        plural_in = _normalize_plural_value(" ".join(parts[2:]))
+        plural_in = _normalize_plural_value(" ".join(parts[2:])) if len(parts) >= 3 else german_in
         for cand in synonyms:
             if (cand.get("type") or "").strip().lower() != "nomen":
                 continue
@@ -3314,6 +3338,8 @@ def _configure_logging():
     root_logger.addHandler(stream_handler)
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
+    logging.getLogger("apscheduler").setLevel(logging.WARNING)
+    logging.getLogger("apscheduler.executors.default").setLevel(logging.WARNING)
 
     _cleanup_old_dump_logs()
 
