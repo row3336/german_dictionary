@@ -1419,6 +1419,21 @@ def update_form_stats(db_path, user_id, word_id, checks):
         for field in fields:
             ok = safe_checks[field]
             if ok:
+                pre_row = conn.execute(
+                    f"""
+                    SELECT
+                        {field}_errors AS errors,
+                        {field}_streak_wrong AS streak_wrong,
+                        {field}_review_stage AS stage
+                    FROM form_stats
+                    WHERE user_id = ? AND word_id = ?
+                    """,
+                    (int(user_id), _safe_text(word_id)),
+                ).fetchone()
+                pre_errors = int(pre_row["errors"] or 0) if pre_row else 0
+                pre_streak_wrong = int(pre_row["streak_wrong"] or 0) if pre_row else 0
+                pre_stage = int(pre_row["stage"] or 0) if pre_row else 0
+                was_active_before = pre_errors >= 2 or pre_streak_wrong >= 2
                 conn.execute(
                     f"""
                     UPDATE form_stats
@@ -1438,21 +1453,6 @@ def update_form_stats(db_path, user_id, word_id, checks):
                 ).fetchone()
                 streak = int(row["s"] or 0) if row else 0
                 if streak >= 3:
-                    stage_row = conn.execute(
-                        f"""
-                        SELECT
-                            {field}_review_stage AS stage,
-                            {field}_errors AS errors,
-                            {field}_streak_wrong AS streak_wrong
-                        FROM form_stats
-                        WHERE user_id = ? AND word_id = ?
-                        """,
-                        (int(user_id), _safe_text(word_id)),
-                    ).fetchone()
-                    stage = int(stage_row["stage"] or 0) if stage_row else 0
-                    errors = int(stage_row["errors"] or 0) if stage_row else 0
-                    streak_wrong = int(stage_row["streak_wrong"] or 0) if stage_row else 0
-                    active_before = errors >= 2 or streak_wrong >= 2
                     conn.execute(
                         f"""
                         UPDATE form_stats
@@ -1463,7 +1463,7 @@ def update_form_stats(db_path, user_id, word_id, checks):
                         """,
                         (int(user_id), _safe_text(word_id)),
                     )
-                    if stage == 0 and active_before:
+                    if pre_stage == 0 and was_active_before:
                         conn.execute(
                             f"""
                             UPDATE form_stats
