@@ -343,7 +343,7 @@ def _run_unit_tests_report():
         "python3",
         "-m",
         "unittest",
-        "-q",
+        "-v",
         "tests.test_retry_logic",
         "tests.test_sm2_logic",
         "tests.test_weak_modes",
