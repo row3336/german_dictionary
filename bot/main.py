@@ -40,6 +40,7 @@ from .app_config import (
     ALGO_SETTINGS_CONFIRM,
     ALGO_SETTINGS_EDIT,
     ALGO_SETTINGS_MENU,
+    DRILL_SETTINGS_MENU,
     TOPIC_FILTER_EDIT,
     ARTICLE_SET,
     AUTO_DUMP_JOB_NAME,
@@ -85,6 +86,8 @@ from .app_config import (
     SESSION_RETRY_GAP_KEY,
     SESSION_RETRY_IT_KEY,
     TOPIC_FILTER_KEY,
+    WEAK_DRILL_GAP_KEY,
+    WEAK_DRILL_REPEATS_KEY,
     get_suggestions_path,
     is_owner,
 )
@@ -172,6 +175,8 @@ QUIZ_DE_RU_TEXT = "De > Ru"
 
 RETRY_GAP_QUESTIONS = 3
 RETRY_MAX_REPEATS = 4
+WEAK_DRILL_GAP_DEFAULT = 4
+WEAK_DRILL_REPEATS_DEFAULT = 10
 
 
 def _main_menu_keys(user_id):
@@ -255,7 +260,17 @@ def _algo_settings_menu_keys(user_id):
     lang = _user_interface_lang(user_id)
     return [
         [t(lang, "topic_filter"), t(lang, "ses_rtr_gap"), t(lang, "ses_rtr_it")],
-        [t(lang, "reset_periodicity"), t(lang, "unit_tests"), t(lang, "back")],
+        [t(lang, "drill_sett"), t(lang, "reset_periodicity"), t(lang, "unit_tests")],
+        [t(lang, "back")],
+    ]
+
+
+def _drill_settings_menu_keys(user_id):
+    """Handle drill settings menu keys."""
+    lang = _user_interface_lang(user_id)
+    return [
+        [t(lang, "weak_drill_gap"), t(lang, "weak_drill_repeats")],
+        [t(lang, "back")],
     ]
 
 
@@ -278,6 +293,18 @@ def _session_retry_gap(db_path):
 def _session_retry_iterations(db_path):
     """Handle session retry iterations."""
     value = _get_int_setting(db_path, SESSION_RETRY_IT_KEY, RETRY_MAX_REPEATS)
+    return max(1, value)
+
+
+def _weak_drill_gap(db_path):
+    """Handle weak drill gap."""
+    value = _get_int_setting(db_path, WEAK_DRILL_GAP_KEY, WEAK_DRILL_GAP_DEFAULT)
+    return max(1, value)
+
+
+def _weak_drill_repeats(db_path):
+    """Handle weak drill repeats."""
+    value = _get_int_setting(db_path, WEAK_DRILL_REPEATS_KEY, WEAK_DRILL_REPEATS_DEFAULT)
     return max(1, value)
 
 
@@ -334,6 +361,8 @@ async def _send_algo_settings_menu(update: Update, user_id):
     lang = _user_interface_lang(user_id)
     gap = _session_retry_gap(get_db_path())
     iterations = _session_retry_iterations(get_db_path())
+    weak_drill_gap = _weak_drill_gap(get_db_path())
+    weak_drill_repeats = _weak_drill_repeats(get_db_path())
     topics = list_topics(get_db_path())
     topics_line = ", ".join(topics) if topics else "-"
     msg = "\n".join(
@@ -341,6 +370,8 @@ async def _send_algo_settings_menu(update: Update, user_id):
             f"{t(lang, 'algo_settings')}:",
             f"{t(lang, 'ses_rtr_gap')} = {gap}",
             f"{t(lang, 'ses_rtr_it')} = {iterations}",
+            f"{t(lang, 'weak_drill_gap')} = {weak_drill_gap}",
+            f"{t(lang, 'weak_drill_repeats')} = {weak_drill_repeats}",
             f"{t(lang, 'topic_filter')} = {_topic_filter_value()}",
             f"weak.active = err>={WEAK_ACTIVE_MIN_ERRORS} or wrong_streak>={WEAK_ACTIVE_MIN_STREAK_WRONG}",
             f"weak.to_review = {WEAK_ACTIVE_CLEAR_STREAK} correct in row",
@@ -353,6 +384,23 @@ async def _send_algo_settings_menu(update: Update, user_id):
         reply_markup=ReplyKeyboardMarkup(_algo_settings_menu_keys(user_id), resize_keyboard=True),
     )
     return ALGO_SETTINGS_MENU
+
+
+async def _send_drill_settings_menu(update: Update, user_id):
+    """Handle send drill settings menu."""
+    lang = _user_interface_lang(user_id)
+    msg = "\n".join(
+        [
+            f"{t(lang, 'drill_sett')}:",
+            f"{t(lang, 'weak_drill_gap')} = {_weak_drill_gap(get_db_path())}",
+            f"{t(lang, 'weak_drill_repeats')} = {_weak_drill_repeats(get_db_path())}",
+        ]
+    )
+    await update.message.reply_text(
+        msg,
+        reply_markup=ReplyKeyboardMarkup(_drill_settings_menu_keys(user_id), resize_keyboard=True),
+    )
+    return DRILL_SETTINGS_MENU
 
 
 def _run_unit_tests_report():
@@ -422,6 +470,7 @@ def _action_key_from_text(text, user_id):
         ("review_flags", "review_flags"),
         ("algo_settings", "algo_settings"),
         ("topic_filter", "topic_filter"),
+        ("drill_sett", "drill_sett"),
         ("auto_dump", "auto_dump"),
         ("daily", "daily"),
         ("weekly", "weekly"),
@@ -1117,8 +1166,10 @@ async def quiz_ru_de_menu_choice(update: Update, context: ContextTypes.DEFAULT_T
         _clear_last_answer(context)
         return await _send_ru_de_prompt(update, context, None)
     if text == TEST_ARTICLE_WEAK_TEXT:
+        _reset_weak_drill_state(context, "weak_article")
         return await _send_article_weak_prompt(update, context, None)
     if text == TEST_PLURAL_WEAK_TEXT:
+        _reset_weak_drill_state(context, "weak_plural")
         return await _send_plural_weak_prompt(update, context, None)
     if text == TEST_VERB_WEAK_TEXT:
         await update.message.reply_text(
@@ -1143,8 +1194,10 @@ async def quiz_verb_weak_menu_choice(update: Update, context: ContextTypes.DEFAU
         )
         return QUIZ_RU_DE_MENU
     if text == TEST_PRATERITUM_WEAK_TEXT:
+        _reset_weak_drill_state(context, "weak_prateritum")
         return await _send_prateritum_weak_prompt(update, context, None)
     if text == TEST_PARTIZIP2_WEAK_TEXT:
+        _reset_weak_drill_state(context, "weak_partizip2")
         return await _send_partizip2_weak_prompt(update, context, None)
     await update.message.reply_text(
         "Use verb weak mode buttons.",
@@ -1233,8 +1286,12 @@ async def algo_settings_menu_choice(update: Update, context: ContextTypes.DEFAUL
         )
         return SETTINGS_MENU
 
+    if action == "drill_sett":
+        return await _send_drill_settings_menu(update, user_id)
+
     if text == t(lang, "ses_rtr_gap"):
         context.user_data["algo_setting_edit"] = SESSION_RETRY_GAP_KEY
+        context.user_data["algo_edit_return"] = "algo"
         await update.message.reply_text(
             "Enter ses.rtr_gap (number of SM2 questions between retries):",
             reply_markup=ReplyKeyboardRemove(),
@@ -1243,6 +1300,7 @@ async def algo_settings_menu_choice(update: Update, context: ContextTypes.DEFAUL
 
     if text == t(lang, "ses_rtr_it"):
         context.user_data["algo_setting_edit"] = SESSION_RETRY_IT_KEY
+        context.user_data["algo_edit_return"] = "algo"
         await update.message.reply_text(
             "Enter ses.rtr_it (retry repetitions per word):",
             reply_markup=ReplyKeyboardRemove(),
@@ -1284,15 +1342,57 @@ async def algo_settings_menu_choice(update: Update, context: ContextTypes.DEFAUL
     return ALGO_SETTINGS_MENU
 
 
+async def drill_settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle drill settings menu choice."""
+    text = update.message.text.strip()
+    user_id = update.effective_user.id
+    lang = _user_interface_lang(user_id)
+    action = _action_key_from_text(text, user_id)
+
+    if action == "back":
+        return await _send_algo_settings_menu(update, user_id)
+
+    if text == t(lang, "weak_drill_gap"):
+        context.user_data["algo_setting_edit"] = WEAK_DRILL_GAP_KEY
+        context.user_data["algo_edit_return"] = "drill"
+        await update.message.reply_text(
+            "Enter weak.drill_gap (normal weak questions between drill repeats):",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        return ALGO_SETTINGS_EDIT
+
+    if text == t(lang, "weak_drill_repeats"):
+        context.user_data["algo_setting_edit"] = WEAK_DRILL_REPEATS_KEY
+        context.user_data["algo_edit_return"] = "drill"
+        await update.message.reply_text(
+            "Enter weak.drill_repeats (total weak shows per word in session):",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        return ALGO_SETTINGS_EDIT
+
+    await update.message.reply_text(
+        "Use drill settings buttons.",
+        reply_markup=ReplyKeyboardMarkup(_drill_settings_menu_keys(user_id), resize_keyboard=True),
+    )
+    return DRILL_SETTINGS_MENU
+
+
 async def algo_settings_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle algo settings edit."""
     text = update.message.text.strip()
     user_id = update.effective_user.id
+    return_to = context.user_data.get("algo_edit_return", "algo")
     if _action_key_from_text(text, user_id) == "back":
+        context.user_data.pop("algo_setting_edit", None)
+        context.user_data.pop("algo_edit_return", None)
+        if return_to == "drill":
+            return await _send_drill_settings_menu(update, user_id)
         return await _send_algo_settings_menu(update, user_id)
 
     key = context.user_data.get("algo_setting_edit")
-    if key not in {SESSION_RETRY_GAP_KEY, SESSION_RETRY_IT_KEY}:
+    if key not in {SESSION_RETRY_GAP_KEY, SESSION_RETRY_IT_KEY, WEAK_DRILL_GAP_KEY, WEAK_DRILL_REPEATS_KEY}:
+        if return_to == "drill":
+            return await _send_drill_settings_menu(update, user_id)
         return await _send_algo_settings_menu(update, user_id)
 
     try:
@@ -1306,6 +1406,10 @@ async def algo_settings_edit(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return ALGO_SETTINGS_EDIT
 
     set_setting(get_db_path(), key, str(value))
+    context.user_data.pop("algo_setting_edit", None)
+    context.user_data.pop("algo_edit_return", None)
+    if return_to == "drill":
+        return await _send_drill_settings_menu(update, user_id)
     return await _send_algo_settings_menu(update, user_id)
 
 
@@ -2717,6 +2821,83 @@ def _reset_retry_state(context):
     context.user_data.pop("quiz_is_retry", None)
 
 
+def _weak_drill_queue(context, mode):
+    """Handle weak drill queue."""
+    queues = context.user_data.setdefault("weak_drill_queue", {})
+    return queues.setdefault(mode, [])
+
+
+def _weak_drill_counts(context, mode):
+    """Handle weak drill counts."""
+    counts = context.user_data.setdefault("weak_drill_counts", {})
+    return counts.setdefault(mode, {})
+
+
+def _weak_drill_since_last(context, mode):
+    """Handle weak drill since last."""
+    counters = context.user_data.setdefault("weak_drill_since_last", {})
+    return counters.get(mode, 0)
+
+
+def _set_weak_drill_since_last(context, mode, value):
+    """Handle set weak drill since last."""
+    counters = context.user_data.setdefault("weak_drill_since_last", {})
+    counters[mode] = int(value)
+
+
+def _reset_weak_drill_state(context, mode=None):
+    """Handle reset weak drill state."""
+    if mode:
+        for key in ("weak_drill_queue", "weak_drill_counts", "weak_drill_since_last"):
+            bucket = context.user_data.get(key)
+            if isinstance(bucket, dict):
+                bucket.pop(mode, None)
+        return
+    context.user_data.pop("weak_drill_queue", None)
+    context.user_data.pop("weak_drill_counts", None)
+    context.user_data.pop("weak_drill_since_last", None)
+    context.user_data.pop("quiz_is_weak_drill", None)
+
+
+def _maybe_take_weak_drill_entry(context, mode, force=False):
+    """Handle maybe take weak drill entry."""
+    queue = _weak_drill_queue(context, mode)
+    if not queue:
+        return None
+    gap = _weak_drill_gap(get_db_path())
+    if not force and _weak_drill_since_last(context, mode) < gap:
+        return None
+    counts = _weak_drill_counts(context, mode)
+    while queue:
+        word_id = queue.pop(0)
+        entry = get_word_by_id(get_db_path(), word_id)
+        if not entry:
+            counts.pop(word_id, None)
+            continue
+        _set_weak_drill_since_last(context, mode, 0)
+        context.user_data["quiz_is_weak_drill"] = True
+        return entry
+    return None
+
+
+def _track_weak_drill_show(context, mode, word_id):
+    """Handle track weak drill show."""
+    if not word_id:
+        return
+    queue = _weak_drill_queue(context, mode)
+    counts = _weak_drill_counts(context, mode)
+    repeats = _weak_drill_repeats(get_db_path())
+    shown = int(counts.get(word_id, 0)) + 1
+    if shown >= repeats:
+        counts.pop(word_id, None)
+        while word_id in queue:
+            queue.remove(word_id)
+        return
+    counts[word_id] = shown
+    if word_id not in queue:
+        queue.append(word_id)
+
+
 def _pick_weak_entry(context, user_id, weak_field, word_type=None):
     """Handle pick weak entry."""
     due = list_weak_words(
@@ -2739,6 +2920,32 @@ def _pick_weak_entry(context, user_id, weak_field, word_type=None):
         pool = pool_src
     entry = random.choice(pool)
     last_ids[mode] = entry.get("id")
+    return entry
+
+
+def _pick_weak_or_drill_entry(context, user_id, weak_field, word_type=None):
+    """Handle pick weak or drill entry."""
+    mode = f"weak_{weak_field}"
+    entry = _pick_weak_entry(context, user_id, weak_field, word_type=word_type)
+    is_drill = False
+
+    drill = _maybe_take_weak_drill_entry(context, mode, force=False)
+    if drill:
+        entry = drill
+        is_drill = True
+    elif not entry:
+        drill = _maybe_take_weak_drill_entry(context, mode, force=True)
+        if drill:
+            entry = drill
+            is_drill = True
+
+    if not entry:
+        return None
+
+    _track_weak_drill_show(context, mode, entry.get("id"))
+    if not is_drill:
+        _set_weak_drill_since_last(context, mode, _weak_drill_since_last(context, mode) + 1)
+        context.user_data["quiz_is_weak_drill"] = False
     return entry
 
 
@@ -2831,7 +3038,7 @@ async def _send_article_prompt(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def _send_article_weak_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
     """Handle send article weak prompt."""
-    entry = _pick_weak_entry(context, update.effective_user.id, "article", word_type="nomen")
+    entry = _pick_weak_or_drill_entry(context, update.effective_user.id, "article", word_type="nomen")
     if not entry:
         if prefix_text:
             await update.message.reply_text(prefix_text, parse_mode="Markdown")
@@ -2855,7 +3062,7 @@ async def _send_article_weak_prompt(update: Update, context: ContextTypes.DEFAUL
 
 async def _send_plural_weak_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
     """Handle send plural weak prompt."""
-    entry = _pick_weak_entry(context, update.effective_user.id, "plural", word_type="nomen")
+    entry = _pick_weak_or_drill_entry(context, update.effective_user.id, "plural", word_type="nomen")
     if not entry:
         if prefix_text:
             await update.message.reply_text(prefix_text, parse_mode="Markdown")
@@ -2880,7 +3087,7 @@ async def _send_plural_weak_prompt(update: Update, context: ContextTypes.DEFAULT
 
 async def _send_prateritum_weak_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
     """Handle send prateritum weak prompt."""
-    entry = _pick_weak_entry(context, update.effective_user.id, "prateritum", word_type="verb")
+    entry = _pick_weak_or_drill_entry(context, update.effective_user.id, "prateritum", word_type="verb")
     if not entry:
         if prefix_text:
             await update.message.reply_text(prefix_text, parse_mode="Markdown")
@@ -2904,7 +3111,7 @@ async def _send_prateritum_weak_prompt(update: Update, context: ContextTypes.DEF
 
 async def _send_partizip2_weak_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
     """Handle send partizip2 weak prompt."""
-    entry = _pick_weak_entry(context, update.effective_user.id, "partizip2", word_type="verb")
+    entry = _pick_weak_or_drill_entry(context, update.effective_user.id, "partizip2", word_type="verb")
     if not entry:
         if prefix_text:
             await update.message.reply_text(prefix_text, parse_mode="Markdown")
@@ -3281,6 +3488,7 @@ async def _back_to_tests(update: Update, context: ContextTypes.DEFAULT_TYPE = No
     """Handle back to tests."""
     if context is not None:
         _reset_retry_state(context)
+        _reset_weak_drill_state(context)
         _clear_last_answer(context)
     user_id = update.effective_user.id
     await update.message.reply_text(
@@ -3458,6 +3666,10 @@ def _prepare_storage():
         set_setting(db_path, OWNER_DICT_LANG_KEY, "ru")
     if not get_setting(db_path, TOPIC_FILTER_KEY):
         set_setting(db_path, TOPIC_FILTER_KEY, "1")
+    if not get_setting(db_path, WEAK_DRILL_GAP_KEY):
+        set_setting(db_path, WEAK_DRILL_GAP_KEY, str(WEAK_DRILL_GAP_DEFAULT))
+    if not get_setting(db_path, WEAK_DRILL_REPEATS_KEY):
+        set_setting(db_path, WEAK_DRILL_REPEATS_KEY, str(WEAK_DRILL_REPEATS_DEFAULT))
 
 
 def main():
@@ -3487,6 +3699,7 @@ def main():
             QUIZ_RU_DE_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_ru_de_menu_choice)],
             SETTINGS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, settings_menu_choice)],
             ALGO_SETTINGS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, algo_settings_menu_choice)],
+            DRILL_SETTINGS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, drill_settings_menu_choice)],
             ALGO_SETTINGS_EDIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, algo_settings_edit)],
             ALGO_SETTINGS_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, algo_settings_confirm)],
             TOPIC_FILTER_EDIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, topic_filter_edit)],

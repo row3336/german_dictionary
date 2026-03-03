@@ -49,6 +49,9 @@ TEXTS = {
         "ses_rtr_it": "ses.rtr_it",
         "reset_periodicity": "reset periodicity",
         "topic_filter": "topic filter",
+        "drill_sett": "drill_sett",
+        "weak_drill_gap": "weak.drill_gap",
+        "weak_drill_repeats": "weak.drill_repeats",
         "unit_tests": "unit tests",
     },
     "ru": {
@@ -88,6 +91,9 @@ TEXTS = {
         "ses_rtr_it": "ses.rtr_it",
         "reset_periodicity": "reset periodicity",
         "topic_filter": "topic filter",
+        "drill_sett": "drill_sett",
+        "weak_drill_gap": "weak.drill_gap",
+        "weak_drill_repeats": "weak.drill_repeats",
         "unit_tests": "unit tests",
     },
     "uk": {
@@ -127,6 +133,9 @@ TEXTS = {
         "ses_rtr_it": "ses.rtr_it",
         "reset_periodicity": "reset periodicity",
         "topic_filter": "topic filter",
+        "drill_sett": "drill_sett",
+        "weak_drill_gap": "weak.drill_gap",
+        "weak_drill_repeats": "weak.drill_repeats",
         "unit_tests": "unit tests",
     },
 }
