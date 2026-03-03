@@ -311,6 +311,15 @@ def _topic_filter_for_query():
     return topics or None
 
 
+def _topic_filter_label():
+    """Handle topic filter label."""
+    raw = _topic_filter_value()
+    topics = _parse_topic_filter(raw)
+    if not topics:
+        return "all"
+    return "+".join(topics)
+
+
 def _current_topic_value():
     """Handle current topic value."""
     raw = _topic_filter_value()
@@ -1072,12 +1081,18 @@ async def tests_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await _back_to_main_menu(update)
     if action == "quiz_l1_de":
         await update.message.reply_text(
-            f"{QUIZ_RU_DE_TEXT}:",
+            f"{QUIZ_RU_DE_TEXT}:\n"
+            f"topic filter = {_topic_filter_label()}",
             reply_markup=ReplyKeyboardMarkup(_ru_de_menu_keys(user_id), resize_keyboard=True),
         )
         return QUIZ_RU_DE_MENU
     if action == "quiz_de_l1":
-        return await _send_de_ru_prompt(update, context, None)
+        return await _send_de_ru_prompt(
+            update,
+            context,
+            f"{QUIZ_DE_RU_TEXT}:\n"
+            f"topic filter = {_topic_filter_label()}",
+        )
 
     await update.message.reply_text(
         "Use tests menu buttons.",
