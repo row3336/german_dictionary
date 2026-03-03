@@ -122,6 +122,12 @@ from .storage import (
     log_quiz_event,
     reset_periodicity,
     list_topics,
+    WEAK_ACTIVE_MIN_ERRORS,
+    WEAK_ACTIVE_MIN_STREAK_WRONG,
+    WEAK_ACTIVE_CLEAR_STREAK,
+    WEAK_REVIEW_DAYS_STAGE1,
+    WEAK_REVIEW_DAYS_STAGE2,
+    WEAK_REVIEW_DAYS_STAGE3,
 )
 from .i18n import (
     dict_choices,
@@ -285,11 +291,14 @@ def _parse_topic_filter(raw):
     """Handle parse topic filter."""
     if not raw:
         return []
-    if raw.lower() == "all":
+    normalized = raw.strip().lower()
+    if normalized in {"all", "0", "*"}:
         return []
     tokens = []
     for chunk in raw.replace(",", "+").split("+"):
         token = chunk.strip()
+        if token == "0":
+            continue
         if token:
             tokens.append(token)
     return tokens
@@ -324,6 +333,9 @@ async def _send_algo_settings_menu(update: Update, user_id):
             f"{t(lang, 'ses_rtr_gap')} = {gap}",
             f"{t(lang, 'ses_rtr_it')} = {iterations}",
             f"{t(lang, 'topic_filter')} = {_topic_filter_value()}",
+            f"weak.active = err>={WEAK_ACTIVE_MIN_ERRORS} or wrong_streak>={WEAK_ACTIVE_MIN_STREAK_WRONG}",
+            f"weak.to_review = {WEAK_ACTIVE_CLEAR_STREAK} correct in row",
+            f"weak.review_days = {WEAK_REVIEW_DAYS_STAGE1}/{WEAK_REVIEW_DAYS_STAGE2}/{WEAK_REVIEW_DAYS_STAGE3}",
             f"topics = {topics_line}",
         ]
     )

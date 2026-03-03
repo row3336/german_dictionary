@@ -6,6 +6,12 @@ from pathlib import Path
 
 DEFAULT_EASE = 2.5
 MIN_EASE = 1.3
+WEAK_ACTIVE_MIN_ERRORS = 2
+WEAK_ACTIVE_MIN_STREAK_WRONG = 2
+WEAK_ACTIVE_CLEAR_STREAK = 3
+WEAK_REVIEW_DAYS_STAGE1 = 1
+WEAK_REVIEW_DAYS_STAGE2 = 2
+WEAK_REVIEW_DAYS_STAGE3 = 5
 
 QUIZ_RU_DE = "ru_de"
 QUIZ_DE_RU = "de_ru"
@@ -1595,7 +1601,7 @@ def update_form_stats(db_path, user_id, word_id, checks):
             (int(user_id), _safe_text(word_id)),
         )
 
-        today_iso = (date.today() + timedelta(days=1)).isoformat()
+        today_iso = (date.today() + timedelta(days=WEAK_REVIEW_DAYS_STAGE1)).isoformat()
         for field in fields:
             ok = safe_checks[field]
             if ok:
@@ -1613,7 +1619,10 @@ def update_form_stats(db_path, user_id, word_id, checks):
                 pre_errors = int(pre_row["errors"] or 0) if pre_row else 0
                 pre_streak_wrong = int(pre_row["streak_wrong"] or 0) if pre_row else 0
                 pre_stage = int(pre_row["stage"] or 0) if pre_row else 0
-                was_active_before = pre_errors >= 2 or pre_streak_wrong >= 2
+                was_active_before = (
+                    pre_errors >= WEAK_ACTIVE_MIN_ERRORS
+                    or pre_streak_wrong >= WEAK_ACTIVE_MIN_STREAK_WRONG
+                )
                 conn.execute(
                     f"""
                     UPDATE form_stats
@@ -1632,7 +1641,7 @@ def update_form_stats(db_path, user_id, word_id, checks):
                     (int(user_id), _safe_text(word_id)),
                 ).fetchone()
                 streak = int(row["s"] or 0) if row else 0
-                if streak >= 3:
+                if streak >= WEAK_ACTIVE_CLEAR_STREAK:
                     conn.execute(
                         f"""
                         UPDATE form_stats
@@ -1691,12 +1700,12 @@ def update_weak_review_state(db_path, user_id, word_id, field, ok):
         errors = int(row["errors"] or 0)
         streak_wrong = int(row["streak_wrong"] or 0)
         stage = int(row["stage"] or 0)
-        active = errors >= 2 or streak_wrong >= 2
+        active = errors >= WEAK_ACTIVE_MIN_ERRORS or streak_wrong >= WEAK_ACTIVE_MIN_STREAK_WRONG
         if active or stage <= 0:
             return stage
         if ok:
             if stage == 1:
-                next_review = (today + timedelta(days=2)).isoformat()
+                next_review = (today + timedelta(days=WEAK_REVIEW_DAYS_STAGE2)).isoformat()
                 conn.execute(
                     f"""
                     UPDATE form_stats
@@ -1708,7 +1717,7 @@ def update_weak_review_state(db_path, user_id, word_id, field, ok):
                 )
                 return 2
             if stage == 2:
-                next_review = (today + timedelta(days=5)).isoformat()
+                next_review = (today + timedelta(days=WEAK_REVIEW_DAYS_STAGE3)).isoformat()
                 conn.execute(
                     f"""
                     UPDATE form_stats
@@ -1729,7 +1738,7 @@ def update_weak_review_state(db_path, user_id, word_id, field, ok):
                 (int(user_id), _safe_text(word_id)),
             )
             return 0
-        next_review = (today + timedelta(days=1)).isoformat()
+        next_review = (today + timedelta(days=WEAK_REVIEW_DAYS_STAGE1)).isoformat()
         conn.execute(
             f"""
             UPDATE form_stats
@@ -1765,7 +1774,7 @@ def get_form_state(db_path, user_id, word_id, field):
     errors = int(row["errors"] or 0)
     streak_wrong = int(row["streak_wrong"] or 0)
     stage = int(row["stage"] or 0)
-    active = errors >= 2 or streak_wrong >= 2
+    active = errors >= WEAK_ACTIVE_MIN_ERRORS or streak_wrong >= WEAK_ACTIVE_MIN_STREAK_WRONG
     return {"errors": errors, "streak_wrong": streak_wrong, "review_stage": stage, "active": active}
 
 
@@ -1794,7 +1803,10 @@ def list_weak_words(db_path, user_id, weak_field, word_type=None, topics=None, l
         return []
     init_db(db_path)
     today = date.today().isoformat()
-    active_cond = f"(fs.{weak_field}_errors >= 2 OR fs.{weak_field}_streak_wrong >= 2)"
+    active_cond = (
+        f"(fs.{weak_field}_errors >= {WEAK_ACTIVE_MIN_ERRORS} "
+        f"OR fs.{weak_field}_streak_wrong >= {WEAK_ACTIVE_MIN_STREAK_WRONG})"
+    )
     review_cond = f"(fs.{weak_field}_review_stage > 0 AND date(fs.{weak_field}_next_review) <= date(?))"
     where = [
         "fs.user_id = ?",
