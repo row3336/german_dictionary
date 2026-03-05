@@ -142,6 +142,9 @@ from .storage import (
     learning_get_or_create_batch,
     learning_pick_new_words,
     learning_skip_word,
+    learning_mark_preview_next,
+    learning_preview_entry,
+    learning_reset_session,
     learning_status_snapshot,
     learning_update_result,
     _parse_learning_intervals,
@@ -196,6 +199,8 @@ LEARNING_TEXT = "Learning"
 LEARNING_START_TEXT = "learning session"
 LEARNING_ADD_TEXT = "add for learning"
 LEARNING_SKIP_TEXT = "skip_learning"
+LEARNING_NEXT_TEXT = "next"
+LEARNING_RESET_TEXT = "reset learning"
 
 RETRY_GAP_QUESTIONS = 3
 RETRY_MAX_REPEATS = 4
@@ -278,7 +283,7 @@ def _ru_de_menu_keys(user_id):
 def _learning_menu_keys(user_id):
     """Handle learning menu keys."""
     return [
-        [LEARNING_START_TEXT, LEARNING_ADD_TEXT],
+        [LEARNING_START_TEXT, LEARNING_ADD_TEXT, LEARNING_RESET_TEXT],
         [t(_user_interface_lang(user_id), "back")],
     ]
 
@@ -602,6 +607,8 @@ def _action_key_from_text(text, user_id):
     mapping[LEARNING_START_TEXT] = "learning_start"
     mapping[LEARNING_ADD_TEXT] = "learning_add"
     mapping[LEARNING_SKIP_TEXT] = "learning_skip"
+    mapping[LEARNING_NEXT_TEXT] = "learning_next"
+    mapping[LEARNING_RESET_TEXT] = "learning_reset"
     mapping["flags!"] = "review_flags"
     mapping["Back"] = "back"
     mapping["Stop"] = "stop"
@@ -1273,6 +1280,7 @@ async def _send_learning_menu(update: Update, user_id):
             f"{t(_user_interface_lang(user_id), 'learning_daily_qty')} = {_learning_daily_qty(get_db_path())}",
             f"{t(_user_interface_lang(user_id), 'learning_intervals')} = {_learning_intervals_text(get_db_path())}",
             f"active = {stats['active_count']}",
+            f"preview_pending = {stats['preview_pending']}",
             f"due_now = {stats['due_count']} / need {stats['ready_needed']}",
             f"completed_in_batch = {stats['completed_count']}",
             f"next_due = {_format_eta_from_iso(stats['next_due'])}",
@@ -1393,9 +1401,8 @@ async def _learning_add_words(update: Update, context: ContextTypes.DEFAULT_TYPE
         batch_id=batch_id,
         first_delay_seconds=first_delay,
     )
-    preview = "\n".join(_format_learning_preview_line(x, _user_dict_lang(user_id)) for x in picked[:20])
     await update.message.reply_text(
-        f"Added for learning: {added}\nFirst check in ~{first_delay}s.\n\n{preview}",
+        f"Added for learning: {added}\nStart learning session for first cycle preview.",
         reply_markup=ReplyKeyboardMarkup(_learning_menu_keys(user_id), resize_keyboard=True),
     )
     return LEARNING_MENU
@@ -1404,16 +1411,48 @@ async def _learning_add_words(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
     """Handle send learning prompt."""
     user_id = update.effective_user.id
+    preview_entry = learning_preview_entry(get_db_path(), user_id=user_id)
+    if preview_entry:
+        context.user_data["quiz_entry"] = preview_entry
+        context.user_data["learning_preview_mode"] = True
+        word_type = (preview_entry.get("type") or "").strip().lower()
+        if word_type == "verb":
+            details = [
+                f"{_low_word(preview_entry.get('infinitive', ''))}",
+                f"{_low_word(preview_entry.get('prateritum', ''))}",
+                f"{_expected_partizip2(preview_entry)}",
+            ]
+            headline = "Verb"
+        else:
+            article = (preview_entry.get("article") or "").strip()
+            german = _cap_word(preview_entry.get("german", ""))
+            plural = _cap_word(preview_entry.get("plural", ""))
+            details = [f"{article} {german}".strip(), f"pl. die {plural}".strip()]
+            headline = "Nomen"
+        right = _entry_translation(preview_entry, _user_dict_lang(user_id))
+        lines = [f"{headline} preview:", *[x for x in details if x], f"= {right}"]
+        prompt_text = "\n".join(lines)
+        if prefix_text:
+            prompt_text = f"{prefix_text}\n\n{prompt_text}"
+        await update.message.reply_text(
+            _md_escape(prompt_text),
+            reply_markup=ReplyKeyboardMarkup([[LEARNING_NEXT_TEXT, LEARNING_SKIP_TEXT], [t(_user_interface_lang(user_id), "back")]], resize_keyboard=True),
+            parse_mode="Markdown",
+        )
+        return LEARNING_QUIZ
+
     entry = learning_due_entry(get_db_path(), user_id=user_id)
     if not entry:
+        context.user_data["learning_preview_mode"] = False
         if prefix_text:
             await update.message.reply_text(prefix_text, parse_mode="Markdown")
         await update.message.reply_text(
-            "No due learning words right now.",
+            f"No due learning words right now.\nnext_due = {_format_eta_from_iso(learning_status_snapshot(get_db_path(), user_id, _learning_ready_quorum(get_db_path())).get('next_due'))}",
             reply_markup=ReplyKeyboardMarkup(_learning_menu_keys(user_id), resize_keyboard=True),
         )
         return LEARNING_MENU
     context.user_data["quiz_entry"] = entry
+    context.user_data["learning_preview_mode"] = False
     prompt_text = _format_ru_question(entry, _user_dict_lang(user_id))
     if prefix_text:
         prompt_text = f"{prefix_text}\n\n{prompt_text}"
@@ -1438,6 +1477,13 @@ async def learning_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
         return TESTS_MENU
     if action == "learning_add":
         return await _learning_add_words(update, context)
+    if action == "learning_reset":
+        learning_reset_session(get_db_path(), user_id=user_id)
+        await update.message.reply_text(
+            "Learning session reset. Words returned to new.",
+            reply_markup=ReplyKeyboardMarkup(_learning_menu_keys(user_id), resize_keyboard=True),
+        )
+        return LEARNING_MENU
     if action == "learning_start":
         return await _send_learning_prompt(update, context, None)
     await update.message.reply_text(
@@ -1458,6 +1504,25 @@ async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     entry = context.user_data.get("quiz_entry")
     if not entry:
         return await _send_learning_prompt(update, context, None)
+
+    is_preview = bool(context.user_data.get("learning_preview_mode"))
+    if is_preview:
+        if action == "learning_skip" or text == LEARNING_SKIP_TEXT:
+            learning_skip_word(get_db_path(), user_id=user_id, word_id=entry.get("id"))
+            return await _send_learning_prompt(update, context, "Skipped for learning.")
+        if action == "learning_next" or text == LEARNING_NEXT_TEXT:
+            learning_mark_preview_next(
+                get_db_path(),
+                user_id=user_id,
+                word_id=entry.get("id"),
+                first_interval_seconds=_learning_intervals_seconds(get_db_path())[0],
+            )
+            return await _send_learning_prompt(update, context, "Saved. Next preview word.")
+        await update.message.reply_text(
+            "Use next/skip/back.",
+            reply_markup=ReplyKeyboardMarkup([[LEARNING_NEXT_TEXT, LEARNING_SKIP_TEXT], [t(_user_interface_lang(user_id), "back")]], resize_keyboard=True),
+        )
+        return LEARNING_QUIZ
 
     if action == "learning_skip" or text == LEARNING_SKIP_TEXT:
         learning_skip_word(get_db_path(), user_id=user_id, word_id=entry.get("id"))

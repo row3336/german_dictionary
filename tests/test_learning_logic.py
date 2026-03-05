@@ -11,6 +11,9 @@ from bot.storage import (
     learning_due_entry,
     learning_get_or_create_batch,
     learning_pick_new_words,
+    learning_preview_entry,
+    learning_mark_preview_next,
+    learning_reset_session,
     learning_status_snapshot,
     learning_update_result,
     select_due,
@@ -107,7 +110,36 @@ class LearningLogicTests(unittest.TestCase):
         learning_add_words(db_path, user_id=1, words=words, batch_id=batch_id, first_delay_seconds=1)
         snap = learning_status_snapshot(db_path, user_id=1, quorum_pct=50)
         self.assertEqual(snap["active_count"], 3)
+        self.assertEqual(snap["preview_pending"], 3)
         self.assertFalse(snap["ready"])
+
+    def test_preview_cycle_requires_next_before_due(self):
+        db_path = _mk_db()
+        self.addCleanup(lambda: os.unlink(db_path))
+        init_db(db_path)
+        w1 = _add_noun(db_path, "Apfel", "яблоко")
+        batch_id = learning_get_or_create_batch(db_path, user_id=1, daily_qty=20)
+        learning_add_words(db_path, user_id=1, words=[w1], batch_id=batch_id, first_delay_seconds=30)
+
+        preview = learning_preview_entry(db_path, user_id=1)
+        self.assertIsNotNone(preview)
+        self.assertEqual(preview["id"], w1["id"])
+        self.assertIsNone(learning_due_entry(db_path, user_id=1))
+
+        ok = learning_mark_preview_next(db_path, user_id=1, word_id=w1["id"], first_interval_seconds=30)
+        self.assertTrue(ok)
+        self.assertIsNone(learning_preview_entry(db_path, user_id=1))
+
+    def test_reset_learning_session_clears_items(self):
+        db_path = _mk_db()
+        self.addCleanup(lambda: os.unlink(db_path))
+        init_db(db_path)
+        w1 = _add_noun(db_path, "Apfel", "яблоко")
+        batch_id = learning_get_or_create_batch(db_path, user_id=1, daily_qty=20)
+        learning_add_words(db_path, user_id=1, words=[w1], batch_id=batch_id, first_delay_seconds=30)
+        learning_reset_session(db_path, user_id=1)
+        snap = learning_status_snapshot(db_path, user_id=1, quorum_pct=70)
+        self.assertEqual(snap["active_count"], 0)
 
 
 if __name__ == "__main__":
