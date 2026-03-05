@@ -1415,27 +1415,11 @@ async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TY
     if preview_entry:
         context.user_data["quiz_entry"] = preview_entry
         context.user_data["learning_preview_mode"] = True
-        word_type = (preview_entry.get("type") or "").strip().lower()
-        if word_type == "verb":
-            details = [
-                f"{_low_word(preview_entry.get('infinitive', ''))}",
-                f"{_low_word(preview_entry.get('prateritum', ''))}",
-                f"{_expected_partizip2(preview_entry)}",
-            ]
-            headline = "Verb"
-        else:
-            article = (preview_entry.get("article") or "").strip()
-            german = _cap_word(preview_entry.get("german", ""))
-            plural = _cap_word(preview_entry.get("plural", ""))
-            details = [f"{article} {german}".strip(), f"pl. die {plural}".strip()]
-            headline = "Nomen"
-        right = _entry_translation(preview_entry, _user_dict_lang(user_id))
-        lines = [f"{headline} preview:", *[x for x in details if x], f"= {right}"]
-        prompt_text = "\n".join(lines)
+        prompt_text = _format_learning_preview_prompt(preview_entry, _user_dict_lang(user_id))
         if prefix_text:
             prompt_text = f"{prefix_text}\n\n{prompt_text}"
         await update.message.reply_text(
-            _md_escape(prompt_text),
+            prompt_text,
             reply_markup=ReplyKeyboardMarkup([[LEARNING_NEXT_TEXT, LEARNING_SKIP_TEXT], [t(_user_interface_lang(user_id), "back")]], resize_keyboard=True),
             parse_mode="Markdown",
         )
@@ -3096,6 +3080,14 @@ def _format_ru_question(entry, dict_lang):
     return f">>    {_md_escape(value)}{_md_escape(type_hint)} ?"
 
 
+def _format_ru_question_no_q(entry, dict_lang):
+    """Handle format ru question no q."""
+    value = _normalize_russian_singular(_entry_translation(entry, dict_lang))
+    word_type = _low_word(entry.get("type", ""))
+    type_hint = f" ({word_type})" if word_type else ""
+    return f">>    {_md_escape(value)}{_md_escape(type_hint)}"
+
+
 def _format_de_ru_question(entry):
     """Handle format de ru question."""
     word_type = entry.get("type", "")
@@ -3148,6 +3140,33 @@ def _format_feedback_ru_de(entry, ok):
             lines.append("")
             lines.append(f"_{_md_escape(forms)}_")
 
+    return "\n".join(lines)
+
+
+def _format_learning_preview_prompt(entry, dict_lang):
+    """Handle format learning preview prompt."""
+    word_type = _low_word(entry.get("type", ""))
+    lines = []
+    if word_type == "nomen":
+        article = str(entry.get("article", "")).strip()
+        german = _cap_word(entry.get("german", ""))
+        answer = f"{article} {german}".strip() if article else german
+        lines.append(f"*{_md_escape(answer)}*")
+        plural = _cap_word(entry.get("plural", ""))
+        if plural:
+            lines.append(f"_pl. die {_md_escape(plural)}_")
+    elif word_type == "verb":
+        infinitive = _low_word(entry.get("infinitive", ""))
+        lines.append(f"*{_md_escape(infinitive)}*")
+        pr = _low_word(entry.get("prateritum", ""))
+        p2 = _expected_partizip2(entry)
+        forms = ", ".join(x for x in [pr, p2] if x)
+        if forms:
+            lines.append(f"_{_md_escape(forms)}_")
+    else:
+        german = _low_word(entry.get("german", ""))
+        lines.append(f"*{_md_escape(german)}*")
+    lines.append(_format_ru_question_no_q(entry, dict_lang))
     return "\n".join(lines)
 
 
