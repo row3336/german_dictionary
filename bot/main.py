@@ -1279,11 +1279,11 @@ async def _send_learning_menu(update: Update, user_id):
             f"{LEARNING_TEXT}:",
             f"{t(_user_interface_lang(user_id), 'learning_daily_qty')} = {_learning_daily_qty(get_db_path())}",
             f"{t(_user_interface_lang(user_id), 'learning_intervals')} = {_learning_intervals_text(get_db_path())}",
-            f"active = {stats['active_count']}",
-            f"preview_pending = {stats['preview_pending']}",
-            f"due_now = {stats['due_count']} / need {stats['ready_needed']}",
-            f"completed_in_batch = {stats['completed_count']}",
-            f"next_due = {_format_eta_from_iso(stats['next_due'])}",
+            f"active = {stats.get('active_count', 0)}",
+            f"preview_pending = {stats.get('preview_pending', 0)}",
+            f"due_now = {stats.get('due_count', 0)} / need {stats.get('ready_needed', 0)}",
+            f"completed_in_batch = {stats.get('completed_count', 0)}",
+            f"next_due = {_format_eta_from_iso(stats.get('next_due'))}",
         ]
     )
     await update.message.reply_text(
