@@ -278,7 +278,7 @@ def _ru_de_menu_keys(user_id):
 def _learning_menu_keys(user_id):
     """Handle learning menu keys."""
     return [
-        [LEARNING_START_TEXT, LEARNING_ADD_TEXT, LEARNING_SKIP_TEXT],
+        [LEARNING_START_TEXT, LEARNING_ADD_TEXT],
         [t(_user_interface_lang(user_id), "back")],
     ]
 
