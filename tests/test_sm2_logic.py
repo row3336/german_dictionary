@@ -5,7 +5,7 @@ import unittest
 import warnings
 from datetime import date, timedelta
 
-from bot.storage import init_db, add_word, select_due, update_sm2, list_topics
+from bot.storage import init_db, add_word, select_due, update_sm2, list_topics, learning_get_or_create_batch, learning_add_words
 
 warnings.filterwarnings("ignore", category=ResourceWarning)
 
@@ -35,11 +35,26 @@ def _add_noun(db_path, german, russian, topic="1"):
 
 
 class Sm2LogicTests(unittest.TestCase):
-    def test_select_due_includes_new_word(self):
+    def test_select_due_excludes_new_word_until_learning_completed(self):
         db_path = _mk_db()
         self.addCleanup(lambda: os.unlink(db_path))
         init_db(db_path)
         _add_noun(db_path, "Schal", "шарф")
+        due = select_due(db_path, user_id=1, mode="ru_de")
+        self.assertEqual(len(due), 0)
+
+    def test_select_due_includes_word_after_learning_completed(self):
+        db_path = _mk_db()
+        self.addCleanup(lambda: os.unlink(db_path))
+        init_db(db_path)
+        entry = _add_noun(db_path, "Schal", "шарф")
+        batch_id = learning_get_or_create_batch(db_path, user_id=1, daily_qty=20)
+        learning_add_words(db_path, user_id=1, words=[entry], batch_id=batch_id, first_delay_seconds=30)
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(
+                "UPDATE learning_items SET status = 'completed' WHERE user_id = ? AND word_id = ?",
+                (1, entry["id"]),
+            )
         due = select_due(db_path, user_id=1, mode="ru_de")
         self.assertEqual(len(due), 1)
 
@@ -80,8 +95,12 @@ class Sm2LogicTests(unittest.TestCase):
         db_path = _mk_db()
         self.addCleanup(lambda: os.unlink(db_path))
         init_db(db_path)
-        _add_noun(db_path, "Apfel", "яблоко", topic="1")
-        _add_noun(db_path, "Jacke", "куртка", topic="2")
+        e1 = _add_noun(db_path, "Apfel", "яблоко", topic="1")
+        e2 = _add_noun(db_path, "Jacke", "куртка", topic="2")
+        batch_id = learning_get_or_create_batch(db_path, user_id=1, daily_qty=20)
+        learning_add_words(db_path, user_id=1, words=[e1, e2], batch_id=batch_id, first_delay_seconds=30)
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("UPDATE learning_items SET status = 'completed' WHERE user_id = ?", (1,))
         due = select_due(db_path, user_id=1, mode="ru_de", topics=["2"])
         self.assertEqual(len(due), 1)
         self.assertEqual(due[0]["german"], "Jacke")

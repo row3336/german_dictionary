@@ -41,6 +41,9 @@ from .app_config import (
     ALGO_SETTINGS_EDIT,
     ALGO_SETTINGS_MENU,
     DRILL_SETTINGS_MENU,
+    LEARNING_MENU,
+    LEARNING_QUIZ,
+    LEARNING_SETTINGS_MENU,
     TOPIC_FILTER_EDIT,
     ARTICLE_SET,
     AUTO_DUMP_JOB_NAME,
@@ -88,6 +91,11 @@ from .app_config import (
     TOPIC_FILTER_KEY,
     WEAK_DRILL_GAP_KEY,
     WEAK_DRILL_REPEATS_KEY,
+    LEARNING_DAILY_QTY_KEY,
+    LEARNING_INTERVALS_KEY,
+    LEARNING_REMINDER_INTERVAL_KEY,
+    LEARNING_REMINDER_COOLDOWN_KEY,
+    LEARNING_READY_QUORUM_KEY,
     get_suggestions_path,
     is_owner,
 )
@@ -125,6 +133,18 @@ from .storage import (
     log_quiz_event,
     reset_periodicity,
     list_topics,
+    learning_active_batches,
+    learning_active_count,
+    learning_add_words,
+    learning_batch_mark_notified,
+    learning_batch_update_ready_state,
+    learning_due_entry,
+    learning_get_or_create_batch,
+    learning_pick_new_words,
+    learning_skip_word,
+    learning_status_snapshot,
+    learning_update_result,
+    _parse_learning_intervals,
     WEAK_ACTIVE_MIN_ERRORS,
     WEAK_ACTIVE_MIN_STREAK_WRONG,
     WEAK_ACTIVE_CLEAR_STREAK,
@@ -172,11 +192,21 @@ SYN_CANCEL_TEXT = "Cancel"
 QUIZ_FIELDS_TEXT = "fields"
 QUIZ_RU_DE_TEXT = "Ru > De"
 QUIZ_DE_RU_TEXT = "De > Ru"
+LEARNING_TEXT = "Learning"
+LEARNING_START_TEXT = "learning session"
+LEARNING_ADD_TEXT = "add for learning"
+LEARNING_SKIP_TEXT = "skip_learning"
 
 RETRY_GAP_QUESTIONS = 3
 RETRY_MAX_REPEATS = 4
 WEAK_DRILL_GAP_DEFAULT = 4
 WEAK_DRILL_REPEATS_DEFAULT = 10
+LEARNING_DAILY_QTY_DEFAULT = 20
+LEARNING_INTERVALS_DEFAULT = "30,120,600,3600,10800,18000"
+LEARNING_REMINDER_INTERVAL_DEFAULT = 60
+LEARNING_REMINDER_COOLDOWN_DEFAULT = 900
+LEARNING_READY_QUORUM_DEFAULT = 70
+LEARNING_REMINDER_JOB_NAME = "learning_reminder_job"
 
 
 def _main_menu_keys(user_id):
@@ -231,7 +261,7 @@ def _mode_de_l1(user_id):
 def _tests_menu_keys(user_id):
     """Handle tests menu keys."""
     return [
-        [QUIZ_RU_DE_TEXT, QUIZ_DE_RU_TEXT],
+        [LEARNING_TEXT, QUIZ_RU_DE_TEXT, QUIZ_DE_RU_TEXT],
         [t(_user_interface_lang(user_id), "back")],
     ]
 
@@ -241,6 +271,14 @@ def _ru_de_menu_keys(user_id):
     return [
         [STANDARD_SM2_TEXT, TEST_ARTICLE_WEAK_TEXT],
         [TEST_PLURAL_WEAK_TEXT, TEST_VERB_WEAK_TEXT],
+        [t(_user_interface_lang(user_id), "back")],
+    ]
+
+
+def _learning_menu_keys(user_id):
+    """Handle learning menu keys."""
+    return [
+        [LEARNING_START_TEXT, LEARNING_ADD_TEXT, LEARNING_SKIP_TEXT],
         [t(_user_interface_lang(user_id), "back")],
     ]
 
@@ -260,7 +298,8 @@ def _algo_settings_menu_keys(user_id):
     lang = _user_interface_lang(user_id)
     return [
         [t(lang, "topic_filter"), t(lang, "ses_rtr_gap"), t(lang, "ses_rtr_it")],
-        [t(lang, "drill_sett"), t(lang, "reset_periodicity"), t(lang, "unit_tests")],
+        [t(lang, "drill_sett"), t(lang, "learning_sett"), t(lang, "unit_tests")],
+        [t(lang, "reset_periodicity")],
         [t(lang, "back")],
     ]
 
@@ -271,6 +310,15 @@ def _drill_settings_menu_keys(user_id):
     return [
         [t(lang, "weak_drill_gap"), t(lang, "weak_drill_repeats")],
         [t(lang, "back")],
+    ]
+
+
+def _learning_settings_menu_keys(user_id):
+    """Handle learning settings menu keys."""
+    lang = _user_interface_lang(user_id)
+    return [
+        [t(lang, "learning_daily_qty"), t(lang, "learning_intervals"), t(lang, "learning_ready_quorum")],
+        [t(lang, "learning_reminder_interval"), t(lang, "learning_reminder_cooldown"), t(lang, "back")],
     ]
 
 
@@ -306,6 +354,44 @@ def _weak_drill_repeats(db_path):
     """Handle weak drill repeats."""
     value = _get_int_setting(db_path, WEAK_DRILL_REPEATS_KEY, WEAK_DRILL_REPEATS_DEFAULT)
     return max(1, value)
+
+
+def _learning_daily_qty(db_path):
+    """Handle learning daily qty."""
+    value = _get_int_setting(db_path, LEARNING_DAILY_QTY_KEY, LEARNING_DAILY_QTY_DEFAULT)
+    return max(1, value)
+
+
+def _learning_intervals_seconds(db_path):
+    """Handle learning intervals seconds."""
+    raw = get_setting(db_path, LEARNING_INTERVALS_KEY, LEARNING_INTERVALS_DEFAULT)
+    values = _parse_learning_intervals(raw)
+    if not values:
+        values = _parse_learning_intervals(LEARNING_INTERVALS_DEFAULT)
+    return values
+
+
+def _learning_intervals_text(db_path):
+    """Handle learning intervals text."""
+    return ",".join(str(v) for v in _learning_intervals_seconds(db_path))
+
+
+def _learning_reminder_interval(db_path):
+    """Handle learning reminder interval."""
+    value = _get_int_setting(db_path, LEARNING_REMINDER_INTERVAL_KEY, LEARNING_REMINDER_INTERVAL_DEFAULT)
+    return max(10, value)
+
+
+def _learning_reminder_cooldown(db_path):
+    """Handle learning reminder cooldown."""
+    value = _get_int_setting(db_path, LEARNING_REMINDER_COOLDOWN_KEY, LEARNING_REMINDER_COOLDOWN_DEFAULT)
+    return max(60, value)
+
+
+def _learning_ready_quorum(db_path):
+    """Handle learning ready quorum."""
+    value = _get_int_setting(db_path, LEARNING_READY_QUORUM_KEY, LEARNING_READY_QUORUM_DEFAULT)
+    return min(100, max(1, value))
 
 
 def _topic_filter_value():
@@ -403,6 +489,27 @@ async def _send_drill_settings_menu(update: Update, user_id):
     return DRILL_SETTINGS_MENU
 
 
+async def _send_learning_settings_menu(update: Update, user_id):
+    """Handle send learning settings menu."""
+    lang = _user_interface_lang(user_id)
+    msg = "\n".join(
+        [
+            f"{t(lang, 'learning_sett')}:",
+            f"{t(lang, 'learning_daily_qty')} = {_learning_daily_qty(get_db_path())}",
+            f"{t(lang, 'learning_intervals')} = {_learning_intervals_text(get_db_path())}",
+            f"{t(lang, 'learning_ready_quorum')} = {_learning_ready_quorum(get_db_path())}",
+            f"{t(lang, 'learning_reminder_interval')} = {_learning_reminder_interval(get_db_path())}",
+            f"{t(lang, 'learning_reminder_cooldown')} = {_learning_reminder_cooldown(get_db_path())}",
+            "learning.on_wrong = reset_step_0",
+        ]
+    )
+    await update.message.reply_text(
+        msg,
+        reply_markup=ReplyKeyboardMarkup(_learning_settings_menu_keys(user_id), resize_keyboard=True),
+    )
+    return LEARNING_SETTINGS_MENU
+
+
 def _run_unit_tests_report():
     """Handle run unit tests report."""
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -414,6 +521,7 @@ def _run_unit_tests_report():
         "tests.test_retry_logic",
         "tests.test_sm2_logic",
         "tests.test_weak_modes",
+        "tests.test_learning_logic",
     ]
     try:
         env = dict(os.environ)
@@ -471,6 +579,12 @@ def _action_key_from_text(text, user_id):
         ("algo_settings", "algo_settings"),
         ("topic_filter", "topic_filter"),
         ("drill_sett", "drill_sett"),
+        ("learning_sett", "learning_sett"),
+        ("learning_daily_qty", "learning_daily_qty"),
+        ("learning_intervals", "learning_intervals"),
+        ("learning_reminder_interval", "learning_reminder_interval"),
+        ("learning_reminder_cooldown", "learning_reminder_cooldown"),
+        ("learning_ready_quorum", "learning_ready_quorum"),
         ("auto_dump", "auto_dump"),
         ("daily", "daily"),
         ("weekly", "weekly"),
@@ -484,6 +598,10 @@ def _action_key_from_text(text, user_id):
         mapping[t("en", key)] = action
     mapping[QUIZ_RU_DE_TEXT] = "quiz_l1_de"
     mapping[QUIZ_DE_RU_TEXT] = "quiz_de_l1"
+    mapping[LEARNING_TEXT] = "learning"
+    mapping[LEARNING_START_TEXT] = "learning_start"
+    mapping[LEARNING_ADD_TEXT] = "learning_add"
+    mapping[LEARNING_SKIP_TEXT] = "learning_skip"
     mapping["flags!"] = "review_flags"
     mapping["Back"] = "back"
     mapping["Stop"] = "stop"
@@ -1069,6 +1187,7 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"words in dict = {stats['total_words']}",
             f"never touched = {stats['never_answered']}",
             f"words weekly = +{stats['weekly_words']}",
+            f"learning->sm2 2+ (week) = {stats['learning_to_sm2_week']}",
             "",
             "_word types:_",
             *[f"_{k} = {word_types[k]}_" for k in sorted(word_types.keys())],
@@ -1119,6 +1238,53 @@ async def select_dict_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return MENU
 
 
+def _format_eta_from_iso(next_due_iso):
+    """Handle format eta from iso."""
+    token = str(next_due_iso or "").strip()
+    if not token:
+        return "-"
+    try:
+        when = datetime.strptime(token, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return token
+    now = datetime.now(timezone.utc)
+    delta = int((when - now).total_seconds())
+    if delta <= 0:
+        return "now"
+    minutes, seconds = divmod(delta, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours > 0:
+        return f"{hours}h {minutes}m"
+    if minutes > 0:
+        return f"{minutes}m {seconds}s"
+    return f"{seconds}s"
+
+
+async def _send_learning_menu(update: Update, user_id):
+    """Handle send learning menu."""
+    stats = learning_status_snapshot(
+        get_db_path(),
+        user_id=user_id,
+        quorum_pct=_learning_ready_quorum(get_db_path()),
+    )
+    msg = "\n".join(
+        [
+            f"{LEARNING_TEXT}:",
+            f"{t(_user_interface_lang(user_id), 'learning_daily_qty')} = {_learning_daily_qty(get_db_path())}",
+            f"{t(_user_interface_lang(user_id), 'learning_intervals')} = {_learning_intervals_text(get_db_path())}",
+            f"active = {stats['active_count']}",
+            f"due_now = {stats['due_count']} / need {stats['ready_needed']}",
+            f"completed_in_batch = {stats['completed_count']}",
+            f"next_due = {_format_eta_from_iso(stats['next_due'])}",
+        ]
+    )
+    await update.message.reply_text(
+        msg,
+        reply_markup=ReplyKeyboardMarkup(_learning_menu_keys(user_id), resize_keyboard=True),
+    )
+    return LEARNING_MENU
+
+
 async def tests_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle tests menu choice."""
     text = update.message.text.strip()
@@ -1142,6 +1308,8 @@ async def tests_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"{QUIZ_DE_RU_TEXT}:\n"
             f"topic filter = {_topic_filter_label()}",
         )
+    if action == "learning":
+        return await _send_learning_menu(update, user_id)
 
     await update.message.reply_text(
         "Use tests menu buttons.",
@@ -1182,6 +1350,141 @@ async def quiz_ru_de_menu_choice(update: Update, context: ContextTypes.DEFAULT_T
         reply_markup=ReplyKeyboardMarkup(_ru_de_menu_keys(user_id), resize_keyboard=True),
     )
     return QUIZ_RU_DE_MENU
+
+
+def _format_learning_preview_line(entry, dict_lang):
+    """Handle format learning preview line."""
+    word_type = (entry.get("type") or "").strip().lower()
+    if word_type == "verb":
+        left = _low_word(entry.get("infinitive", "")).strip()
+    else:
+        article = (entry.get("article") or "").strip()
+        left = f"{article} {_cap_word(entry.get('german', ''))}".strip()
+    right = _entry_translation(entry, dict_lang)
+    return f"- {left} = {right}"
+
+
+async def _learning_add_words(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle learning add words."""
+    user_id = update.effective_user.id
+    db_path = get_db_path()
+    daily_qty = _learning_daily_qty(db_path)
+    batch_id = learning_get_or_create_batch(db_path, user_id=user_id, daily_qty=daily_qty)
+    active_count = learning_active_count(db_path, user_id=user_id, batch_id=batch_id)
+    need = max(0, daily_qty - active_count)
+    if need <= 0:
+        await update.message.reply_text(
+            f"Learning batch is full: {active_count}/{daily_qty}.",
+            reply_markup=ReplyKeyboardMarkup(_learning_menu_keys(user_id), resize_keyboard=True),
+        )
+        return LEARNING_MENU
+    picked = learning_pick_new_words(db_path, user_id=user_id, limit=need)
+    if not picked:
+        await update.message.reply_text(
+            "No new words available for learning.",
+            reply_markup=ReplyKeyboardMarkup(_learning_menu_keys(user_id), resize_keyboard=True),
+        )
+        return LEARNING_MENU
+    first_delay = _learning_intervals_seconds(db_path)[0]
+    added = learning_add_words(
+        db_path,
+        user_id=user_id,
+        words=picked,
+        batch_id=batch_id,
+        first_delay_seconds=first_delay,
+    )
+    preview = "\n".join(_format_learning_preview_line(x, _user_dict_lang(user_id)) for x in picked[:20])
+    await update.message.reply_text(
+        f"Added for learning: {added}\nFirst check in ~{first_delay}s.\n\n{preview}",
+        reply_markup=ReplyKeyboardMarkup(_learning_menu_keys(user_id), resize_keyboard=True),
+    )
+    return LEARNING_MENU
+
+
+async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
+    """Handle send learning prompt."""
+    user_id = update.effective_user.id
+    entry = learning_due_entry(get_db_path(), user_id=user_id)
+    if not entry:
+        if prefix_text:
+            await update.message.reply_text(prefix_text, parse_mode="Markdown")
+        await update.message.reply_text(
+            "No due learning words right now.",
+            reply_markup=ReplyKeyboardMarkup(_learning_menu_keys(user_id), resize_keyboard=True),
+        )
+        return LEARNING_MENU
+    context.user_data["quiz_entry"] = entry
+    prompt_text = _format_ru_question(entry, _user_dict_lang(user_id))
+    if prefix_text:
+        prompt_text = f"{prefix_text}\n\n{prompt_text}"
+    await update.message.reply_text(
+        prompt_text,
+        reply_markup=ReplyKeyboardMarkup([[I_DONT_KNOW_TEXT, LEARNING_SKIP_TEXT], [t(_user_interface_lang(user_id), "back")]], resize_keyboard=True),
+        parse_mode="Markdown",
+    )
+    return LEARNING_QUIZ
+
+
+async def learning_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle learning menu choice."""
+    text = update.message.text.strip()
+    user_id = update.effective_user.id
+    action = _action_key_from_text(text, user_id)
+    if action == "back":
+        await update.message.reply_text(
+            t(_user_interface_lang(user_id), "tests") + ":",
+            reply_markup=ReplyKeyboardMarkup(_tests_menu_keys(user_id), resize_keyboard=True),
+        )
+        return TESTS_MENU
+    if action == "learning_add":
+        return await _learning_add_words(update, context)
+    if action == "learning_start":
+        return await _send_learning_prompt(update, context, None)
+    await update.message.reply_text(
+        "Use learning menu buttons.",
+        reply_markup=ReplyKeyboardMarkup(_learning_menu_keys(user_id), resize_keyboard=True),
+    )
+    return LEARNING_MENU
+
+
+async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle learning quiz."""
+    text = update.message.text.strip()
+    user_id = update.effective_user.id
+    action = _action_key_from_text(text, user_id)
+    if action == "back":
+        return await _send_learning_menu(update, user_id)
+
+    entry = context.user_data.get("quiz_entry")
+    if not entry:
+        return await _send_learning_prompt(update, context, None)
+
+    if action == "learning_skip" or text == LEARNING_SKIP_TEXT:
+        learning_skip_word(get_db_path(), user_id=user_id, word_id=entry.get("id"))
+        return await _send_learning_prompt(update, context, "Skipped for learning.")
+
+    if text == I_DONT_KNOW_TEXT:
+        ok = False
+    else:
+        ok, _ = _check_ru_de_strict(entry, text)
+    log_quiz_event(
+        get_db_path(),
+        user_id=user_id,
+        word_id=entry.get("id"),
+        mode="learning",
+        is_correct=ok,
+    )
+    result = learning_update_result(
+        get_db_path(),
+        user_id=user_id,
+        word_id=entry.get("id"),
+        ok=ok,
+        intervals_seconds=_learning_intervals_seconds(get_db_path()),
+    )
+    feedback = _format_feedback_ru_de(entry, ok)
+    if result.get("completed"):
+        feedback = f"{feedback}\n\nLearning completed for this word."
+    return await _send_learning_prompt(update, context, feedback)
 
 
 async def quiz_verb_weak_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1288,6 +1591,8 @@ async def algo_settings_menu_choice(update: Update, context: ContextTypes.DEFAUL
 
     if action == "drill_sett":
         return await _send_drill_settings_menu(update, user_id)
+    if action == "learning_sett":
+        return await _send_learning_settings_menu(update, user_id)
 
     if text == t(lang, "ses_rtr_gap"):
         context.user_data["algo_setting_edit"] = SESSION_RETRY_GAP_KEY
@@ -1377,6 +1682,49 @@ async def drill_settings_menu_choice(update: Update, context: ContextTypes.DEFAU
     return DRILL_SETTINGS_MENU
 
 
+async def learning_settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle learning settings menu choice."""
+    text = update.message.text.strip()
+    user_id = update.effective_user.id
+    lang = _user_interface_lang(user_id)
+    action = _action_key_from_text(text, user_id)
+    if action == "back":
+        return await _send_algo_settings_menu(update, user_id)
+    if text == t(lang, "learning_daily_qty"):
+        context.user_data["algo_setting_edit"] = LEARNING_DAILY_QTY_KEY
+        context.user_data["algo_edit_return"] = "learning"
+        await update.message.reply_text("Enter learning.daily_qty:", reply_markup=ReplyKeyboardRemove())
+        return ALGO_SETTINGS_EDIT
+    if text == t(lang, "learning_intervals"):
+        context.user_data["algo_setting_edit"] = LEARNING_INTERVALS_KEY
+        context.user_data["algo_edit_return"] = "learning"
+        await update.message.reply_text(
+            "Enter learning.intervals_sec as comma-separated seconds (example: 30,120,600,3600):",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        return ALGO_SETTINGS_EDIT
+    if text == t(lang, "learning_reminder_interval"):
+        context.user_data["algo_setting_edit"] = LEARNING_REMINDER_INTERVAL_KEY
+        context.user_data["algo_edit_return"] = "learning"
+        await update.message.reply_text("Enter learning.reminder_interval_sec:", reply_markup=ReplyKeyboardRemove())
+        return ALGO_SETTINGS_EDIT
+    if text == t(lang, "learning_reminder_cooldown"):
+        context.user_data["algo_setting_edit"] = LEARNING_REMINDER_COOLDOWN_KEY
+        context.user_data["algo_edit_return"] = "learning"
+        await update.message.reply_text("Enter learning.reminder_cooldown_sec:", reply_markup=ReplyKeyboardRemove())
+        return ALGO_SETTINGS_EDIT
+    if text == t(lang, "learning_ready_quorum"):
+        context.user_data["algo_setting_edit"] = LEARNING_READY_QUORUM_KEY
+        context.user_data["algo_edit_return"] = "learning"
+        await update.message.reply_text("Enter learning.ready_quorum_pct (1-100):", reply_markup=ReplyKeyboardRemove())
+        return ALGO_SETTINGS_EDIT
+    await update.message.reply_text(
+        "Use learning settings buttons.",
+        reply_markup=ReplyKeyboardMarkup(_learning_settings_menu_keys(user_id), resize_keyboard=True),
+    )
+    return LEARNING_SETTINGS_MENU
+
+
 async def algo_settings_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle algo settings edit."""
     text = update.message.text.strip()
@@ -1387,29 +1735,54 @@ async def algo_settings_edit(update: Update, context: ContextTypes.DEFAULT_TYPE)
         context.user_data.pop("algo_edit_return", None)
         if return_to == "drill":
             return await _send_drill_settings_menu(update, user_id)
+        if return_to == "learning":
+            return await _send_learning_settings_menu(update, user_id)
         return await _send_algo_settings_menu(update, user_id)
 
     key = context.user_data.get("algo_setting_edit")
-    if key not in {SESSION_RETRY_GAP_KEY, SESSION_RETRY_IT_KEY, WEAK_DRILL_GAP_KEY, WEAK_DRILL_REPEATS_KEY}:
+    if key not in {
+        SESSION_RETRY_GAP_KEY,
+        SESSION_RETRY_IT_KEY,
+        WEAK_DRILL_GAP_KEY,
+        WEAK_DRILL_REPEATS_KEY,
+        LEARNING_DAILY_QTY_KEY,
+        LEARNING_INTERVALS_KEY,
+        LEARNING_REMINDER_INTERVAL_KEY,
+        LEARNING_REMINDER_COOLDOWN_KEY,
+        LEARNING_READY_QUORUM_KEY,
+    }:
         if return_to == "drill":
             return await _send_drill_settings_menu(update, user_id)
+        if return_to == "learning":
+            return await _send_learning_settings_menu(update, user_id)
         return await _send_algo_settings_menu(update, user_id)
 
-    try:
-        value = int(text)
-    except ValueError:
-        await update.message.reply_text("Enter a number.")
-        return ALGO_SETTINGS_EDIT
-
-    if value < 1:
-        await update.message.reply_text("Value must be >= 1.")
-        return ALGO_SETTINGS_EDIT
-
-    set_setting(get_db_path(), key, str(value))
+    if key == LEARNING_INTERVALS_KEY:
+        values = _parse_learning_intervals(text)
+        if not values:
+            await update.message.reply_text("Enter comma-separated seconds, for example: 30,120,600")
+            return ALGO_SETTINGS_EDIT
+        set_setting(get_db_path(), key, ",".join(str(v) for v in values))
+    else:
+        try:
+            value = int(text)
+        except ValueError:
+            await update.message.reply_text("Enter a number.")
+            return ALGO_SETTINGS_EDIT
+        if key == LEARNING_READY_QUORUM_KEY:
+            if value < 1 or value > 100:
+                await update.message.reply_text("Value must be in range 1..100.")
+                return ALGO_SETTINGS_EDIT
+        elif value < 1:
+            await update.message.reply_text("Value must be >= 1.")
+            return ALGO_SETTINGS_EDIT
+        set_setting(get_db_path(), key, str(value))
     context.user_data.pop("algo_setting_edit", None)
     context.user_data.pop("algo_edit_return", None)
     if return_to == "drill":
         return await _send_drill_settings_menu(update, user_id)
+    if return_to == "learning":
+        return await _send_learning_settings_menu(update, user_id)
     return await _send_algo_settings_menu(update, user_id)
 
 
@@ -3656,6 +4029,78 @@ def _configure_auto_dump(app: Application, mode: str):
         )
 
 
+def _parse_utc_iso(token):
+    """Handle parse utc iso."""
+    raw = str(token or "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.strptime(raw, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+async def _learning_reminder_job(context: ContextTypes.DEFAULT_TYPE):
+    """Handle learning reminder job."""
+    db_path = get_db_path()
+    now = datetime.now(timezone.utc)
+    now_iso = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    reminder_interval = _learning_reminder_interval(db_path)
+    reminder_cooldown = _learning_reminder_cooldown(db_path)
+    quorum_pct = _learning_ready_quorum(db_path)
+
+    for batch in learning_active_batches(db_path):
+        user_id = int(batch.get("user_id") or 0)
+        batch_id = str(batch.get("id") or "")
+        if not user_id or not batch_id:
+            continue
+        stats = learning_status_snapshot(db_path, user_id=user_id, quorum_pct=quorum_pct)
+        if stats.get("batch_id") != batch_id:
+            continue
+        active_count = int(stats.get("active_count") or 0)
+        if active_count <= 0:
+            continue
+        ready = bool(stats.get("ready"))
+        learning_batch_update_ready_state(db_path, batch_id=batch_id, ready=ready, now_iso=now_iso)
+        if not ready:
+            continue
+        ready_since = _parse_utc_iso(stats.get("ready_since")) or now
+        last_notified = _parse_utc_iso(stats.get("last_notified_at"))
+        ready_elapsed = (now - ready_since).total_seconds()
+        notify_elapsed = (now - last_notified).total_seconds() if last_notified else 10**9
+        if ready_elapsed < reminder_interval:
+            continue
+        if notify_elapsed < reminder_cooldown:
+            continue
+        try:
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=(
+                    f"Learning reminder:\n"
+                    f"due_now = {stats.get('due_count', 0)} / need {stats.get('ready_needed', 0)}\n"
+                    f"Use Learning -> learning session."
+                ),
+            )
+            learning_batch_mark_notified(db_path, batch_id=batch_id, now_iso=now_iso)
+        except Exception:
+            continue
+
+
+def _configure_learning_reminders(app: Application):
+    """Handle configure learning reminders."""
+    job_queue = app.job_queue
+    if job_queue is None:
+        return
+    for job in job_queue.get_jobs_by_name(LEARNING_REMINDER_JOB_NAME):
+        job.schedule_removal()
+    job_queue.run_repeating(
+        _learning_reminder_job,
+        interval=60,
+        first=60,
+        name=LEARNING_REMINDER_JOB_NAME,
+    )
+
+
 def _prepare_storage():
     """Handle prepare storage."""
     db_path = get_db_path()
@@ -3670,6 +4115,16 @@ def _prepare_storage():
         set_setting(db_path, WEAK_DRILL_GAP_KEY, str(WEAK_DRILL_GAP_DEFAULT))
     if not get_setting(db_path, WEAK_DRILL_REPEATS_KEY):
         set_setting(db_path, WEAK_DRILL_REPEATS_KEY, str(WEAK_DRILL_REPEATS_DEFAULT))
+    if not get_setting(db_path, LEARNING_DAILY_QTY_KEY):
+        set_setting(db_path, LEARNING_DAILY_QTY_KEY, str(LEARNING_DAILY_QTY_DEFAULT))
+    if not get_setting(db_path, LEARNING_INTERVALS_KEY):
+        set_setting(db_path, LEARNING_INTERVALS_KEY, LEARNING_INTERVALS_DEFAULT)
+    if not get_setting(db_path, LEARNING_REMINDER_INTERVAL_KEY):
+        set_setting(db_path, LEARNING_REMINDER_INTERVAL_KEY, str(LEARNING_REMINDER_INTERVAL_DEFAULT))
+    if not get_setting(db_path, LEARNING_REMINDER_COOLDOWN_KEY):
+        set_setting(db_path, LEARNING_REMINDER_COOLDOWN_KEY, str(LEARNING_REMINDER_COOLDOWN_DEFAULT))
+    if not get_setting(db_path, LEARNING_READY_QUORUM_KEY):
+        set_setting(db_path, LEARNING_READY_QUORUM_KEY, str(LEARNING_READY_QUORUM_DEFAULT))
 
 
 def main():
@@ -3686,6 +4141,7 @@ def main():
 
     mode = get_setting(get_db_path(), AUTO_DUMP_SETTING_KEY, "off")
     _configure_auto_dump(app, mode)
+    _configure_learning_reminders(app)
     conv = ConversationHandler(
         entry_points=[
             CommandHandler("start", start),
@@ -3696,10 +4152,13 @@ def main():
             SELECT_UI_LANG: [MessageHandler(filters.TEXT & ~filters.COMMAND, select_ui_lang)],
             SELECT_DICT_LANG: [MessageHandler(filters.TEXT & ~filters.COMMAND, select_dict_lang)],
             TESTS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, tests_menu_choice)],
+            LEARNING_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, learning_menu_choice)],
+            LEARNING_QUIZ: [MessageHandler(filters.TEXT & ~filters.COMMAND, learning_quiz)],
             QUIZ_RU_DE_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_ru_de_menu_choice)],
             SETTINGS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, settings_menu_choice)],
             ALGO_SETTINGS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, algo_settings_menu_choice)],
             DRILL_SETTINGS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, drill_settings_menu_choice)],
+            LEARNING_SETTINGS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, learning_settings_menu_choice)],
             ALGO_SETTINGS_EDIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, algo_settings_edit)],
             ALGO_SETTINGS_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, algo_settings_confirm)],
             TOPIC_FILTER_EDIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, topic_filter_edit)],

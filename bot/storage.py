@@ -1,7 +1,8 @@
+import math
 import sqlite3
 import uuid
 from contextlib import contextmanager
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 DEFAULT_EASE = 2.5
@@ -60,6 +61,8 @@ def _ensure_indexes(conn):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_quiz_events_user_word_mode ON quiz_events(user_id, word_id, mode, created_at)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_form_stats_user_word ON form_stats(user_id, word_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_word_synonyms_group ON word_synonyms(group_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_learning_items_user_status_due ON learning_items(user_id, status, next_due)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_learning_items_batch_status ON learning_items(batch_id, status)")
 
 
 def _repair_word_fk_tables(conn):
@@ -332,6 +335,31 @@ def init_db(db_path):
                 FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE,
                 FOREIGN KEY (group_id) REFERENCES synonym_groups(id) ON DELETE CASCADE
             );
+
+            CREATE TABLE IF NOT EXISTS learning_batches (
+                id TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                target_qty INTEGER NOT NULL DEFAULT 20,
+                status TEXT NOT NULL DEFAULT 'active',
+                ready_since TEXT DEFAULT NULL,
+                last_notified_at TEXT DEFAULT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS learning_items (
+                user_id INTEGER NOT NULL,
+                word_id TEXT NOT NULL,
+                batch_id TEXT NOT NULL,
+                step_index INTEGER NOT NULL DEFAULT 0,
+                next_due TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'active',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (user_id, word_id),
+                FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE,
+                FOREIGN KEY (batch_id) REFERENCES learning_batches(id) ON DELETE CASCADE
+            );
             """
         )
         _ensure_schema(conn)
@@ -416,6 +444,25 @@ def _ensure_schema(conn):
     }
     if "review_stage_snapshot" not in quiz_cols:
         conn.execute("ALTER TABLE quiz_events ADD COLUMN review_stage_snapshot INTEGER")
+
+    batch_cols = {
+        row["name"] if isinstance(row, sqlite3.Row) else row[1]
+        for row in conn.execute("PRAGMA table_info(learning_batches)").fetchall()
+    }
+    if batch_cols:
+        if "ready_since" not in batch_cols:
+            conn.execute("ALTER TABLE learning_batches ADD COLUMN ready_since TEXT DEFAULT NULL")
+        if "last_notified_at" not in batch_cols:
+            conn.execute("ALTER TABLE learning_batches ADD COLUMN last_notified_at TEXT DEFAULT NULL")
+        if "updated_at" not in batch_cols:
+            conn.execute("ALTER TABLE learning_batches ADD COLUMN updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP")
+
+    learning_cols = {
+        row["name"] if isinstance(row, sqlite3.Row) else row[1]
+        for row in conn.execute("PRAGMA table_info(learning_items)").fetchall()
+    }
+    if learning_cols and "updated_at" not in learning_cols:
+        conn.execute("ALTER TABLE learning_items ADD COLUMN updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP")
 
 
 def _normalize_text(text):
@@ -824,6 +871,26 @@ def get_statistics_snapshot(db_path, user_id, mode):
             or 0
         )
 
+        learning_to_sm2_week = int(
+            conn.execute(
+                """
+                SELECT COUNT(DISTINCT p.word_id) AS cnt
+                FROM progress p
+                JOIN learning_items li
+                  ON li.user_id = p.user_id
+                 AND li.word_id = p.word_id
+                 AND li.status IN ('completed', 'skipped')
+                WHERE p.user_id = ?
+                  AND p.mode = ?
+                  AND p.repetitions >= 2
+                  AND date(p.updated_at) >= date(?)
+                  AND date(p.updated_at) < date(?)
+                """,
+                (user_id, mode, ws, we),
+            ).fetchone()["cnt"]
+            or 0
+        )
+
         weak_resolved = int(
             conn.execute(
                 """
@@ -899,6 +966,7 @@ def get_statistics_snapshot(db_path, user_id, mode):
         "never_answered": never_answered,
         "retention_7d_pct": retention_7d_pct,
         "new_words_tested_week": new_words_tested,
+        "learning_to_sm2_week": learning_to_sm2_week,
         "weak_resolved_week": weak_resolved,
     }
 
@@ -1320,8 +1388,36 @@ def select_due(db_path, user_id, mode, word_type=None, topics=None, today=None):
     due_today = today.isoformat()
     init_db(db_path)
 
-    where_clauses = ["COALESCE(p.due, ?) <= ?"]
+    where_clauses = [
+        "COALESCE(p.due, ?) <= ?",
+        """NOT EXISTS (
+            SELECT 1
+            FROM learning_items li
+            WHERE li.user_id = ?
+              AND li.word_id = w.id
+              AND li.status = 'active'
+        )""",
+        """(
+            EXISTS (
+                SELECT 1
+                FROM learning_items l2
+                WHERE l2.user_id = ?
+                  AND l2.word_id = w.id
+                  AND l2.status IN ('completed', 'skipped')
+            )
+            OR EXISTS (
+                SELECT 1
+                FROM quiz_events e
+                WHERE e.user_id = ?
+                  AND e.word_id = w.id
+                  AND e.mode != 'learning'
+            )
+        )""",
+    ]
     where_params = [due_today, due_today]
+    where_params.append(int(user_id))
+    where_params.append(int(user_id))
+    where_params.append(int(user_id))
     if word_type:
         where_clauses.insert(0, "w.type = ?")
         where_params.insert(0, word_type)
@@ -1437,6 +1533,386 @@ def update_progress(db_path, user_id, word_id, mode, quality):
                 updated["due"],
             ),
         )
+
+
+def _utc_now_iso():
+    """Handle utc now iso."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _parse_learning_intervals(raw):
+    """Handle parse learning intervals."""
+    token = str(raw or "").strip()
+    if not token:
+        return []
+    values = []
+    for chunk in token.replace(";", ",").split(","):
+        part = chunk.strip()
+        if not part:
+            continue
+        try:
+            value = int(part)
+        except ValueError:
+            continue
+        if value < 1:
+            continue
+        values.append(value)
+    return values
+
+
+def _active_learning_batch_row(conn, user_id):
+    """Handle active learning batch row."""
+    return conn.execute(
+        """
+        SELECT id, target_qty, status, ready_since, last_notified_at
+        FROM learning_batches
+        WHERE user_id = ? AND status = 'active'
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        (int(user_id),),
+    ).fetchone()
+
+
+def learning_get_or_create_batch(db_path, user_id, daily_qty):
+    """Handle learning get or create batch."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        row = _active_learning_batch_row(conn, user_id)
+        if row:
+            if int(row["target_qty"] or 0) != int(daily_qty):
+                conn.execute(
+                    """
+                    UPDATE learning_batches
+                    SET target_qty = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (int(daily_qty), row["id"]),
+                )
+            return row["id"]
+        batch_id = str(uuid.uuid4())
+        conn.execute(
+            """
+            INSERT INTO learning_batches (id, user_id, target_qty, status)
+            VALUES (?, ?, ?, 'active')
+            """,
+            (batch_id, int(user_id), int(daily_qty)),
+        )
+    return batch_id
+
+
+def learning_active_count(db_path, user_id, batch_id=None):
+    """Handle learning active count."""
+    init_db(db_path)
+    query = "SELECT COUNT(*) AS cnt FROM learning_items WHERE user_id = ? AND status = 'active'"
+    params = [int(user_id)]
+    if batch_id:
+        query += " AND batch_id = ?"
+        params.append(_safe_text(batch_id))
+    with _connect(db_path) as conn:
+        row = conn.execute(query, tuple(params)).fetchone()
+    return int(row["cnt"] or 0) if row else 0
+
+
+def learning_pick_new_words(db_path, user_id, limit):
+    """Handle learning pick new words."""
+    init_db(db_path)
+    if int(limit) <= 0:
+        return []
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2,
+                   w.russian, w.ukrainian, w.english, w.topic
+            FROM words w
+            WHERE NOT EXISTS (
+                SELECT 1 FROM quiz_events e
+                WHERE e.user_id = ? AND e.word_id = w.id
+            )
+              AND NOT EXISTS (
+                SELECT 1 FROM learning_items li
+                WHERE li.user_id = ? AND li.word_id = w.id
+              )
+            ORDER BY RANDOM()
+            LIMIT ?
+            """,
+            (int(user_id), int(user_id), int(limit)),
+        ).fetchall()
+    return [_row_to_entry(row) for row in rows]
+
+
+def learning_add_words(db_path, user_id, words, batch_id, first_delay_seconds):
+    """Handle learning add words."""
+    init_db(db_path)
+    now = datetime.now(timezone.utc) + timedelta(seconds=max(1, int(first_delay_seconds)))
+    due_iso = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    inserted = 0
+    with _connect(db_path) as conn:
+        for entry in words:
+            word_id = _safe_text(entry.get("id"))
+            if not word_id:
+                continue
+            cur = conn.execute(
+                """
+                INSERT INTO learning_items (user_id, word_id, batch_id, step_index, next_due, status)
+                VALUES (?, ?, ?, 0, ?, 'active')
+                ON CONFLICT(user_id, word_id) DO NOTHING
+                """,
+                (int(user_id), word_id, _safe_text(batch_id), due_iso),
+            )
+            inserted += int(cur.rowcount > 0)
+        conn.execute(
+            """
+            UPDATE learning_batches
+            SET updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (_safe_text(batch_id),),
+        )
+    return inserted
+
+
+def learning_due_entry(db_path, user_id):
+    """Handle learning due entry."""
+    init_db(db_path)
+    now_iso = _utc_now_iso()
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT
+                w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2,
+                w.russian, w.ukrainian, w.english, w.topic,
+                li.step_index AS learning_step,
+                li.next_due AS learning_due,
+                li.batch_id AS learning_batch_id
+            FROM learning_items li
+            JOIN words w ON w.id = li.word_id
+            WHERE li.user_id = ?
+              AND li.status = 'active'
+              AND li.next_due <= ?
+            ORDER BY li.next_due ASC, li.created_at ASC
+            LIMIT 1
+            """,
+            (int(user_id), now_iso),
+        ).fetchone()
+    return _row_to_entry(row) if row else None
+
+
+def learning_update_result(db_path, user_id, word_id, ok, intervals_seconds):
+    """Handle learning update result."""
+    intervals = [int(v) for v in intervals_seconds if int(v) > 0]
+    if not intervals:
+        return {"completed": True, "step_index": 0, "next_due": None}
+    init_db(db_path)
+    now = datetime.now(timezone.utc)
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT step_index, batch_id
+            FROM learning_items
+            WHERE user_id = ? AND word_id = ? AND status = 'active'
+            """,
+            (int(user_id), _safe_text(word_id)),
+        ).fetchone()
+        if not row:
+            return {"completed": False, "step_index": 0, "next_due": None}
+        step_index = int(row["step_index"] or 0)
+        batch_id = row["batch_id"]
+
+        if ok:
+            next_step = step_index + 1
+            if next_step >= len(intervals):
+                conn.execute(
+                    """
+                    UPDATE learning_items
+                    SET status = 'completed', updated_at = CURRENT_TIMESTAMP
+                    WHERE user_id = ? AND word_id = ?
+                    """,
+                    (int(user_id), _safe_text(word_id)),
+                )
+                conn.execute(
+                    """
+                    UPDATE learning_batches
+                    SET updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (_safe_text(batch_id),),
+                )
+                return {"completed": True, "step_index": next_step, "next_due": None}
+            due_iso = (now + timedelta(seconds=intervals[next_step])).strftime("%Y-%m-%dT%H:%M:%SZ")
+            conn.execute(
+                """
+                UPDATE learning_items
+                SET step_index = ?, next_due = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE user_id = ? AND word_id = ?
+                """,
+                (int(next_step), due_iso, int(user_id), _safe_text(word_id)),
+            )
+            conn.execute(
+                """
+                UPDATE learning_batches
+                SET updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (_safe_text(batch_id),),
+            )
+            return {"completed": False, "step_index": next_step, "next_due": due_iso}
+
+        due_iso = (now + timedelta(seconds=intervals[0])).strftime("%Y-%m-%dT%H:%M:%SZ")
+        conn.execute(
+            """
+            UPDATE learning_items
+            SET step_index = 0, next_due = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = ? AND word_id = ?
+            """,
+            (due_iso, int(user_id), _safe_text(word_id)),
+        )
+        conn.execute(
+            """
+            UPDATE learning_batches
+            SET updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (_safe_text(batch_id),),
+        )
+        return {"completed": False, "step_index": 0, "next_due": due_iso}
+
+
+def learning_skip_word(db_path, user_id, word_id):
+    """Handle learning skip word."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        conn.execute(
+            """
+            UPDATE learning_items
+            SET status = 'skipped', updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = ? AND word_id = ? AND status = 'active'
+            """,
+            (int(user_id), _safe_text(word_id)),
+        )
+    return True
+
+
+def learning_status_snapshot(db_path, user_id, quorum_pct=70):
+    """Handle learning status snapshot."""
+    init_db(db_path)
+    now_iso = _utc_now_iso()
+    with _connect(db_path) as conn:
+        batch = _active_learning_batch_row(conn, user_id)
+        if not batch:
+            return {
+                "batch_id": "",
+                "target_qty": 0,
+                "active_count": 0,
+                "due_count": 0,
+                "ready_needed": 0,
+                "ready": False,
+                "next_due": "",
+                "completed_count": 0,
+            }
+        batch_id = batch["id"]
+        active_count = int(
+            conn.execute(
+                "SELECT COUNT(*) AS cnt FROM learning_items WHERE user_id = ? AND batch_id = ? AND status = 'active'",
+                (int(user_id), batch_id),
+            ).fetchone()["cnt"]
+            or 0
+        )
+        due_count = int(
+            conn.execute(
+                """
+                SELECT COUNT(*) AS cnt
+                FROM learning_items
+                WHERE user_id = ? AND batch_id = ? AND status = 'active' AND next_due <= ?
+                """,
+                (int(user_id), batch_id, now_iso),
+            ).fetchone()["cnt"]
+            or 0
+        )
+        next_due_row = conn.execute(
+            """
+            SELECT next_due
+            FROM learning_items
+            WHERE user_id = ? AND batch_id = ? AND status = 'active'
+            ORDER BY next_due ASC
+            LIMIT 1
+            """,
+            (int(user_id), batch_id),
+        ).fetchone()
+        completed_count = int(
+            conn.execute(
+                """
+                SELECT COUNT(*) AS cnt
+                FROM learning_items
+                WHERE user_id = ? AND batch_id = ? AND status IN ('completed', 'skipped')
+                """,
+                (int(user_id), batch_id),
+            ).fetchone()["cnt"]
+            or 0
+        )
+    needed = int(math.ceil(active_count * (max(1, min(100, int(quorum_pct))) / 100.0))) if active_count else 0
+    return {
+        "batch_id": batch_id,
+        "target_qty": int(batch["target_qty"] or 0),
+        "active_count": active_count,
+        "due_count": due_count,
+        "ready_needed": needed,
+        "ready": bool(active_count and due_count >= needed),
+        "next_due": next_due_row["next_due"] if next_due_row else "",
+        "completed_count": completed_count,
+        "ready_since": batch["ready_since"] or "",
+        "last_notified_at": batch["last_notified_at"] or "",
+    }
+
+
+def learning_batch_update_ready_state(db_path, batch_id, ready, now_iso):
+    """Handle learning batch update ready state."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        if ready:
+            row = conn.execute(
+                "SELECT ready_since FROM learning_batches WHERE id = ?",
+                (_safe_text(batch_id),),
+            ).fetchone()
+            if row and not row["ready_since"]:
+                conn.execute(
+                    "UPDATE learning_batches SET ready_since = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (_safe_text(now_iso), _safe_text(batch_id)),
+                )
+        else:
+            conn.execute(
+                "UPDATE learning_batches SET ready_since = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (_safe_text(batch_id),),
+            )
+
+
+def learning_batch_mark_notified(db_path, batch_id, now_iso):
+    """Handle learning batch mark notified."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        conn.execute(
+            """
+            UPDATE learning_batches
+            SET last_notified_at = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (_safe_text(now_iso), _safe_text(batch_id)),
+        )
+
+
+def learning_active_batches(db_path):
+    """Handle learning active batches."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT id, user_id, target_qty, ready_since, last_notified_at
+            FROM learning_batches
+            WHERE status = 'active'
+            ORDER BY created_at ASC
+            """
+        ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def set_progress(db_path, user_id, word_id, mode, srs):
