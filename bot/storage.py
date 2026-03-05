@@ -1907,11 +1907,15 @@ def learning_status_snapshot(db_path, user_id, quorum_pct=70):
                 "batch_id": "",
                 "target_qty": 0,
                 "active_count": 0,
+                "preview_pending": 0,
+                "active_due_pool": 0,
                 "due_count": 0,
                 "ready_needed": 0,
                 "ready": False,
                 "next_due": "",
                 "completed_count": 0,
+                "ready_since": "",
+                "last_notified_at": "",
             }
         batch_id = batch["id"]
         active_count = int(
