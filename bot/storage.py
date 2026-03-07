@@ -2692,6 +2692,21 @@ def get_word_by_id(db_path, word_id):
     return _row_to_entry(row)
 
 
+def list_all_words(db_path):
+    """Handle list all words."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian
+            , ukrainian, english, topic
+            FROM words
+            ORDER BY created_at ASC
+            """
+        ).fetchall()
+    return [_row_to_entry(row) for row in rows]
+
+
 def find_word_by_value(db_path, token):
     """Handle find word by value."""
     candidate = _normalize_text(token)
@@ -2714,6 +2729,166 @@ def find_word_by_value(db_path, token):
     if not row:
         return None
     return _row_to_entry(row)
+
+
+_ARTICLE_PREFIXES = {
+    "der",
+    "die",
+    "das",
+    "den",
+    "dem",
+    "des",
+    "ein",
+    "eine",
+    "einen",
+    "einem",
+    "eines",
+    "kein",
+    "keine",
+    "keinen",
+    "keinem",
+    "keines",
+}
+
+
+def _strip_leading_article(token):
+    """Handle strip leading article."""
+    normalized = _normalize_text(token)
+    parts = normalized.split()
+    if parts and parts[0] in _ARTICLE_PREFIXES:
+        return " ".join(parts[1:])
+    return normalized
+
+
+def search_word(db_path, token):
+    """Handle search word."""
+    candidate = _normalize_text(token)
+    if not candidate:
+        return None
+    stripped = _strip_leading_article(candidate)
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian
+            , ukrainian, english, topic
+            FROM words
+            WHERE id = ?
+               OR lower(trim(german)) IN (?, ?)
+               OR lower(trim(infinitive)) IN (?, ?)
+               OR lower(trim(plural)) IN (?, ?)
+               OR lower(trim(prateritum)) IN (?, ?)
+               OR lower(trim(partizip2)) IN (?, ?)
+               OR lower(trim(russian)) IN (?, ?)
+               OR lower(trim(ukrainian)) IN (?, ?)
+               OR lower(trim(english)) IN (?, ?)
+            LIMIT 1
+            """,
+            (
+                _safe_text(token),
+                candidate,
+                stripped,
+                candidate,
+                stripped,
+                candidate,
+                stripped,
+                candidate,
+                stripped,
+                candidate,
+                stripped,
+                candidate,
+                stripped,
+                candidate,
+                stripped,
+                candidate,
+                stripped,
+            ),
+        ).fetchone()
+        if row:
+            return _row_to_entry(row)
+
+        like = f"%{candidate}%"
+        like_stripped = f"%{stripped}%"
+        rows = conn.execute(
+            """
+            SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian
+            , ukrainian, english, topic
+            FROM words
+            WHERE lower(german) LIKE ? OR lower(german) LIKE ?
+               OR lower(infinitive) LIKE ? OR lower(infinitive) LIKE ?
+               OR lower(plural) LIKE ? OR lower(plural) LIKE ?
+               OR lower(prateritum) LIKE ? OR lower(prateritum) LIKE ?
+               OR lower(partizip2) LIKE ? OR lower(partizip2) LIKE ?
+               OR lower(russian) LIKE ? OR lower(russian) LIKE ?
+               OR lower(ukrainian) LIKE ? OR lower(ukrainian) LIKE ?
+               OR lower(english) LIKE ? OR lower(english) LIKE ?
+            LIMIT 20
+            """,
+            (
+                like,
+                like_stripped,
+                like,
+                like_stripped,
+                like,
+                like_stripped,
+                like,
+                like_stripped,
+                like,
+                like_stripped,
+                like,
+                like_stripped,
+                like,
+                like_stripped,
+                like,
+                like_stripped,
+            ),
+        ).fetchall()
+    if not rows:
+        return None
+
+    def _matches(entry):
+        forms = {
+            _normalize_text(entry.get("german", "")),
+            _normalize_text(entry.get("infinitive", "")),
+            _normalize_text(entry.get("plural", "")),
+            _normalize_text(entry.get("prateritum", "")),
+            _normalize_text(entry.get("partizip2", "")),
+        }
+        if candidate in forms or stripped in forms:
+            return True
+        for field in ("russian", "ukrainian", "english"):
+            variants = _form_variants(entry.get(field, ""))
+            if candidate in variants or stripped in variants:
+                return True
+        return False
+
+    for row in rows:
+        entry = _row_to_entry(row)
+        if _matches(entry):
+            return entry
+    return _row_to_entry(rows[0])
+
+
+def has_translation_collision(db_path, translation, dict_lang):
+    """Handle has translation collision."""
+    field = {
+        "ru": "russian",
+        "uk": "ukrainian",
+        "en": "english",
+    }.get(dict_lang, "russian")
+    candidate = _normalize_text(translation)
+    if not candidate:
+        return False
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            f"SELECT {field} FROM words"
+        ).fetchall()
+    for row in rows:
+        value = row[field] if isinstance(row, sqlite3.Row) else row[0]
+        if candidate in _form_variants(value):
+            return True
+    return False
 
 
 def add_word_flag(db_path, word_id, user_id, comment):

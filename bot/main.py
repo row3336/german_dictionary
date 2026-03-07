@@ -29,6 +29,8 @@ from .app_config import (
     ADD_INPUT,
     ADD_PRECHECK,
     ADD_PRECHECK_EDIT,
+    DB_SEARCH,
+    DB_SEARCH_VIEW,
     AI_CLARIFY_AI,
     AI_BAN_WORD,
     AI_CLARIFY_FIELD,
@@ -115,6 +117,9 @@ from .storage import (
     find_word_by_value,
     find_existing_word,
     get_word_by_id,
+    search_word,
+    has_translation_collision,
+    list_all_words,
     get_synonym_group,
     get_setting,
     init_db,
@@ -219,7 +224,10 @@ LEARNING_REMINDER_JOB_NAME = "learning_reminder_job"
 def _main_menu_keys(user_id):
     """Handle main menu keys."""
     lang = _user_interface_lang(user_id)
-    return [[t(lang, "add_word"), t(lang, "tests")], [t(lang, "settings"), t(lang, "stat")]]
+    return [
+        [t(lang, "add_word"), t(lang, "tests"), t(lang, "db_search")],
+        [t(lang, "settings"), t(lang, "stat")],
+    ]
 
 
 def _main_menu_markup(user_id):
@@ -580,6 +588,8 @@ def _action_key_from_text(text, user_id):
         ("stop", "stop"),
         ("add_word", "add_word"),
         ("tests", "tests"),
+        ("db_search", "db_search"),
+        ("db_search_matches", "db_search_matches"),
         ("settings", "settings"),
         ("info", "info"),
         ("stat", "stat"),
@@ -648,6 +658,12 @@ def _clarify_keys(user_id):
 def _add_input_markup(user_id):
     """Handle add input markup."""
     return ReplyKeyboardMarkup([[t(_user_interface_lang(user_id), "back")]], resize_keyboard=True)
+
+
+def _db_search_markup(user_id):
+    """Handle db search markup."""
+    lang = _user_interface_lang(user_id)
+    return ReplyKeyboardMarkup([[t(lang, "db_search_matches"), t(lang, "back")]], resize_keyboard=True)
 
 
 def _split_text_chunks(text, max_size=3500):
@@ -1055,6 +1071,18 @@ async def _show_quiz_prompt_after_edit(update: Update, context: ContextTypes.DEF
     if state == LEARNING_QUIZ:
         return await _send_learning_prompt(update, context, prefix_text)
 
+    if state == DB_SEARCH_VIEW:
+        text = _format_db_search_card(entry, _user_dict_lang(update.effective_user.id))
+        if prefix_text:
+            text = f"{prefix_text}\n\n{text}"
+        await update.message.reply_text(text, parse_mode="Markdown")
+        context.user_data["edit_stage"] = "pick_scope"
+        await update.message.reply_text(
+            "Choose edit action:",
+            reply_markup=_quiz_edit_root_markup(update.effective_user.id),
+        )
+        return ADD_EDIT
+
     return await _back_to_tests(update, context)
 
 
@@ -1075,6 +1103,101 @@ def _format_word_card(entry, title="Word card:"):
         f"english: {entry.get('english', '') or '-'}",
     ]
     return "\n".join(lines)
+
+
+def _format_db_search_card(entry, dict_lang):
+    """Handle format db search card."""
+    word_type = _low_word(entry.get("type", ""))
+    translation = _entry_translation(entry, dict_lang)
+    lines = []
+    if word_type == "nomen":
+        article = str(entry.get("article", "")).strip()
+        german = _cap_word(entry.get("german", ""))
+        left = f"{article} {german}".strip() if article else german
+        if translation:
+            lines.append(f"{_md_escape(left)} - {_md_escape(translation)}")
+        else:
+            lines.append(_md_escape(left))
+        plural = _cap_word(entry.get("plural", ""))
+        if plural:
+            lines.append("")
+            lines.append(f"_pl. die {_md_escape(plural)}_")
+        return "\n".join(lines)
+    if word_type == "verb":
+        infinitive = _low_word(entry.get("infinitive", ""))
+        if translation:
+            lines.append(f"{_md_escape(infinitive)} - {_md_escape(translation)}")
+        else:
+            lines.append(_md_escape(infinitive))
+        pr = _low_word(entry.get("prateritum", ""))
+        p2 = _expected_partizip2(entry)
+        forms = ", ".join([x for x in [pr, p2] if x])
+        if forms:
+            lines.append("")
+            lines.append(f"_{_md_escape(forms)}_")
+        return "\n".join(lines)
+    german = _low_word(entry.get("german", ""))
+    if translation:
+        return f"{_md_escape(german)} - {_md_escape(translation)}"
+    return _md_escape(german)
+
+
+def _format_match_line(entry, dict_lang):
+    """Handle format match line."""
+    entry_type = _low_word(entry.get("type", ""))
+    translation = _entry_translation(entry, dict_lang)
+    if entry_type == "nomen":
+        article = str(entry.get("article", "")).strip()
+        german = _cap_word(entry.get("german", ""))
+        plural = _cap_word(entry.get("plural", ""))
+        parts = [entry_type, "-", article, german, plural, translation]
+        return " ".join(p for p in parts if p)
+    if entry_type == "verb":
+        infinitive = _low_word(entry.get("infinitive", ""))
+        pr = _low_word(entry.get("prateritum", ""))
+        p2 = _low_word(entry.get("partizip2", ""))
+        parts = [entry_type, "-", infinitive, pr, p2, translation]
+        return " ".join(p for p in parts if p)
+    german = _low_word(entry.get("german", ""))
+    parts = [entry_type, "-", german, translation]
+    return " ".join(p for p in parts if p)
+
+
+def _list_match_pairs(entries, dict_lang):
+    """Handle list match pairs."""
+    if not entries:
+        return []
+    by_base = {}
+    by_translation = {}
+    for entry in entries:
+        entry_type = _low_word(entry.get("type", ""))
+        if entry_type == "verb":
+            base = _normalize_lookup_text(entry.get("infinitive", ""))
+        else:
+            base = _normalize_lookup_text(entry.get("german", ""))
+        if base:
+            by_base.setdefault((entry_type or "word", base), []).append(entry)
+        translation = _normalize_lookup_text(_entry_translation(entry, dict_lang))
+        if translation:
+            by_translation.setdefault(("translation", translation), []).append(entry)
+
+    groups = []
+    for group in by_base.values():
+        if len(group) > 1:
+            groups.append(group)
+    for group in by_translation.values():
+        if len(group) > 1:
+            groups.append(group)
+
+    blocks = []
+    for group in groups:
+        for idx in range(0, len(group), 2):
+            pair = group[idx:idx + 2]
+            if len(pair) < 2:
+                continue
+            lines = [_format_match_line(pair[0], dict_lang), _format_match_line(pair[1], dict_lang)]
+            blocks.append("\n".join(lines))
+    return blocks
 
 
 def _syn_menu_markup(user_id):
@@ -1215,6 +1338,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return MENU
 
 
+async def _send_db_search_prompt(update: Update, user_id, prefix_text=None):
+    """Handle send db search prompt."""
+    text = "Send a word to search in DB:"
+    if prefix_text:
+        text = f"{prefix_text}\n\n{text}"
+    await update.message.reply_text(text, reply_markup=_db_search_markup(user_id))
+    return DB_SEARCH
+
+
 async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle menu choice."""
     text = update.message.text.strip()
@@ -1249,6 +1381,9 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=ReplyKeyboardMarkup(_settings_menu_keys(user_id), resize_keyboard=True),
         )
         return SETTINGS_MENU
+
+    if action == "db_search":
+        return await _send_db_search_prompt(update, user_id, None)
 
     if action == "info":
         chunks = _split_text_chunks(_load_info_text(_user_interface_lang(user_id)))
@@ -1308,6 +1443,43 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(t(_user_interface_lang(user_id), "unknown_menu"))
     return MENU
+
+
+async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle db search input."""
+    text = update.message.text.strip()
+    user_id = update.effective_user.id
+    action = _action_key_from_text(text, user_id)
+    if action == "back":
+        await update.message.reply_text(t(_user_interface_lang(user_id), "main_menu"), reply_markup=_main_menu_markup(user_id))
+        return MENU
+    if action == "db_search_matches":
+        entries = list_all_words(get_db_path())
+        blocks = _list_match_pairs(entries, _user_dict_lang(user_id))
+        if not blocks:
+            return await _send_db_search_prompt(update, user_id, "No matches found.")
+        chunks = _split_text_chunks("\n\n".join(blocks))
+        for idx, chunk in enumerate(chunks):
+            markup = _db_search_markup(user_id) if idx == len(chunks) - 1 else None
+            await update.message.reply_text(chunk, reply_markup=markup)
+        return DB_SEARCH
+    entry = search_word(get_db_path(), text)
+    if not entry:
+        return await _send_db_search_prompt(update, user_id, "Not found.")
+    context.user_data["quiz_entry"] = entry
+    context.user_data["quiz_edit_entry"] = entry
+    context.user_data["edit_source"] = "quiz"
+    context.user_data["edit_stage"] = "pick_scope"
+    context.user_data["edit_return_state"] = DB_SEARCH_VIEW
+    await update.message.reply_text(
+        _format_db_search_card(entry, _user_dict_lang(user_id)),
+        parse_mode="Markdown",
+    )
+    await update.message.reply_text(
+        "Choose edit action:",
+        reply_markup=_quiz_edit_root_markup(user_id),
+    )
+    return ADD_EDIT
 
 
 async def select_ui_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2431,6 +2603,9 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     stage = context.user_data.get("edit_stage", "pick_scope" if source == "quiz" else "pick_field")
     if _action_key_from_text(text, update.effective_user.id) == "back":
         if source == "quiz":
+            if stage == "pick_scope" and context.user_data.get("edit_return_state") == DB_SEARCH_VIEW:
+                context.user_data.pop("quiz_edit_entry", None)
+                return await _send_db_search_prompt(update, update.effective_user.id, None)
             if stage == "pick_scope":
                 return await _show_quiz_prompt_after_edit(update, context, "❌ Edit canceled.")
             if stage == "pick_field":
@@ -2499,6 +2674,8 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return await _send_prateritum_weak_prompt(update, context, prefix)
             if state == QUIZ_PARTIZIP2_WEAK:
                 return await _send_partizip2_weak_prompt(update, context, prefix)
+            if state == DB_SEARCH_VIEW:
+                return await _send_db_search_prompt(update, update.effective_user.id, prefix)
             return await _back_to_tests(update, context)
         await update.message.reply_text(
             "Use buttons: fields, delete, back.",
@@ -3905,35 +4082,49 @@ def _is_non_infinitive_verb_input(raw_word, entry):
     return source != infinitive
 
 
-def _format_ai_preview(entry):
+def _format_ai_preview(entry, dict_lang, has_synonym=False):
     """Handle format ai preview."""
     entry_type = entry.get("type")
+    translation = _entry_translation(entry, dict_lang)
+    warn = "❗ has a synonym in DB" if has_synonym else ""
     if entry_type == "nomen":
         art = entry.get("article", "")
         ger = entry.get("german", "")
         plural = entry.get("plural", "")
-        rus = entry.get("russian", "")
         extras = f" ({plural})" if plural else ""
-        return (
-            "Recognized [Nomen]\n"
-            f"{art} *{_md_escape(ger)}*{_md_escape(extras)} - {_md_escape(rus)}"
-        )
+        lines = [
+            "Recognized Nomen",
+            "",
+            f"{art} *{_md_escape(ger)}*{_md_escape(extras)} - {_md_escape(translation)}",
+        ]
+        if warn:
+            lines += ["", warn]
+        return "\n".join(lines)
 
     if entry_type == "verb":
         inf = entry.get("infinitive", "")
         pr = entry.get("prateritum", "")
         p2 = entry.get("partizip2", "")
-        rus = entry.get("russian", "")
         extras = " / ".join([x for x in [pr, p2] if x])
         extras = f" ({extras})" if extras else ""
-        return (
-            "Recognized [Verb]\n"
-            f"*{_md_escape(inf)}*{_md_escape(extras)} - {_md_escape(rus)}"
-        )
+        lines = [
+            "Recognized Verb",
+            "",
+            f"*{_md_escape(inf)}*{_md_escape(extras)} - {_md_escape(translation)}",
+        ]
+        if warn:
+            lines += ["", warn]
+        return "\n".join(lines)
 
     ger = entry.get("german", "")
-    rus = entry.get("russian", "")
-    return f"Recognized [{entry_type}]\n*{_md_escape(ger)}* - {_md_escape(rus)}"
+    lines = [
+        f"Recognized {entry_type}",
+        "",
+        f"*{_md_escape(ger)}* - {_md_escape(translation)}",
+    ]
+    if warn:
+        lines += ["", warn]
+    return "\n".join(lines)
 
 
 async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, word, clarification):
@@ -4030,7 +4221,10 @@ async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, w
 
 async def _show_ai_preview(update: Update, entry):
     """Handle show ai preview."""
-    preview = _format_ai_preview(entry)
+    dict_lang = _user_dict_lang(update.effective_user.id)
+    translation = _entry_translation(entry, dict_lang)
+    has_synonym = has_translation_collision(get_db_path(), translation, dict_lang)
+    preview = _format_ai_preview(entry, dict_lang, has_synonym=has_synonym)
     await _reply_text_with_retry(
         update.message,
         preview,
@@ -4398,6 +4592,7 @@ def main():
             SELECT_UI_LANG: [MessageHandler(filters.TEXT & ~filters.COMMAND, select_ui_lang)],
             SELECT_DICT_LANG: [MessageHandler(filters.TEXT & ~filters.COMMAND, select_dict_lang)],
             TESTS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, tests_menu_choice)],
+            DB_SEARCH: [MessageHandler(filters.TEXT & ~filters.COMMAND, db_search_input)],
             LEARNING_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, learning_menu_choice)],
             LEARNING_QUIZ: [MessageHandler(filters.TEXT & ~filters.COMMAND, learning_quiz)],
             QUIZ_RU_DE_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_ru_de_menu_choice)],
