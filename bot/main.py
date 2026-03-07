@@ -287,7 +287,7 @@ def _ru_de_menu_keys(user_id):
     return [
         [STANDARD_SM2_TEXT, TEST_ARTICLE_WEAK_TEXT],
         [TEST_PLURAL_WEAK_TEXT, TEST_VERB_WEAK_TEXT],
-        [t(_user_interface_lang(user_id), "back")],
+        [t(_user_interface_lang(user_id), "topic_filter"), t(_user_interface_lang(user_id), "back")],
     ]
 
 
@@ -710,7 +710,7 @@ def _quiz_markup(user_id, article=False, allow_idk=True):
     if article:
         rows.append(["der", "die", "das"])
     elif allow_idk:
-        rows.append([I_DONT_KNOW_TEXT, INPUT_ERR_TEXT, SEND_LEARN_TEXT])
+        rows.append([INPUT_ERR_TEXT, I_DONT_KNOW_TEXT, SEND_LEARN_TEXT])
     if is_owner(user_id):
         rows.append([AI_CLARIFY_FIELD, t(lang, "stop")])
     else:
@@ -723,9 +723,9 @@ def _weak_article_markup(user_id):
     lang = _user_interface_lang(user_id)
     rows = [["der", "die", "das"]]
     if is_owner(user_id):
-        rows.append([AI_CLARIFY_FIELD])
-    rows.append([INPUT_ERR_TEXT])
-    rows.append([t(lang, "stop")])
+        rows.append([AI_CLARIFY_FIELD, INPUT_ERR_TEXT, t(lang, "stop")])
+    else:
+        rows.append([INPUT_ERR_TEXT, t(lang, "stop")])
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 
@@ -1670,6 +1670,16 @@ async def quiz_ru_de_menu_choice(update: Update, context: ContextTypes.DEFAULT_T
             reply_markup=ReplyKeyboardMarkup(_tests_menu_keys(user_id), resize_keyboard=True),
         )
         return TESTS_MENU
+    if action == "topic_filter":
+        current = _topic_filter_value()
+        topics = list_topics(get_db_path())
+        topics_line = ", ".join(topics) if topics else "-"
+        await update.message.reply_text(
+            f"Current topic filter: {current}\nTopics: {topics_line}\nSend e.g. 1+2+food or 'all'.",
+            reply_markup=ReplyKeyboardMarkup([[t(_user_interface_lang(user_id), "back")]], resize_keyboard=True),
+        )
+        context.user_data["topic_return"] = "ru_de_menu"
+        return TOPIC_FILTER_EDIT
     if text == STANDARD_SM2_TEXT:
         _reset_retry_state(context)
         _clear_last_answer(context)
@@ -1782,7 +1792,7 @@ async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TY
     await update.message.reply_text(
         prompt_text,
         reply_markup=ReplyKeyboardMarkup(
-            [[I_DONT_KNOW_TEXT, INPUT_ERR_TEXT], [LEARNING_SKIP_TEXT, AI_CLARIFY_FIELD, t(_user_interface_lang(user_id), "back")]],
+            [[INPUT_ERR_TEXT, I_DONT_KNOW_TEXT], [LEARNING_SKIP_TEXT, AI_CLARIFY_FIELD, t(_user_interface_lang(user_id), "back")]],
             resize_keyboard=True,
         ),
         parse_mode="Markdown",
@@ -2235,6 +2245,12 @@ async def topic_filter_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         stats = context.user_data.pop("pending_add_stats", {})
         context.user_data["add_queue"] = pending
         return await _process_next_ai_word(update, context)
+    if return_to == "ru_de_menu":
+        await update.message.reply_text(
+            f"✅ Topic filter set to: {value}",
+            reply_markup=ReplyKeyboardMarkup(_ru_de_menu_keys(user_id), resize_keyboard=True),
+        )
+        return QUIZ_RU_DE_MENU
     if return_to == "algo":
         await update.message.reply_text(
             f"✅ Topic filter set to: {value}",
@@ -3823,8 +3839,7 @@ async def _send_ru_de_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
         return QUIZ_RU_DE_MENU
 
     context.user_data["quiz_entry"] = entry
-    banner = _topic_filter_banner()
-    prompt_text = f"{banner}\n\n{_format_ru_question(entry, _user_dict_lang(update.effective_user.id))}"
+    prompt_text = _format_ru_question(entry, _user_dict_lang(update.effective_user.id))
     if prefix_text:
         prompt_text = f"{prefix_text}\n\n{prompt_text}"
 
@@ -3853,8 +3868,7 @@ async def _send_de_ru_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
         return TESTS_MENU
 
     context.user_data["quiz_entry"] = entry
-    banner = _topic_filter_banner()
-    prompt_text = f"{banner}\n\n{_format_de_ru_question(entry)}"
+    prompt_text = _format_de_ru_question(entry)
     if prefix_text:
         prompt_text = f"{prefix_text}\n\n{prompt_text}"
 
@@ -3883,8 +3897,7 @@ async def _send_article_prompt(update: Update, context: ContextTypes.DEFAULT_TYP
         return TESTS_MENU
 
     context.user_data["quiz_entry"] = entry
-    banner = _topic_filter_banner()
-    prompt_text = f"{banner}\n\n{_format_article_question(entry)}"
+    prompt_text = _format_article_question(entry)
     if prefix_text:
         prompt_text = f"{prefix_text}\n\n{prompt_text}"
 
@@ -3912,8 +3925,7 @@ async def _send_article_weak_prompt(update: Update, context: ContextTypes.DEFAUL
     text = _md_escape(text)
     if prefix_text:
         text = f"{prefix_text}\n\n{text}"
-    banner = _topic_filter_banner()
-    prompt = f"{banner}\n\n{text}"
+    prompt = text
     await update.message.reply_text(
         prompt,
         reply_markup=_weak_article_markup(update.effective_user.id),
@@ -3939,8 +3951,7 @@ async def _send_plural_weak_prompt(update: Update, context: ContextTypes.DEFAULT
     text = _md_escape(text)
     if prefix_text:
         text = f"{prefix_text}\n\n{text}"
-    banner = _topic_filter_banner()
-    prompt = f"{banner}\n\n{text}"
+    prompt = text
     await update.message.reply_text(
         prompt,
         reply_markup=_quiz_markup(update.effective_user.id, article=False, allow_idk=True),
@@ -3965,8 +3976,7 @@ async def _send_prateritum_weak_prompt(update: Update, context: ContextTypes.DEF
     text = _md_escape(text)
     if prefix_text:
         text = f"{prefix_text}\n\n{text}"
-    banner = _topic_filter_banner()
-    prompt = f"{banner}\n\n{text}"
+    prompt = text
     await update.message.reply_text(
         prompt,
         reply_markup=_quiz_markup(update.effective_user.id, article=False, allow_idk=True),
@@ -3991,8 +4001,7 @@ async def _send_partizip2_weak_prompt(update: Update, context: ContextTypes.DEFA
     text = _md_escape(text)
     if prefix_text:
         text = f"{prefix_text}\n\n{text}"
-    banner = _topic_filter_banner()
-    prompt = f"{banner}\n\n{text}"
+    prompt = text
     await update.message.reply_text(
         prompt,
         reply_markup=_quiz_markup(update.effective_user.id, article=False, allow_idk=True),
