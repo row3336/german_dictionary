@@ -1052,6 +1052,8 @@ async def _show_quiz_prompt_after_edit(update: Update, context: ContextTypes.DEF
         return await _send_prateritum_weak_prompt(update, context, prefix_text)
     if state == QUIZ_PARTIZIP2_WEAK:
         return await _send_partizip2_weak_prompt(update, context, prefix_text)
+    if state == LEARNING_QUIZ:
+        return await _send_learning_prompt(update, context, prefix_text)
 
     return await _back_to_tests(update, context)
 
@@ -1524,7 +1526,10 @@ async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TY
             prompt_text = f"{prefix_text}\n\n{prompt_text}"
         await update.message.reply_text(
             prompt_text,
-            reply_markup=ReplyKeyboardMarkup([[LEARNING_NEXT_TEXT, LEARNING_SKIP_TEXT], [t(_user_interface_lang(user_id), "back")]], resize_keyboard=True),
+            reply_markup=ReplyKeyboardMarkup(
+                [[LEARNING_NEXT_TEXT, LEARNING_SKIP_TEXT], [AI_CLARIFY_FIELD, t(_user_interface_lang(user_id), "back")]],
+                resize_keyboard=True,
+            ),
             parse_mode="Markdown",
         )
         return LEARNING_QUIZ
@@ -1547,7 +1552,7 @@ async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TY
     await update.message.reply_text(
         prompt_text,
         reply_markup=ReplyKeyboardMarkup(
-            [[I_DONT_KNOW_TEXT, INPUT_ERR_TEXT, SEND_LEARN_TEXT], [LEARNING_SKIP_TEXT, t(_user_interface_lang(user_id), "back")]],
+            [[I_DONT_KNOW_TEXT, INPUT_ERR_TEXT], [LEARNING_SKIP_TEXT, AI_CLARIFY_FIELD, t(_user_interface_lang(user_id), "back")]],
             resize_keyboard=True,
         ),
         parse_mode="Markdown",
@@ -1591,6 +1596,8 @@ async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     action = _action_key_from_text(text, user_id)
     if action == "back":
         return await _send_learning_menu(update, user_id)
+    if text == AI_CLARIFY_FIELD and is_owner(user_id):
+        return await _start_quiz_edit(update, context, LEARNING_QUIZ)
 
     entry = context.user_data.get("quiz_entry")
     if not entry:
