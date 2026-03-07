@@ -202,6 +202,7 @@ LEARNING_ADD_TEXT = "add for learning"
 LEARNING_SKIP_TEXT = "skip_learning"
 LEARNING_NEXT_TEXT = "next"
 LEARNING_RESET_TEXT = "reset learning"
+SEND_LEARN_TEXT = "send_learn"
 
 RETRY_GAP_QUESTIONS = 3
 RETRY_MAX_REPEATS = 4
@@ -610,6 +611,7 @@ def _action_key_from_text(text, user_id):
     mapping[LEARNING_SKIP_TEXT] = "learning_skip"
     mapping[LEARNING_NEXT_TEXT] = "learning_next"
     mapping[LEARNING_RESET_TEXT] = "learning_reset"
+    mapping[SEND_LEARN_TEXT] = "send_learn"
     mapping["flags!"] = "review_flags"
     mapping["Back"] = "back"
     mapping["Stop"] = "stop"
@@ -685,7 +687,7 @@ def _quiz_markup(user_id, article=False, allow_idk=True):
     if article:
         rows.append(["der", "die", "das"])
     elif allow_idk:
-        rows.append([I_DONT_KNOW_TEXT, INPUT_ERR_TEXT])
+        rows.append([I_DONT_KNOW_TEXT, INPUT_ERR_TEXT, SEND_LEARN_TEXT])
     if is_owner(user_id):
         rows.append([AI_CLARIFY_FIELD, t(lang, "stop")])
     else:
@@ -928,6 +930,24 @@ async def _repeat_current_de_ru(update: Update, context: ContextTypes.DEFAULT_TY
         parse_mode="Markdown",
     )
     return QUIZ_DE_RU
+
+
+def _send_entry_to_learning(update: Update, context: ContextTypes.DEFAULT_TYPE, entry_key="quiz_entry"):
+    """Handle send entry to learning."""
+    entry = context.user_data.get(entry_key)
+    if not entry:
+        return False
+    db_path = get_db_path()
+    user_id = update.effective_user.id
+    batch_id = learning_get_or_create_batch(db_path, user_id=user_id, daily_qty=_learning_daily_qty(db_path))
+    added = learning_add_word_by_id(
+        db_path,
+        user_id=user_id,
+        word_id=entry.get("id"),
+        batch_id=batch_id,
+        first_delay_seconds=_learning_intervals_seconds(db_path)[0],
+    )
+    return bool(added)
 
 
 def _apply_input_err(update, context, mode):
@@ -1518,7 +1538,7 @@ async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TY
     await update.message.reply_text(
         prompt_text,
         reply_markup=ReplyKeyboardMarkup(
-            [[I_DONT_KNOW_TEXT, INPUT_ERR_TEXT], [LEARNING_SKIP_TEXT, t(_user_interface_lang(user_id), "back")]],
+            [[I_DONT_KNOW_TEXT, INPUT_ERR_TEXT, SEND_LEARN_TEXT], [LEARNING_SKIP_TEXT, t(_user_interface_lang(user_id), "back")]],
             resize_keyboard=True,
         ),
         parse_mode="Markdown",
@@ -2720,6 +2740,10 @@ async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
         applied = _apply_input_err(update, context, _mode_l1_de(update.effective_user.id))
         prefix = "✅ Fixed previous answer." if applied else "Nothing to fix."
         return await _repeat_current_ru_de(update, context, prefix)
+    if text == SEND_LEARN_TEXT:
+        added = _send_entry_to_learning(update, context, entry_key="quiz_entry")
+        prefix = "✅ Added to learning." if added else "Already in learning."
+        return await _repeat_current_ru_de(update, context, prefix)
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_RU_DE)
     if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
@@ -2757,6 +2781,10 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == INPUT_ERR_TEXT:
         applied = _apply_input_err(update, context, _mode_de_l1(update.effective_user.id))
         prefix = "✅ Fixed previous answer." if applied else "Nothing to fix."
+        return await _repeat_current_de_ru(update, context, prefix)
+    if text == SEND_LEARN_TEXT:
+        added = _send_entry_to_learning(update, context, entry_key="quiz_entry")
+        prefix = "✅ Added to learning." if added else "Already in learning."
         return await _repeat_current_de_ru(update, context, prefix)
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_DE_RU)

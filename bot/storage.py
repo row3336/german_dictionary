@@ -1674,6 +1674,29 @@ def learning_add_words(db_path, user_id, words, batch_id, first_delay_seconds):
     return inserted
 
 
+def learning_add_word_by_id(db_path, user_id, word_id, batch_id, first_delay_seconds):
+    """Handle learning add word by id."""
+    init_db(db_path)
+    due_iso = _utc_now_iso()
+    added = 0
+    with _connect(db_path) as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO learning_items (user_id, word_id, batch_id, step_index, preview_done, next_due, status)
+            VALUES (?, ?, ?, 0, 0, ?, 'active')
+            ON CONFLICT(user_id, word_id) DO NOTHING
+            """,
+            (int(user_id), _safe_text(word_id), _safe_text(batch_id), due_iso),
+        )
+        added = int(cur.rowcount > 0)
+        if added:
+            conn.execute(
+                "UPDATE learning_batches SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (_safe_text(batch_id),),
+            )
+    return added
+
+
 def learning_preview_entry(db_path, user_id):
     """Handle learning preview entry."""
     init_db(db_path)
