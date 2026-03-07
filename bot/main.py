@@ -2189,6 +2189,7 @@ async def add_precheck(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Already in database {len(existing)}\n"
             f"Filtred {len(filtered)}\n"
             f"For recognition {len(recognition)}\n"
+            f"Topics: {', '.join(list_topics(get_db_path())) or '-'}\n"
             "Choose topic for this list:"
         ),
         reply_markup=ReplyKeyboardMarkup([[t(_user_interface_lang(update.effective_user.id), "back")]], resize_keyboard=True),
@@ -2257,6 +2258,7 @@ async def add_precheck_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Already in database {len(existing)}\n"
             f"Filtred {len(filtered)}\n"
             f"For recognition {len(recognition)}\n"
+            f"Topics: {', '.join(list_topics(get_db_path())) or '-'}\n"
             "Choose topic for this list:"
         ),
         reply_markup=ReplyKeyboardMarkup([[t(_user_interface_lang(update.effective_user.id), "back")]], resize_keyboard=True),
