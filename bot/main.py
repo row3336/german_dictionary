@@ -124,6 +124,7 @@ from .storage import (
     clear_synonym_group,
     set_setting,
     update_form_stats,
+    apply_weak_input_err,
     update_weak_review_state,
     update_progress,
     set_progress,
@@ -692,6 +693,17 @@ def _quiz_markup(user_id, article=False, allow_idk=True):
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 
+def _weak_article_markup(user_id):
+    """Handle weak article markup."""
+    lang = _user_interface_lang(user_id)
+    rows = [["der", "die", "das"]]
+    if is_owner(user_id):
+        rows.append([AI_CLARIFY_FIELD])
+    rows.append([INPUT_ERR_TEXT])
+    rows.append([t(lang, "stop")])
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True)
+
+
 def _parse_level_toggle(text):
     """Handle parse level toggle."""
     token = (text or "").strip().split(" ", 1)[0].upper()
@@ -840,6 +852,43 @@ def _clear_last_answer(context):
     context.user_data.pop("last_answered_srs", None)
 
 
+def _remember_last_weak_answer(context, entry, field, ok):
+    """Handle remember last weak answer."""
+    context.user_data["last_weak_answered_entry"] = entry
+    context.user_data["last_weak_answered_field"] = field
+    context.user_data["last_weak_answered_ok"] = bool(ok)
+
+
+def _apply_input_err_weak(update, context, field):
+    """Handle apply input error for weak modes."""
+    last_entry = context.user_data.get("last_weak_answered_entry")
+    last_field = context.user_data.get("last_weak_answered_field")
+    last_ok = context.user_data.get("last_weak_answered_ok")
+    if not last_entry or last_field != field or last_ok is None:
+        return False
+    if last_ok:
+        return False
+    if not apply_weak_input_err(get_db_path(), update.effective_user.id, last_entry.get("id"), field):
+        return False
+    state = get_form_state(get_db_path(), update.effective_user.id, last_entry.get("id"), field)
+    if not state["active"] and state["review_stage"] > 0:
+        stage_snapshot = update_weak_review_state(
+            get_db_path(), update.effective_user.id, last_entry.get("id"), field, True
+        )
+    else:
+        stage_snapshot = get_form_review_stage(get_db_path(), update.effective_user.id, last_entry.get("id"), field)
+    log_quiz_event(
+        get_db_path(),
+        user_id=update.effective_user.id,
+        word_id=last_entry.get("id"),
+        mode=f"weak_{field}",
+        is_correct=True,
+        review_stage_snapshot=stage_snapshot,
+    )
+    context.user_data["last_weak_answered_ok"] = True
+    return True
+
+
 def _remove_from_retry(context, mode, word_id):
     """Handle remove from retry."""
     queue = _retry_queue(context, mode)
@@ -900,6 +949,32 @@ def _apply_input_err(update, context, mode):
     _set_retry_since_last(context, mode, _retry_since_last(context, mode) + 1)
     context.user_data["last_answered_ok"] = True
     return True
+
+
+def _apply_input_err_learning(update, context):
+    """Handle apply input error for learning mode."""
+    last_id = context.user_data.get("last_learning_entry_id")
+    last_ok = context.user_data.get("last_learning_ok")
+    if not last_id or last_ok is None:
+        return False
+    if last_ok:
+        return False
+    result = learning_update_result(
+        get_db_path(),
+        user_id=update.effective_user.id,
+        word_id=last_id,
+        ok=True,
+        intervals_seconds=_learning_intervals_seconds(get_db_path()),
+    )
+    log_quiz_event(
+        get_db_path(),
+        user_id=update.effective_user.id,
+        word_id=last_id,
+        mode="learning",
+        is_correct=True,
+    )
+    context.user_data["last_learning_ok"] = True
+    return bool(result)
 
 
 async def _show_quiz_prompt_after_edit(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text, state_override=None):
@@ -1442,7 +1517,10 @@ async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TY
         prompt_text = f"{prefix_text}\n\n{prompt_text}"
     await update.message.reply_text(
         prompt_text,
-        reply_markup=ReplyKeyboardMarkup([[I_DONT_KNOW_TEXT, LEARNING_SKIP_TEXT], [t(_user_interface_lang(user_id), "back")]], resize_keyboard=True),
+        reply_markup=ReplyKeyboardMarkup(
+            [[I_DONT_KNOW_TEXT, INPUT_ERR_TEXT], [LEARNING_SKIP_TEXT, t(_user_interface_lang(user_id), "back")]],
+            resize_keyboard=True,
+        ),
         parse_mode="Markdown",
     )
     return LEARNING_QUIZ
@@ -1508,6 +1586,11 @@ async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return LEARNING_QUIZ
 
+    if text == INPUT_ERR_TEXT:
+        applied = _apply_input_err_learning(update, context)
+        prefix = "✅ Fixed previous answer." if applied else "Nothing to fix."
+        return await _send_learning_prompt(update, context, prefix)
+
     if action == "learning_skip" or text == LEARNING_SKIP_TEXT:
         learning_skip_word(get_db_path(), user_id=user_id, word_id=entry.get("id"))
         return await _send_learning_prompt(update, context, "Skipped for learning.")
@@ -1516,6 +1599,8 @@ async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ok = False
     else:
         ok, _ = _check_ru_de_strict(entry, text)
+    context.user_data["last_learning_entry_id"] = entry.get("id")
+    context.user_data["last_learning_ok"] = bool(ok)
     log_quiz_event(
         get_db_path(),
         user_id=user_id,
@@ -2775,6 +2860,10 @@ async def quiz_article_weak(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "stop":
         return await _back_to_tests(update, context)
+    if text == INPUT_ERR_TEXT:
+        applied = _apply_input_err_weak(update, context, "article")
+        prefix = "✅ Fixed previous answer." if applied else "Nothing to fix."
+        return await _send_article_weak_prompt(update, context, prefix)
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_ARTICLE_WEAK)
     if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
@@ -2799,6 +2888,7 @@ async def quiz_article_weak(update: Update, context: ContextTypes.DEFAULT_TYPE):
         is_correct=ok,
         review_stage_snapshot=stage_snapshot,
     )
+    _remember_last_weak_answer(context, entry, "article", ok)
     context.user_data["quiz_last_answered_entry"] = entry
     feedback = _format_feedback_article(entry, ok, _user_dict_lang(update.effective_user.id))
     return await _send_article_weak_prompt(update, context, feedback)
@@ -2809,6 +2899,10 @@ async def quiz_plural_weak(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "stop":
         return await _back_to_tests(update, context)
+    if text == INPUT_ERR_TEXT:
+        applied = _apply_input_err_weak(update, context, "plural")
+        prefix = "✅ Fixed previous answer." if applied else "Nothing to fix."
+        return await _send_plural_weak_prompt(update, context, prefix)
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_PLURAL_WEAK)
     if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
@@ -2836,6 +2930,7 @@ async def quiz_plural_weak(update: Update, context: ContextTypes.DEFAULT_TYPE):
         is_correct=ok,
         review_stage_snapshot=stage_snapshot,
     )
+    _remember_last_weak_answer(context, entry, "plural", ok)
     context.user_data["quiz_last_answered_entry"] = entry
     feedback = _format_feedback_plural_weak(entry, ok)
     return await _send_plural_weak_prompt(update, context, feedback)
@@ -2846,6 +2941,10 @@ async def quiz_prateritum_weak(update: Update, context: ContextTypes.DEFAULT_TYP
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "stop":
         return await _back_to_tests(update, context)
+    if text == INPUT_ERR_TEXT:
+        applied = _apply_input_err_weak(update, context, "prateritum")
+        prefix = "✅ Fixed previous answer." if applied else "Nothing to fix."
+        return await _send_prateritum_weak_prompt(update, context, prefix)
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_PRATERITUM_WEAK)
     if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
@@ -2873,6 +2972,7 @@ async def quiz_prateritum_weak(update: Update, context: ContextTypes.DEFAULT_TYP
         is_correct=ok,
         review_stage_snapshot=stage_snapshot,
     )
+    _remember_last_weak_answer(context, entry, "prateritum", ok)
     context.user_data["quiz_last_answered_entry"] = entry
     feedback = _format_feedback_prateritum_weak(entry, ok)
     return await _send_prateritum_weak_prompt(update, context, feedback)
@@ -2883,6 +2983,10 @@ async def quiz_partizip2_weak(update: Update, context: ContextTypes.DEFAULT_TYPE
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "stop":
         return await _back_to_tests(update, context)
+    if text == INPUT_ERR_TEXT:
+        applied = _apply_input_err_weak(update, context, "partizip2")
+        prefix = "✅ Fixed previous answer." if applied else "Nothing to fix."
+        return await _send_partizip2_weak_prompt(update, context, prefix)
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_PARTIZIP2_WEAK)
     if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
@@ -2910,6 +3014,7 @@ async def quiz_partizip2_weak(update: Update, context: ContextTypes.DEFAULT_TYPE
         is_correct=ok,
         review_stage_snapshot=stage_snapshot,
     )
+    _remember_last_weak_answer(context, entry, "partizip2", ok)
     context.user_data["quiz_last_answered_entry"] = entry
     feedback = _format_feedback_partizip2_weak(entry, ok)
     return await _send_partizip2_weak_prompt(update, context, feedback)
@@ -3511,7 +3616,7 @@ async def _send_article_weak_prompt(update: Update, context: ContextTypes.DEFAUL
         text = f"{prefix_text}\n\n{text}"
     await update.message.reply_text(
         text,
-        reply_markup=_quiz_markup(update.effective_user.id, article=True, allow_idk=False),
+        reply_markup=_weak_article_markup(update.effective_user.id),
         parse_mode="Markdown",
     )
     return QUIZ_ARTICLE_WEAK

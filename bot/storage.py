@@ -2358,6 +2358,45 @@ def update_weak_review_state(db_path, user_id, word_id, field, ok):
         return 1
 
 
+def apply_weak_input_err(db_path, user_id, word_id, field):
+    """Handle apply weak input error correction."""
+    field = _safe_text(field).strip().lower()
+    if field not in {"article", "plural", "prateritum", "partizip2"}:
+        return False
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            f"""
+            SELECT
+                {field}_errors AS errors,
+                {field}_streak_wrong AS streak_wrong,
+                {field}_streak_correct AS streak_correct
+            FROM form_stats
+            WHERE user_id = ? AND word_id = ?
+            """,
+            (int(user_id), _safe_text(word_id)),
+        ).fetchone()
+        if not row:
+            return False
+        errors = int(row["errors"] or 0)
+        streak_wrong = int(row["streak_wrong"] or 0)
+        streak_correct = int(row["streak_correct"] or 0)
+        new_errors = max(0, errors - 1)
+        new_streak_wrong = max(0, streak_wrong - 1)
+        new_streak_correct = streak_correct + 1
+        conn.execute(
+            f"""
+            UPDATE form_stats
+            SET {field}_errors = ?,
+                {field}_streak_wrong = ?,
+                {field}_streak_correct = ?
+            WHERE user_id = ? AND word_id = ?
+            """,
+            (new_errors, new_streak_wrong, new_streak_correct, int(user_id), _safe_text(word_id)),
+        )
+    return True
+
+
 def get_form_state(db_path, user_id, word_id, field):
     """Handle get form state."""
     field = _safe_text(field).strip().lower()
