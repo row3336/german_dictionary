@@ -440,6 +440,12 @@ def _topic_filter_label():
     return "+".join(topics)
 
 
+def _topic_filter_banner():
+    """Handle topic filter banner."""
+    label = _topic_filter_label()
+    return f"Topic filter:\n\n*{_md_escape(label)}*"
+
+
 def _current_topic_value():
     """Handle current topic value."""
     raw = _topic_filter_value()
@@ -1372,6 +1378,9 @@ async def _send_learning_menu(update: Update, user_id):
     msg = "\n".join(
         [
             f"{LEARNING_TEXT}:",
+            "",
+            _topic_filter_banner(),
+            "",
             f"{t(_user_interface_lang(user_id), 'learning_daily_qty')} = {_learning_daily_qty(get_db_path())}",
             f"{t(_user_interface_lang(user_id), 'learning_intervals')} = {_learning_intervals_text(get_db_path())}",
             f"active = {stats.get('active_count', 0)}",
@@ -1399,17 +1408,16 @@ async def tests_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await _back_to_main_menu(update)
     if action == "quiz_l1_de":
         await update.message.reply_text(
-            f"{QUIZ_RU_DE_TEXT}:\n"
-            f"topic filter = {_topic_filter_label()}",
+            f"{QUIZ_RU_DE_TEXT}:\n\n{_topic_filter_banner()}",
             reply_markup=ReplyKeyboardMarkup(_ru_de_menu_keys(user_id), resize_keyboard=True),
+            parse_mode="Markdown",
         )
         return QUIZ_RU_DE_MENU
     if action == "quiz_de_l1":
         return await _send_de_ru_prompt(
             update,
             context,
-            f"{QUIZ_DE_RU_TEXT}:\n"
-            f"topic filter = {_topic_filter_label()}",
+            f"{QUIZ_DE_RU_TEXT}:\n\n{_topic_filter_banner()}",
         )
     if action == "learning":
         return await _send_learning_menu(update, user_id)
@@ -1481,7 +1489,7 @@ async def _learning_add_words(update: Update, context: ContextTypes.DEFAULT_TYPE
             reply_markup=ReplyKeyboardMarkup(_learning_menu_keys(user_id), resize_keyboard=True),
         )
         return LEARNING_MENU
-    picked = learning_pick_new_words(db_path, user_id=user_id, limit=need)
+    picked = learning_pick_new_words(db_path, user_id=user_id, limit=need, topics=_topic_filter_for_query())
     if not picked:
         await update.message.reply_text(
             "No new words available for learning.",
@@ -3556,7 +3564,8 @@ async def _send_ru_de_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
         return QUIZ_RU_DE_MENU
 
     context.user_data["quiz_entry"] = entry
-    prompt_text = _format_ru_question(entry, _user_dict_lang(update.effective_user.id))
+    banner = _topic_filter_banner()
+    prompt_text = f"{banner}\n\n{_format_ru_question(entry, _user_dict_lang(update.effective_user.id))}"
     if prefix_text:
         prompt_text = f"{prefix_text}\n\n{prompt_text}"
 
@@ -3585,7 +3594,8 @@ async def _send_de_ru_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
         return TESTS_MENU
 
     context.user_data["quiz_entry"] = entry
-    prompt_text = _format_de_ru_question(entry)
+    banner = _topic_filter_banner()
+    prompt_text = f"{banner}\n\n{_format_de_ru_question(entry)}"
     if prefix_text:
         prompt_text = f"{prefix_text}\n\n{prompt_text}"
 
@@ -3614,7 +3624,8 @@ async def _send_article_prompt(update: Update, context: ContextTypes.DEFAULT_TYP
         return TESTS_MENU
 
     context.user_data["quiz_entry"] = entry
-    prompt_text = _format_article_question(entry)
+    banner = _topic_filter_banner()
+    prompt_text = f"{banner}\n\n{_format_article_question(entry)}"
     if prefix_text:
         prompt_text = f"{prefix_text}\n\n{prompt_text}"
 
@@ -3642,8 +3653,10 @@ async def _send_article_weak_prompt(update: Update, context: ContextTypes.DEFAUL
     text = _md_escape(text)
     if prefix_text:
         text = f"{prefix_text}\n\n{text}"
+    banner = _topic_filter_banner()
+    prompt = f"{banner}\n\n{text}"
     await update.message.reply_text(
-        text,
+        prompt,
         reply_markup=_weak_article_markup(update.effective_user.id),
         parse_mode="Markdown",
     )
@@ -3667,8 +3680,10 @@ async def _send_plural_weak_prompt(update: Update, context: ContextTypes.DEFAULT
     text = _md_escape(text)
     if prefix_text:
         text = f"{prefix_text}\n\n{text}"
+    banner = _topic_filter_banner()
+    prompt = f"{banner}\n\n{text}"
     await update.message.reply_text(
-        text,
+        prompt,
         reply_markup=_quiz_markup(update.effective_user.id, article=False, allow_idk=True),
         parse_mode="Markdown",
     )
@@ -3691,8 +3706,10 @@ async def _send_prateritum_weak_prompt(update: Update, context: ContextTypes.DEF
     text = _md_escape(text)
     if prefix_text:
         text = f"{prefix_text}\n\n{text}"
+    banner = _topic_filter_banner()
+    prompt = f"{banner}\n\n{text}"
     await update.message.reply_text(
-        text,
+        prompt,
         reply_markup=_quiz_markup(update.effective_user.id, article=False, allow_idk=True),
         parse_mode="Markdown",
     )
@@ -3715,8 +3732,10 @@ async def _send_partizip2_weak_prompt(update: Update, context: ContextTypes.DEFA
     text = _md_escape(text)
     if prefix_text:
         text = f"{prefix_text}\n\n{text}"
+    banner = _topic_filter_banner()
+    prompt = f"{banner}\n\n{text}"
     await update.message.reply_text(
-        text,
+        prompt,
         reply_markup=_quiz_markup(update.effective_user.id, article=False, allow_idk=True),
         parse_mode="Markdown",
     )

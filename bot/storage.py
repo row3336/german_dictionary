@@ -1617,11 +1617,19 @@ def learning_active_count(db_path, user_id, batch_id=None):
     return int(row["cnt"] or 0) if row else 0
 
 
-def learning_pick_new_words(db_path, user_id, limit):
+def learning_pick_new_words(db_path, user_id, limit, topics=None):
     """Handle learning pick new words."""
     init_db(db_path)
     if int(limit) <= 0:
         return []
+    where_topics = ""
+    params = [int(user_id), int(user_id)]
+    if topics:
+        clean_topics = [_safe_text(x) for x in topics if _safe_text(x)]
+        if clean_topics:
+            placeholders = ",".join("?" for _ in clean_topics)
+            where_topics = f" AND w.topic IN ({placeholders})"
+            params.extend(clean_topics)
     with _connect(db_path) as conn:
         rows = conn.execute(
             """
@@ -1636,10 +1644,11 @@ def learning_pick_new_words(db_path, user_id, limit):
                 SELECT 1 FROM learning_items li
                 WHERE li.user_id = ? AND li.word_id = w.id
               )
+            {where_topics}
             ORDER BY RANDOM()
             LIMIT ?
-            """,
-            (int(user_id), int(user_id), int(limit)),
+            """.format(where_topics=where_topics),
+            (*params, int(limit)),
         ).fetchall()
     return [_row_to_entry(row) for row in rows]
 
