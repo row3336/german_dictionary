@@ -1520,20 +1520,42 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     entry = search_word(get_db_path(), text)
     if not entry:
         return await _send_db_search_prompt(update, user_id, "Not found.")
-    context.user_data["quiz_entry"] = entry
-    context.user_data["quiz_edit_entry"] = entry
-    context.user_data["edit_source"] = "quiz"
-    context.user_data["edit_stage"] = "pick_scope"
-    context.user_data["edit_return_state"] = DB_SEARCH_VIEW
     await update.message.reply_text(
         _format_db_search_card(entry, _user_dict_lang(user_id)),
         parse_mode="Markdown",
     )
     await update.message.reply_text(
         "Choose edit action:",
-        reply_markup=_quiz_edit_root_markup(user_id),
+        reply_markup=ReplyKeyboardMarkup(
+            [
+                [QUIZ_FIELDS_TEXT],
+                ["delete", t(_user_interface_lang(user_id), "back")],
+                [t(_user_interface_lang(user_id), "db_search_matches"), t(_user_interface_lang(user_id), "db_search")],
+            ],
+            resize_keyboard=True,
+        ),
     )
-    return ADD_EDIT
+    context.user_data["quiz_entry"] = entry
+    context.user_data["quiz_edit_entry"] = entry
+    context.user_data["edit_source"] = "quiz"
+    context.user_data["edit_stage"] = "pick_scope"
+    context.user_data["edit_return_state"] = DB_SEARCH_VIEW
+    return DB_SEARCH_VIEW
+
+
+async def db_search_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle db search view."""
+    text = update.message.text.strip()
+    user_id = update.effective_user.id
+    action = _action_key_from_text(text, user_id)
+    if action in {"back", "db_search", "stop"}:
+        return await _send_db_search_prompt(update, user_id, None)
+    if action == "db_search_matches":
+        return await db_search_input(update, context)
+    if text in {QUIZ_FIELDS_TEXT, "delete"}:
+        return await add_edit(update, context)
+    # Any other text is treated as a new search query.
+    return await db_search_input(update, context)
 
 
 async def select_ui_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
