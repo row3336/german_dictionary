@@ -121,6 +121,7 @@ from .storage import (
     has_translation_collision,
     list_all_words,
     get_synonym_group,
+    get_synonym_group_id,
     get_setting,
     init_db,
     list_synonym_candidates_by_ru,
@@ -1190,12 +1191,23 @@ def _list_match_pairs(entries, dict_lang):
             groups.append(group)
 
     blocks = []
+    group_cache = {}
     for group in groups:
         for idx in range(0, len(group), 2):
             pair = group[idx:idx + 2]
             if len(pair) < 2:
                 continue
             lines = [_format_match_line(pair[0], dict_lang), _format_match_line(pair[1], dict_lang)]
+            gid_a = group_cache.get(pair[0].get("id"))
+            if gid_a is None:
+                gid_a = get_synonym_group_id(get_db_path(), pair[0].get("id"))
+                group_cache[pair[0].get("id")] = gid_a
+            gid_b = group_cache.get(pair[1].get("id"))
+            if gid_b is None:
+                gid_b = get_synonym_group_id(get_db_path(), pair[1].get("id"))
+                group_cache[pair[1].get("id")] = gid_b
+            if gid_a and gid_b and gid_a == gid_b:
+                lines.append("✅ linked")
             blocks.append("\n".join(lines))
     return blocks
 

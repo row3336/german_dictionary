@@ -2604,6 +2604,22 @@ def get_synonym_group(db_path, word_id):
     return [_row_to_entry(x) for x in rows]
 
 
+def get_synonym_group_id(db_path, word_id):
+    """Handle get synonym group id."""
+    wid = _safe_text(word_id)
+    if not wid:
+        return None
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT group_id FROM word_synonyms WHERE word_id = ?",
+            (wid,),
+        ).fetchone()
+    if not row:
+        return None
+    return int(row["group_id"])
+
+
 def remove_synonym_link(db_path, word_id):
     """Handle remove synonym link."""
     wid = _safe_text(word_id)
