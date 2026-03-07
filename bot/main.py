@@ -2762,6 +2762,8 @@ async def _return_from_synonyms(update: Update, context: ContextTypes.DEFAULT_TY
         return await _send_prateritum_weak_prompt(update, context, prefix)
     if return_state == QUIZ_PARTIZIP2_WEAK:
         return await _send_partizip2_weak_prompt(update, context, prefix)
+    if return_state == DB_SEARCH_VIEW:
+        return await _send_db_search_prompt(update, update.effective_user.id, prefix)
     return await _back_to_tests(update, context)
 
 
