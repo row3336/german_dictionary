@@ -1228,8 +1228,9 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if action == "add_word":
         await update.message.reply_text(
-            "Send a word or a list (one per line), or upload a .txt file.",
+            f"Send a word or a list (one per line), or upload a .txt file.\n\n{_topic_filter_banner()}",
             reply_markup=_add_input_markup(user_id),
+            parse_mode="Markdown",
         )
         return ADD_INPUT
 
