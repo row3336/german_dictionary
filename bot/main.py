@@ -877,6 +877,48 @@ def _clear_last_answer(context):
     context.user_data.pop("last_answered_srs", None)
 
 
+def _session_key(mode):
+    """Handle session key."""
+    return f"session_seen_{mode}"
+
+
+def _reset_session(context, mode):
+    """Handle reset session."""
+    context.user_data["session_mode"] = mode
+    context.user_data[_session_key(mode)] = set()
+
+
+def _ensure_session_mode(context, mode):
+    """Handle ensure session mode."""
+    if context.user_data.get("session_mode") != mode:
+        _reset_session(context, mode)
+
+
+def _mark_session_word(context, mode, word_id):
+    """Handle mark session word."""
+    if not word_id:
+        return
+    _ensure_session_mode(context, mode)
+    seen = context.user_data.get(_session_key(mode))
+    if isinstance(seen, set):
+        seen.add(word_id)
+
+
+def _session_count(context, mode):
+    """Handle session count."""
+    seen = context.user_data.get(_session_key(mode))
+    if isinstance(seen, set):
+        return len(seen)
+    return 0
+
+
+async def _stop_with_summary(update: Update, context: ContextTypes.DEFAULT_TYPE, mode):
+    """Handle stop with summary."""
+    count = _session_count(context, mode)
+    await update.message.reply_text(f"session words = {count}")
+    return await _back_to_tests(update, context)
+
+
 def _remember_last_weak_answer(context, entry, field, ok):
     """Handle remember last weak answer."""
     context.user_data["last_weak_answered_entry"] = entry
@@ -1601,6 +1643,7 @@ async def tests_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return QUIZ_RU_DE_MENU
     if action == "quiz_de_l1":
+        _reset_session(context, _mode_de_l1(user_id))
         return await _send_de_ru_prompt(
             update,
             context,
@@ -1630,12 +1673,15 @@ async def quiz_ru_de_menu_choice(update: Update, context: ContextTypes.DEFAULT_T
     if text == STANDARD_SM2_TEXT:
         _reset_retry_state(context)
         _clear_last_answer(context)
+        _reset_session(context, _mode_l1_de(user_id))
         return await _send_ru_de_prompt(update, context, None)
     if text == TEST_ARTICLE_WEAK_TEXT:
         _reset_weak_drill_state(context, "weak_article")
+        _reset_session(context, "weak_article")
         return await _send_article_weak_prompt(update, context, None)
     if text == TEST_PLURAL_WEAK_TEXT:
         _reset_weak_drill_state(context, "weak_plural")
+        _reset_session(context, "weak_plural")
         return await _send_plural_weak_prompt(update, context, None)
     if text == TEST_VERB_WEAK_TEXT:
         await update.message.reply_text(
@@ -1852,9 +1898,11 @@ async def quiz_verb_weak_menu_choice(update: Update, context: ContextTypes.DEFAU
         return QUIZ_RU_DE_MENU
     if text == TEST_PRATERITUM_WEAK_TEXT:
         _reset_weak_drill_state(context, "weak_prateritum")
+        _reset_session(context, "weak_prateritum")
         return await _send_prateritum_weak_prompt(update, context, None)
     if text == TEST_PARTIZIP2_WEAK_TEXT:
         _reset_weak_drill_state(context, "weak_partizip2")
+        _reset_session(context, "weak_partizip2")
         return await _send_partizip2_weak_prompt(update, context, None)
     await update.message.reply_text(
         "Use verb weak mode buttons.",
@@ -2947,7 +2995,7 @@ async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle quiz ru de."""
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "stop":
-        return await _back_to_tests(update, context)
+        return await _stop_with_summary(update, context, _mode_l1_de(update.effective_user.id))
     if text == INPUT_ERR_TEXT:
         applied = _apply_input_err(update, context, _mode_l1_de(update.effective_user.id))
         prefix = "✅ Fixed previous answer." if applied else "Nothing to fix."
@@ -2976,6 +3024,7 @@ async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _update_srs_for_entry(update.effective_user.id, entry, mode, ok)
         if form_checks:
             update_form_stats(get_db_path(), update.effective_user.id, entry.get("id"), form_checks)
+        _mark_session_word(context, mode, entry.get("id"))
     context.user_data["quiz_last_answered_entry"] = entry
     _register_retry_result(context, mode, entry.get("id"), ok, is_retry)
     if not is_retry and ok:
@@ -2989,7 +3038,7 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle quiz de ru."""
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "stop":
-        return await _back_to_tests(update, context)
+        return await _stop_with_summary(update, context, _mode_de_l1(update.effective_user.id))
     if text == INPUT_ERR_TEXT:
         applied = _apply_input_err(update, context, _mode_de_l1(update.effective_user.id))
         prefix = "✅ Fixed previous answer." if applied else "Nothing to fix."
@@ -3018,6 +3067,7 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_retry:
         _remember_last_answer(context, entry, mode, ok)
         _update_srs_for_entry(update.effective_user.id, entry, mode, ok)
+        _mark_session_word(context, mode, entry.get("id"))
     context.user_data["quiz_last_answered_entry"] = entry
     _register_retry_result(context, mode, entry.get("id"), ok, is_retry)
     if not is_retry and ok:
@@ -3031,7 +3081,7 @@ async def quiz_article(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle quiz article."""
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "stop":
-        return await _back_to_tests(update, context)
+        return await _stop_with_summary(update, context, MODE_ARTICLE)
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_ARTICLE)
     if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
@@ -3050,6 +3100,7 @@ async def quiz_article(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mode = MODE_ARTICLE
     if not is_retry:
         _update_srs_for_entry(update.effective_user.id, entry, mode, ok)
+        _mark_session_word(context, mode, entry.get("id"))
     context.user_data["quiz_last_answered_entry"] = entry
     _register_retry_result(context, mode, entry.get("id"), ok, is_retry)
     if not is_retry:
@@ -3099,7 +3150,7 @@ async def quiz_article_weak(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle quiz article weak."""
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "stop":
-        return await _back_to_tests(update, context)
+        return await _stop_with_summary(update, context, "weak_article")
     if text == INPUT_ERR_TEXT:
         applied = _apply_input_err_weak(update, context, "article")
         prefix = "✅ Fixed previous answer." if applied else "Nothing to fix."
@@ -3130,6 +3181,7 @@ async def quiz_article_weak(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     _remember_last_weak_answer(context, entry, "article", ok)
     context.user_data["quiz_last_answered_entry"] = entry
+    _mark_session_word(context, "weak_article", entry.get("id"))
     feedback = _format_feedback_article(entry, ok, _user_dict_lang(update.effective_user.id))
     return await _send_article_weak_prompt(update, context, feedback)
 
@@ -3138,7 +3190,7 @@ async def quiz_plural_weak(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle quiz plural weak."""
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "stop":
-        return await _back_to_tests(update, context)
+        return await _stop_with_summary(update, context, "weak_plural")
     if text == INPUT_ERR_TEXT:
         applied = _apply_input_err_weak(update, context, "plural")
         prefix = "✅ Fixed previous answer." if applied else "Nothing to fix."
@@ -3172,6 +3224,7 @@ async def quiz_plural_weak(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     _remember_last_weak_answer(context, entry, "plural", ok)
     context.user_data["quiz_last_answered_entry"] = entry
+    _mark_session_word(context, "weak_plural", entry.get("id"))
     feedback = _format_feedback_plural_weak(entry, ok)
     return await _send_plural_weak_prompt(update, context, feedback)
 
@@ -3180,7 +3233,7 @@ async def quiz_prateritum_weak(update: Update, context: ContextTypes.DEFAULT_TYP
     """Handle quiz prateritum weak."""
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "stop":
-        return await _back_to_tests(update, context)
+        return await _stop_with_summary(update, context, "weak_prateritum")
     if text == INPUT_ERR_TEXT:
         applied = _apply_input_err_weak(update, context, "prateritum")
         prefix = "✅ Fixed previous answer." if applied else "Nothing to fix."
@@ -3214,6 +3267,7 @@ async def quiz_prateritum_weak(update: Update, context: ContextTypes.DEFAULT_TYP
     )
     _remember_last_weak_answer(context, entry, "prateritum", ok)
     context.user_data["quiz_last_answered_entry"] = entry
+    _mark_session_word(context, "weak_prateritum", entry.get("id"))
     feedback = _format_feedback_prateritum_weak(entry, ok)
     return await _send_prateritum_weak_prompt(update, context, feedback)
 
@@ -3222,7 +3276,7 @@ async def quiz_partizip2_weak(update: Update, context: ContextTypes.DEFAULT_TYPE
     """Handle quiz partizip2 weak."""
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "stop":
-        return await _back_to_tests(update, context)
+        return await _stop_with_summary(update, context, "weak_partizip2")
     if text == INPUT_ERR_TEXT:
         applied = _apply_input_err_weak(update, context, "partizip2")
         prefix = "✅ Fixed previous answer." if applied else "Nothing to fix."
@@ -3256,6 +3310,7 @@ async def quiz_partizip2_weak(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
     _remember_last_weak_answer(context, entry, "partizip2", ok)
     context.user_data["quiz_last_answered_entry"] = entry
+    _mark_session_word(context, "weak_partizip2", entry.get("id"))
     feedback = _format_feedback_partizip2_weak(entry, ok)
     return await _send_partizip2_weak_prompt(update, context, feedback)
 

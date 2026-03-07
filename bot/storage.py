@@ -1403,10 +1403,10 @@ def select_due(db_path, user_id, mode, word_type=None, topics=None, today=None):
         """(
             EXISTS (
                 SELECT 1
-                FROM learning_items l2
-                WHERE l2.user_id = ?
-                  AND l2.word_id = w.id
-                  AND l2.status IN ('completed', 'skipped')
+                FROM learning_items l3
+                WHERE l3.user_id = ?
+                  AND l3.word_id = w.id
+                  AND l3.status IN ('completed', 'skipped')
             )
             OR EXISTS (
                 SELECT 1
@@ -1441,10 +1441,17 @@ def select_due(db_path, user_id, mode, word_type=None, topics=None, today=None):
         FROM words w
         LEFT JOIN progress p
             ON p.word_id = w.id AND p.user_id = ? AND p.mode = ?
+        LEFT JOIN learning_items lcomp
+            ON lcomp.user_id = ? AND lcomp.word_id = w.id AND lcomp.status = 'completed'
         WHERE {where_sql}
+        ORDER BY
+            CASE WHEN lcomp.updated_at IS NOT NULL THEN 0 ELSE 1 END,
+            lcomp.updated_at DESC,
+            p.due ASC,
+            w.created_at ASC
     """
 
-    params = [int(user_id), mode] + where_params
+    params = [int(user_id), mode, int(user_id)] + where_params
     with _connect(db_path) as conn:
         rows = conn.execute(query, tuple(params)).fetchall()
 
