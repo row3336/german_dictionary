@@ -452,7 +452,7 @@ def _topic_filter_label():
 def _topic_filter_banner():
     """Handle topic filter banner."""
     label = _topic_filter_label()
-    return f"Topic filter:\n\n*{_md_escape(label)}*"
+    return f"Topic filter:\n\n🟥 *{_md_escape(label)}* 🟥"
 
 
 def _current_topic_value():
