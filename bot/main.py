@@ -2732,6 +2732,9 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         last_answered = context.user_data.get("quiz_last_answered_entry")
         if last_answered and last_answered.get("id") == updated.get("id"):
             context.user_data["quiz_last_answered_entry"] = updated
+        if context.user_data.get("edit_return_state") == DB_SEARCH_VIEW:
+            context.user_data.pop("quiz_edit_entry", None)
+            return await _send_db_search_prompt(update, update.effective_user.id, "✅ Updated.")
         return await _show_quiz_prompt_after_edit(update, context, "✅ Updated.")
     return await _show_ai_preview(update, updated)
 
