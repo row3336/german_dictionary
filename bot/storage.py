@@ -1465,12 +1465,18 @@ def select_due(db_path, user_id, mode, word_type=None, topics=None, today=None):
     return result
 
 
-def update_sm2(srs, quality, today=None):
+def update_sm2(srs, quality, today=None, interval_divisor=1.0):
     """Handle update sm2."""
     if today is None:
         today = date.today()
 
     quality = max(0, min(5, int(quality)))
+    try:
+        interval_divisor = float(interval_divisor)
+    except (TypeError, ValueError):
+        interval_divisor = 1.0
+    if interval_divisor <= 0:
+        interval_divisor = 1.0
     interval = int(srs.get("interval", 1))
     repetitions = int(srs.get("repetitions", 0))
     ease = float(srs.get("ease", DEFAULT_EASE))
@@ -1490,6 +1496,7 @@ def update_sm2(srs, quality, today=None):
     ease = ease + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02))
     ease = max(MIN_EASE, ease)
 
+    interval = max(1, int(interval / interval_divisor))
     due = today + timedelta(days=interval)
     return {
         "interval": interval,
@@ -1499,7 +1506,7 @@ def update_sm2(srs, quality, today=None):
     }
 
 
-def update_progress(db_path, user_id, word_id, mode, quality):
+def update_progress(db_path, user_id, word_id, mode, quality, interval_divisor=1.0):
     """Handle update progress."""
     init_db(db_path)
     with _connect(db_path) as conn:
@@ -1522,7 +1529,7 @@ def update_progress(db_path, user_id, word_id, mode, quality):
             if row
             else default_srs()
         )
-        updated = update_sm2(srs, quality)
+        updated = update_sm2(srs, quality, interval_divisor=interval_divisor)
 
         conn.execute(
             """

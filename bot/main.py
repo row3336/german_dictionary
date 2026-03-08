@@ -1061,7 +1061,14 @@ def _apply_input_err(update, context, mode):
     if not last_srs:
         return False
     set_progress(get_db_path(), update.effective_user.id, last_entry.get("id"), mode, last_srs)
-    update_progress(get_db_path(), update.effective_user.id, last_entry.get("id"), mode, quality=5)
+    update_progress(
+        get_db_path(),
+        update.effective_user.id,
+        last_entry.get("id"),
+        mode,
+        quality=5,
+        interval_divisor=_interval_divisor_for_mode(update.effective_user.id, mode),
+    )
     log_quiz_event(get_db_path(), user_id=update.effective_user.id, word_id=last_entry.get("id"), mode=mode, is_correct=True)
     _remove_from_retry(context, mode, last_entry.get("id"))
     _set_retry_since_last(context, mode, _retry_since_last(context, mode) + 1)
@@ -3607,12 +3614,30 @@ def _format_ru_question_no_q(entry, dict_lang):
 
 def _format_de_ru_question(entry):
     """Handle format de ru question."""
-    word_type = entry.get("type", "")
-    article = str(entry.get("article", "")).strip()
-    base = entry.get("infinitive", "") if word_type == "verb" else entry.get("german", "")
-    base = _cap_word(base) if word_type == "nomen" else _low_word(base)
-    prefix = f"{article} " if article else ""
-    return f">>    {_md_escape(prefix + base)}?"
+    word_type = _low_word(entry.get("type", ""))
+    lines = []
+    if word_type == "nomen":
+        article = str(entry.get("article", "")).strip()
+        german = _cap_word(entry.get("german", ""))
+        answer = f"{article} {german}".strip() if article else german
+        lines.append(_md_escape(answer))
+        plural = _cap_word(entry.get("plural", ""))
+        if plural:
+            lines.append(f"_  pl. die {_md_escape(plural)}_")
+    elif word_type == "verb":
+        infinitive = _low_word(entry.get("infinitive", ""))
+        lines.append(_md_escape(infinitive))
+        pr = _low_word(entry.get("prateritum", ""))
+        if pr:
+            lines.append(f"_  {_md_escape(pr)}_")
+        p2 = _expected_partizip2(entry)
+        if p2:
+            lines.append(f"_  {_md_escape(p2)}_")
+    else:
+        german = _low_word(entry.get("german", ""))
+        lines.append(_md_escape(german))
+    lines.append(">>    перевод")
+    return "\n".join(lines)
 
 
 def _format_article_question(entry):
@@ -4495,10 +4520,24 @@ async def _back_to_tests(update: Update, context: ContextTypes.DEFAULT_TYPE = No
 
 
 
+def _interval_divisor_for_mode(user_id, mode):
+    """Handle interval divisor for mode."""
+    if mode == _mode_de_l1(user_id):
+        return 2.0
+    return 1.0
+
+
 def _update_srs_for_entry(user_id, entry, mode, ok):
     """Handle update srs for entry."""
     quality = 5 if ok else 2
-    update_progress(get_db_path(), user_id=user_id, word_id=entry.get("id"), mode=mode, quality=quality)
+    update_progress(
+        get_db_path(),
+        user_id=user_id,
+        word_id=entry.get("id"),
+        mode=mode,
+        quality=quality,
+        interval_divisor=_interval_divisor_for_mode(user_id, mode),
+    )
     log_quiz_event(get_db_path(), user_id=user_id, word_id=entry.get("id"), mode=mode, is_correct=ok)
 
 

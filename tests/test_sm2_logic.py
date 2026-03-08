@@ -91,6 +91,20 @@ class Sm2LogicTests(unittest.TestCase):
         self.assertEqual(updated["repetitions"], 1)
         self.assertEqual(updated["due"], (today + timedelta(days=2)).isoformat())
 
+    def test_update_sm2_interval_divisor_halves_interval(self):
+        today = date(2026, 2, 24)
+        srs = {"interval": 6, "repetitions": 2, "ease": 2.5, "due": today.isoformat()}
+        updated = update_sm2(srs, quality=4, today=today, interval_divisor=2.0)
+        self.assertEqual(updated["interval"], 7)
+        self.assertEqual(updated["due"], (today + timedelta(days=7)).isoformat())
+
+    def test_update_sm2_interval_divisor_keeps_min_one(self):
+        today = date(2026, 2, 24)
+        srs = {"interval": 1, "repetitions": 0, "ease": 2.5, "due": today.isoformat()}
+        updated = update_sm2(srs, quality=4, today=today, interval_divisor=2.0)
+        self.assertEqual(updated["interval"], 1)
+        self.assertEqual(updated["due"], (today + timedelta(days=1)).isoformat())
+
     def test_select_due_filters_topics(self):
         db_path = _mk_db()
         self.addCleanup(lambda: os.unlink(db_path))
