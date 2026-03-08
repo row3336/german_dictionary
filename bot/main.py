@@ -123,6 +123,7 @@ from .storage import (
     search_word,
     has_translation_collision,
     list_all_words,
+    list_sm2_weak_words,
     get_synonym_group,
     get_synonym_group_id,
     get_setting,
@@ -146,6 +147,7 @@ from .storage import (
     learning_active_batches,
     learning_active_count,
     learning_add_words,
+    learning_add_word_by_id,
     learning_batch_mark_notified,
     learning_batch_update_ready_state,
     learning_due_entry,
@@ -604,6 +606,7 @@ def _action_key_from_text(text, user_id):
         ("tests", "tests"),
         ("db_search", "db_search"),
         ("db_search_matches", "db_search_matches"),
+        ("db_search_weak_words", "db_search_weak_words"),
         ("settings", "settings"),
         ("info", "info"),
         ("stat", "stat"),
@@ -677,7 +680,13 @@ def _add_input_markup(user_id):
 def _db_search_markup(user_id):
     """Handle db search markup."""
     lang = _user_interface_lang(user_id)
-    return ReplyKeyboardMarkup([[t(lang, "db_search_matches"), t(lang, "back")]], resize_keyboard=True)
+    return ReplyKeyboardMarkup([[t(lang, "db_search_matches"), t(lang, "db_search_weak_words"), t(lang, "back")]], resize_keyboard=True)
+
+
+def _db_search_weak_markup(user_id):
+    """Handle db search weak markup."""
+    lang = _user_interface_lang(user_id)
+    return ReplyKeyboardMarkup([[SEND_LEARN_TEXT, t(lang, "back")]], resize_keyboard=True)
 
 
 def _split_text_chunks(text, max_size=3500):
@@ -1278,6 +1287,12 @@ def _list_match_pairs(entries, dict_lang):
     return blocks
 
 
+def _format_sm2_weak_line(entry, dict_lang):
+    """Handle format sm2 weak line."""
+    streak = int(entry.get("wrong_streak") or 0)
+    return f"{_format_match_line(entry, dict_lang)} | wrong_streak={streak}"
+
+
 def _syn_menu_markup(user_id):
     """Handle syn menu markup."""
     return ReplyKeyboardMarkup(
@@ -1529,9 +1544,28 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     action = _action_key_from_text(text, user_id)
     if action == "back":
+        context.user_data.pop("db_search_weak_ids", None)
         await update.message.reply_text(t(_user_interface_lang(user_id), "main_menu"), reply_markup=_main_menu_markup(user_id))
         return MENU
+    if text == SEND_LEARN_TEXT and context.user_data.get("db_search_weak_ids"):
+        ids = list(dict.fromkeys(context.user_data.get("db_search_weak_ids") or []))
+        db_path = get_db_path()
+        batch_id = learning_get_or_create_batch(db_path, user_id=user_id, daily_qty=_learning_daily_qty(db_path))
+        added = 0
+        for wid in ids:
+            added += int(
+                learning_add_word_by_id(
+                    db_path,
+                    user_id=user_id,
+                    word_id=wid,
+                    batch_id=batch_id,
+                    first_delay_seconds=_learning_intervals_seconds(db_path)[0],
+                )
+            )
+        context.user_data.pop("db_search_weak_ids", None)
+        return await _send_db_search_prompt(update, user_id, f"Added to learning: {added}")
     if action == "db_search_matches":
+        context.user_data.pop("db_search_weak_ids", None)
         entries = list_all_words(get_db_path())
         blocks = _list_match_pairs(entries, _user_dict_lang(user_id))
         if not blocks:
@@ -1541,6 +1575,20 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             markup = _db_search_markup(user_id) if idx == len(chunks) - 1 else None
             await update.message.reply_text(chunk, reply_markup=markup)
         return DB_SEARCH
+    if action == "db_search_weak_words":
+        mode = _mode_l1_de(user_id)
+        entries = list_sm2_weak_words(get_db_path(), user_id=user_id, mode=mode, min_wrong_streak=4)
+        if not entries:
+            context.user_data.pop("db_search_weak_ids", None)
+            return await _send_db_search_prompt(update, user_id, "No weak words found.")
+        context.user_data["db_search_weak_ids"] = [x.get("id") for x in entries if x.get("id")]
+        lines = [_format_sm2_weak_line(entry, _user_dict_lang(user_id)) for entry in entries]
+        chunks = _split_text_chunks("\n".join(lines))
+        for idx, chunk in enumerate(chunks):
+            markup = _db_search_weak_markup(user_id) if idx == len(chunks) - 1 else None
+            await update.message.reply_text(chunk, reply_markup=markup)
+        return DB_SEARCH
+    context.user_data.pop("db_search_weak_ids", None)
     entry = search_word(get_db_path(), text)
     if not entry:
         return await _send_db_search_prompt(update, user_id, "Not found.")
@@ -1573,8 +1621,9 @@ async def db_search_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     action = _action_key_from_text(text, user_id)
     if action in {"back", "db_search", "stop"}:
+        context.user_data.pop("db_search_weak_ids", None)
         return await _send_db_search_prompt(update, user_id, None)
-    if action == "db_search_matches":
+    if action in {"db_search_matches", "db_search_weak_words"} or text == SEND_LEARN_TEXT:
         return await db_search_input(update, context)
     if text in {QUIZ_FIELDS_TEXT, "delete"}:
         return await add_edit(update, context)

@@ -539,6 +539,8 @@ def _row_to_entry(row):
         entry["next_review"] = row["next_review"]
     if "is_active" in row.keys():
         entry["is_active"] = bool(row["is_active"])
+    if "wrong_streak" in row.keys():
+        entry["wrong_streak"] = int(row["wrong_streak"] or 0)
     return entry
 
 
@@ -2799,6 +2801,49 @@ def list_all_words(db_path):
             FROM words
             ORDER BY created_at ASC
             """
+        ).fetchall()
+    return [_row_to_entry(row) for row in rows]
+
+
+def list_sm2_weak_words(db_path, user_id, mode, min_wrong_streak=4):
+    """Handle list sm2 weak words."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            WITH ordered AS (
+                SELECT
+                    e.word_id AS word_id,
+                    e.is_correct AS is_correct,
+                    e.id AS id,
+                    SUM(CASE WHEN e.is_correct = 1 THEN 1 ELSE 0 END)
+                        OVER (
+                            PARTITION BY e.word_id
+                            ORDER BY e.id DESC
+                            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                        ) AS seen_correct
+                FROM quiz_events e
+                WHERE e.user_id = ? AND e.mode = ?
+            ),
+            streaks AS (
+                SELECT
+                    o.word_id AS word_id,
+                    COUNT(*) AS wrong_streak
+                FROM ordered o
+                WHERE o.seen_correct = 0
+                  AND o.is_correct = 0
+                GROUP BY o.word_id
+                HAVING COUNT(*) >= ?
+            )
+            SELECT
+                w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.russian,
+                w.ukrainian, w.english, w.topic,
+                s.wrong_streak AS wrong_streak
+            FROM streaks s
+            JOIN words w ON w.id = s.word_id
+            ORDER BY s.wrong_streak DESC, w.created_at ASC
+            """,
+            (int(user_id), _safe_text(mode), int(min_wrong_streak)),
         ).fetchall()
     return [_row_to_entry(row) for row in rows]
 
