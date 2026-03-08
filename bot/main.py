@@ -731,6 +731,17 @@ def _quiz_markup(user_id, article=False, allow_idk=True):
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 
+def _quiz_idle_markup(user_id):
+    """Handle quiz idle markup."""
+    lang = _user_interface_lang(user_id)
+    rows = [[SEND_LEARN_TEXT, INPUT_ERR_TEXT]]
+    if is_owner(user_id):
+        rows.append([AI_CLARIFY_FIELD, t(lang, "back")])
+    else:
+        rows.append([t(lang, "back")])
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True)
+
+
 def _weak_article_markup(user_id):
     """Handle weak article markup."""
     lang = _user_interface_lang(user_id)
@@ -3045,7 +3056,10 @@ async def _flag_current_word(update: Update, context: ContextTypes.DEFAULT_TYPE,
 async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle quiz ru de."""
     text = update.message.text.strip()
-    if _action_key_from_text(text, update.effective_user.id) == "stop":
+    action = _action_key_from_text(text, update.effective_user.id)
+    if action == "back":
+        return await _back_to_tests(update, context)
+    if action == "stop":
         return await _stop_with_summary(update, context, _mode_l1_de(update.effective_user.id))
     if text == INPUT_ERR_TEXT:
         applied = _apply_input_err(update, context, _mode_l1_de(update.effective_user.id))
@@ -3088,7 +3102,10 @@ async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle quiz de ru."""
     text = update.message.text.strip()
-    if _action_key_from_text(text, update.effective_user.id) == "stop":
+    action = _action_key_from_text(text, update.effective_user.id)
+    if action == "back":
+        return await _back_to_tests(update, context)
+    if action == "stop":
         return await _stop_with_summary(update, context, _mode_de_l1(update.effective_user.id))
     if text == INPUT_ERR_TEXT:
         applied = _apply_input_err(update, context, _mode_de_l1(update.effective_user.id))
@@ -3869,9 +3886,9 @@ async def _send_ru_de_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
             await update.message.reply_text(prefix_text, parse_mode="Markdown")
         await update.message.reply_text(
             "No due words. Add more or wait until due date.",
-            reply_markup=ReplyKeyboardMarkup(_ru_de_menu_keys(update.effective_user.id), resize_keyboard=True),
+            reply_markup=_quiz_idle_markup(update.effective_user.id),
         )
-        return QUIZ_RU_DE_MENU
+        return QUIZ_RU_DE
 
     context.user_data["quiz_entry"] = entry
     prompt_text = _format_ru_question(entry, _user_dict_lang(update.effective_user.id))
@@ -3898,9 +3915,9 @@ async def _send_de_ru_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
             await update.message.reply_text(prefix_text, parse_mode="Markdown")
         await update.message.reply_text(
             "No due words. Add more or wait until due date.",
-            reply_markup=ReplyKeyboardMarkup(_tests_menu_keys(update.effective_user.id), resize_keyboard=True),
+            reply_markup=_quiz_idle_markup(update.effective_user.id),
         )
-        return TESTS_MENU
+        return QUIZ_DE_RU
 
     context.user_data["quiz_entry"] = entry
     prompt_text = _format_de_ru_question(entry)
