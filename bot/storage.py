@@ -2085,6 +2085,79 @@ def learning_active_batches(db_path):
     return [dict(row) for row in rows]
 
 
+def sm2_due_forecast(db_path, user_id, mode):
+    """Handle sm2 due forecast."""
+    init_db(db_path)
+    today = date.today().isoformat()
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                w.id AS word_id,
+                COALESCE(p.due, date('now')) AS due_date,
+                p.updated_at AS updated_at
+            FROM words w
+            LEFT JOIN progress p
+              ON p.word_id = w.id
+             AND p.user_id = ?
+             AND p.mode = ?
+            WHERE COALESCE(p.due, date('now')) <= date('now')
+              AND NOT EXISTS (
+                SELECT 1
+                FROM learning_items li
+                WHERE li.user_id = ?
+                  AND li.word_id = w.id
+                  AND li.status = 'active'
+              )
+              AND (
+                EXISTS (
+                    SELECT 1
+                    FROM learning_items l2
+                    WHERE l2.user_id = ?
+                      AND l2.word_id = w.id
+                      AND l2.status IN ('completed', 'skipped')
+                )
+                OR EXISTS (
+                    SELECT 1
+                    FROM quiz_events e
+                    WHERE e.user_id = ?
+                      AND e.word_id = w.id
+                      AND e.mode != 'learning'
+                )
+              )
+            """,
+            (int(user_id), _safe_text(mode), int(user_id), int(user_id), int(user_id)),
+        ).fetchall()
+    per_hour = {h: 0 for h in range(24)}
+    total = 0
+    for row in rows:
+        total += 1
+        due_date = str(row["due_date"] or "")
+        updated_at = row["updated_at"]
+        if due_date < today:
+            hour = 0
+        elif updated_at and len(updated_at) >= 13:
+            try:
+                hour = int(updated_at[11:13])
+            except ValueError:
+                hour = 0
+        else:
+            hour = 0
+        per_hour[hour] = per_hour.get(hour, 0) + 1
+    peak_hour = None
+    peak_count = 0
+    for hour, count in per_hour.items():
+        if count > peak_count:
+            peak_count = count
+            peak_hour = hour
+    return {
+        "total": total,
+        "per_hour": per_hour,
+        "peak_hour": peak_hour,
+        "peak_count": peak_count,
+    }
+
+
 def set_progress(db_path, user_id, word_id, mode, srs):
     """Handle set progress."""
     init_db(db_path)

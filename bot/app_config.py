@@ -34,6 +34,9 @@ LEARNING_INTERVALS_KEY = "learning_intervals_sec"
 LEARNING_REMINDER_INTERVAL_KEY = "learning_reminder_interval_sec"
 LEARNING_REMINDER_COOLDOWN_KEY = "learning_reminder_cooldown_sec"
 LEARNING_READY_QUORUM_KEY = "learning_ready_quorum_pct"
+SM2_REPORT_HOUR_KEY = "sm2_report_utc_hour"
+SM2_REPORT_DATE_KEY = "sm2_report_date"
+SM2_PEAK_NOTIFY_DATE_KEY = "sm2_peak_notify_date"
 
 ARTICLE_SET = {
     "der",

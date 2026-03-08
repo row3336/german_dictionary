@@ -98,6 +98,9 @@ from .app_config import (
     LEARNING_REMINDER_INTERVAL_KEY,
     LEARNING_REMINDER_COOLDOWN_KEY,
     LEARNING_READY_QUORUM_KEY,
+    SM2_REPORT_HOUR_KEY,
+    SM2_REPORT_DATE_KEY,
+    SM2_PEAK_NOTIFY_DATE_KEY,
     get_suggestions_path,
     is_owner,
 )
@@ -155,6 +158,7 @@ from .storage import (
     learning_status_snapshot,
     learning_update_result,
     _parse_learning_intervals,
+    sm2_due_forecast,
     WEAK_ACTIVE_MIN_ERRORS,
     WEAK_ACTIVE_MIN_STREAK_WRONG,
     WEAK_ACTIVE_CLEAR_STREAK,
@@ -220,6 +224,9 @@ LEARNING_REMINDER_INTERVAL_DEFAULT = 60
 LEARNING_REMINDER_COOLDOWN_DEFAULT = 900
 LEARNING_READY_QUORUM_DEFAULT = 70
 LEARNING_REMINDER_JOB_NAME = "learning_reminder_job"
+SM2_REPORT_UTC_HOUR_DEFAULT = 3
+SM2_REPORT_JOB_NAME = "sm2_daily_report_job"
+SM2_PEAK_JOB_NAME = "sm2_peak_notify_job"
 
 
 def _main_menu_keys(user_id):
@@ -408,6 +415,12 @@ def _learning_ready_quorum(db_path):
     """Handle learning ready quorum."""
     value = _get_int_setting(db_path, LEARNING_READY_QUORUM_KEY, LEARNING_READY_QUORUM_DEFAULT)
     return min(100, max(1, value))
+
+
+def _sm2_report_hour_utc(db_path):
+    """Handle sm2 report hour utc."""
+    value = _get_int_setting(db_path, SM2_REPORT_HOUR_KEY, SM2_REPORT_UTC_HOUR_DEFAULT)
+    return min(23, max(0, value))
 
 
 def _topic_filter_value():
@@ -4644,6 +4657,100 @@ def _configure_learning_reminders(app: Application):
     )
 
 
+def _format_sm2_report_text(total, peak_hour, peak_count):
+    """Handle format sm2 report text."""
+    if total <= 0:
+        return "SM2 today: 0 due."
+    if peak_hour is None:
+        return f"SM2 today: {total} due."
+    return (
+        f"SM2 today: {total} due.\n"
+        f"Peak hour ~{peak_hour:02d}:00 UTC (approx), count {peak_count}."
+    )
+
+
+async def _sm2_daily_report_job(context: ContextTypes.DEFAULT_TYPE):
+    """Handle sm2 daily report job."""
+    db_path = get_db_path()
+    owner_id = get_owner_id()
+    if not owner_id:
+        return
+    today = date.today().isoformat()
+    last_date = get_setting(db_path, SM2_REPORT_DATE_KEY, "")
+    if last_date == today:
+        return
+    mode = _mode_l1_de(owner_id)
+    forecast = sm2_due_forecast(db_path, owner_id, mode)
+    total = int(forecast.get("total", 0))
+    peak_hour = forecast.get("peak_hour")
+    peak_count = int(forecast.get("peak_count", 0))
+    text = _format_sm2_report_text(total, peak_hour, peak_count)
+    try:
+        await context.bot.send_message(chat_id=owner_id, text=text)
+        set_setting(db_path, SM2_REPORT_DATE_KEY, today)
+        if peak_hour is not None:
+            set_setting(db_path, "sm2_peak_hour_today", str(int(peak_hour)))
+            set_setting(db_path, SM2_PEAK_NOTIFY_DATE_KEY, "")
+    except Exception:
+        return
+
+
+async def _sm2_peak_notify_job(context: ContextTypes.DEFAULT_TYPE):
+    """Handle sm2 peak notify job."""
+    db_path = get_db_path()
+    owner_id = get_owner_id()
+    if not owner_id:
+        return
+    today = date.today().isoformat()
+    peak_notified = get_setting(db_path, SM2_PEAK_NOTIFY_DATE_KEY, "")
+    if peak_notified == today:
+        return
+    peak_hour_raw = get_setting(db_path, "sm2_peak_hour_today", "")
+    try:
+        peak_hour = int(peak_hour_raw)
+    except (TypeError, ValueError):
+        return
+    now = datetime.now(timezone.utc)
+    if now.hour < peak_hour:
+        return
+    mode = _mode_l1_de(owner_id)
+    forecast = sm2_due_forecast(db_path, owner_id, mode)
+    total = int(forecast.get("total", 0))
+    if total <= 0:
+        return
+    try:
+        await context.bot.send_message(
+            chat_id=owner_id,
+            text=f"SM2 peak window now. Due today: {total}.",
+        )
+        set_setting(db_path, SM2_PEAK_NOTIFY_DATE_KEY, today)
+    except Exception:
+        return
+
+
+def _configure_sm2_reports(app: Application):
+    """Handle configure sm2 reports."""
+    job_queue = app.job_queue
+    if job_queue is None:
+        return
+    for job in job_queue.get_jobs_by_name(SM2_REPORT_JOB_NAME):
+        job.schedule_removal()
+    for job in job_queue.get_jobs_by_name(SM2_PEAK_JOB_NAME):
+        job.schedule_removal()
+    report_hour = _sm2_report_hour_utc(get_db_path())
+    job_queue.run_daily(
+        _sm2_daily_report_job,
+        time=time(hour=report_hour, minute=0, tzinfo=timezone.utc),
+        name=SM2_REPORT_JOB_NAME,
+    )
+    job_queue.run_repeating(
+        _sm2_peak_notify_job,
+        interval=900,
+        first=900,
+        name=SM2_PEAK_JOB_NAME,
+    )
+
+
 def _prepare_storage():
     """Handle prepare storage."""
     db_path = get_db_path()
@@ -4668,6 +4775,8 @@ def _prepare_storage():
         set_setting(db_path, LEARNING_REMINDER_COOLDOWN_KEY, str(LEARNING_REMINDER_COOLDOWN_DEFAULT))
     if not get_setting(db_path, LEARNING_READY_QUORUM_KEY):
         set_setting(db_path, LEARNING_READY_QUORUM_KEY, str(LEARNING_READY_QUORUM_DEFAULT))
+    if not get_setting(db_path, SM2_REPORT_HOUR_KEY):
+        set_setting(db_path, SM2_REPORT_HOUR_KEY, str(SM2_REPORT_UTC_HOUR_DEFAULT))
 
 
 def main():
@@ -4685,6 +4794,7 @@ def main():
     mode = get_setting(get_db_path(), AUTO_DUMP_SETTING_KEY, "off")
     _configure_auto_dump(app, mode)
     _configure_learning_reminders(app)
+    _configure_sm2_reports(app)
     conv = ConversationHandler(
         entry_points=[
             CommandHandler("start", start),
