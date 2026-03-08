@@ -723,7 +723,7 @@ def _quiz_markup(user_id, article=False, allow_idk=True):
     if article:
         rows.append(["der", "die", "das"])
     elif allow_idk:
-        rows.append([INPUT_ERR_TEXT, I_DONT_KNOW_TEXT, SEND_LEARN_TEXT])
+        rows.append([SEND_LEARN_TEXT, I_DONT_KNOW_TEXT, INPUT_ERR_TEXT])
     if is_owner(user_id):
         rows.append([AI_CLARIFY_FIELD, t(lang, "stop")])
     else:
