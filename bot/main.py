@@ -561,6 +561,7 @@ def _run_unit_tests_report():
         "tests.test_sm2_logic",
         "tests.test_weak_modes",
         "tests.test_learning_logic",
+        "tests.test_adjektiv_forms",
     ]
     try:
         env = dict(os.environ)
@@ -581,8 +582,30 @@ def _run_unit_tests_report():
     text = out
     if err:
         text = f"{text}\n{err}".strip()
+    smoke_cmd = ["python3", "-m", "scripts.smoke_check_db", "--db", str(get_db_path())]
+    try:
+        smoke_proc = subprocess.run(
+            smoke_cmd,
+            cwd=root_dir,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+            env=env,
+        )
+        smoke_out = (smoke_proc.stdout or "").strip()
+        smoke_err = (smoke_proc.stderr or "").strip()
+        smoke_text = smoke_out
+        if smoke_err:
+            smoke_text = f"{smoke_text}\n{smoke_err}".strip()
+        if not smoke_text:
+            smoke_text = f"smoke exit_code={smoke_proc.returncode}"
+        text = f"{text}\n\n--- smoke ---\n{smoke_text}".strip()
+    except Exception as exc:
+        text = f"{text}\n\n--- smoke ---\nfailed to run smoke checks: {exc}".strip()
     if not text:
         text = f"exit_code={proc.returncode}"
+    text = "\n".join(f"  {line}" for line in text.splitlines())
     if len(text) > 3500:
         text = text[:3500] + "\n...truncated..."
     return text.replace("```", "'''")
