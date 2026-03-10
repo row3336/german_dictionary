@@ -1906,6 +1906,61 @@ def learning_update_result(db_path, user_id, word_id, ok, intervals_seconds):
         return {"completed": False, "step_index": 0, "next_due": due_iso}
 
 
+def learning_apply_input_err(db_path, user_id, word_id, prev_step_index, intervals_seconds):
+    """Handle apply input err for learning without reset."""
+    intervals = [int(v) for v in intervals_seconds if int(v) > 0]
+    if not intervals:
+        return {"completed": True, "step_index": 0, "next_due": None}
+    init_db(db_path)
+    now = datetime.now(timezone.utc)
+    try:
+        prev_step = int(prev_step_index)
+    except (TypeError, ValueError):
+        prev_step = 0
+    prev_step = max(0, min(prev_step, len(intervals) - 1))
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT batch_id
+            FROM learning_items
+            WHERE user_id = ? AND word_id = ? AND status = 'active'
+            """,
+            (int(user_id), _safe_text(word_id)),
+        ).fetchone()
+        if not row:
+            return {"completed": False, "step_index": prev_step, "next_due": None}
+        batch_id = row["batch_id"]
+        next_step = prev_step + 1
+        if next_step >= len(intervals):
+            conn.execute(
+                """
+                UPDATE learning_items
+                SET status = 'completed', updated_at = CURRENT_TIMESTAMP
+                WHERE user_id = ? AND word_id = ?
+                """,
+                (int(user_id), _safe_text(word_id)),
+            )
+            conn.execute(
+                "UPDATE learning_batches SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (_safe_text(batch_id),),
+            )
+            return {"completed": True, "step_index": next_step, "next_due": None}
+        due_iso = (now + timedelta(seconds=intervals[next_step])).strftime("%Y-%m-%dT%H:%M:%SZ")
+        conn.execute(
+            """
+            UPDATE learning_items
+            SET step_index = ?, next_due = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = ? AND word_id = ?
+            """,
+            (int(next_step), due_iso, int(user_id), _safe_text(word_id)),
+        )
+        conn.execute(
+            "UPDATE learning_batches SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (_safe_text(batch_id),),
+        )
+        return {"completed": False, "step_index": next_step, "next_due": due_iso}
+
+
 def learning_skip_word(db_path, user_id, word_id):
     """Handle learning skip word."""
     init_db(db_path)

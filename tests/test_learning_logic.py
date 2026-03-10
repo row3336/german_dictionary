@@ -15,6 +15,7 @@ from bot.storage import (
     learning_mark_preview_next,
     learning_reset_session,
     learning_status_snapshot,
+    learning_apply_input_err,
     learning_update_result,
     select_due,
 )
@@ -192,6 +193,49 @@ class LearningLogicTests(unittest.TestCase):
         picked_ids = {x["id"] for x in picked}
         self.assertIn(w1["id"], picked_ids)
         self.assertNotIn(w2["id"], picked_ids)
+
+    def test_learning_input_err_restores_progress_without_reset(self):
+        db_path = _mk_db()
+        self.addCleanup(lambda: os.unlink(db_path))
+        init_db(db_path)
+        w1 = _add_noun(db_path, "Apfel", "яблоко")
+        batch_id = learning_get_or_create_batch(db_path, user_id=1, daily_qty=20)
+        learning_add_words(db_path, user_id=1, words=[w1], batch_id=batch_id, first_delay_seconds=1)
+        learning_mark_preview_next(db_path, user_id=1, word_id=w1["id"], first_interval_seconds=1)
+
+        # Move to step 2 first.
+        learning_update_result(db_path, user_id=1, word_id=w1["id"], ok=True, intervals_seconds=[1, 2, 3, 4])
+        with sqlite3.connect(db_path) as conn:
+            before_wrong_step = conn.execute(
+                "SELECT step_index FROM learning_items WHERE user_id = ? AND word_id = ?",
+                (1, w1["id"]),
+            ).fetchone()[0]
+        self.assertEqual(before_wrong_step, 1)
+
+        # Wrong answer resets to step 0.
+        learning_update_result(db_path, user_id=1, word_id=w1["id"], ok=False, intervals_seconds=[1, 2, 3, 4])
+        with sqlite3.connect(db_path) as conn:
+            after_wrong_step = conn.execute(
+                "SELECT step_index FROM learning_items WHERE user_id = ? AND word_id = ?",
+                (1, w1["id"]),
+            ).fetchone()[0]
+        self.assertEqual(after_wrong_step, 0)
+
+        # input_err should recover as if last answer was correct from prev step (1 -> 2), not from 0.
+        result = learning_apply_input_err(
+            db_path,
+            user_id=1,
+            word_id=w1["id"],
+            prev_step_index=before_wrong_step,
+            intervals_seconds=[1, 2, 3, 4],
+        )
+        self.assertFalse(result["completed"])
+        with sqlite3.connect(db_path) as conn:
+            recovered_step = conn.execute(
+                "SELECT step_index FROM learning_items WHERE user_id = ? AND word_id = ?",
+                (1, w1["id"]),
+            ).fetchone()[0]
+        self.assertEqual(recovered_step, 2)
 
 
 if __name__ == "__main__":

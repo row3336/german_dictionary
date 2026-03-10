@@ -159,6 +159,7 @@ from .storage import (
     learning_reset_session,
     learning_status_snapshot,
     learning_update_result,
+    learning_apply_input_err,
     _parse_learning_intervals,
     sm2_due_forecast,
     WEAK_ACTIVE_MIN_ERRORS,
@@ -1082,15 +1083,16 @@ def _apply_input_err_learning(update, context):
     """Handle apply input error for learning mode."""
     last_id = context.user_data.get("last_learning_entry_id")
     last_ok = context.user_data.get("last_learning_ok")
+    last_prev_step = context.user_data.get("last_learning_prev_step")
     if not last_id or last_ok is None:
         return False
     if last_ok:
         return False
-    result = learning_update_result(
+    result = learning_apply_input_err(
         get_db_path(),
         user_id=update.effective_user.id,
         word_id=last_id,
-        ok=True,
+        prev_step_index=last_prev_step,
         intervals_seconds=_learning_intervals_seconds(get_db_path()),
     )
     log_quiz_event(
@@ -1985,6 +1987,7 @@ async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ok, _ = _check_ru_de_strict(entry, text)
     context.user_data["last_learning_entry_id"] = entry.get("id")
     context.user_data["last_learning_ok"] = bool(ok)
+    context.user_data["last_learning_prev_step"] = int(entry.get("learning_step") or 0)
     log_quiz_event(
         get_db_path(),
         user_id=user_id,
