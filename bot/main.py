@@ -4774,16 +4774,26 @@ def _format_sm2_report_text(total, peak_hour, peak_count):
     )
 
 
+def _should_send_sm2_daily_report(db_path, now_utc):
+    """Handle should send sm2 daily report."""
+    today = now_utc.date().isoformat()
+    last_date = get_setting(db_path, SM2_REPORT_DATE_KEY, "")
+    if last_date == today:
+        return False
+    report_hour = _sm2_report_hour_utc(db_path)
+    return now_utc.hour >= report_hour
+
+
 async def _sm2_daily_report_job(context: ContextTypes.DEFAULT_TYPE):
     """Handle sm2 daily report job."""
     db_path = get_db_path()
     owner_id = get_owner_id()
     if not owner_id:
         return
-    today = date.today().isoformat()
-    last_date = get_setting(db_path, SM2_REPORT_DATE_KEY, "")
-    if last_date == today:
+    now = datetime.now(timezone.utc)
+    if not _should_send_sm2_daily_report(db_path, now):
         return
+    today = now.date().isoformat()
     mode = _mode_l1_de(owner_id)
     forecast = sm2_due_forecast(db_path, owner_id, mode)
     total = int(forecast.get("total", 0))
@@ -4793,10 +4803,12 @@ async def _sm2_daily_report_job(context: ContextTypes.DEFAULT_TYPE):
     try:
         await context.bot.send_message(chat_id=owner_id, text=text)
         set_setting(db_path, SM2_REPORT_DATE_KEY, today)
+        set_setting(db_path, "sm2_peak_hour_today", "")
+        set_setting(db_path, SM2_PEAK_NOTIFY_DATE_KEY, "")
         if peak_hour is not None:
             set_setting(db_path, "sm2_peak_hour_today", str(int(peak_hour)))
-            set_setting(db_path, SM2_PEAK_NOTIFY_DATE_KEY, "")
     except Exception:
+        logging.exception("SM2 daily report failed")
         return
 
 
@@ -4809,6 +4821,9 @@ async def _sm2_peak_notify_job(context: ContextTypes.DEFAULT_TYPE):
     today = date.today().isoformat()
     peak_notified = get_setting(db_path, SM2_PEAK_NOTIFY_DATE_KEY, "")
     if peak_notified == today:
+        return
+    report_date = get_setting(db_path, SM2_REPORT_DATE_KEY, "")
+    if report_date != today:
         return
     peak_hour_raw = get_setting(db_path, "sm2_peak_hour_today", "")
     try:
@@ -4830,6 +4845,7 @@ async def _sm2_peak_notify_job(context: ContextTypes.DEFAULT_TYPE):
         )
         set_setting(db_path, SM2_PEAK_NOTIFY_DATE_KEY, today)
     except Exception:
+        logging.exception("SM2 peak notify failed")
         return
 
 
@@ -4842,10 +4858,11 @@ def _configure_sm2_reports(app: Application):
         job.schedule_removal()
     for job in job_queue.get_jobs_by_name(SM2_PEAK_JOB_NAME):
         job.schedule_removal()
-    report_hour = _sm2_report_hour_utc(get_db_path())
-    job_queue.run_daily(
+    # Run frequently and guard by date/hour so reports still work after restarts.
+    job_queue.run_repeating(
         _sm2_daily_report_job,
-        time=time(hour=report_hour, minute=0, tzinfo=timezone.utc),
+        interval=600,
+        first=30,
         name=SM2_REPORT_JOB_NAME,
     )
     job_queue.run_repeating(
