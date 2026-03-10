@@ -866,20 +866,22 @@ def _set_entry_field_value(entry, field, value):
     return _set_entry_field(entry, f"{field}={value}")
 
 
-def _get_quiz_action_entry(context: ContextTypes.DEFAULT_TYPE):
+def _get_quiz_action_entry(context: ContextTypes.DEFAULT_TYPE, prefer_current=False):
     """Handle get quiz action entry."""
+    current = context.user_data.get("quiz_entry")
     last_answered = context.user_data.get("quiz_last_answered_entry")
+    if prefer_current and current:
+        return current, "Current quiz word:"
     if last_answered:
         return last_answered, "Last answered word:"
-    current = context.user_data.get("quiz_entry")
     if current:
         return current, "Current quiz word:"
     return None, ""
 
 
-async def _start_quiz_edit(update: Update, context: ContextTypes.DEFAULT_TYPE, return_state):
+async def _start_quiz_edit(update: Update, context: ContextTypes.DEFAULT_TYPE, return_state, prefer_current=False):
     """Handle start quiz edit."""
-    entry, title = _get_quiz_action_entry(context)
+    entry, title = _get_quiz_action_entry(context, prefer_current=prefer_current)
     if not entry:
         return await _back_to_tests(update, context)
     context.user_data["edit_source"] = "quiz"
@@ -1943,7 +1945,7 @@ async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if action == "back":
         return await _send_learning_menu(update, user_id)
     if text == AI_CLARIFY_FIELD and is_owner(user_id):
-        return await _start_quiz_edit(update, context, LEARNING_QUIZ)
+        return await _start_quiz_edit(update, context, LEARNING_QUIZ, prefer_current=True)
 
     entry = context.user_data.get("quiz_entry")
     if not entry:
