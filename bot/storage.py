@@ -818,18 +818,26 @@ def get_statistics_snapshot(db_path, user_id, mode):
         weak_prateritum_stage2 = int(weak_row["prateritum_stage2"] or 0) if weak_row else 0
         weak_prateritum_stage3 = int(weak_row["prateritum_stage3"] or 0) if weak_row else 0
 
-        touch_row = conn.execute(
-            """
-            SELECT
-                COUNT(DISTINCT e.word_id) AS cnt
-            FROM quiz_events e
-            WHERE e.user_id = ?
-              AND e.mode IN ('ru_de', 'de_ru', 'article')
-              AND date(e.created_at) = date(?)
-            """,
-            (user_id, today.isoformat()),
-        ).fetchone()
-        today_complete = int(touch_row["cnt"] or 0) if touch_row else 0
+        def _today_mode_count(mode_name):
+            row = conn.execute(
+                """
+                SELECT COUNT(DISTINCT e.word_id) AS cnt
+                FROM quiz_events e
+                WHERE e.user_id = ?
+                  AND e.mode = ?
+                  AND date(e.created_at) = date(?)
+                """,
+                (user_id, mode_name, today.isoformat()),
+            ).fetchone()
+            return int((row["cnt"] if row else 0) or 0)
+
+        today_complete_sm2_ru_de = _today_mode_count("ru_de")
+        today_complete_sm2_de_ru = _today_mode_count("de_ru")
+        today_complete_weak_article = _today_mode_count("weak_article")
+        today_complete_weak_plural = _today_mode_count("weak_plural")
+        today_complete_weak_partizip2 = _today_mode_count("weak_partizip2")
+        today_complete_weak_prateritum = _today_mode_count("weak_prateritum")
+        today_complete = today_complete_sm2_ru_de + today_complete_sm2_de_ru
 
         retention_row = conn.execute(
             """
@@ -978,6 +986,12 @@ def get_statistics_snapshot(db_path, user_id, mode):
         "weak_prateritum_stage2": weak_prateritum_stage2,
         "weak_prateritum_stage3": weak_prateritum_stage3,
         "today_complete": today_complete,
+        "today_complete_sm2_ru_de": today_complete_sm2_ru_de,
+        "today_complete_sm2_de_ru": today_complete_sm2_de_ru,
+        "today_complete_weak_article": today_complete_weak_article,
+        "today_complete_weak_plural": today_complete_weak_plural,
+        "today_complete_weak_partizip2": today_complete_weak_partizip2,
+        "today_complete_weak_prateritum": today_complete_weak_prateritum,
         "never_answered": never_answered,
         "retention_7d_pct": retention_7d_pct,
         "new_words_tested_week": new_words_tested,

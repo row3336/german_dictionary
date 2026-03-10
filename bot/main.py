@@ -1538,7 +1538,12 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         stats = get_statistics_snapshot(get_db_path(), user_id=user_id, mode=_mode_l1_de(user_id))
         word_types = stats.get("word_types") or {}
         lines = [
-            f"today complete = {stats['today_complete']}",
+            f"today complete sm2 Ru > De = {stats['today_complete_sm2_ru_de']}",
+            f"today complete sm2 De > Ru = {stats['today_complete_sm2_de_ru']}",
+            f"today complete weak article = {stats['today_complete_weak_article']}",
+            f"today complete weak plural = {stats['today_complete_weak_plural']}",
+            f"today complete weak partizip2 = {stats['today_complete_weak_partizip2']}",
+            f"today complete weak preteritum = {stats['today_complete_weak_prateritum']}",
             f"3+ correct streak = {stats['streak_3p']}",
             f"2 correct streak = {stats['streak_2']}",
             f"1 correct = {stats['streak_1']}",
