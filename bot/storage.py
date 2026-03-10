@@ -1938,9 +1938,44 @@ def learning_reset_session(db_path, user_id):
     """Handle learning reset session."""
     init_db(db_path)
     with _connect(db_path) as conn:
-        conn.execute("DELETE FROM learning_items WHERE user_id = ?", (int(user_id),))
-        conn.execute("DELETE FROM learning_batches WHERE user_id = ?", (int(user_id),))
-        conn.execute("DELETE FROM quiz_events WHERE user_id = ? AND mode = 'learning'", (int(user_id),))
+        rows = conn.execute(
+            """
+            SELECT word_id
+            FROM learning_items
+            WHERE user_id = ? AND status = 'active'
+            """,
+            (int(user_id),),
+        ).fetchall()
+        reset_word_ids = [str(row["word_id"]) for row in rows if row and row["word_id"]]
+
+        conn.execute(
+            "DELETE FROM learning_items WHERE user_id = ? AND status = 'active'",
+            (int(user_id),),
+        )
+
+        if reset_word_ids:
+            placeholders = ",".join("?" for _ in reset_word_ids)
+            conn.execute(
+                f"""
+                DELETE FROM quiz_events
+                WHERE user_id = ? AND mode = 'learning' AND word_id IN ({placeholders})
+                """,
+                (int(user_id), *reset_word_ids),
+            )
+
+        conn.execute(
+            """
+            DELETE FROM learning_batches
+            WHERE user_id = ?
+              AND NOT EXISTS (
+                SELECT 1
+                FROM learning_items li
+                WHERE li.user_id = learning_batches.user_id
+                  AND li.batch_id = learning_batches.id
+              )
+            """,
+            (int(user_id),),
+        )
     return True
 
 

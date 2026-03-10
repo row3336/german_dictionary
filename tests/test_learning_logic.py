@@ -141,6 +141,58 @@ class LearningLogicTests(unittest.TestCase):
         snap = learning_status_snapshot(db_path, user_id=1, quorum_pct=70)
         self.assertEqual(snap["active_count"], 0)
 
+    def test_reset_learning_keeps_completed_and_resets_only_active(self):
+        db_path = _mk_db()
+        self.addCleanup(lambda: os.unlink(db_path))
+        init_db(db_path)
+        w1 = _add_noun(db_path, "Apfel", "яблоко")
+        w2 = _add_noun(db_path, "Katze", "кошка")
+        batch_id = learning_get_or_create_batch(db_path, user_id=1, daily_qty=20)
+        learning_add_words(db_path, user_id=1, words=[w1, w2], batch_id=batch_id, first_delay_seconds=30)
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(
+                "UPDATE learning_items SET status = 'completed' WHERE user_id = ? AND word_id = ?",
+                (1, w2["id"]),
+            )
+            conn.execute(
+                "INSERT INTO quiz_events (user_id, word_id, mode, is_correct) VALUES (?, ?, 'learning', 1)",
+                (1, w1["id"]),
+            )
+            conn.execute(
+                "INSERT INTO quiz_events (user_id, word_id, mode, is_correct) VALUES (?, ?, 'learning', 1)",
+                (1, w2["id"]),
+            )
+
+        learning_reset_session(db_path, user_id=1)
+
+        with sqlite3.connect(db_path) as conn:
+            active_cnt = conn.execute(
+                "SELECT COUNT(*) FROM learning_items WHERE user_id = ? AND status = 'active'",
+                (1,),
+            ).fetchone()[0]
+            completed_cnt = conn.execute(
+                "SELECT COUNT(*) FROM learning_items WHERE user_id = ? AND status = 'completed'",
+                (1,),
+            ).fetchone()[0]
+            w1_learning_events = conn.execute(
+                "SELECT COUNT(*) FROM quiz_events WHERE user_id = ? AND mode = 'learning' AND word_id = ?",
+                (1, w1["id"]),
+            ).fetchone()[0]
+            w2_learning_events = conn.execute(
+                "SELECT COUNT(*) FROM quiz_events WHERE user_id = ? AND mode = 'learning' AND word_id = ?",
+                (1, w2["id"]),
+            ).fetchone()[0]
+
+        self.assertEqual(active_cnt, 0)
+        self.assertEqual(completed_cnt, 1)
+        self.assertEqual(w1_learning_events, 0)
+        self.assertEqual(w2_learning_events, 1)
+
+        picked = learning_pick_new_words(db_path, user_id=1, limit=10)
+        picked_ids = {x["id"] for x in picked}
+        self.assertIn(w1["id"], picked_ids)
+        self.assertNotIn(w2["id"], picked_ids)
+
 
 if __name__ == "__main__":
     unittest.main()
