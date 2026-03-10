@@ -2001,7 +2001,7 @@ async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     feedback = _format_feedback_ru_de(entry, ok)
     if result.get("completed"):
-        feedback = f"{feedback}\n\nLearning completed for this word."
+        feedback = f"{feedback}\n\nLearning done ✅, sent to sm2"
     return await _send_learning_prompt(update, context, feedback)
 
 
