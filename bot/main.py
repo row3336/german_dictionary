@@ -1590,10 +1590,14 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await _send_db_search_prompt(update, user_id, "No weak words found.")
         context.user_data["db_search_weak_ids"] = [x.get("id") for x in entries if x.get("id")]
         lines = [_format_sm2_weak_line(entry, _user_dict_lang(user_id)) for entry in entries]
-        chunks = _split_text_chunks("\n".join(lines))
+        chunks = _split_text_chunks("\n\n".join(lines))
         for idx, chunk in enumerate(chunks):
             markup = _db_search_weak_markup(user_id) if idx == len(chunks) - 1 else None
-            await update.message.reply_text(chunk, reply_markup=markup)
+            await update.message.reply_text(
+                f"```text\n{chunk}\n```",
+                reply_markup=markup,
+                parse_mode="Markdown",
+            )
         return DB_SEARCH
     context.user_data.pop("db_search_weak_ids", None)
     entry = search_word(get_db_path(), text)
