@@ -8,6 +8,14 @@ from dotenv import load_dotenv
 from bot.ai import generate_fields
 from bot.storage import init_db
 
+NON_COMPARABLE_ADJEKTIV = {
+    "verheiratet",
+    "verwitwet",
+    "geschieden",
+    "ledig",
+    "sehr gut",
+}
+
 
 def _extract_json(text):
     start = text.find("{")
@@ -40,17 +48,19 @@ def _prompt(german, russian):
 def _load_candidates(db_path, limit):
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
+        placeholders = ",".join("?" for _ in NON_COMPARABLE_ADJEKTIV)
         query = """
             SELECT id, german, russian, komparativ, superlativ
             FROM words
             WHERE type = 'adjektiv'
               AND (TRIM(COALESCE(komparativ, '')) = '' OR TRIM(COALESCE(superlativ, '')) = '')
+              AND lower(trim(german)) NOT IN ({})
             ORDER BY created_at ASC
-        """
-        params = ()
+        """.format(placeholders)
+        params = tuple(sorted(NON_COMPARABLE_ADJEKTIV))
         if limit and int(limit) > 0:
             query += " LIMIT ?"
-            params = (int(limit),)
+            params = params + (int(limit),)
         rows = conn.execute(query, params).fetchall()
     return [dict(row) for row in rows]
 
