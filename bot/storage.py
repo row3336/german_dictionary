@@ -986,6 +986,56 @@ def get_statistics_snapshot(db_path, user_id, mode):
     }
 
 
+def get_daily_first_touch_retention(db_path, user_id, target_date=None, modes=None):
+    """Handle daily first touch retention for selected quiz modes."""
+    init_db(db_path)
+    user_id = int(user_id)
+    day = target_date or date.today().isoformat()
+    selected_modes = tuple(modes or (QUIZ_RU_DE, QUIZ_DE_RU))
+    if not selected_modes:
+        return {"date": day, "total": 0, "correct": 0, "rate": 0.0}
+    placeholders = ",".join("?" for _ in selected_modes)
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            f"""
+            WITH day_events AS (
+                SELECT id, word_id, is_correct, created_at
+                FROM quiz_events
+                WHERE user_id = ?
+                  AND mode IN ({placeholders})
+                  AND date(created_at) = date(?)
+            ),
+            first_ts AS (
+                SELECT word_id, MIN(created_at) AS first_created_at
+                FROM day_events
+                GROUP BY word_id
+            ),
+            first_events AS (
+                SELECT de.id, de.word_id, de.is_correct
+                FROM day_events de
+                JOIN first_ts ft
+                  ON ft.word_id = de.word_id
+                 AND ft.first_created_at = de.created_at
+            ),
+            picked AS (
+                SELECT word_id, MIN(id) AS first_id
+                FROM first_events
+                GROUP BY word_id
+            )
+            SELECT
+                COUNT(*) AS total_cnt,
+                SUM(CASE WHEN fe.is_correct = 1 THEN 1 ELSE 0 END) AS correct_cnt
+            FROM picked p
+            JOIN first_events fe ON fe.id = p.first_id
+            """,
+            (user_id, *selected_modes, day),
+        ).fetchone()
+    total = int((row["total_cnt"] if row else 0) or 0)
+    correct = int((row["correct_cnt"] if row else 0) or 0)
+    rate = round((correct / total) * 100, 1) if total > 0 else 0.0
+    return {"date": day, "total": total, "correct": correct, "rate": rate}
+
+
 def register_or_update_user(db_path, user_id, username="", first_name=""):
     """Handle register or update user."""
     init_db(db_path)

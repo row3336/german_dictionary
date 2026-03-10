@@ -160,6 +160,7 @@ from .storage import (
     learning_status_snapshot,
     learning_update_result,
     learning_apply_input_err,
+    get_daily_first_touch_retention,
     _parse_learning_intervals,
     sm2_due_forecast,
     WEAK_ACTIVE_MIN_ERRORS,
@@ -4760,8 +4761,42 @@ async def _auto_dump_job(context: ContextTypes.DEFAULT_TYPE):
                 filename=dump_path.name,
                 caption=f"✅ Auto dump created: {dump_path.name}",
             )
+            report_day = (datetime.now(timezone.utc).date() - timedelta(days=1)).isoformat()
+            retention = get_daily_first_touch_retention(
+                get_db_path(),
+                user_id=owner_id,
+                target_date=report_day,
+                modes=(MODE_RU_DE, MODE_DE_RU),
+            )
+            await context.bot.send_message(
+                chat_id=owner_id,
+                text=_format_retention_daily_text(retention),
+            )
         except Exception:
             pass
+
+
+def _format_retention_daily_text(retention):
+    """Handle format daily first-touch retention text."""
+    day = retention.get("date", "")
+    total = int(retention.get("total") or 0)
+    correct = int(retention.get("correct") or 0)
+    rate = float(retention.get("rate") or 0.0)
+    if total <= 0:
+        return f"Retention rate ({day}, first touch): no data."
+    if rate < 70.0:
+        zone = "<70%: overload"
+    elif 80.0 <= rate <= 90.0:
+        zone = "80-90%: optimal"
+    elif rate > 95.0:
+        zone = ">95%: too easy (you can add more new words)"
+    else:
+        zone = "outside optimal range"
+    return (
+        f"Retention rate ({day}, first touch): {rate:.1f}%\n"
+        f"Correct: {correct}/{total}\n"
+        f"{zone}"
+    )
 
 
 def _configure_auto_dump(app: Application, mode: str):

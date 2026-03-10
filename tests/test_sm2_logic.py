@@ -5,7 +5,16 @@ import unittest
 import warnings
 from datetime import date, timedelta
 
-from bot.storage import init_db, add_word, select_due, update_sm2, list_topics, learning_get_or_create_batch, learning_add_words
+from bot.storage import (
+    init_db,
+    add_word,
+    select_due,
+    update_sm2,
+    list_topics,
+    learning_get_or_create_batch,
+    learning_add_words,
+    get_daily_first_touch_retention,
+)
 
 warnings.filterwarnings("ignore", category=ResourceWarning)
 
@@ -156,6 +165,31 @@ class Sm2LogicTests(unittest.TestCase):
         _add_noun(db_path, "Jacke", "куртка", topic="2")
         topics = list_topics(db_path)
         self.assertEqual(topics, ["1", "2"])
+
+    def test_daily_retention_uses_only_first_touch_per_word(self):
+        db_path = _mk_db()
+        self.addCleanup(lambda: os.unlink(db_path))
+        init_db(db_path)
+        e1 = _add_noun(db_path, "Apfel", "яблоко", topic="1")
+        e2 = _add_noun(db_path, "Jacke", "куртка", topic="1")
+        today = date.today().isoformat()
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(
+                "INSERT INTO quiz_events (user_id, word_id, mode, is_correct, created_at) VALUES (?, ?, 'ru_de', 0, ?)",
+                (1, e1["id"], f"{today} 08:00:00"),
+            )
+            conn.execute(
+                "INSERT INTO quiz_events (user_id, word_id, mode, is_correct, created_at) VALUES (?, ?, 'ru_de', 1, ?)",
+                (1, e1["id"], f"{today} 08:05:00"),
+            )
+            conn.execute(
+                "INSERT INTO quiz_events (user_id, word_id, mode, is_correct, created_at) VALUES (?, ?, 'de_ru', 1, ?)",
+                (1, e2["id"], f"{today} 09:00:00"),
+            )
+        stats = get_daily_first_touch_retention(db_path, user_id=1, target_date=today)
+        self.assertEqual(stats["total"], 2)
+        self.assertEqual(stats["correct"], 1)
+        self.assertEqual(stats["rate"], 50.0)
 
 
 if __name__ == "__main__":
