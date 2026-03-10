@@ -774,16 +774,21 @@ def _edit_fields_markup(source):
     if source == "add":
         return ReplyKeyboardMarkup(
             [
-                ["ru", "ukr", "de"],
-                ["article", "plural", "type"],
-                ["prateritum", "partizip2", "infinitive"],
+                ["ru", "ukr", "en", "de"],
+                ["article", "plural", "type", "infinitive"],
+                ["prateritum", "partizip2", "komparativ", "superlativ"],
                 [BACK_TEXT],
             ],
             resize_keyboard=True,
         )
     if source == "quiz":
         return ReplyKeyboardMarkup(
-            [["ru", "ukr", "de"], ["article", "plural", "type"], ["prateritum", "partizip2", "infinitive"], [SYNONYMS_TEXT, BACK_TEXT]],
+            [
+                ["ru", "ukr", "de", SYNONYMS_TEXT],
+                ["article", "plural", "type", "infinitive"],
+                ["prateritum", "partizip2", "komparativ", "superlativ"],
+                [BACK_TEXT],
+            ],
             resize_keyboard=True,
         )
     return ReplyKeyboardMarkup([["russian", BACK_TEXT]], resize_keyboard=True)
@@ -792,9 +797,15 @@ def _edit_fields_markup(source):
 def _allowed_edit_fields(source):
     """Handle allowed edit fields."""
     if source == "add":
-        return {"ru", "ukr", "de", "article", "plural", "type", "prateritum", "partizip2", "infinitive"}
+        return {
+            "ru", "ukr", "en", "de", "article", "plural", "type",
+            "prateritum", "partizip2", "infinitive", "komparativ", "superlativ",
+        }
     if source == "quiz":
-        return {"ru", "ukr", "de", "article", "plural", "prateritum", "partizip2", "infinitive", "type", SYNONYMS_TEXT}
+        return {
+            "ru", "ukr", "de", "article", "plural", "prateritum",
+            "partizip2", "infinitive", "type", SYNONYMS_TEXT, "komparativ", "superlativ",
+        }
     return {"russian", "level"}
 
 
@@ -842,6 +853,8 @@ def _set_entry_field(entry, raw_update):
         "plural",
         "prateritum",
         "partizip2",
+        "komparativ",
+        "superlativ",
         "german",
         "infinitive",
         "type",
@@ -1185,6 +1198,8 @@ def _format_word_card(entry, title="Word card:"):
         f"plural: {entry.get('plural', '') or '-'}",
         f"prateritum: {entry.get('prateritum', '') or '-'}",
         f"partizip2: {entry.get('partizip2', '') or '-'}",
+        f"komparativ: {entry.get('komparativ', '') or '-'}",
+        f"superlativ: {entry.get('superlativ', '') or '-'}",
         f"russian: {entry.get('russian', '') or '-'}",
         f"ukrainian: {entry.get('ukrainian', '') or '-'}",
         f"english: {entry.get('english', '') or '-'}",
@@ -1223,6 +1238,19 @@ def _format_db_search_card(entry, dict_lang):
             lines.append("")
             lines.append(f"_{_md_escape(forms)}_")
         return "\n".join(lines)
+    if word_type == "adjektiv":
+        german = _low_word(entry.get("german", ""))
+        if translation:
+            lines.append(f"{_md_escape(german)} - {_md_escape(translation)}")
+        else:
+            lines.append(_md_escape(german))
+        komp = _low_word(entry.get("komparativ", ""))
+        supr = _low_word(entry.get("superlativ", ""))
+        forms = ", ".join([x for x in [komp, supr] if x])
+        if forms:
+            lines.append("")
+            lines.append(f"_  {_md_escape(forms)}_")
+        return "\n".join(lines)
     german = _low_word(entry.get("german", ""))
     if translation:
         return f"{_md_escape(german)} - {_md_escape(translation)}"
@@ -1244,6 +1272,12 @@ def _format_match_line(entry, dict_lang):
         pr = _low_word(entry.get("prateritum", ""))
         p2 = _low_word(entry.get("partizip2", ""))
         parts = [entry_type, "-", infinitive, pr, p2, translation]
+        return " ".join(p for p in parts if p)
+    if entry_type == "adjektiv":
+        german = _low_word(entry.get("german", ""))
+        komp = _low_word(entry.get("komparativ", ""))
+        supr = _low_word(entry.get("superlativ", ""))
+        parts = [entry_type, "-", german, komp, supr, translation]
         return " ".join(p for p in parts if p)
     german = _low_word(entry.get("german", ""))
     parts = [entry_type, "-", german, translation]
@@ -3642,6 +3676,15 @@ def _format_de_ru_question(entry):
         p2 = _expected_partizip2(entry)
         if p2:
             lines.append(f"_  {_md_escape(p2)}_")
+    elif word_type == "adjektiv":
+        german = _low_word(entry.get("german", ""))
+        lines.append(_md_escape(german))
+        komp = _low_word(entry.get("komparativ", ""))
+        if komp:
+            lines.append(f"_  {_md_escape(komp)}_")
+        supr = _low_word(entry.get("superlativ", ""))
+        if supr:
+            lines.append(f"_  {_md_escape(supr)}_")
     else:
         german = _low_word(entry.get("german", ""))
         lines.append(_md_escape(german))
@@ -3690,6 +3733,13 @@ def _format_feedback_ru_de(entry, ok):
         if forms:
             lines.append("")
             lines.append(f"_{_md_escape(forms)}_")
+    elif word_type == "adjektiv":
+        komp = _low_word(entry.get("komparativ", ""))
+        supr = _low_word(entry.get("superlativ", ""))
+        forms = ", ".join([x for x in [komp, supr] if x])
+        if forms:
+            lines.append("")
+            lines.append(f"_  {_md_escape(forms)}_")
 
     return "\n".join(lines)
 
@@ -3714,6 +3764,14 @@ def _format_learning_preview_prompt(entry, dict_lang):
         forms = ", ".join(x for x in [pr, p2] if x)
         if forms:
             lines.append(f"_{_md_escape(forms)}_")
+    elif word_type == "adjektiv":
+        german = _low_word(entry.get("german", ""))
+        lines.append(f"*{_md_escape(german)}*")
+        komp = _low_word(entry.get("komparativ", ""))
+        supr = _low_word(entry.get("superlativ", ""))
+        forms = ", ".join(x for x in [komp, supr] if x)
+        if forms:
+            lines.append(f"_  {_md_escape(forms)}_")
     else:
         german = _low_word(entry.get("german", ""))
         lines.append(f"*{_md_escape(german)}*")
@@ -4158,6 +4216,7 @@ def _ai_prompt(word, clarification):
         "nomen, verb, adjektiv, pronomen, adverb, praeposition, konjunktion, partikel. "
         "For nomen return: type, article, german, plural, russian. "
         "For verb return: type, infinitive, prateritum, partizip2, russian. "
+        "For adjektiv return: type, german, komparativ, superlativ, russian. "
         "For all other allowed types return: type, german, russian. "
         "Use Russian translations in singular only. No extra text."
         f"\nWord: {word}{extra}"
@@ -4281,6 +4340,18 @@ def _normalize_ai_entry(entry):
             "topic": topic,
         }
 
+    if entry_type == "adjektiv":
+        return {
+            "type": "adjektiv",
+            "german": str(entry.get("german", "")).strip(),
+            "komparativ": str(entry.get("komparativ", "")).strip(),
+            "superlativ": str(entry.get("superlativ", "")).strip(),
+            "russian": _normalize_russian_singular(entry.get("russian", "")),
+            "ukrainian": str(entry.get("ukrainian", "")).strip(),
+            "english": str(entry.get("english", "")).strip(),
+            "topic": topic,
+        }
+
     return {
         "type": entry_type,
         "german": str(entry.get("german", "")).strip(),
@@ -4331,6 +4402,21 @@ def _format_ai_preview(entry, dict_lang, has_synonym=False):
             "Recognized Verb",
             "",
             f"*{_md_escape(inf)}*{_md_escape(extras)} - {_md_escape(translation)}",
+        ]
+        if warn:
+            lines += ["", warn]
+        return "\n".join(lines)
+
+    if entry_type == "adjektiv":
+        ger = entry.get("german", "")
+        komp = entry.get("komparativ", "")
+        supr = entry.get("superlativ", "")
+        extras = " / ".join([x for x in [komp, supr] if x])
+        extras = f" ({extras})" if extras else ""
+        lines = [
+            "Recognized Adjektiv",
+            "",
+            f"*{_md_escape(ger)}*{_md_escape(extras)} - {_md_escape(translation)}",
         ]
         if warn:
             lines += ["", warn]

@@ -222,6 +222,8 @@ def init_db(db_path):
                 infinitive TEXT NOT NULL DEFAULT '',
                 prateritum TEXT NOT NULL DEFAULT '',
                 partizip2 TEXT NOT NULL DEFAULT '',
+                komparativ TEXT NOT NULL DEFAULT '',
+                superlativ TEXT NOT NULL DEFAULT '',
                 russian TEXT NOT NULL DEFAULT '',
                 ukrainian TEXT NOT NULL DEFAULT '',
                 english TEXT NOT NULL DEFAULT '',
@@ -385,6 +387,8 @@ def _ensure_schema(conn):
                 infinitive TEXT NOT NULL DEFAULT '',
                 prateritum TEXT NOT NULL DEFAULT '',
                 partizip2 TEXT NOT NULL DEFAULT '',
+                komparativ TEXT NOT NULL DEFAULT '',
+                superlativ TEXT NOT NULL DEFAULT '',
                 russian TEXT NOT NULL DEFAULT '',
                 ukrainian TEXT NOT NULL DEFAULT '',
                 english TEXT NOT NULL DEFAULT '',
@@ -392,11 +396,11 @@ def _ensure_schema(conn):
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
             INSERT INTO words_new (
-                id, type, article, german, plural, infinitive, prateritum, partizip2,
+                id, type, article, german, plural, infinitive, prateritum, partizip2, komparativ, superlativ,
                 russian, ukrainian, english, topic, created_at
             )
             SELECT
-                id, type, article, german, plural, infinitive, prateritum, partizip2,
+                id, type, article, german, plural, infinitive, prateritum, partizip2, '', '',
                 russian, ukrainian, english, '1', created_at
             FROM words;
             DROP TABLE words;
@@ -414,6 +418,10 @@ def _ensure_schema(conn):
         conn.execute("ALTER TABLE words ADD COLUMN english TEXT NOT NULL DEFAULT ''")
     if "topic" not in word_cols:
         conn.execute("ALTER TABLE words ADD COLUMN topic TEXT NOT NULL DEFAULT '1'")
+    if "komparativ" not in word_cols:
+        conn.execute("ALTER TABLE words ADD COLUMN komparativ TEXT NOT NULL DEFAULT ''")
+    if "superlativ" not in word_cols:
+        conn.execute("ALTER TABLE words ADD COLUMN superlativ TEXT NOT NULL DEFAULT ''")
     conn.execute("UPDATE words SET topic = '1' WHERE trim(coalesce(topic, '')) = ''")
     _repair_word_fk_tables(conn)
     _ensure_indexes(conn)
@@ -528,6 +536,8 @@ def _row_to_entry(row):
         "infinitive": row["infinitive"] or "",
         "prateritum": row["prateritum"] or "",
         "partizip2": row["partizip2"] or "",
+        "komparativ": row["komparativ"] if "komparativ" in row.keys() else "",
+        "superlativ": row["superlativ"] if "superlativ" in row.keys() else "",
         "russian": row["russian"] or "",
         "ukrainian": row["ukrainian"] or "",
         "english": row["english"] or "",
@@ -550,8 +560,8 @@ def load_words(db_path):
     with _connect(db_path) as conn:
         rows = conn.execute(
             """
-            SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian,
-            ukrainian, english, topic
+            SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, komparativ, superlativ,
+            russian, ukrainian, english, topic
             FROM words
             ORDER BY created_at ASC
             """
@@ -1353,8 +1363,9 @@ def add_word(db_path, entry):
         conn.execute(
             """
             INSERT INTO words (
-                id, type, article, german, plural, infinitive, prateritum, partizip2, russian, ukrainian, english, topic
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                id, type, article, german, plural, infinitive, prateritum, partizip2, komparativ, superlativ,
+                russian, ukrainian, english, topic
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 entry["id"],
@@ -1365,6 +1376,8 @@ def add_word(db_path, entry):
                 _safe_text(entry.get("infinitive", "")),
                 _safe_text(entry.get("prateritum", "")),
                 _safe_text(entry.get("partizip2", "")),
+                _safe_text(entry.get("komparativ", "")),
+                _safe_text(entry.get("superlativ", "")),
                 _safe_text(entry.get("russian", "")),
                 _safe_text(entry.get("ukrainian", "")),
                 _safe_text(entry.get("english", "")),
@@ -1437,7 +1450,7 @@ def select_due(db_path, user_id, mode, word_type=None, topics=None, today=None):
 
     query = f"""
         SELECT
-            w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.russian,
+            w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ, w.russian,
             w.ukrainian, w.english, w.topic, ldone.done_at AS learning_done_at,
             p.interval AS p_interval, p.repetitions AS p_repetitions, p.ease AS p_ease, p.due AS p_due
         FROM words w
@@ -1654,7 +1667,7 @@ def learning_pick_new_words(db_path, user_id, limit, topics=None):
     with _connect(db_path) as conn:
         rows = conn.execute(
             """
-            SELECT w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2,
+            SELECT w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ,
                    w.russian, w.ukrainian, w.english, w.topic
             FROM words w
             WHERE NOT EXISTS (
@@ -1734,7 +1747,7 @@ def learning_preview_entry(db_path, user_id):
         row = conn.execute(
             """
             SELECT
-                w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2,
+                w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ,
                 w.russian, w.ukrainian, w.english, w.topic,
                 li.step_index AS learning_step,
                 li.next_due AS learning_due,
@@ -1812,7 +1825,7 @@ def learning_due_entry(db_path, user_id):
         row = conn.execute(
             """
             SELECT
-                w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2,
+                w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ,
                 w.russian, w.ukrainian, w.english, w.topic,
                 li.step_index AS learning_step,
                 li.next_due AS learning_due,
@@ -2369,6 +2382,8 @@ def update_word_fields(db_path, word_id, fields):
         "infinitive",
         "prateritum",
         "partizip2",
+        "komparativ",
+        "superlativ",
         "russian",
         "ukrainian",
         "english",
@@ -2686,7 +2701,7 @@ def list_weak_words(db_path, user_id, weak_field, word_type=None, topics=None, l
             params.extend(clean_topics)
     query = f"""
         SELECT
-            w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.russian,
+            w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ, w.russian,
             w.ukrainian, w.english, w.topic,
             fs.{weak_field}_review_stage AS review_stage,
             fs.{weak_field}_next_review AS next_review,
@@ -2776,7 +2791,7 @@ def get_synonym_group(db_path, word_id):
         group_id = int(row["group_id"])
         rows = conn.execute(
             """
-            SELECT w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.russian
+            SELECT w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ, w.russian
             , w.ukrainian, w.english, w.topic
             FROM word_synonyms s
             JOIN words w ON w.id = s.word_id
@@ -2938,7 +2953,7 @@ def list_sm2_weak_words(db_path, user_id, mode, min_wrong_streak=4):
                 HAVING COUNT(*) >= ?
             )
             SELECT
-                w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.russian,
+                w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ, w.russian,
                 w.ukrainian, w.english, w.topic,
                 s.wrong_streak AS wrong_streak
             FROM streaks s
@@ -3174,7 +3189,7 @@ def list_pending_word_flags(db_path, limit=0):
             f.user_id AS flag_user_id,
             f.comment AS flag_comment,
             f.created_at AS flag_created_at,
-            w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.russian
+            w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ, w.russian
             , w.ukrainian, w.english, w.topic
         FROM word_flags f
         JOIN words w ON w.id = f.word_id
