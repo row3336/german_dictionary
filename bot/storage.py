@@ -1,4 +1,5 @@
 import math
+import json
 import sqlite3
 import uuid
 from contextlib import contextmanager
@@ -63,6 +64,8 @@ def _ensure_indexes(conn):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_word_synonyms_group ON word_synonyms(group_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_learning_items_user_status_due ON learning_items(user_id, status, next_due)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_learning_items_batch_status ON learning_items(batch_id, status)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_transaction_log_user_id ON transaction_log(user_id, id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_transaction_log_created_at ON transaction_log(created_at)")
 
 
 def _repair_word_fk_tables(conn):
@@ -362,6 +365,14 @@ def init_db(db_path):
                 PRIMARY KEY (user_id, word_id),
                 FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE,
                 FOREIGN KEY (batch_id) REFERENCES learning_batches(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS transaction_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                action TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
             """
         )
@@ -1054,6 +1065,229 @@ def get_daily_first_touch_retention(db_path, user_id, target_date=None, modes=No
     correct = int((row["correct_cnt"] if row else 0) or 0)
     rate = round((correct / total) * 100, 1) if total > 0 else 0.0
     return {"date": day, "total": total, "correct": correct, "rate": rate}
+
+
+def snapshot_user_word_state(db_path, user_id, word_id, modes=None):
+    """Handle snapshot user word state for rollback."""
+    init_db(db_path)
+    user_id = int(user_id)
+    word_id = _safe_text(word_id)
+    selected_modes = [str(m) for m in (modes or []) if str(m)]
+    with _connect(db_path) as conn:
+        progress_rows = {}
+        for mode in selected_modes:
+            row = conn.execute(
+                """
+                SELECT user_id, word_id, mode, interval, repetitions, ease, due, updated_at
+                FROM progress
+                WHERE user_id = ? AND word_id = ? AND mode = ?
+                """,
+                (user_id, word_id, mode),
+            ).fetchone()
+            progress_rows[mode] = dict(row) if row else None
+
+        fs_row = conn.execute(
+            "SELECT * FROM form_stats WHERE user_id = ? AND word_id = ?",
+            (user_id, word_id),
+        ).fetchone()
+        li_row = conn.execute(
+            "SELECT * FROM learning_items WHERE user_id = ? AND word_id = ?",
+            (user_id, word_id),
+        ).fetchone()
+
+        event_counts = {}
+        for mode in selected_modes:
+            cnt = conn.execute(
+                """
+                SELECT COUNT(*) AS cnt
+                FROM quiz_events
+                WHERE user_id = ? AND word_id = ? AND mode = ?
+                """,
+                (user_id, word_id, mode),
+            ).fetchone()["cnt"]
+            event_counts[mode] = int(cnt or 0)
+
+    return {
+        "user_id": user_id,
+        "word_id": word_id,
+        "modes": selected_modes,
+        "progress": progress_rows,
+        "form_stats": dict(fs_row) if fs_row else None,
+        "learning_item": dict(li_row) if li_row else None,
+        "event_counts": event_counts,
+    }
+
+
+def restore_user_word_state(db_path, snapshot):
+    """Handle restore user word state from rollback snapshot."""
+    init_db(db_path)
+    if not isinstance(snapshot, dict):
+        return False
+    user_id = int(snapshot.get("user_id") or 0)
+    word_id = _safe_text(snapshot.get("word_id"))
+    modes = [str(m) for m in (snapshot.get("modes") or []) if str(m)]
+    progress_rows = snapshot.get("progress") or {}
+    event_counts = snapshot.get("event_counts") or {}
+    with _connect(db_path) as conn:
+        for mode in modes:
+            row = progress_rows.get(mode)
+            if row:
+                conn.execute(
+                    """
+                    INSERT INTO progress (user_id, word_id, mode, interval, repetitions, ease, due, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(user_id, word_id, mode) DO UPDATE SET
+                        interval = excluded.interval,
+                        repetitions = excluded.repetitions,
+                        ease = excluded.ease,
+                        due = excluded.due,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        int(row.get("user_id") or user_id),
+                        _safe_text(row.get("word_id") or word_id),
+                        _safe_text(row.get("mode") or mode),
+                        int(row.get("interval") or 1),
+                        int(row.get("repetitions") or 0),
+                        float(row.get("ease") or DEFAULT_EASE),
+                        _safe_text(row.get("due") or date.today().isoformat()),
+                        _safe_text(row.get("updated_at") or datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")),
+                    ),
+                )
+            else:
+                conn.execute(
+                    "DELETE FROM progress WHERE user_id = ? AND word_id = ? AND mode = ?",
+                    (user_id, word_id, mode),
+                )
+
+        fs_row = snapshot.get("form_stats")
+        if fs_row:
+            cols = [c for c in fs_row.keys()]
+            placeholders = ",".join("?" for _ in cols)
+            update_cols = ",".join(f"{c}=excluded.{c}" for c in cols if c not in {"user_id", "word_id"})
+            conn.execute(
+                f"""
+                INSERT INTO form_stats ({",".join(cols)})
+                VALUES ({placeholders})
+                ON CONFLICT(user_id, word_id) DO UPDATE SET {update_cols}
+                """,
+                tuple(fs_row[c] for c in cols),
+            )
+        else:
+            conn.execute(
+                "DELETE FROM form_stats WHERE user_id = ? AND word_id = ?",
+                (user_id, word_id),
+            )
+
+        li_row = snapshot.get("learning_item")
+        if li_row:
+            cols = [c for c in li_row.keys()]
+            placeholders = ",".join("?" for _ in cols)
+            update_cols = ",".join(f"{c}=excluded.{c}" for c in cols if c not in {"user_id", "word_id"})
+            conn.execute(
+                f"""
+                INSERT INTO learning_items ({",".join(cols)})
+                VALUES ({placeholders})
+                ON CONFLICT(user_id, word_id) DO UPDATE SET {update_cols}
+                """,
+                tuple(li_row[c] for c in cols),
+            )
+        else:
+            conn.execute(
+                "DELETE FROM learning_items WHERE user_id = ? AND word_id = ?",
+                (user_id, word_id),
+            )
+
+        for mode in modes:
+            target = int(event_counts.get(mode, 0) or 0)
+            current = int(
+                conn.execute(
+                    "SELECT COUNT(*) AS cnt FROM quiz_events WHERE user_id = ? AND word_id = ? AND mode = ?",
+                    (user_id, word_id, mode),
+                ).fetchone()["cnt"]
+                or 0
+            )
+            if current > target:
+                to_delete = current - target
+                ids = conn.execute(
+                    """
+                    SELECT id
+                    FROM quiz_events
+                    WHERE user_id = ? AND word_id = ? AND mode = ?
+                    ORDER BY id DESC
+                    LIMIT ?
+                    """,
+                    (user_id, word_id, mode, to_delete),
+                ).fetchall()
+                if ids:
+                    placeholders = ",".join("?" for _ in ids)
+                    conn.execute(
+                        f"DELETE FROM quiz_events WHERE id IN ({placeholders})",
+                        tuple(int(r["id"]) for r in ids),
+                    )
+    return True
+
+
+def add_transaction_log(db_path, user_id, action, payload):
+    """Handle add transaction log."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO transaction_log (user_id, action, payload)
+            VALUES (?, ?, ?)
+            """,
+            (int(user_id), _safe_text(action), json.dumps(payload, ensure_ascii=False)),
+        )
+
+
+def list_transaction_logs(db_path, user_id, limit=10):
+    """Handle list transaction logs."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT id, user_id, action, payload, created_at
+            FROM transaction_log
+            WHERE user_id = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (int(user_id), int(limit)),
+        ).fetchall()
+    result = []
+    for row in rows:
+        item = dict(row)
+        try:
+            item["payload"] = json.loads(item.get("payload") or "{}")
+        except json.JSONDecodeError:
+            item["payload"] = {}
+        result.append(item)
+    return result
+
+
+def delete_transaction_logs(db_path, user_id, ids):
+    """Handle delete transaction logs."""
+    ids = [int(x) for x in (ids or [])]
+    if not ids:
+        return
+    init_db(db_path)
+    placeholders = ",".join("?" for _ in ids)
+    with _connect(db_path) as conn:
+        conn.execute(
+            f"DELETE FROM transaction_log WHERE user_id = ? AND id IN ({placeholders})",
+            (int(user_id), *ids),
+        )
+
+
+def cleanup_transaction_logs(db_path, days=7):
+    """Handle cleanup transaction logs older than N days."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        conn.execute(
+            "DELETE FROM transaction_log WHERE datetime(created_at) < datetime('now', ?)",
+            (f"-{int(days)} days",),
+        )
 
 
 def register_or_update_user(db_path, user_id, username="", first_name=""):

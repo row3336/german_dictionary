@@ -160,6 +160,12 @@ from .storage import (
     learning_status_snapshot,
     learning_update_result,
     learning_apply_input_err,
+    snapshot_user_word_state,
+    restore_user_word_state,
+    add_transaction_log,
+    list_transaction_logs,
+    delete_transaction_logs,
+    cleanup_transaction_logs,
     get_daily_first_touch_retention,
     _parse_learning_intervals,
     sm2_due_forecast,
@@ -562,6 +568,7 @@ def _run_unit_tests_report():
         "tests.test_weak_modes",
         "tests.test_learning_logic",
         "tests.test_adjektiv_forms",
+        "tests.test_transaction_log",
     ]
     try:
         env = dict(os.environ)
@@ -950,6 +957,25 @@ def _clear_last_answer(context):
     context.user_data.pop("last_answered_srs", None)
 
 
+def _capture_transaction_snapshot(user_id, word_id, modes):
+    """Handle capture transaction snapshot."""
+    if not word_id:
+        return None
+    return snapshot_user_word_state(get_db_path(), user_id=user_id, word_id=word_id, modes=modes)
+
+
+def _log_transaction(user_id, action, snapshot):
+    """Handle log transaction."""
+    if not snapshot:
+        return
+    add_transaction_log(
+        get_db_path(),
+        user_id=user_id,
+        action=action,
+        payload={"snapshot": snapshot},
+    )
+
+
 def _session_key(mode):
     """Handle session key."""
     return f"session_seen_{mode}"
@@ -1008,6 +1034,8 @@ def _apply_input_err_weak(update, context, field):
         return False
     if last_ok:
         return False
+    mode_name = f"weak_{field}"
+    snapshot = _capture_transaction_snapshot(update.effective_user.id, last_entry.get("id"), [mode_name])
     if not apply_weak_input_err(get_db_path(), update.effective_user.id, last_entry.get("id"), field):
         return False
     state = get_form_state(get_db_path(), update.effective_user.id, last_entry.get("id"), field)
@@ -1021,10 +1049,11 @@ def _apply_input_err_weak(update, context, field):
         get_db_path(),
         user_id=update.effective_user.id,
         word_id=last_entry.get("id"),
-        mode=f"weak_{field}",
+        mode=mode_name,
         is_correct=True,
         review_stage_snapshot=stage_snapshot,
     )
+    _log_transaction(update.effective_user.id, f"input_err:{mode_name}", snapshot)
     context.user_data["last_weak_answered_ok"] = True
     return True
 
@@ -1100,6 +1129,7 @@ def _apply_input_err(update, context, mode):
         return False
     if not last_srs:
         return False
+    snapshot = _capture_transaction_snapshot(update.effective_user.id, last_entry.get("id"), [mode])
     set_progress(get_db_path(), update.effective_user.id, last_entry.get("id"), mode, last_srs)
     update_progress(
         get_db_path(),
@@ -1110,6 +1140,7 @@ def _apply_input_err(update, context, mode):
         interval_divisor=_interval_divisor_for_mode(update.effective_user.id, mode),
     )
     log_quiz_event(get_db_path(), user_id=update.effective_user.id, word_id=last_entry.get("id"), mode=mode, is_correct=True)
+    _log_transaction(update.effective_user.id, f"input_err:{mode}", snapshot)
     _remove_from_retry(context, mode, last_entry.get("id"))
     _set_retry_since_last(context, mode, _retry_since_last(context, mode) + 1)
     context.user_data["last_answered_ok"] = True
@@ -1125,6 +1156,7 @@ def _apply_input_err_learning(update, context):
         return False
     if last_ok:
         return False
+    snapshot = _capture_transaction_snapshot(update.effective_user.id, last_id, ["learning"])
     result = learning_apply_input_err(
         get_db_path(),
         user_id=update.effective_user.id,
@@ -1139,6 +1171,7 @@ def _apply_input_err_learning(update, context):
         mode="learning",
         is_correct=True,
     )
+    _log_transaction(update.effective_user.id, "input_err:learning", snapshot)
     context.user_data["last_learning_ok"] = True
     return bool(result)
 
@@ -1497,6 +1530,36 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not ui_lang or not dict_lang:
         return await _ask_interface_language(update)
     await update.message.reply_text(t(_user_interface_lang(user_id), "main_menu"), reply_markup=_main_menu_markup(user_id))
+    return MENU
+
+
+async def undo_steps(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /undo [N] rollback by transaction log."""
+    user_id = update.effective_user.id
+    if not _is_owner_only(user_id):
+        await update.message.reply_text("❌ Owner-only bot.")
+        return ConversationHandler.END
+    steps = 1
+    if context.args:
+        try:
+            steps = int(context.args[0])
+        except (TypeError, ValueError):
+            steps = 1
+    steps = max(1, min(20, steps))
+    logs = list_transaction_logs(get_db_path(), user_id=user_id, limit=steps)
+    if not logs:
+        await update.message.reply_text("Nothing to undo.")
+        return MENU
+    restored = 0
+    processed_ids = []
+    for item in logs:
+        payload = item.get("payload") or {}
+        snapshot = payload.get("snapshot")
+        if restore_user_word_state(get_db_path(), snapshot):
+            restored += 1
+        processed_ids.append(int(item.get("id")))
+    delete_transaction_logs(get_db_path(), user_id=user_id, ids=processed_ids)
+    await update.message.reply_text(f"Undo done: {restored}/{len(logs)} step(s).")
     return MENU
 
 
@@ -2022,15 +2085,19 @@ async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     is_preview = bool(context.user_data.get("learning_preview_mode"))
     if is_preview:
         if action == "learning_skip" or text == LEARNING_SKIP_TEXT:
+            snapshot = _capture_transaction_snapshot(user_id, entry.get("id"), ["learning"])
             learning_skip_word(get_db_path(), user_id=user_id, word_id=entry.get("id"))
+            _log_transaction(user_id, "learning:skip", snapshot)
             return await _send_learning_prompt(update, context, "Skipped for learning.")
         if action == "learning_next" or text == LEARNING_NEXT_TEXT:
+            snapshot = _capture_transaction_snapshot(user_id, entry.get("id"), ["learning"])
             learning_mark_preview_next(
                 get_db_path(),
                 user_id=user_id,
                 word_id=entry.get("id"),
                 first_interval_seconds=_learning_intervals_seconds(get_db_path())[0],
             )
+            _log_transaction(user_id, "learning:preview_next", snapshot)
             return await _send_learning_prompt(update, context, "Saved. Next preview word.")
         await update.message.reply_text(
             "Use next/skip/back.",
@@ -2044,7 +2111,9 @@ async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await _send_learning_prompt(update, context, prefix)
 
     if action == "learning_skip" or text == LEARNING_SKIP_TEXT:
+        snapshot = _capture_transaction_snapshot(user_id, entry.get("id"), ["learning"])
         learning_skip_word(get_db_path(), user_id=user_id, word_id=entry.get("id"))
+        _log_transaction(user_id, "learning:skip", snapshot)
         return await _send_learning_prompt(update, context, "Skipped for learning.")
 
     if text == I_DONT_KNOW_TEXT:
@@ -2061,6 +2130,7 @@ async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         mode="learning",
         is_correct=ok,
     )
+    snapshot = _capture_transaction_snapshot(user_id, entry.get("id"), ["learning"])
     result = learning_update_result(
         get_db_path(),
         user_id=user_id,
@@ -2068,6 +2138,7 @@ async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ok=ok,
         intervals_seconds=_learning_intervals_seconds(get_db_path()),
     )
+    _log_transaction(user_id, "learning:answer", snapshot)
     feedback = _format_feedback_ru_de(entry, ok)
     if result.get("completed"):
         feedback = f"{feedback}\n\nLearning done ✅, sent to sm2"
@@ -3364,6 +3435,7 @@ async def quiz_article_weak(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await _send_article_weak_prompt(update, context, None)
 
     state = get_form_state(get_db_path(), update.effective_user.id, entry.get("id"), "article")
+    snapshot = _capture_transaction_snapshot(update.effective_user.id, entry.get("id"), ["weak_article"])
     ok = _normalize_answer(text) == _normalize_answer(entry.get("article", ""))
     update_form_stats(get_db_path(), update.effective_user.id, entry.get("id"), {"article": ok})
     if not state["active"] and state["review_stage"] > 0:
@@ -3381,6 +3453,7 @@ async def quiz_article_weak(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _remember_last_weak_answer(context, entry, "article", ok)
     context.user_data["quiz_last_answered_entry"] = entry
     _mark_session_word(context, "weak_article", entry.get("id"))
+    _log_transaction(update.effective_user.id, "quiz:weak_article", snapshot)
     feedback = _format_feedback_article(entry, ok, _user_dict_lang(update.effective_user.id))
     return await _send_article_weak_prompt(update, context, feedback)
 
@@ -3404,6 +3477,7 @@ async def quiz_plural_weak(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await _send_plural_weak_prompt(update, context, None)
 
     state = get_form_state(get_db_path(), update.effective_user.id, entry.get("id"), "plural")
+    snapshot = _capture_transaction_snapshot(update.effective_user.id, entry.get("id"), ["weak_plural"])
     if text == I_DONT_KNOW_TEXT:
         ok = False
     else:
@@ -3424,6 +3498,7 @@ async def quiz_plural_weak(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _remember_last_weak_answer(context, entry, "plural", ok)
     context.user_data["quiz_last_answered_entry"] = entry
     _mark_session_word(context, "weak_plural", entry.get("id"))
+    _log_transaction(update.effective_user.id, "quiz:weak_plural", snapshot)
     feedback = _format_feedback_plural_weak(entry, ok)
     return await _send_plural_weak_prompt(update, context, feedback)
 
@@ -3447,6 +3522,7 @@ async def quiz_prateritum_weak(update: Update, context: ContextTypes.DEFAULT_TYP
         return await _send_prateritum_weak_prompt(update, context, None)
 
     state = get_form_state(get_db_path(), update.effective_user.id, entry.get("id"), "prateritum")
+    snapshot = _capture_transaction_snapshot(update.effective_user.id, entry.get("id"), ["weak_prateritum"])
     if text == I_DONT_KNOW_TEXT:
         ok = False
     else:
@@ -3467,6 +3543,7 @@ async def quiz_prateritum_weak(update: Update, context: ContextTypes.DEFAULT_TYP
     _remember_last_weak_answer(context, entry, "prateritum", ok)
     context.user_data["quiz_last_answered_entry"] = entry
     _mark_session_word(context, "weak_prateritum", entry.get("id"))
+    _log_transaction(update.effective_user.id, "quiz:weak_prateritum", snapshot)
     feedback = _format_feedback_prateritum_weak(entry, ok)
     return await _send_prateritum_weak_prompt(update, context, feedback)
 
@@ -3490,6 +3567,7 @@ async def quiz_partizip2_weak(update: Update, context: ContextTypes.DEFAULT_TYPE
         return await _send_partizip2_weak_prompt(update, context, None)
 
     state = get_form_state(get_db_path(), update.effective_user.id, entry.get("id"), "partizip2")
+    snapshot = _capture_transaction_snapshot(update.effective_user.id, entry.get("id"), ["weak_partizip2"])
     if text == I_DONT_KNOW_TEXT:
         ok = False
     else:
@@ -3510,6 +3588,7 @@ async def quiz_partizip2_weak(update: Update, context: ContextTypes.DEFAULT_TYPE
     _remember_last_weak_answer(context, entry, "partizip2", ok)
     context.user_data["quiz_last_answered_entry"] = entry
     _mark_session_word(context, "weak_partizip2", entry.get("id"))
+    _log_transaction(update.effective_user.id, "quiz:weak_partizip2", snapshot)
     feedback = _format_feedback_partizip2_weak(entry, ok)
     return await _send_partizip2_weak_prompt(update, context, feedback)
 
@@ -4660,6 +4739,7 @@ def _interval_divisor_for_mode(user_id, mode):
 
 def _update_srs_for_entry(user_id, entry, mode, ok):
     """Handle update srs for entry."""
+    snapshot = _capture_transaction_snapshot(user_id, entry.get("id"), [mode])
     quality = 5 if ok else 2
     update_progress(
         get_db_path(),
@@ -4670,6 +4750,7 @@ def _update_srs_for_entry(user_id, entry, mode, ok):
         interval_divisor=_interval_divisor_for_mode(user_id, mode),
     )
     log_quiz_event(get_db_path(), user_id=user_id, word_id=entry.get("id"), mode=mode, is_correct=ok)
+    _log_transaction(user_id, f"quiz:{mode}", snapshot)
 
 
 def _create_dump_file():
@@ -4806,6 +4887,7 @@ async def _auto_dump_job(context: ContextTypes.DEFAULT_TYPE):
             )
         except Exception:
             pass
+    cleanup_transaction_logs(get_db_path(), days=7)
 
 
 def _format_retention_daily_text(retention):
@@ -5069,6 +5151,7 @@ def _prepare_storage():
         set_setting(db_path, LEARNING_READY_QUORUM_KEY, str(LEARNING_READY_QUORUM_DEFAULT))
     if not get_setting(db_path, SM2_REPORT_HOUR_KEY):
         set_setting(db_path, SM2_REPORT_HOUR_KEY, str(SM2_REPORT_UTC_HOUR_DEFAULT))
+    cleanup_transaction_logs(db_path, days=7)
 
 
 def main():
@@ -5090,6 +5173,7 @@ def main():
     conv = ConversationHandler(
         entry_points=[
             CommandHandler("start", start),
+            CommandHandler("undo", undo_steps),
             MessageHandler(filters.Regex(f"^{START_TEXT}$") & ~filters.COMMAND, start),
         ],
         states={
@@ -5134,7 +5218,7 @@ def main():
             SYN_AUTO_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, synonyms_auto_confirm)],
             SYN_CLEAR_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, synonyms_clear_confirm)],
         },
-        fallbacks=[CommandHandler("start", start)],
+        fallbacks=[CommandHandler("start", start), CommandHandler("undo", undo_steps)],
     )
 
     app.add_handler(conv)
