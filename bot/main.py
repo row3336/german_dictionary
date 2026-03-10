@@ -1667,8 +1667,8 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"words weekly = +{stats['weekly_words']}",
             f"learning->sm2 2+ (week) = {stats['learning_to_sm2_week']}",
             "",
-            "_word types:_",
-            *[f"_{k} = {word_types[k]}_" for k in sorted(word_types.keys())],
+            "word types:",
+            *[f"{k} = {word_types[k]}" for k in sorted(word_types.keys())],
         ]
         await update.message.reply_text(
             f"```text\n{chr(10).join(lines)}\n```",
