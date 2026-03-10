@@ -4781,7 +4781,8 @@ async def _auto_dump_job(context: ContextTypes.DEFAULT_TYPE):
             )
             await context.bot.send_message(
                 chat_id=owner_id,
-                text=_format_retention_daily_text(retention),
+                text=f"```text\n{_format_retention_daily_text(retention)}\n```",
+                parse_mode="Markdown",
             )
         except Exception:
             pass
@@ -4946,7 +4947,11 @@ async def _sm2_daily_report_job(context: ContextTypes.DEFAULT_TYPE):
     peak_count = int(forecast.get("peak_count", 0))
     text = _format_sm2_report_text(total, peak_hour, peak_count)
     try:
-        await context.bot.send_message(chat_id=owner_id, text=text)
+        await context.bot.send_message(
+            chat_id=owner_id,
+            text=f"```text\n{text}\n```",
+            parse_mode="Markdown",
+        )
         set_setting(db_path, SM2_REPORT_DATE_KEY, today)
         set_setting(db_path, "sm2_peak_hour_today", "")
         set_setting(db_path, SM2_PEAK_NOTIFY_DATE_KEY, "")
