@@ -1686,14 +1686,7 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(
         "Choose edit action:",
-        reply_markup=ReplyKeyboardMarkup(
-            [
-                [QUIZ_FIELDS_TEXT],
-                ["delete", t(_user_interface_lang(user_id), "back")],
-                [t(_user_interface_lang(user_id), "db_search_matches"), t(_user_interface_lang(user_id), "db_search")],
-            ],
-            resize_keyboard=True,
-        ),
+        reply_markup=_quiz_edit_root_markup(user_id),
     )
     context.user_data["quiz_entry"] = entry
     context.user_data["quiz_edit_entry"] = entry
@@ -1708,7 +1701,7 @@ async def db_search_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     user_id = update.effective_user.id
     action = _action_key_from_text(text, user_id)
-    if action in {"back", "db_search", "stop"}:
+    if action in {"back", "stop"}:
         context.user_data.pop("db_search_weak_ids", None)
         return await _send_db_search_prompt(update, user_id, None)
     if action in {"db_search_matches", "db_search_weak_words"} or text == SEND_LEARN_TEXT:
