@@ -2453,9 +2453,17 @@ def update_word_fields(db_path, word_id, fields):
         "english",
         "topic",
     }
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        existing_cols = {
+            row["name"] if isinstance(row, sqlite3.Row) else row[1]
+            for row in conn.execute("PRAGMA table_info(words)").fetchall()
+        }
     values = {}
     for key, value in dict(fields or {}).items():
         if key not in allowed:
+            continue
+        if key not in existing_cols:
             continue
         values[key] = _safe_text(value)
     if not values:
@@ -2465,7 +2473,6 @@ def update_word_fields(db_path, word_id, fields):
     params = list(values.values()) + [_safe_text(word_id)]
     query = f"UPDATE words SET {', '.join(parts)} WHERE id = ?"
 
-    init_db(db_path)
     with _connect(db_path) as conn:
         conn.execute(query, tuple(params))
 

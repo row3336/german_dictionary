@@ -1630,7 +1630,11 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chunks = _split_text_chunks("\n\n".join(blocks))
         for idx, chunk in enumerate(chunks):
             markup = _db_search_markup(user_id) if idx == len(chunks) - 1 else None
-            await update.message.reply_text(chunk, reply_markup=markup)
+            await update.message.reply_text(
+                f"```text\n{chunk}\n```",
+                reply_markup=markup,
+                parse_mode="Markdown",
+            )
         return DB_SEARCH
     if action == "db_search_weak_words":
         mode = _mode_l1_de(user_id)
