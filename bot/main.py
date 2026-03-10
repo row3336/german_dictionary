@@ -3759,7 +3759,11 @@ def _pick_due_entry(context, user_id, mode, word_type=None):
     if not pool:
         pool = due
 
-    entry = random.choice(pool)
+    # SM2 modes use ordered queue: learning->SM2 first, then normal due order.
+    if mode in {_mode_l1_de(user_id), _mode_de_l1(user_id)}:
+        entry = pool[0]
+    else:
+        entry = random.choice(pool)
     last_ids[mode] = entry.get("id")
     return entry
 

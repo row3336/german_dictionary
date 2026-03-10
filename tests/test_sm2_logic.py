@@ -119,6 +119,35 @@ class Sm2LogicTests(unittest.TestCase):
         self.assertEqual(len(due), 1)
         self.assertEqual(due[0]["german"], "Jacke")
 
+    def test_select_due_prioritizes_learning_completed_words(self):
+        db_path = _mk_db()
+        self.addCleanup(lambda: os.unlink(db_path))
+        init_db(db_path)
+        e_learning = _add_noun(db_path, "Apfel", "яблоко", topic="1")
+        e_old = _add_noun(db_path, "Jacke", "куртка", topic="1")
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(
+                "INSERT INTO quiz_events (user_id, word_id, mode, is_correct) VALUES (?, ?, 'ru_de', 1)",
+                (1, e_old["id"]),
+            )
+            conn.execute(
+                """
+                INSERT INTO progress (user_id, word_id, mode, interval, repetitions, ease, due)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (1, e_old["id"], "ru_de", 2, 1, 2.5, date.today().isoformat()),
+            )
+        batch_id = learning_get_or_create_batch(db_path, user_id=1, daily_qty=20)
+        learning_add_words(db_path, user_id=1, words=[e_learning], batch_id=batch_id, first_delay_seconds=30)
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(
+                "UPDATE learning_items SET status = 'completed' WHERE user_id = ? AND word_id = ?",
+                (1, e_learning["id"]),
+            )
+        due = select_due(db_path, user_id=1, mode="ru_de")
+        self.assertGreaterEqual(len(due), 2)
+        self.assertEqual(due[0]["id"], e_learning["id"])
+
     def test_list_topics(self):
         db_path = _mk_db()
         self.addCleanup(lambda: os.unlink(db_path))

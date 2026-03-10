@@ -1438,17 +1438,22 @@ def select_due(db_path, user_id, mode, word_type=None, topics=None, today=None):
     query = f"""
         SELECT
             w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.russian,
-            w.ukrainian, w.english, w.topic,
+            w.ukrainian, w.english, w.topic, ldone.done_at AS learning_done_at,
             p.interval AS p_interval, p.repetitions AS p_repetitions, p.ease AS p_ease, p.due AS p_due
         FROM words w
         LEFT JOIN progress p
             ON p.word_id = w.id AND p.user_id = ? AND p.mode = ?
-        LEFT JOIN learning_items lcomp
-            ON lcomp.user_id = ? AND lcomp.word_id = w.id AND lcomp.status = 'completed'
+        LEFT JOIN (
+            SELECT word_id, MAX(updated_at) AS done_at
+            FROM learning_items
+            WHERE user_id = ? AND status IN ('completed', 'skipped')
+            GROUP BY word_id
+        ) ldone
+            ON ldone.word_id = w.id
         WHERE {where_sql}
         ORDER BY
-            CASE WHEN lcomp.updated_at IS NOT NULL THEN 0 ELSE 1 END,
-            lcomp.updated_at DESC,
+            CASE WHEN ldone.done_at IS NOT NULL THEN 0 ELSE 1 END,
+            ldone.done_at DESC,
             p.due ASC,
             w.created_at ASC
     """
