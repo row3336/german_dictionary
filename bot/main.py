@@ -3640,7 +3640,7 @@ def _format_de_ru_question(entry):
     else:
         german = _low_word(entry.get("german", ""))
         lines.append(_md_escape(german))
-    lines.append(">>    перевод")
+    lines.append(">>    ❓")
     return "\n".join(lines)
 
 
