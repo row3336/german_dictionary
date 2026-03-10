@@ -551,6 +551,12 @@ def _row_to_entry(row):
         entry["is_active"] = bool(row["is_active"])
     if "wrong_streak" in row.keys():
         entry["wrong_streak"] = int(row["wrong_streak"] or 0)
+    if "learning_step" in row.keys():
+        entry["learning_step"] = int(row["learning_step"] or 0)
+    if "learning_due" in row.keys():
+        entry["learning_due"] = row["learning_due"]
+    if "learning_batch_id" in row.keys():
+        entry["learning_batch_id"] = row["learning_batch_id"] or ""
     return entry
 
 

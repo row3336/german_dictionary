@@ -131,6 +131,23 @@ class LearningLogicTests(unittest.TestCase):
         self.assertTrue(ok)
         self.assertIsNone(learning_preview_entry(db_path, user_id=1))
 
+    def test_learning_due_entry_contains_learning_step(self):
+        db_path = _mk_db()
+        self.addCleanup(lambda: os.unlink(db_path))
+        init_db(db_path)
+        w1 = _add_noun(db_path, "Apfel", "яблоко")
+        batch_id = learning_get_or_create_batch(db_path, user_id=1, daily_qty=20)
+        learning_add_words(db_path, user_id=1, words=[w1], batch_id=batch_id, first_delay_seconds=1)
+        learning_mark_preview_next(db_path, user_id=1, word_id=w1["id"], first_interval_seconds=1)
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(
+                "UPDATE learning_items SET next_due = ?, step_index = ? WHERE user_id = ? AND word_id = ?",
+                ("2000-01-01T00:00:00Z", 2, 1, w1["id"]),
+            )
+        due = learning_due_entry(db_path, user_id=1)
+        self.assertIsNotNone(due)
+        self.assertEqual(due.get("learning_step"), 2)
+
     def test_reset_learning_session_clears_items(self):
         db_path = _mk_db()
         self.addCleanup(lambda: os.unlink(db_path))
