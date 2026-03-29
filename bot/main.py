@@ -1640,7 +1640,9 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"today complete weak partizip2 = {stats['today_complete_weak_partizip2']}",
             f"today complete weak preteritum = {stats['today_complete_weak_prateritum']}",
             "",
-            f"3+ correct streak = {stats['streak_3p']}",
+            f"5+ correct streak = {stats['streak_5p']}",
+            f"4 correct streak = {stats['streak_4']}",
+            f"3 correct streak = {stats['streak_3']}",
             f"2 correct streak = {stats['streak_2']}",
             f"1 correct = {stats['streak_1']}",
             f"wrong sm2 = {stats['wrong_sm2']}",
@@ -4796,6 +4798,8 @@ async def _back_to_tests(update: Update, context: ContextTypes.DEFAULT_TYPE = No
 
 def _interval_divisor_for_mode(user_id, mode):
     """Handle interval divisor for mode."""
+    if mode == MODE_RU_DE:
+        return 1.65
     if mode == _mode_de_l1(user_id):
         return 2.0
     return 1.0
