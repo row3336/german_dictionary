@@ -650,7 +650,9 @@ def get_statistics_snapshot(db_path, user_id, mode):
         streak_row = conn.execute(
             """
             SELECT
-                SUM(CASE WHEN repetitions >= 3 THEN 1 ELSE 0 END) AS s3,
+                SUM(CASE WHEN repetitions >= 5 THEN 1 ELSE 0 END) AS s5p,
+                SUM(CASE WHEN repetitions = 4 THEN 1 ELSE 0 END) AS s4,
+                SUM(CASE WHEN repetitions = 3 THEN 1 ELSE 0 END) AS s3,
                 SUM(CASE WHEN repetitions = 2 THEN 1 ELSE 0 END) AS s2,
                 SUM(CASE WHEN repetitions = 1 THEN 1 ELSE 0 END) AS s1
             FROM progress
@@ -658,9 +660,12 @@ def get_statistics_snapshot(db_path, user_id, mode):
             """,
             (user_id, mode),
         ).fetchone()
-        streak_3p = int(streak_row["s3"] or 0) if streak_row else 0
+        streak_5p = int(streak_row["s5p"] or 0) if streak_row else 0
+        streak_4 = int(streak_row["s4"] or 0) if streak_row else 0
+        streak_3 = int(streak_row["s3"] or 0) if streak_row else 0
         streak_2 = int(streak_row["s2"] or 0) if streak_row else 0
         streak_1 = int(streak_row["s1"] or 0) if streak_row else 0
+        streak_3p = streak_3 + streak_4 + streak_5p
         wrong_sm2 = int(
             conn.execute(
                 """
@@ -984,6 +989,9 @@ def get_statistics_snapshot(db_path, user_id, mode):
         "total_words": total_words,
         "weekly_words": weekly_words,
         "word_types": word_types,
+        "streak_5p": streak_5p,
+        "streak_4": streak_4,
+        "streak_3": streak_3,
         "streak_3p": streak_3p,
         "streak_2": streak_2,
         "streak_1": streak_1,

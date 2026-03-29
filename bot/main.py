@@ -1640,12 +1640,12 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"today complete weak partizip2 = {stats['today_complete_weak_partizip2']}",
             f"today complete weak preteritum = {stats['today_complete_weak_prateritum']}",
             "",
-            f"5+ correct streak = {stats['streak_5p']}",
-            f"4 correct streak = {stats['streak_4']}",
-            f"3 correct streak = {stats['streak_3']}",
-            f"2 correct streak = {stats['streak_2']}",
-            f"1 correct = {stats['streak_1']}",
-            f"wrong sm2 = {stats['wrong_sm2']}",
+            f"5+ correct streak = {stats.get('streak_5p', 0)}",
+            f"4 correct streak = {stats.get('streak_4', 0)}",
+            f"3 correct streak = {stats.get('streak_3', stats.get('streak_3p', 0))}",
+            f"2 correct streak = {stats.get('streak_2', 0)}",
+            f"1 correct = {stats.get('streak_1', 0)}",
+            f"wrong sm2 = {stats.get('wrong_sm2', 0)}",
             "",
             (
                 f"weak article = {stats['weak_article']} "
@@ -4203,8 +4203,10 @@ async def _send_ru_de_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
         context.user_data["quiz_is_retry"] = False
         entry = _pick_due_entry(context, update.effective_user.id, mode)
     if not entry:
+        count = _session_count(context, mode)
         if prefix_text:
             await update.message.reply_text(prefix_text, parse_mode="Markdown")
+        await update.message.reply_text(f"session words = {count}")
         await update.message.reply_text(
             "No due words. Add more or wait until due date.",
             reply_markup=_quiz_idle_markup(update.effective_user.id),
@@ -4232,8 +4234,10 @@ async def _send_de_ru_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
         context.user_data["quiz_is_retry"] = False
         entry = _pick_due_entry(context, update.effective_user.id, mode)
     if not entry:
+        count = _session_count(context, mode)
         if prefix_text:
             await update.message.reply_text(prefix_text, parse_mode="Markdown")
+        await update.message.reply_text(f"session words = {count}")
         await update.message.reply_text(
             "No due words. Add more or wait until due date.",
             reply_markup=_quiz_idle_markup(update.effective_user.id),
