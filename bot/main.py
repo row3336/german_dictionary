@@ -2030,9 +2030,12 @@ async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TY
             await update.message.reply_text(prefix_text, parse_mode="Markdown")
         await update.message.reply_text(
             f"No due learning words right now.\nnext_due = {_format_eta_from_iso(learning_status_snapshot(get_db_path(), user_id, _learning_ready_quorum(get_db_path())).get('next_due'))}",
-            reply_markup=ReplyKeyboardMarkup(_learning_menu_keys(user_id), resize_keyboard=True),
+            reply_markup=ReplyKeyboardMarkup(
+                [[INPUT_ERR_TEXT], [t(_user_interface_lang(user_id), "back")]],
+                resize_keyboard=True,
+            ),
         )
-        return LEARNING_MENU
+        return LEARNING_QUIZ
     context.user_data["quiz_entry"] = entry
     context.user_data["learning_preview_mode"] = False
     prompt_text = _format_ru_question(entry, _user_dict_lang(user_id))
