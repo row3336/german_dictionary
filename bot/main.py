@@ -7,7 +7,7 @@ import re
 import shutil
 import subprocess
 from logging.handlers import TimedRotatingFileHandler
-from datetime import datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 
 from dotenv import load_dotenv
 from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
@@ -4942,7 +4942,7 @@ async def _auto_dump_job(context: ContextTypes.DEFAULT_TYPE):
                 get_db_path(),
                 user_id=owner_id,
                 target_date=report_day,
-                modes=(MODE_RU_DE, MODE_DE_RU),
+                modes=(_mode_l1_de(owner_id), _mode_de_l1(owner_id)),
             )
             await context.bot.send_message(
                 chat_id=owner_id,
@@ -4950,7 +4950,7 @@ async def _auto_dump_job(context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown",
             )
         except Exception:
-            pass
+            logging.exception("Auto dump job failed")
     cleanup_transaction_logs(get_db_path(), days=7)
 
 
@@ -5116,6 +5116,18 @@ async def _sm2_daily_report_job(context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(
             chat_id=owner_id,
             text=f"```text\n{text}\n```",
+            parse_mode="Markdown",
+        )
+        report_day = (now.date() - timedelta(days=1)).isoformat()
+        retention = get_daily_first_touch_retention(
+            db_path,
+            user_id=owner_id,
+            target_date=report_day,
+            modes=(_mode_l1_de(owner_id), _mode_de_l1(owner_id)),
+        )
+        await context.bot.send_message(
+            chat_id=owner_id,
+            text=f"```text\n{_format_retention_daily_text(retention)}\n```",
             parse_mode="Markdown",
         )
         set_setting(db_path, SM2_REPORT_DATE_KEY, today)
