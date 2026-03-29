@@ -568,6 +568,8 @@ def _row_to_entry(row):
         entry["learning_due"] = row["learning_due"]
     if "learning_batch_id" in row.keys():
         entry["learning_batch_id"] = row["learning_batch_id"] or ""
+    if "learning_done_at" in row.keys():
+        entry["learning_done_at"] = row["learning_done_at"] or ""
     return entry
 
 
@@ -2073,7 +2075,7 @@ def learning_mark_preview_next(db_path, user_id, word_id, first_interval_seconds
     """Handle learning mark preview next."""
     init_db(db_path)
     now = datetime.now(timezone.utc)
-    first_due_iso = (now + timedelta(seconds=max(1, int(first_interval_seconds)))).strftime("%Y-%m-%dT%H:%M:%SZ")
+    first_due_iso = (now + timedelta(seconds=max(0, int(first_interval_seconds)))).strftime("%Y-%m-%dT%H:%M:%SZ")
     with _connect(db_path) as conn:
         row = conn.execute(
             """
@@ -2140,7 +2142,10 @@ def learning_due_entry(db_path, user_id):
               AND li.status = 'active'
               AND li.preview_done = 1
               AND li.next_due <= ?
-            ORDER BY li.next_due ASC, li.created_at ASC
+            ORDER BY
+              CASE WHEN li.step_index = 0 THEN 0 ELSE 1 END ASC,
+              CASE WHEN li.step_index = 0 THEN li.created_at ELSE NULL END ASC,
+              CASE WHEN li.step_index > 0 THEN RANDOM() ELSE 0 END
             LIMIT 1
             """,
             (int(user_id), now_iso),
@@ -2150,7 +2155,7 @@ def learning_due_entry(db_path, user_id):
 
 def learning_update_result(db_path, user_id, word_id, ok, intervals_seconds):
     """Handle learning update result."""
-    intervals = [int(v) for v in intervals_seconds if int(v) > 0]
+    intervals = [int(v) for v in intervals_seconds if int(v) >= 0]
     if not intervals:
         return {"completed": True, "step_index": 0, "next_due": None}
     init_db(db_path)
@@ -2230,7 +2235,7 @@ def learning_update_result(db_path, user_id, word_id, ok, intervals_seconds):
 
 def learning_apply_input_err(db_path, user_id, word_id, prev_step_index, intervals_seconds):
     """Handle apply input err for learning without reset."""
-    intervals = [int(v) for v in intervals_seconds if int(v) > 0]
+    intervals = [int(v) for v in intervals_seconds if int(v) >= 0]
     if not intervals:
         return {"completed": True, "step_index": 0, "next_due": None}
     init_db(db_path)

@@ -237,6 +237,7 @@ LEARNING_REMINDER_JOB_NAME = "learning_reminder_job"
 SM2_REPORT_UTC_HOUR_DEFAULT = 3
 SM2_REPORT_JOB_NAME = "sm2_daily_report_job"
 SM2_PEAK_JOB_NAME = "sm2_peak_notify_job"
+LEARNING_WARMUP_INTERVALS = (0, 0, 0)
 
 
 def _main_menu_keys(user_id):
@@ -409,6 +410,11 @@ def _learning_intervals_text(db_path):
     return ",".join(str(v) for v in _learning_intervals_seconds(db_path))
 
 
+def _learning_schedule_seconds(db_path):
+    """Handle effective learning schedule with warmup repeats."""
+    return list(LEARNING_WARMUP_INTERVALS) + _learning_intervals_seconds(db_path)
+
+
 def _learning_reminder_interval(db_path):
     """Handle learning reminder interval."""
     value = _get_int_setting(db_path, LEARNING_REMINDER_INTERVAL_KEY, LEARNING_REMINDER_INTERVAL_DEFAULT)
@@ -542,6 +548,7 @@ async def _send_learning_settings_menu(update: Update, user_id):
             f"{t(lang, 'learning_sett')}:",
             f"{t(lang, 'learning_daily_qty')} = {_learning_daily_qty(get_db_path())}",
             f"{t(lang, 'learning_intervals')} = {_learning_intervals_text(get_db_path())}",
+            f"learning_warmup = {','.join(str(v) for v in LEARNING_WARMUP_INTERVALS)}",
             f"{t(lang, 'learning_ready_quorum')} = {_learning_ready_quorum(get_db_path())}",
             f"{t(lang, 'learning_reminder_interval')} = {_learning_reminder_interval(get_db_path())}",
             f"{t(lang, 'learning_reminder_cooldown')} = {_learning_reminder_cooldown(get_db_path())}",
@@ -985,6 +992,7 @@ def _reset_session(context, mode):
     """Handle reset session."""
     context.user_data["session_mode"] = mode
     context.user_data[_session_key(mode)] = set()
+    _reset_sm2_cycle_state(context, mode)
 
 
 def _ensure_session_mode(context, mode):
@@ -1112,7 +1120,7 @@ def _send_entry_to_learning(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         user_id=user_id,
         word_id=entry.get("id"),
         batch_id=batch_id,
-        first_delay_seconds=_learning_intervals_seconds(db_path)[0],
+        first_delay_seconds=_learning_schedule_seconds(db_path)[0],
     )
     return bool(added)
 
@@ -1162,7 +1170,7 @@ def _apply_input_err_learning(update, context):
         user_id=update.effective_user.id,
         word_id=last_id,
         prev_step_index=last_prev_step,
-        intervals_seconds=_learning_intervals_seconds(get_db_path()),
+        intervals_seconds=_learning_schedule_seconds(get_db_path()),
     )
     log_quiz_event(
         get_db_path(),
@@ -1702,7 +1710,7 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     user_id=user_id,
                     word_id=wid,
                     batch_id=batch_id,
-                    first_delay_seconds=_learning_intervals_seconds(db_path)[0],
+                    first_delay_seconds=_learning_schedule_seconds(db_path)[0],
                 )
             )
         context.user_data.pop("db_search_weak_ids", None)
@@ -1882,6 +1890,8 @@ async def tests_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return QUIZ_RU_DE_MENU
     if action == "quiz_de_l1":
+        _reset_retry_state(context)
+        _clear_last_answer(context)
         _reset_session(context, _mode_de_l1(user_id))
         return await _send_de_ru_prompt(
             update,
@@ -1978,7 +1988,7 @@ async def _learning_add_words(update: Update, context: ContextTypes.DEFAULT_TYPE
             reply_markup=ReplyKeyboardMarkup(_learning_menu_keys(user_id), resize_keyboard=True),
         )
         return LEARNING_MENU
-    first_delay = _learning_intervals_seconds(db_path)[0]
+    first_delay = _learning_schedule_seconds(db_path)[0]
     added = learning_add_words(
         db_path,
         user_id=user_id,
@@ -2095,7 +2105,7 @@ async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 get_db_path(),
                 user_id=user_id,
                 word_id=entry.get("id"),
-                first_interval_seconds=_learning_intervals_seconds(get_db_path())[0],
+                first_interval_seconds=_learning_schedule_seconds(get_db_path())[0],
             )
             _log_transaction(user_id, "learning:preview_next", snapshot)
             return await _send_learning_prompt(update, context, "Saved. Next preview word.")
@@ -2136,7 +2146,7 @@ async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id=user_id,
         word_id=entry.get("id"),
         ok=ok,
-        intervals_seconds=_learning_intervals_seconds(get_db_path()),
+        intervals_seconds=_learning_schedule_seconds(get_db_path()),
     )
     _log_transaction(user_id, "learning:answer", snapshot)
     feedback = _format_feedback_ru_de(entry, ok)
@@ -3912,27 +3922,66 @@ def _format_feedback_article(entry, ok, dict_lang):
 
 def _pick_due_entry(context, user_id, mode, word_type=None):
     """Handle pick due entry."""
-    due = select_due(
-        get_db_path(),
-        user_id=user_id,
-        mode=mode,
-        word_type=word_type,
-        topics=_topic_filter_for_query(),
-    )
-    if not due:
-        return None
+    def _fetch_due():
+        return select_due(
+            get_db_path(),
+            user_id=user_id,
+            mode=mode,
+            word_type=word_type,
+            topics=_topic_filter_for_query(),
+        )
+
+    def _build_sm2_queue(entries):
+        learning_pool = []
+        sm2_pool = []
+        for item in entries:
+            if str(item.get("learning_done_at") or "").strip():
+                learning_pool.append(item)
+            else:
+                sm2_pool.append(item)
+        random.shuffle(learning_pool)
+        random.shuffle(sm2_pool)
+        mixed = []
+        while learning_pool or sm2_pool:
+            if learning_pool:
+                mixed.append(learning_pool.pop(0))
+            if sm2_pool:
+                take = random.randint(1, 2)
+                for _ in range(take):
+                    if not sm2_pool:
+                        break
+                    mixed.append(sm2_pool.pop(0))
+        return mixed
 
     last_ids = context.user_data.setdefault("last_quiz_ids", {})
     last_id = last_ids.get(mode)
+    is_sm2_mode = mode in {_mode_l1_de(user_id), _mode_de_l1(user_id)}
+
+    if is_sm2_mode:
+        bucket = context.user_data.setdefault("sm2_cycle_queue", {})
+        queue = bucket.get(mode)
+        if not queue:
+            due = _fetch_due()
+            if not due:
+                return None
+            pool = [w for w in due if w.get("id") != last_id] if len(due) > 1 else due
+            if not pool:
+                pool = due
+            queue = _build_sm2_queue(pool)
+            if not queue:
+                return None
+            bucket[mode] = queue
+        entry = queue.pop(0)
+        last_ids[mode] = entry.get("id")
+        return entry
+
+    due = _fetch_due()
+    if not due:
+        return None
     pool = [w for w in due if w.get("id") != last_id] if len(due) > 1 else due
     if not pool:
         pool = due
-
-    # SM2 modes use ordered queue: learning->SM2 first, then normal due order.
-    if mode in {_mode_l1_de(user_id), _mode_de_l1(user_id)}:
-        entry = pool[0]
-    else:
-        entry = random.choice(pool)
+    entry = random.choice(pool)
     last_ids[mode] = entry.get("id")
     return entry
 
@@ -4000,6 +4049,17 @@ def _reset_retry_state(context):
     context.user_data.pop("retry_counts", None)
     context.user_data.pop("retry_since_last", None)
     context.user_data.pop("quiz_is_retry", None)
+
+
+def _reset_sm2_cycle_state(context, mode=None):
+    """Handle reset sm2 cycle state."""
+    bucket = context.user_data.get("sm2_cycle_queue")
+    if not isinstance(bucket, dict):
+        return
+    if mode:
+        bucket.pop(mode, None)
+        return
+    context.user_data.pop("sm2_cycle_queue", None)
 
 
 def _weak_drill_queue(context, mode):
@@ -4718,6 +4778,7 @@ async def _back_to_tests(update: Update, context: ContextTypes.DEFAULT_TYPE = No
     """Handle back to tests."""
     if context is not None:
         _reset_retry_state(context)
+        _reset_sm2_cycle_state(context)
         _reset_weak_drill_state(context)
         _clear_last_answer(context)
     user_id = update.effective_user.id
