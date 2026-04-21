@@ -1,7 +1,9 @@
+import math
+import json
 import sqlite3
 import uuid
 from contextlib import contextmanager
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 DEFAULT_EASE = 2.5
@@ -60,6 +62,10 @@ def _ensure_indexes(conn):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_quiz_events_user_word_mode ON quiz_events(user_id, word_id, mode, created_at)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_form_stats_user_word ON form_stats(user_id, word_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_word_synonyms_group ON word_synonyms(group_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_learning_items_user_status_due ON learning_items(user_id, status, next_due)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_learning_items_batch_status ON learning_items(batch_id, status)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_transaction_log_user_id ON transaction_log(user_id, id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_transaction_log_created_at ON transaction_log(created_at)")
 
 
 def _repair_word_fk_tables(conn):
@@ -219,6 +225,8 @@ def init_db(db_path):
                 infinitive TEXT NOT NULL DEFAULT '',
                 prateritum TEXT NOT NULL DEFAULT '',
                 partizip2 TEXT NOT NULL DEFAULT '',
+                komparativ TEXT NOT NULL DEFAULT '',
+                superlativ TEXT NOT NULL DEFAULT '',
                 russian TEXT NOT NULL DEFAULT '',
                 ukrainian TEXT NOT NULL DEFAULT '',
                 english TEXT NOT NULL DEFAULT '',
@@ -332,6 +340,40 @@ def init_db(db_path):
                 FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE,
                 FOREIGN KEY (group_id) REFERENCES synonym_groups(id) ON DELETE CASCADE
             );
+
+            CREATE TABLE IF NOT EXISTS learning_batches (
+                id TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                target_qty INTEGER NOT NULL DEFAULT 20,
+                status TEXT NOT NULL DEFAULT 'active',
+                ready_since TEXT DEFAULT NULL,
+                last_notified_at TEXT DEFAULT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS learning_items (
+                user_id INTEGER NOT NULL,
+                word_id TEXT NOT NULL,
+                batch_id TEXT NOT NULL,
+                step_index INTEGER NOT NULL DEFAULT 0,
+                preview_done INTEGER NOT NULL DEFAULT 0,
+                next_due TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'active',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (user_id, word_id),
+                FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE,
+                FOREIGN KEY (batch_id) REFERENCES learning_batches(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS transaction_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                action TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
             """
         )
         _ensure_schema(conn)
@@ -356,6 +398,8 @@ def _ensure_schema(conn):
                 infinitive TEXT NOT NULL DEFAULT '',
                 prateritum TEXT NOT NULL DEFAULT '',
                 partizip2 TEXT NOT NULL DEFAULT '',
+                komparativ TEXT NOT NULL DEFAULT '',
+                superlativ TEXT NOT NULL DEFAULT '',
                 russian TEXT NOT NULL DEFAULT '',
                 ukrainian TEXT NOT NULL DEFAULT '',
                 english TEXT NOT NULL DEFAULT '',
@@ -363,11 +407,11 @@ def _ensure_schema(conn):
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
             INSERT INTO words_new (
-                id, type, article, german, plural, infinitive, prateritum, partizip2,
+                id, type, article, german, plural, infinitive, prateritum, partizip2, komparativ, superlativ,
                 russian, ukrainian, english, topic, created_at
             )
             SELECT
-                id, type, article, german, plural, infinitive, prateritum, partizip2,
+                id, type, article, german, plural, infinitive, prateritum, partizip2, '', '',
                 russian, ukrainian, english, '1', created_at
             FROM words;
             DROP TABLE words;
@@ -385,6 +429,10 @@ def _ensure_schema(conn):
         conn.execute("ALTER TABLE words ADD COLUMN english TEXT NOT NULL DEFAULT ''")
     if "topic" not in word_cols:
         conn.execute("ALTER TABLE words ADD COLUMN topic TEXT NOT NULL DEFAULT '1'")
+    if "komparativ" not in word_cols:
+        conn.execute("ALTER TABLE words ADD COLUMN komparativ TEXT NOT NULL DEFAULT ''")
+    if "superlativ" not in word_cols:
+        conn.execute("ALTER TABLE words ADD COLUMN superlativ TEXT NOT NULL DEFAULT ''")
     conn.execute("UPDATE words SET topic = '1' WHERE trim(coalesce(topic, '')) = ''")
     _repair_word_fk_tables(conn)
     _ensure_indexes(conn)
@@ -416,6 +464,27 @@ def _ensure_schema(conn):
     }
     if "review_stage_snapshot" not in quiz_cols:
         conn.execute("ALTER TABLE quiz_events ADD COLUMN review_stage_snapshot INTEGER")
+
+    batch_cols = {
+        row["name"] if isinstance(row, sqlite3.Row) else row[1]
+        for row in conn.execute("PRAGMA table_info(learning_batches)").fetchall()
+    }
+    if batch_cols:
+        if "ready_since" not in batch_cols:
+            conn.execute("ALTER TABLE learning_batches ADD COLUMN ready_since TEXT DEFAULT NULL")
+        if "last_notified_at" not in batch_cols:
+            conn.execute("ALTER TABLE learning_batches ADD COLUMN last_notified_at TEXT DEFAULT NULL")
+        if "updated_at" not in batch_cols:
+            conn.execute("ALTER TABLE learning_batches ADD COLUMN updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP")
+
+    learning_cols = {
+        row["name"] if isinstance(row, sqlite3.Row) else row[1]
+        for row in conn.execute("PRAGMA table_info(learning_items)").fetchall()
+    }
+    if learning_cols and "preview_done" not in learning_cols:
+        conn.execute("ALTER TABLE learning_items ADD COLUMN preview_done INTEGER NOT NULL DEFAULT 0")
+    if learning_cols and "updated_at" not in learning_cols:
+        conn.execute("ALTER TABLE learning_items ADD COLUMN updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP")
 
 
 def _normalize_text(text):
@@ -478,6 +547,8 @@ def _row_to_entry(row):
         "infinitive": row["infinitive"] or "",
         "prateritum": row["prateritum"] or "",
         "partizip2": row["partizip2"] or "",
+        "komparativ": row["komparativ"] if "komparativ" in row.keys() else "",
+        "superlativ": row["superlativ"] if "superlativ" in row.keys() else "",
         "russian": row["russian"] or "",
         "ukrainian": row["ukrainian"] or "",
         "english": row["english"] or "",
@@ -489,6 +560,16 @@ def _row_to_entry(row):
         entry["next_review"] = row["next_review"]
     if "is_active" in row.keys():
         entry["is_active"] = bool(row["is_active"])
+    if "wrong_streak" in row.keys():
+        entry["wrong_streak"] = int(row["wrong_streak"] or 0)
+    if "learning_step" in row.keys():
+        entry["learning_step"] = int(row["learning_step"] or 0)
+    if "learning_due" in row.keys():
+        entry["learning_due"] = row["learning_due"]
+    if "learning_batch_id" in row.keys():
+        entry["learning_batch_id"] = row["learning_batch_id"] or ""
+    if "learning_done_at" in row.keys():
+        entry["learning_done_at"] = row["learning_done_at"] or ""
     return entry
 
 
@@ -498,8 +579,8 @@ def load_words(db_path):
     with _connect(db_path) as conn:
         rows = conn.execute(
             """
-            SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian,
-            ukrainian, english, topic
+            SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, komparativ, superlativ,
+            russian, ukrainian, english, topic
             FROM words
             ORDER BY created_at ASC
             """
@@ -569,7 +650,9 @@ def get_statistics_snapshot(db_path, user_id, mode):
         streak_row = conn.execute(
             """
             SELECT
-                SUM(CASE WHEN repetitions >= 3 THEN 1 ELSE 0 END) AS s3,
+                SUM(CASE WHEN repetitions >= 5 THEN 1 ELSE 0 END) AS s5p,
+                SUM(CASE WHEN repetitions = 4 THEN 1 ELSE 0 END) AS s4,
+                SUM(CASE WHEN repetitions = 3 THEN 1 ELSE 0 END) AS s3,
                 SUM(CASE WHEN repetitions = 2 THEN 1 ELSE 0 END) AS s2,
                 SUM(CASE WHEN repetitions = 1 THEN 1 ELSE 0 END) AS s1
             FROM progress
@@ -577,9 +660,12 @@ def get_statistics_snapshot(db_path, user_id, mode):
             """,
             (user_id, mode),
         ).fetchone()
-        streak_3p = int(streak_row["s3"] or 0) if streak_row else 0
+        streak_5p = int(streak_row["s5p"] or 0) if streak_row else 0
+        streak_4 = int(streak_row["s4"] or 0) if streak_row else 0
+        streak_3 = int(streak_row["s3"] or 0) if streak_row else 0
         streak_2 = int(streak_row["s2"] or 0) if streak_row else 0
         streak_1 = int(streak_row["s1"] or 0) if streak_row else 0
+        streak_3p = streak_3 + streak_4 + streak_5p
         wrong_sm2 = int(
             conn.execute(
                 """
@@ -756,18 +842,26 @@ def get_statistics_snapshot(db_path, user_id, mode):
         weak_prateritum_stage2 = int(weak_row["prateritum_stage2"] or 0) if weak_row else 0
         weak_prateritum_stage3 = int(weak_row["prateritum_stage3"] or 0) if weak_row else 0
 
-        touch_row = conn.execute(
-            """
-            SELECT
-                COUNT(DISTINCT e.word_id) AS cnt
-            FROM quiz_events e
-            WHERE e.user_id = ?
-              AND e.mode IN ('ru_de', 'de_ru', 'article')
-              AND date(e.created_at) = date(?)
-            """,
-            (user_id, today.isoformat()),
-        ).fetchone()
-        today_complete = int(touch_row["cnt"] or 0) if touch_row else 0
+        def _today_mode_count(mode_name):
+            row = conn.execute(
+                """
+                SELECT COUNT(DISTINCT e.word_id) AS cnt
+                FROM quiz_events e
+                WHERE e.user_id = ?
+                  AND e.mode = ?
+                  AND date(e.created_at) = date(?)
+                """,
+                (user_id, mode_name, today.isoformat()),
+            ).fetchone()
+            return int((row["cnt"] if row else 0) or 0)
+
+        today_complete_sm2_ru_de = _today_mode_count("ru_de")
+        today_complete_sm2_de_ru = _today_mode_count("de_ru")
+        today_complete_weak_article = _today_mode_count("weak_article")
+        today_complete_weak_plural = _today_mode_count("weak_plural")
+        today_complete_weak_partizip2 = _today_mode_count("weak_partizip2")
+        today_complete_weak_prateritum = _today_mode_count("weak_prateritum")
+        today_complete = today_complete_sm2_ru_de + today_complete_sm2_de_ru
 
         retention_row = conn.execute(
             """
@@ -824,6 +918,26 @@ def get_statistics_snapshot(db_path, user_id, mode):
             or 0
         )
 
+        learning_to_sm2_week = int(
+            conn.execute(
+                """
+                SELECT COUNT(DISTINCT p.word_id) AS cnt
+                FROM progress p
+                JOIN learning_items li
+                  ON li.user_id = p.user_id
+                 AND li.word_id = p.word_id
+                 AND li.status IN ('completed', 'skipped')
+                WHERE p.user_id = ?
+                  AND p.mode = ?
+                  AND p.repetitions >= 2
+                  AND date(p.updated_at) >= date(?)
+                  AND date(p.updated_at) < date(?)
+                """,
+                (user_id, mode, ws, we),
+            ).fetchone()["cnt"]
+            or 0
+        )
+
         weak_resolved = int(
             conn.execute(
                 """
@@ -875,6 +989,9 @@ def get_statistics_snapshot(db_path, user_id, mode):
         "total_words": total_words,
         "weekly_words": weekly_words,
         "word_types": word_types,
+        "streak_5p": streak_5p,
+        "streak_4": streak_4,
+        "streak_3": streak_3,
         "streak_3p": streak_3p,
         "streak_2": streak_2,
         "streak_1": streak_1,
@@ -896,11 +1013,291 @@ def get_statistics_snapshot(db_path, user_id, mode):
         "weak_prateritum_stage2": weak_prateritum_stage2,
         "weak_prateritum_stage3": weak_prateritum_stage3,
         "today_complete": today_complete,
+        "today_complete_sm2_ru_de": today_complete_sm2_ru_de,
+        "today_complete_sm2_de_ru": today_complete_sm2_de_ru,
+        "today_complete_weak_article": today_complete_weak_article,
+        "today_complete_weak_plural": today_complete_weak_plural,
+        "today_complete_weak_partizip2": today_complete_weak_partizip2,
+        "today_complete_weak_prateritum": today_complete_weak_prateritum,
         "never_answered": never_answered,
         "retention_7d_pct": retention_7d_pct,
         "new_words_tested_week": new_words_tested,
+        "learning_to_sm2_week": learning_to_sm2_week,
         "weak_resolved_week": weak_resolved,
     }
+
+
+def get_daily_first_touch_retention(db_path, user_id, target_date=None, modes=None):
+    """Handle daily first touch retention for selected quiz modes."""
+    init_db(db_path)
+    user_id = int(user_id)
+    day = target_date or date.today().isoformat()
+    selected_modes = tuple(modes or (QUIZ_RU_DE, QUIZ_DE_RU))
+    if not selected_modes:
+        return {"date": day, "total": 0, "correct": 0, "rate": 0.0}
+    placeholders = ",".join("?" for _ in selected_modes)
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            f"""
+            WITH day_events AS (
+                SELECT id, word_id, is_correct, created_at
+                FROM quiz_events
+                WHERE user_id = ?
+                  AND mode IN ({placeholders})
+                  AND date(created_at) = date(?)
+            ),
+            first_ts AS (
+                SELECT word_id, MIN(created_at) AS first_created_at
+                FROM day_events
+                GROUP BY word_id
+            ),
+            first_events AS (
+                SELECT de.id, de.word_id, de.is_correct
+                FROM day_events de
+                JOIN first_ts ft
+                  ON ft.word_id = de.word_id
+                 AND ft.first_created_at = de.created_at
+            ),
+            picked AS (
+                SELECT word_id, MIN(id) AS first_id
+                FROM first_events
+                GROUP BY word_id
+            )
+            SELECT
+                COUNT(*) AS total_cnt,
+                SUM(CASE WHEN fe.is_correct = 1 THEN 1 ELSE 0 END) AS correct_cnt
+            FROM picked p
+            JOIN first_events fe ON fe.id = p.first_id
+            """,
+            (user_id, *selected_modes, day),
+        ).fetchone()
+    total = int((row["total_cnt"] if row else 0) or 0)
+    correct = int((row["correct_cnt"] if row else 0) or 0)
+    rate = round((correct / total) * 100, 1) if total > 0 else 0.0
+    return {"date": day, "total": total, "correct": correct, "rate": rate}
+
+
+def snapshot_user_word_state(db_path, user_id, word_id, modes=None):
+    """Handle snapshot user word state for rollback."""
+    init_db(db_path)
+    user_id = int(user_id)
+    word_id = _safe_text(word_id)
+    selected_modes = [str(m) for m in (modes or []) if str(m)]
+    with _connect(db_path) as conn:
+        progress_rows = {}
+        for mode in selected_modes:
+            row = conn.execute(
+                """
+                SELECT user_id, word_id, mode, interval, repetitions, ease, due, updated_at
+                FROM progress
+                WHERE user_id = ? AND word_id = ? AND mode = ?
+                """,
+                (user_id, word_id, mode),
+            ).fetchone()
+            progress_rows[mode] = dict(row) if row else None
+
+        fs_row = conn.execute(
+            "SELECT * FROM form_stats WHERE user_id = ? AND word_id = ?",
+            (user_id, word_id),
+        ).fetchone()
+        li_row = conn.execute(
+            "SELECT * FROM learning_items WHERE user_id = ? AND word_id = ?",
+            (user_id, word_id),
+        ).fetchone()
+
+        event_counts = {}
+        for mode in selected_modes:
+            cnt = conn.execute(
+                """
+                SELECT COUNT(*) AS cnt
+                FROM quiz_events
+                WHERE user_id = ? AND word_id = ? AND mode = ?
+                """,
+                (user_id, word_id, mode),
+            ).fetchone()["cnt"]
+            event_counts[mode] = int(cnt or 0)
+
+    return {
+        "user_id": user_id,
+        "word_id": word_id,
+        "modes": selected_modes,
+        "progress": progress_rows,
+        "form_stats": dict(fs_row) if fs_row else None,
+        "learning_item": dict(li_row) if li_row else None,
+        "event_counts": event_counts,
+    }
+
+
+def restore_user_word_state(db_path, snapshot):
+    """Handle restore user word state from rollback snapshot."""
+    init_db(db_path)
+    if not isinstance(snapshot, dict):
+        return False
+    user_id = int(snapshot.get("user_id") or 0)
+    word_id = _safe_text(snapshot.get("word_id"))
+    modes = [str(m) for m in (snapshot.get("modes") or []) if str(m)]
+    progress_rows = snapshot.get("progress") or {}
+    event_counts = snapshot.get("event_counts") or {}
+    with _connect(db_path) as conn:
+        for mode in modes:
+            row = progress_rows.get(mode)
+            if row:
+                conn.execute(
+                    """
+                    INSERT INTO progress (user_id, word_id, mode, interval, repetitions, ease, due, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(user_id, word_id, mode) DO UPDATE SET
+                        interval = excluded.interval,
+                        repetitions = excluded.repetitions,
+                        ease = excluded.ease,
+                        due = excluded.due,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        int(row.get("user_id") or user_id),
+                        _safe_text(row.get("word_id") or word_id),
+                        _safe_text(row.get("mode") or mode),
+                        int(row.get("interval") or 1),
+                        int(row.get("repetitions") or 0),
+                        float(row.get("ease") or DEFAULT_EASE),
+                        _safe_text(row.get("due") or date.today().isoformat()),
+                        _safe_text(row.get("updated_at") or datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")),
+                    ),
+                )
+            else:
+                conn.execute(
+                    "DELETE FROM progress WHERE user_id = ? AND word_id = ? AND mode = ?",
+                    (user_id, word_id, mode),
+                )
+
+        fs_row = snapshot.get("form_stats")
+        if fs_row:
+            cols = [c for c in fs_row.keys()]
+            placeholders = ",".join("?" for _ in cols)
+            update_cols = ",".join(f"{c}=excluded.{c}" for c in cols if c not in {"user_id", "word_id"})
+            conn.execute(
+                f"""
+                INSERT INTO form_stats ({",".join(cols)})
+                VALUES ({placeholders})
+                ON CONFLICT(user_id, word_id) DO UPDATE SET {update_cols}
+                """,
+                tuple(fs_row[c] for c in cols),
+            )
+        else:
+            conn.execute(
+                "DELETE FROM form_stats WHERE user_id = ? AND word_id = ?",
+                (user_id, word_id),
+            )
+
+        li_row = snapshot.get("learning_item")
+        if li_row:
+            cols = [c for c in li_row.keys()]
+            placeholders = ",".join("?" for _ in cols)
+            update_cols = ",".join(f"{c}=excluded.{c}" for c in cols if c not in {"user_id", "word_id"})
+            conn.execute(
+                f"""
+                INSERT INTO learning_items ({",".join(cols)})
+                VALUES ({placeholders})
+                ON CONFLICT(user_id, word_id) DO UPDATE SET {update_cols}
+                """,
+                tuple(li_row[c] for c in cols),
+            )
+        else:
+            conn.execute(
+                "DELETE FROM learning_items WHERE user_id = ? AND word_id = ?",
+                (user_id, word_id),
+            )
+
+        for mode in modes:
+            target = int(event_counts.get(mode, 0) or 0)
+            current = int(
+                conn.execute(
+                    "SELECT COUNT(*) AS cnt FROM quiz_events WHERE user_id = ? AND word_id = ? AND mode = ?",
+                    (user_id, word_id, mode),
+                ).fetchone()["cnt"]
+                or 0
+            )
+            if current > target:
+                to_delete = current - target
+                ids = conn.execute(
+                    """
+                    SELECT id
+                    FROM quiz_events
+                    WHERE user_id = ? AND word_id = ? AND mode = ?
+                    ORDER BY id DESC
+                    LIMIT ?
+                    """,
+                    (user_id, word_id, mode, to_delete),
+                ).fetchall()
+                if ids:
+                    placeholders = ",".join("?" for _ in ids)
+                    conn.execute(
+                        f"DELETE FROM quiz_events WHERE id IN ({placeholders})",
+                        tuple(int(r["id"]) for r in ids),
+                    )
+    return True
+
+
+def add_transaction_log(db_path, user_id, action, payload):
+    """Handle add transaction log."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO transaction_log (user_id, action, payload)
+            VALUES (?, ?, ?)
+            """,
+            (int(user_id), _safe_text(action), json.dumps(payload, ensure_ascii=False)),
+        )
+
+
+def list_transaction_logs(db_path, user_id, limit=10):
+    """Handle list transaction logs."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT id, user_id, action, payload, created_at
+            FROM transaction_log
+            WHERE user_id = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (int(user_id), int(limit)),
+        ).fetchall()
+    result = []
+    for row in rows:
+        item = dict(row)
+        try:
+            item["payload"] = json.loads(item.get("payload") or "{}")
+        except json.JSONDecodeError:
+            item["payload"] = {}
+        result.append(item)
+    return result
+
+
+def delete_transaction_logs(db_path, user_id, ids):
+    """Handle delete transaction logs."""
+    ids = [int(x) for x in (ids or [])]
+    if not ids:
+        return
+    init_db(db_path)
+    placeholders = ",".join("?" for _ in ids)
+    with _connect(db_path) as conn:
+        conn.execute(
+            f"DELETE FROM transaction_log WHERE user_id = ? AND id IN ({placeholders})",
+            (int(user_id), *ids),
+        )
+
+
+def cleanup_transaction_logs(db_path, days=7):
+    """Handle cleanup transaction logs older than N days."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        conn.execute(
+            "DELETE FROM transaction_log WHERE datetime(created_at) < datetime('now', ?)",
+            (f"-{int(days)} days",),
+        )
 
 
 def register_or_update_user(db_path, user_id, username="", first_name=""):
@@ -1280,8 +1677,9 @@ def add_word(db_path, entry):
         conn.execute(
             """
             INSERT INTO words (
-                id, type, article, german, plural, infinitive, prateritum, partizip2, russian, ukrainian, english, topic
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                id, type, article, german, plural, infinitive, prateritum, partizip2, komparativ, superlativ,
+                russian, ukrainian, english, topic
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 entry["id"],
@@ -1292,6 +1690,8 @@ def add_word(db_path, entry):
                 _safe_text(entry.get("infinitive", "")),
                 _safe_text(entry.get("prateritum", "")),
                 _safe_text(entry.get("partizip2", "")),
+                _safe_text(entry.get("komparativ", "")),
+                _safe_text(entry.get("superlativ", "")),
                 _safe_text(entry.get("russian", "")),
                 _safe_text(entry.get("ukrainian", "")),
                 _safe_text(entry.get("english", "")),
@@ -1320,8 +1720,36 @@ def select_due(db_path, user_id, mode, word_type=None, topics=None, today=None):
     due_today = today.isoformat()
     init_db(db_path)
 
-    where_clauses = ["COALESCE(p.due, ?) <= ?"]
+    where_clauses = [
+        "COALESCE(p.due, ?) <= ?",
+        """NOT EXISTS (
+            SELECT 1
+            FROM learning_items li
+            WHERE li.user_id = ?
+              AND li.word_id = w.id
+              AND li.status = 'active'
+        )""",
+        """(
+            EXISTS (
+                SELECT 1
+                FROM learning_items l3
+                WHERE l3.user_id = ?
+                  AND l3.word_id = w.id
+                  AND l3.status IN ('completed', 'skipped')
+            )
+            OR EXISTS (
+                SELECT 1
+                FROM quiz_events e
+                WHERE e.user_id = ?
+                  AND e.word_id = w.id
+                  AND e.mode != 'learning'
+            )
+        )""",
+    ]
     where_params = [due_today, due_today]
+    where_params.append(int(user_id))
+    where_params.append(int(user_id))
+    where_params.append(int(user_id))
     if word_type:
         where_clauses.insert(0, "w.type = ?")
         where_params.insert(0, word_type)
@@ -1336,16 +1764,28 @@ def select_due(db_path, user_id, mode, word_type=None, topics=None, today=None):
 
     query = f"""
         SELECT
-            w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.russian,
-            w.ukrainian, w.english, w.topic,
+            w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ, w.russian,
+            w.ukrainian, w.english, w.topic, ldone.done_at AS learning_done_at,
             p.interval AS p_interval, p.repetitions AS p_repetitions, p.ease AS p_ease, p.due AS p_due
         FROM words w
         LEFT JOIN progress p
             ON p.word_id = w.id AND p.user_id = ? AND p.mode = ?
+        LEFT JOIN (
+            SELECT word_id, MAX(updated_at) AS done_at
+            FROM learning_items
+            WHERE user_id = ? AND status IN ('completed', 'skipped')
+            GROUP BY word_id
+        ) ldone
+            ON ldone.word_id = w.id
         WHERE {where_sql}
+        ORDER BY
+            CASE WHEN ldone.done_at IS NOT NULL THEN 0 ELSE 1 END,
+            ldone.done_at DESC,
+            p.due ASC,
+            w.created_at ASC
     """
 
-    params = [int(user_id), mode] + where_params
+    params = [int(user_id), mode, int(user_id)] + where_params
     with _connect(db_path) as conn:
         rows = conn.execute(query, tuple(params)).fetchall()
 
@@ -1357,12 +1797,18 @@ def select_due(db_path, user_id, mode, word_type=None, topics=None, today=None):
     return result
 
 
-def update_sm2(srs, quality, today=None):
+def update_sm2(srs, quality, today=None, interval_divisor=1.0):
     """Handle update sm2."""
     if today is None:
         today = date.today()
 
     quality = max(0, min(5, int(quality)))
+    try:
+        interval_divisor = float(interval_divisor)
+    except (TypeError, ValueError):
+        interval_divisor = 1.0
+    if interval_divisor <= 0:
+        interval_divisor = 1.0
     interval = int(srs.get("interval", 1))
     repetitions = int(srs.get("repetitions", 0))
     ease = float(srs.get("ease", DEFAULT_EASE))
@@ -1382,6 +1828,7 @@ def update_sm2(srs, quality, today=None):
     ease = ease + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02))
     ease = max(MIN_EASE, ease)
 
+    interval = max(1, int(interval / interval_divisor))
     due = today + timedelta(days=interval)
     return {
         "interval": interval,
@@ -1391,7 +1838,7 @@ def update_sm2(srs, quality, today=None):
     }
 
 
-def update_progress(db_path, user_id, word_id, mode, quality):
+def update_progress(db_path, user_id, word_id, mode, quality, interval_divisor=1.0):
     """Handle update progress."""
     init_db(db_path)
     with _connect(db_path) as conn:
@@ -1414,7 +1861,7 @@ def update_progress(db_path, user_id, word_id, mode, quality):
             if row
             else default_srs()
         )
-        updated = update_sm2(srs, quality)
+        updated = update_sm2(srs, quality, interval_divisor=interval_divisor)
 
         conn.execute(
             """
@@ -1437,6 +1884,712 @@ def update_progress(db_path, user_id, word_id, mode, quality):
                 updated["due"],
             ),
         )
+
+
+def _utc_now_iso():
+    """Handle utc now iso."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _parse_learning_intervals(raw):
+    """Handle parse learning intervals."""
+    token = str(raw or "").strip()
+    if not token:
+        return []
+    values = []
+    for chunk in token.replace(";", ",").split(","):
+        part = chunk.strip()
+        if not part:
+            continue
+        try:
+            value = int(part)
+        except ValueError:
+            continue
+        if value < 1:
+            continue
+        values.append(value)
+    return values
+
+
+def _active_learning_batch_row(conn, user_id):
+    """Handle active learning batch row."""
+    return conn.execute(
+        """
+        SELECT id, target_qty, status, ready_since, last_notified_at
+        FROM learning_batches
+        WHERE user_id = ? AND status = 'active'
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        (int(user_id),),
+    ).fetchone()
+
+
+def learning_get_or_create_batch(db_path, user_id, daily_qty):
+    """Handle learning get or create batch."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        row = _active_learning_batch_row(conn, user_id)
+        if row:
+            if int(row["target_qty"] or 0) != int(daily_qty):
+                conn.execute(
+                    """
+                    UPDATE learning_batches
+                    SET target_qty = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (int(daily_qty), row["id"]),
+                )
+            return row["id"]
+        batch_id = str(uuid.uuid4())
+        conn.execute(
+            """
+            INSERT INTO learning_batches (id, user_id, target_qty, status)
+            VALUES (?, ?, ?, 'active')
+            """,
+            (batch_id, int(user_id), int(daily_qty)),
+        )
+    return batch_id
+
+
+def learning_active_count(db_path, user_id, batch_id=None):
+    """Handle learning active count."""
+    init_db(db_path)
+    query = "SELECT COUNT(*) AS cnt FROM learning_items WHERE user_id = ? AND status = 'active'"
+    params = [int(user_id)]
+    if batch_id:
+        query += " AND batch_id = ?"
+        params.append(_safe_text(batch_id))
+    with _connect(db_path) as conn:
+        row = conn.execute(query, tuple(params)).fetchone()
+    return int(row["cnt"] or 0) if row else 0
+
+
+def learning_pick_new_words(db_path, user_id, limit, topics=None):
+    """Handle learning pick new words."""
+    init_db(db_path)
+    if int(limit) <= 0:
+        return []
+    where_topics = ""
+    params = [int(user_id), int(user_id)]
+    if topics:
+        clean_topics = [_safe_text(x) for x in topics if _safe_text(x)]
+        if clean_topics:
+            placeholders = ",".join("?" for _ in clean_topics)
+            where_topics = f" AND w.topic IN ({placeholders})"
+            params.extend(clean_topics)
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ,
+                   w.russian, w.ukrainian, w.english, w.topic
+            FROM words w
+            WHERE NOT EXISTS (
+                SELECT 1 FROM quiz_events e
+                WHERE e.user_id = ? AND e.word_id = w.id
+            )
+              AND NOT EXISTS (
+                SELECT 1 FROM learning_items li
+                WHERE li.user_id = ? AND li.word_id = w.id
+              )
+            {where_topics}
+            ORDER BY RANDOM()
+            LIMIT ?
+            """.format(where_topics=where_topics),
+            (*params, int(limit)),
+        ).fetchall()
+    return [_row_to_entry(row) for row in rows]
+
+
+def learning_add_words(db_path, user_id, words, batch_id, first_delay_seconds):
+    """Handle learning add words."""
+    init_db(db_path)
+    due_iso = _utc_now_iso()
+    inserted = 0
+    with _connect(db_path) as conn:
+        for entry in words:
+            word_id = _safe_text(entry.get("id"))
+            if not word_id:
+                continue
+            cur = conn.execute(
+                """
+                INSERT INTO learning_items (user_id, word_id, batch_id, step_index, preview_done, next_due, status)
+                VALUES (?, ?, ?, 0, 0, ?, 'active')
+                ON CONFLICT(user_id, word_id) DO NOTHING
+                """,
+                (int(user_id), word_id, _safe_text(batch_id), due_iso),
+            )
+            inserted += int(cur.rowcount > 0)
+        conn.execute(
+            """
+            UPDATE learning_batches
+            SET updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (_safe_text(batch_id),),
+        )
+    return inserted
+
+
+def learning_add_word_by_id(db_path, user_id, word_id, batch_id, first_delay_seconds):
+    """Handle learning add word by id."""
+    init_db(db_path)
+    due_iso = _utc_now_iso()
+    added = 0
+    with _connect(db_path) as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO learning_items (user_id, word_id, batch_id, step_index, preview_done, next_due, status)
+            VALUES (?, ?, ?, 0, 0, ?, 'active')
+            ON CONFLICT(user_id, word_id) DO NOTHING
+            """,
+            (int(user_id), _safe_text(word_id), _safe_text(batch_id), due_iso),
+        )
+        added = int(cur.rowcount > 0)
+        if added:
+            conn.execute(
+                "UPDATE learning_batches SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (_safe_text(batch_id),),
+            )
+    return added
+
+
+def learning_preview_entry(db_path, user_id):
+    """Handle learning preview entry."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT
+                w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ,
+                w.russian, w.ukrainian, w.english, w.topic,
+                li.step_index AS learning_step,
+                li.next_due AS learning_due,
+                li.batch_id AS learning_batch_id
+            FROM learning_items li
+            JOIN words w ON w.id = li.word_id
+            WHERE li.user_id = ?
+              AND li.status = 'active'
+              AND li.preview_done = 0
+            ORDER BY li.created_at ASC
+            LIMIT 1
+            """,
+            (int(user_id),),
+        ).fetchone()
+    return _row_to_entry(row) if row else None
+
+
+def learning_mark_preview_next(db_path, user_id, word_id, first_interval_seconds):
+    """Handle learning mark preview next."""
+    init_db(db_path)
+    now = datetime.now(timezone.utc)
+    first_due_iso = (now + timedelta(seconds=max(0, int(first_interval_seconds)))).strftime("%Y-%m-%dT%H:%M:%SZ")
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT batch_id
+            FROM learning_items
+            WHERE user_id = ? AND word_id = ? AND status = 'active'
+            """,
+            (int(user_id), _safe_text(word_id)),
+        ).fetchone()
+        if not row:
+            return False
+        batch_id = row["batch_id"]
+        conn.execute(
+            """
+            UPDATE learning_items
+            SET preview_done = 1, updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = ? AND word_id = ? AND status = 'active'
+            """,
+            (int(user_id), _safe_text(word_id)),
+        )
+        pending = int(
+            conn.execute(
+                """
+                SELECT COUNT(*) AS cnt
+                FROM learning_items
+                WHERE user_id = ? AND batch_id = ? AND status = 'active' AND preview_done = 0
+                """,
+                (int(user_id), batch_id),
+            ).fetchone()["cnt"]
+            or 0
+        )
+        if pending == 0:
+            conn.execute(
+                """
+                UPDATE learning_items
+                SET next_due = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE user_id = ? AND batch_id = ? AND status = 'active' AND preview_done = 1
+                """,
+                (first_due_iso, int(user_id), batch_id),
+            )
+        conn.execute(
+            "UPDATE learning_batches SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (batch_id,),
+        )
+    return True
+
+
+def learning_due_entry(db_path, user_id):
+    """Handle learning due entry."""
+    init_db(db_path)
+    now_iso = _utc_now_iso()
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT
+                w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ,
+                w.russian, w.ukrainian, w.english, w.topic,
+                li.step_index AS learning_step,
+                li.next_due AS learning_due,
+                li.batch_id AS learning_batch_id
+            FROM learning_items li
+            JOIN words w ON w.id = li.word_id
+            WHERE li.user_id = ?
+              AND li.status = 'active'
+              AND li.preview_done = 1
+              AND li.next_due <= ?
+            ORDER BY
+              CASE WHEN li.step_index = 0 THEN 0 ELSE 1 END ASC,
+              CASE WHEN li.step_index = 0 THEN li.created_at ELSE NULL END ASC,
+              CASE WHEN li.step_index > 0 THEN RANDOM() ELSE 0 END
+            LIMIT 1
+            """,
+            (int(user_id), now_iso),
+        ).fetchone()
+    return _row_to_entry(row) if row else None
+
+
+def learning_update_result(db_path, user_id, word_id, ok, intervals_seconds):
+    """Handle learning update result."""
+    intervals = [int(v) for v in intervals_seconds if int(v) >= 0]
+    if not intervals:
+        return {"completed": True, "step_index": 0, "next_due": None}
+    init_db(db_path)
+    now = datetime.now(timezone.utc)
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT step_index, batch_id
+            FROM learning_items
+            WHERE user_id = ? AND word_id = ? AND status = 'active'
+            """,
+            (int(user_id), _safe_text(word_id)),
+        ).fetchone()
+        if not row:
+            return {"completed": False, "step_index": 0, "next_due": None}
+        step_index = int(row["step_index"] or 0)
+        batch_id = row["batch_id"]
+
+        if ok:
+            next_step = step_index + 1
+            if next_step >= len(intervals):
+                conn.execute(
+                    """
+                    UPDATE learning_items
+                    SET status = 'completed', updated_at = CURRENT_TIMESTAMP
+                    WHERE user_id = ? AND word_id = ?
+                    """,
+                    (int(user_id), _safe_text(word_id)),
+                )
+                conn.execute(
+                    """
+                    UPDATE learning_batches
+                    SET updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (_safe_text(batch_id),),
+                )
+                return {"completed": True, "step_index": next_step, "next_due": None}
+            due_iso = (now + timedelta(seconds=intervals[next_step])).strftime("%Y-%m-%dT%H:%M:%SZ")
+            conn.execute(
+                """
+                UPDATE learning_items
+                SET step_index = ?, next_due = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE user_id = ? AND word_id = ?
+                """,
+                (int(next_step), due_iso, int(user_id), _safe_text(word_id)),
+            )
+            conn.execute(
+                """
+                UPDATE learning_batches
+                SET updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (_safe_text(batch_id),),
+            )
+            return {"completed": False, "step_index": next_step, "next_due": due_iso}
+
+        due_iso = (now + timedelta(seconds=intervals[0])).strftime("%Y-%m-%dT%H:%M:%SZ")
+        conn.execute(
+            """
+            UPDATE learning_items
+            SET step_index = 0, next_due = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = ? AND word_id = ?
+            """,
+            (due_iso, int(user_id), _safe_text(word_id)),
+        )
+        conn.execute(
+            """
+            UPDATE learning_batches
+            SET updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (_safe_text(batch_id),),
+        )
+        return {"completed": False, "step_index": 0, "next_due": due_iso}
+
+
+def learning_apply_input_err(db_path, user_id, word_id, prev_step_index, intervals_seconds):
+    """Handle apply input err for learning without reset."""
+    intervals = [int(v) for v in intervals_seconds if int(v) >= 0]
+    if not intervals:
+        return {"completed": True, "step_index": 0, "next_due": None}
+    init_db(db_path)
+    now = datetime.now(timezone.utc)
+    try:
+        prev_step = int(prev_step_index)
+    except (TypeError, ValueError):
+        prev_step = 0
+    prev_step = max(0, min(prev_step, len(intervals) - 1))
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT batch_id
+            FROM learning_items
+            WHERE user_id = ? AND word_id = ? AND status = 'active'
+            """,
+            (int(user_id), _safe_text(word_id)),
+        ).fetchone()
+        if not row:
+            return {"completed": False, "step_index": prev_step, "next_due": None}
+        batch_id = row["batch_id"]
+        next_step = prev_step + 1
+        if next_step >= len(intervals):
+            conn.execute(
+                """
+                UPDATE learning_items
+                SET status = 'completed', updated_at = CURRENT_TIMESTAMP
+                WHERE user_id = ? AND word_id = ?
+                """,
+                (int(user_id), _safe_text(word_id)),
+            )
+            conn.execute(
+                "UPDATE learning_batches SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (_safe_text(batch_id),),
+            )
+            return {"completed": True, "step_index": next_step, "next_due": None}
+        due_iso = (now + timedelta(seconds=intervals[next_step])).strftime("%Y-%m-%dT%H:%M:%SZ")
+        conn.execute(
+            """
+            UPDATE learning_items
+            SET step_index = ?, next_due = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = ? AND word_id = ?
+            """,
+            (int(next_step), due_iso, int(user_id), _safe_text(word_id)),
+        )
+        conn.execute(
+            "UPDATE learning_batches SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (_safe_text(batch_id),),
+        )
+        return {"completed": False, "step_index": next_step, "next_due": due_iso}
+
+
+def learning_skip_word(db_path, user_id, word_id):
+    """Handle learning skip word."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT batch_id
+            FROM learning_items
+            WHERE user_id = ? AND word_id = ? AND status = 'active'
+            """,
+            (int(user_id), _safe_text(word_id)),
+        ).fetchone()
+        conn.execute(
+            """
+            UPDATE learning_items
+            SET status = 'skipped', updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = ? AND word_id = ? AND status = 'active'
+            """,
+            (int(user_id), _safe_text(word_id)),
+        )
+        if row:
+            conn.execute(
+                "UPDATE learning_batches SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (row["batch_id"],),
+            )
+    return True
+
+
+def learning_reset_session(db_path, user_id):
+    """Handle learning reset session."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT word_id
+            FROM learning_items
+            WHERE user_id = ? AND status = 'active'
+            """,
+            (int(user_id),),
+        ).fetchall()
+        reset_word_ids = [str(row["word_id"]) for row in rows if row and row["word_id"]]
+
+        conn.execute(
+            "DELETE FROM learning_items WHERE user_id = ? AND status = 'active'",
+            (int(user_id),),
+        )
+
+        if reset_word_ids:
+            placeholders = ",".join("?" for _ in reset_word_ids)
+            conn.execute(
+                f"""
+                DELETE FROM quiz_events
+                WHERE user_id = ? AND mode = 'learning' AND word_id IN ({placeholders})
+                """,
+                (int(user_id), *reset_word_ids),
+            )
+
+        conn.execute(
+            """
+            DELETE FROM learning_batches
+            WHERE user_id = ?
+              AND NOT EXISTS (
+                SELECT 1
+                FROM learning_items li
+                WHERE li.user_id = learning_batches.user_id
+                  AND li.batch_id = learning_batches.id
+              )
+            """,
+            (int(user_id),),
+        )
+    return True
+
+
+def learning_status_snapshot(db_path, user_id, quorum_pct=70):
+    """Handle learning status snapshot."""
+    init_db(db_path)
+    now_iso = _utc_now_iso()
+    with _connect(db_path) as conn:
+        batch = _active_learning_batch_row(conn, user_id)
+        if not batch:
+            return {
+                "batch_id": "",
+                "target_qty": 0,
+                "active_count": 0,
+                "preview_pending": 0,
+                "active_due_pool": 0,
+                "due_count": 0,
+                "ready_needed": 0,
+                "ready": False,
+                "next_due": "",
+                "completed_count": 0,
+                "ready_since": "",
+                "last_notified_at": "",
+            }
+        batch_id = batch["id"]
+        active_count = int(
+            conn.execute(
+                "SELECT COUNT(*) AS cnt FROM learning_items WHERE user_id = ? AND batch_id = ? AND status = 'active'",
+                (int(user_id), batch_id),
+            ).fetchone()["cnt"]
+            or 0
+        )
+        preview_pending = int(
+            conn.execute(
+                """
+                SELECT COUNT(*) AS cnt
+                FROM learning_items
+                WHERE user_id = ? AND batch_id = ? AND status = 'active' AND preview_done = 0
+                """,
+                (int(user_id), batch_id),
+            ).fetchone()["cnt"]
+            or 0
+        )
+        active_due_pool = int(
+            conn.execute(
+                """
+                SELECT COUNT(*) AS cnt
+                FROM learning_items
+                WHERE user_id = ? AND batch_id = ? AND status = 'active' AND preview_done = 1
+                """,
+                (int(user_id), batch_id),
+            ).fetchone()["cnt"]
+            or 0
+        )
+        due_count = int(
+            conn.execute(
+                """
+                SELECT COUNT(*) AS cnt
+                FROM learning_items
+                WHERE user_id = ? AND batch_id = ? AND status = 'active' AND preview_done = 1 AND next_due <= ?
+                """,
+                (int(user_id), batch_id, now_iso),
+            ).fetchone()["cnt"]
+            or 0
+        )
+        next_due_row = conn.execute(
+            """
+            SELECT next_due
+                FROM learning_items
+                WHERE user_id = ? AND batch_id = ? AND status = 'active' AND preview_done = 1
+                ORDER BY next_due ASC
+                LIMIT 1
+                """,
+                (int(user_id), batch_id),
+            ).fetchone()
+        completed_count = int(
+            conn.execute(
+                """
+                SELECT COUNT(*) AS cnt
+                FROM learning_items
+                WHERE user_id = ? AND batch_id = ? AND status IN ('completed', 'skipped')
+                """,
+                (int(user_id), batch_id),
+            ).fetchone()["cnt"]
+            or 0
+        )
+    needed = int(math.ceil(active_due_pool * (max(1, min(100, int(quorum_pct))) / 100.0))) if active_due_pool else 0
+    return {
+        "batch_id": batch_id,
+        "target_qty": int(batch["target_qty"] or 0),
+        "active_count": active_count,
+        "preview_pending": preview_pending,
+        "active_due_pool": active_due_pool,
+        "due_count": due_count,
+        "ready_needed": needed,
+        "ready": bool(active_due_pool > 0 and preview_pending == 0 and due_count >= needed and needed > 0),
+        "next_due": next_due_row["next_due"] if next_due_row else "",
+        "completed_count": completed_count,
+        "ready_since": batch["ready_since"] or "",
+        "last_notified_at": batch["last_notified_at"] or "",
+    }
+
+
+def learning_batch_update_ready_state(db_path, batch_id, ready, now_iso):
+    """Handle learning batch update ready state."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        if ready:
+            row = conn.execute(
+                "SELECT ready_since FROM learning_batches WHERE id = ?",
+                (_safe_text(batch_id),),
+            ).fetchone()
+            if row and not row["ready_since"]:
+                conn.execute(
+                    "UPDATE learning_batches SET ready_since = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (_safe_text(now_iso), _safe_text(batch_id)),
+                )
+        else:
+            conn.execute(
+                "UPDATE learning_batches SET ready_since = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (_safe_text(batch_id),),
+            )
+
+
+def learning_batch_mark_notified(db_path, batch_id, now_iso):
+    """Handle learning batch mark notified."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        conn.execute(
+            """
+            UPDATE learning_batches
+            SET last_notified_at = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (_safe_text(now_iso), _safe_text(batch_id)),
+        )
+
+
+def learning_active_batches(db_path):
+    """Handle learning active batches."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT id, user_id, target_qty, ready_since, last_notified_at
+            FROM learning_batches
+            WHERE status = 'active'
+            ORDER BY created_at ASC
+            """
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def sm2_due_forecast(db_path, user_id, mode):
+    """Handle sm2 due forecast."""
+    init_db(db_path)
+    today = date.today().isoformat()
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                w.id AS word_id,
+                COALESCE(p.due, date('now')) AS due_date,
+                p.updated_at AS updated_at
+            FROM words w
+            LEFT JOIN progress p
+              ON p.word_id = w.id
+             AND p.user_id = ?
+             AND p.mode = ?
+            WHERE COALESCE(p.due, date('now')) <= date('now')
+              AND NOT EXISTS (
+                SELECT 1
+                FROM learning_items li
+                WHERE li.user_id = ?
+                  AND li.word_id = w.id
+                  AND li.status = 'active'
+              )
+              AND (
+                EXISTS (
+                    SELECT 1
+                    FROM learning_items l2
+                    WHERE l2.user_id = ?
+                      AND l2.word_id = w.id
+                      AND l2.status IN ('completed', 'skipped')
+                )
+                OR EXISTS (
+                    SELECT 1
+                    FROM quiz_events e
+                    WHERE e.user_id = ?
+                      AND e.word_id = w.id
+                      AND e.mode != 'learning'
+                )
+              )
+            """,
+            (int(user_id), _safe_text(mode), int(user_id), int(user_id), int(user_id)),
+        ).fetchall()
+    per_hour = {h: 0 for h in range(24)}
+    total = 0
+    for row in rows:
+        total += 1
+        due_date = str(row["due_date"] or "")
+        updated_at = row["updated_at"]
+        if due_date < today:
+            hour = 0
+        elif updated_at and len(updated_at) >= 13:
+            try:
+                hour = int(updated_at[11:13])
+            except ValueError:
+                hour = 0
+        else:
+            hour = 0
+        per_hour[hour] = per_hour.get(hour, 0) + 1
+    peak_hour = None
+    peak_count = 0
+    for hour, count in per_hour.items():
+        if count > peak_count:
+            peak_count = count
+            peak_hour = hour
+    return {
+        "total": total,
+        "per_hour": per_hour,
+        "peak_hour": peak_hour,
+        "peak_count": peak_count,
+    }
 
 
 def set_progress(db_path, user_id, word_id, mode, srs):
@@ -1546,14 +2699,24 @@ def update_word_fields(db_path, word_id, fields):
         "infinitive",
         "prateritum",
         "partizip2",
+        "komparativ",
+        "superlativ",
         "russian",
         "ukrainian",
         "english",
         "topic",
     }
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        existing_cols = {
+            row["name"] if isinstance(row, sqlite3.Row) else row[1]
+            for row in conn.execute("PRAGMA table_info(words)").fetchall()
+        }
     values = {}
     for key, value in dict(fields or {}).items():
         if key not in allowed:
+            continue
+        if key not in existing_cols:
             continue
         values[key] = _safe_text(value)
     if not values:
@@ -1563,7 +2726,6 @@ def update_word_fields(db_path, word_id, fields):
     params = list(values.values()) + [_safe_text(word_id)]
     query = f"UPDATE words SET {', '.join(parts)} WHERE id = ?"
 
-    init_db(db_path)
     with _connect(db_path) as conn:
         conn.execute(query, tuple(params))
 
@@ -1751,6 +2913,45 @@ def update_weak_review_state(db_path, user_id, word_id, field, ok):
         return 1
 
 
+def apply_weak_input_err(db_path, user_id, word_id, field):
+    """Handle apply weak input error correction."""
+    field = _safe_text(field).strip().lower()
+    if field not in {"article", "plural", "prateritum", "partizip2"}:
+        return False
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            f"""
+            SELECT
+                {field}_errors AS errors,
+                {field}_streak_wrong AS streak_wrong,
+                {field}_streak_correct AS streak_correct
+            FROM form_stats
+            WHERE user_id = ? AND word_id = ?
+            """,
+            (int(user_id), _safe_text(word_id)),
+        ).fetchone()
+        if not row:
+            return False
+        errors = int(row["errors"] or 0)
+        streak_wrong = int(row["streak_wrong"] or 0)
+        streak_correct = int(row["streak_correct"] or 0)
+        new_errors = max(0, errors - 1)
+        new_streak_wrong = max(0, streak_wrong - 1)
+        new_streak_correct = streak_correct + 1
+        conn.execute(
+            f"""
+            UPDATE form_stats
+            SET {field}_errors = ?,
+                {field}_streak_wrong = ?,
+                {field}_streak_correct = ?
+            WHERE user_id = ? AND word_id = ?
+            """,
+            (new_errors, new_streak_wrong, new_streak_correct, int(user_id), _safe_text(word_id)),
+        )
+    return True
+
+
 def get_form_state(db_path, user_id, word_id, field):
     """Handle get form state."""
     field = _safe_text(field).strip().lower()
@@ -1824,7 +3025,7 @@ def list_weak_words(db_path, user_id, weak_field, word_type=None, topics=None, l
             params.extend(clean_topics)
     query = f"""
         SELECT
-            w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.russian,
+            w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ, w.russian,
             w.ukrainian, w.english, w.topic,
             fs.{weak_field}_review_stage AS review_stage,
             fs.{weak_field}_next_review AS next_review,
@@ -1914,7 +3115,7 @@ def get_synonym_group(db_path, word_id):
         group_id = int(row["group_id"])
         rows = conn.execute(
             """
-            SELECT w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.russian
+            SELECT w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ, w.russian
             , w.ukrainian, w.english, w.topic
             FROM word_synonyms s
             JOIN words w ON w.id = s.word_id
@@ -1924,6 +3125,22 @@ def get_synonym_group(db_path, word_id):
             (group_id,),
         ).fetchall()
     return [_row_to_entry(x) for x in rows]
+
+
+def get_synonym_group_id(db_path, word_id):
+    """Handle get synonym group id."""
+    wid = _safe_text(word_id)
+    if not wid:
+        return None
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT group_id FROM word_synonyms WHERE word_id = ?",
+            (wid,),
+        ).fetchone()
+    if not row:
+        return None
+    return int(row["group_id"])
 
 
 def remove_synonym_link(db_path, word_id):
@@ -2014,6 +3231,64 @@ def get_word_by_id(db_path, word_id):
     return _row_to_entry(row)
 
 
+def list_all_words(db_path):
+    """Handle list all words."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian
+            , ukrainian, english, topic
+            FROM words
+            ORDER BY created_at ASC
+            """
+        ).fetchall()
+    return [_row_to_entry(row) for row in rows]
+
+
+def list_sm2_weak_words(db_path, user_id, mode, min_wrong_streak=4):
+    """Handle list sm2 weak words."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            WITH ordered AS (
+                SELECT
+                    e.word_id AS word_id,
+                    e.is_correct AS is_correct,
+                    e.id AS id,
+                    SUM(CASE WHEN e.is_correct = 1 THEN 1 ELSE 0 END)
+                        OVER (
+                            PARTITION BY e.word_id
+                            ORDER BY e.id DESC
+                            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                        ) AS seen_correct
+                FROM quiz_events e
+                WHERE e.user_id = ? AND e.mode = ?
+            ),
+            streaks AS (
+                SELECT
+                    o.word_id AS word_id,
+                    COUNT(*) AS wrong_streak
+                FROM ordered o
+                WHERE o.seen_correct = 0
+                  AND o.is_correct = 0
+                GROUP BY o.word_id
+                HAVING COUNT(*) >= ?
+            )
+            SELECT
+                w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ, w.russian,
+                w.ukrainian, w.english, w.topic,
+                s.wrong_streak AS wrong_streak
+            FROM streaks s
+            JOIN words w ON w.id = s.word_id
+            ORDER BY s.wrong_streak DESC, w.created_at ASC
+            """,
+            (int(user_id), _safe_text(mode), int(min_wrong_streak)),
+        ).fetchall()
+    return [_row_to_entry(row) for row in rows]
+
+
 def find_word_by_value(db_path, token):
     """Handle find word by value."""
     candidate = _normalize_text(token)
@@ -2036,6 +3311,166 @@ def find_word_by_value(db_path, token):
     if not row:
         return None
     return _row_to_entry(row)
+
+
+_ARTICLE_PREFIXES = {
+    "der",
+    "die",
+    "das",
+    "den",
+    "dem",
+    "des",
+    "ein",
+    "eine",
+    "einen",
+    "einem",
+    "eines",
+    "kein",
+    "keine",
+    "keinen",
+    "keinem",
+    "keines",
+}
+
+
+def _strip_leading_article(token):
+    """Handle strip leading article."""
+    normalized = _normalize_text(token)
+    parts = normalized.split()
+    if parts and parts[0] in _ARTICLE_PREFIXES:
+        return " ".join(parts[1:])
+    return normalized
+
+
+def search_word(db_path, token):
+    """Handle search word."""
+    candidate = _normalize_text(token)
+    if not candidate:
+        return None
+    stripped = _strip_leading_article(candidate)
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian
+            , ukrainian, english, topic
+            FROM words
+            WHERE id = ?
+               OR lower(trim(german)) IN (?, ?)
+               OR lower(trim(infinitive)) IN (?, ?)
+               OR lower(trim(plural)) IN (?, ?)
+               OR lower(trim(prateritum)) IN (?, ?)
+               OR lower(trim(partizip2)) IN (?, ?)
+               OR lower(trim(russian)) IN (?, ?)
+               OR lower(trim(ukrainian)) IN (?, ?)
+               OR lower(trim(english)) IN (?, ?)
+            LIMIT 1
+            """,
+            (
+                _safe_text(token),
+                candidate,
+                stripped,
+                candidate,
+                stripped,
+                candidate,
+                stripped,
+                candidate,
+                stripped,
+                candidate,
+                stripped,
+                candidate,
+                stripped,
+                candidate,
+                stripped,
+                candidate,
+                stripped,
+            ),
+        ).fetchone()
+        if row:
+            return _row_to_entry(row)
+
+        like = f"%{candidate}%"
+        like_stripped = f"%{stripped}%"
+        rows = conn.execute(
+            """
+            SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian
+            , ukrainian, english, topic
+            FROM words
+            WHERE lower(german) LIKE ? OR lower(german) LIKE ?
+               OR lower(infinitive) LIKE ? OR lower(infinitive) LIKE ?
+               OR lower(plural) LIKE ? OR lower(plural) LIKE ?
+               OR lower(prateritum) LIKE ? OR lower(prateritum) LIKE ?
+               OR lower(partizip2) LIKE ? OR lower(partizip2) LIKE ?
+               OR lower(russian) LIKE ? OR lower(russian) LIKE ?
+               OR lower(ukrainian) LIKE ? OR lower(ukrainian) LIKE ?
+               OR lower(english) LIKE ? OR lower(english) LIKE ?
+            LIMIT 20
+            """,
+            (
+                like,
+                like_stripped,
+                like,
+                like_stripped,
+                like,
+                like_stripped,
+                like,
+                like_stripped,
+                like,
+                like_stripped,
+                like,
+                like_stripped,
+                like,
+                like_stripped,
+                like,
+                like_stripped,
+            ),
+        ).fetchall()
+    if not rows:
+        return None
+
+    def _matches(entry):
+        forms = {
+            _normalize_text(entry.get("german", "")),
+            _normalize_text(entry.get("infinitive", "")),
+            _normalize_text(entry.get("plural", "")),
+            _normalize_text(entry.get("prateritum", "")),
+            _normalize_text(entry.get("partizip2", "")),
+        }
+        if candidate in forms or stripped in forms:
+            return True
+        for field in ("russian", "ukrainian", "english"):
+            variants = _form_variants(entry.get(field, ""))
+            if candidate in variants or stripped in variants:
+                return True
+        return False
+
+    for row in rows:
+        entry = _row_to_entry(row)
+        if _matches(entry):
+            return entry
+    return _row_to_entry(rows[0])
+
+
+def has_translation_collision(db_path, translation, dict_lang):
+    """Handle has translation collision."""
+    field = {
+        "ru": "russian",
+        "uk": "ukrainian",
+        "en": "english",
+    }.get(dict_lang, "russian")
+    candidate = _normalize_text(translation)
+    if not candidate:
+        return False
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            f"SELECT {field} FROM words"
+        ).fetchall()
+    for row in rows:
+        value = row[field] if isinstance(row, sqlite3.Row) else row[0]
+        if candidate in _form_variants(value):
+            return True
+    return False
 
 
 def add_word_flag(db_path, word_id, user_id, comment):
@@ -2078,7 +3513,7 @@ def list_pending_word_flags(db_path, limit=0):
             f.user_id AS flag_user_id,
             f.comment AS flag_comment,
             f.created_at AS flag_created_at,
-            w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.russian
+            w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ, w.russian
             , w.ukrainian, w.english, w.topic
         FROM word_flags f
         JOIN words w ON w.id = f.word_id
