@@ -4945,18 +4945,6 @@ async def _auto_dump_job(context: ContextTypes.DEFAULT_TYPE):
                 filename=dump_path.name,
                 caption=f"✅ Auto dump created: {dump_path.name}",
             )
-            report_day = (datetime.now(timezone.utc).date() - timedelta(days=1)).isoformat()
-            retention = get_daily_first_touch_retention(
-                get_db_path(),
-                user_id=owner_id,
-                target_date=report_day,
-                modes=(_mode_l1_de(owner_id), _mode_de_l1(owner_id)),
-            )
-            await context.bot.send_message(
-                chat_id=owner_id,
-                text=f"```text\n{_format_retention_daily_text(retention)}\n```",
-                parse_mode="Markdown",
-            )
         except Exception:
             logging.exception("Auto dump job failed")
     cleanup_transaction_logs(get_db_path(), days=7)
