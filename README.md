@@ -3,7 +3,7 @@
 ## Overview
 Owner-only Telegram bot for building a German dictionary and running quizzes. It supports:
 - Manual and AI-assisted word import
-- SM2-based long-term scheduling
+- FSRS-based long-term scheduling
 - Session-retry for short-term reinforcement
 - Weak-mode remediation and review scheduling for forms
 - Synonyms management
@@ -55,7 +55,7 @@ New words are saved under the first topic in the filter (or `1` when `all`).
 - De > L1
 
 **L1 > De submenu**
-- Standart mode SM2
+- Standart mode FSRS
 - Article Weak Mode
 - Plural Weak Mode
 - Verb Forms Weak Mode
@@ -86,17 +86,17 @@ After approval:
 - Reject / Ban drops it.
 
 ## Quiz Modes
-### L1 > De (SM2)
+### L1 > De (FSRS)
 - For nouns: expect `article + german + plural` (strict).
 - For verbs: expected answer matches `infinitiv + partizip2`.
   - `prateritum` does not affect correctness.
   - Allowed formats: `infinitiv partizip2` or `infinitiv prateritum partizip2`.
 
-### De > L1 (SM2)
+### De > L1 (FSRS)
 - Expect translation in L1 (with variants normalized).
 
-## SM2 Scheduling (Long-term)
-SM2 is a spaced repetition algorithm.
+## FSRS Scheduling (Long-term)
+FSRS is a spaced repetition algorithm.
 - Correct answers grow the interval between repeats.
 - Wrong answer resets interval to 1 day.
 - Only due words (`due <= today`) appear.
@@ -106,7 +106,7 @@ Purpose: immediate reinforcement within the current session.
 - Queue: `user_data["retry_queue"][mode]`.
 - Wrong answer (non-retry): word id added to queue.
 - After each normal question, if `>= 3` other questions passed, one retry is shown.
-- Retry does **not** update SM2.
+- Retry does **not** update FSRS.
 - Total repeats per word: **4**.
 - Queue resets when leaving Quiz.
 

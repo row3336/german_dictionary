@@ -204,7 +204,7 @@ TEST_PLURAL_WEAK_TEXT = "Plural Weak Mode"
 TEST_VERB_WEAK_TEXT = "Verb Forms Weak Mode"
 TEST_PRATERITUM_WEAK_TEXT = "Prateritum Weak Mode"
 TEST_PARTIZIP2_WEAK_TEXT = "Partizip2 Weak Mode"
-STANDARD_SM2_TEXT = "Standart mode SM2"
+STANDARD_SM2_TEXT = "Standart mode FSRS"
 SYNONYMS_TEXT = "synonyms"
 SYN_ADD_TEXT = "add"
 SYN_REMOVE_TEXT = "remove"
@@ -1632,8 +1632,8 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         stats = get_statistics_snapshot(get_db_path(), user_id=user_id, mode=_mode_l1_de(user_id))
         word_types = stats.get("word_types") or {}
         lines = [
-            f"today complete sm2 Ru > De = {stats['today_complete_sm2_ru_de']}",
-            f"today complete sm2 De > Ru = {stats['today_complete_sm2_de_ru']}",
+            f"today complete fsrs Ru > De = {stats['today_complete_sm2_ru_de']}",
+            f"today complete fsrs De > Ru = {stats['today_complete_sm2_de_ru']}",
             "",
             f"today complete weak article = {stats['today_complete_weak_article']}",
             f"today complete weak plural = {stats['today_complete_weak_plural']}",
@@ -1645,7 +1645,7 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"3 correct streak = {stats.get('streak_3', stats.get('streak_3p', 0))}",
             f"2 correct streak = {stats.get('streak_2', 0)}",
             f"1 correct = {stats.get('streak_1', 0)}",
-            f"wrong sm2 = {stats.get('wrong_sm2', 0)}",
+            f"wrong fsrs = {stats.get('wrong_sm2', 0)}",
             "",
             (
                 f"weak article = {stats['weak_article']} "
@@ -1675,7 +1675,7 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"words in dict = {stats['total_words']}",
             f"never touched = {stats['never_answered']}",
             f"words weekly = +{stats['weekly_words']}",
-            f"learning->sm2 2+ (week) = {stats['learning_to_sm2_week']}",
+            f"learning->fsrs 2+ (week) = {stats['learning_to_sm2_week']}",
             "",
             "word types:",
             *[f"{k} = {word_types[k]}" for k in sorted(word_types.keys())],
@@ -2156,7 +2156,7 @@ async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _log_transaction(user_id, "learning:answer", snapshot)
     feedback = _format_feedback_ru_de(entry, ok)
     if result.get("completed"):
-        feedback = f"{feedback}\n\nLearning done ✅, sent to sm2"
+        feedback = f"{feedback}\n\nLearning done ✅, sent to fsrs"
     return await _send_learning_prompt(update, context, feedback)
 
 
@@ -2273,7 +2273,7 @@ async def algo_settings_menu_choice(update: Update, context: ContextTypes.DEFAUL
         context.user_data["algo_setting_edit"] = SESSION_RETRY_GAP_KEY
         context.user_data["algo_edit_return"] = "algo"
         await update.message.reply_text(
-            "Enter ses.rtr_gap (number of SM2 questions between retries):",
+            "Enter ses.rtr_gap (number of FSRS questions between retries):",
             reply_markup=ReplyKeyboardRemove(),
         )
         return ALGO_SETTINGS_EDIT
@@ -5077,11 +5077,11 @@ def _configure_learning_reminders(app: Application):
 def _format_sm2_report_text(total, peak_hour, peak_count):
     """Handle format sm2 report text."""
     if total <= 0:
-        return "SM2 today: 0 due."
+        return "FSRS today: 0 due."
     if peak_hour is None:
-        return f"SM2 today: {total} due."
+        return f"FSRS today: {total} due."
     return (
-        f"SM2 today: {total} due.\n"
+        f"FSRS today: {total} due.\n"
         f"Peak hour ~{peak_hour:02d}:00 UTC (approx), count {peak_count}."
     )
 
@@ -5136,7 +5136,7 @@ async def _sm2_daily_report_job(context: ContextTypes.DEFAULT_TYPE):
         if peak_hour is not None:
             set_setting(db_path, "sm2_peak_hour_today", str(int(peak_hour)))
     except Exception:
-        logging.exception("SM2 daily report failed")
+        logging.exception("FSRS daily report failed")
         return
 
 
@@ -5169,11 +5169,11 @@ async def _sm2_peak_notify_job(context: ContextTypes.DEFAULT_TYPE):
     try:
         await context.bot.send_message(
             chat_id=owner_id,
-            text=f"SM2 peak window now. Due today: {total}.",
+            text=f"FSRS peak window now. Due today: {total}.",
         )
         set_setting(db_path, SM2_PEAK_NOTIFY_DATE_KEY, today)
     except Exception:
-        logging.exception("SM2 peak notify failed")
+        logging.exception("FSRS peak notify failed")
         return
 
 
