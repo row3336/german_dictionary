@@ -123,6 +123,7 @@ from .storage import (
     search_word,
     has_translation_collision,
     list_all_words,
+    list_words_by_topic,
     list_sm2_weak_words,
     get_synonym_group,
     get_synonym_group_id,
@@ -645,6 +646,7 @@ def _action_key_from_text(text, user_id):
         ("tests", "tests"),
         ("db_search", "db_search"),
         ("db_search_matches", "db_search_matches"),
+        ("db_search_topic_words", "db_search_topic_words"),
         ("db_search_weak_words", "db_search_weak_words"),
         ("settings", "settings"),
         ("info", "info"),
@@ -719,13 +721,55 @@ def _add_input_markup(user_id):
 def _db_search_markup(user_id):
     """Handle db search markup."""
     lang = _user_interface_lang(user_id)
-    return ReplyKeyboardMarkup([[t(lang, "db_search_matches"), t(lang, "db_search_weak_words"), t(lang, "back")]], resize_keyboard=True)
+    return ReplyKeyboardMarkup(
+        [[t(lang, "db_search_matches"), t(lang, "db_search_topic_words"), t(lang, "db_search_weak_words"), t(lang, "back")]],
+        resize_keyboard=True,
+    )
 
 
 def _db_search_weak_markup(user_id):
     """Handle db search weak markup."""
     lang = _user_interface_lang(user_id)
     return ReplyKeyboardMarkup([[SEND_LEARN_TEXT, t(lang, "back")]], resize_keyboard=True)
+
+
+def _topic_sort_key(token):
+    """Handle topic sort key with numeric priority."""
+    value = str(token or "").strip()
+    if value.isdigit():
+        return (0, int(value), value)
+    return (1, value.lower(), value)
+
+
+def _db_search_topic_markup(user_id):
+    """Handle db search topic selector markup."""
+    lang = _user_interface_lang(user_id)
+    topics = sorted(list_topics(get_db_path()), key=_topic_sort_key)
+    rows = []
+    row = []
+    for item in topics:
+        row.append(str(item))
+        if len(row) == 4:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([t(lang, "back")])
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True), topics
+
+
+def _format_topic_words_line(entry, dict_lang):
+    """Handle format topic words line."""
+    entry_type = str(entry.get("type", "")).strip().lower()
+    if entry_type == "verb":
+        base = str(entry.get("infinitive", "")).strip()
+    else:
+        base = str(entry.get("german", "")).strip()
+    if entry_type == "nomen":
+        article = str(entry.get("article", "")).strip()
+        base = f"{article} {base}".strip() if article else base
+    translation = _entry_translation(entry, dict_lang)
+    return f"{base} [{entry_type}] - {translation}"
 
 
 def _split_text_chunks(text, max_size=3500):
@@ -1696,10 +1740,35 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     user_id = update.effective_user.id
     action = _action_key_from_text(text, user_id)
+    if context.user_data.get("db_search_topic_pick") and action == "back":
+        context.user_data.pop("db_search_topic_pick", None)
+        return await _send_db_search_prompt(update, user_id, None)
     if action == "back":
+        context.user_data.pop("db_search_topic_pick", None)
         context.user_data.pop("db_search_weak_ids", None)
         await update.message.reply_text(t(_user_interface_lang(user_id), "main_menu"), reply_markup=_main_menu_markup(user_id))
         return MENU
+    if context.user_data.get("db_search_topic_pick"):
+        markup, topics = _db_search_topic_markup(user_id)
+        if text not in topics:
+            await update.message.reply_text("Choose topic:", reply_markup=markup)
+            return DB_SEARCH
+        context.user_data.pop("db_search_topic_pick", None)
+        context.user_data.pop("db_search_weak_ids", None)
+        entries = list_words_by_topic(get_db_path(), text)
+        if not entries:
+            return await _send_db_search_prompt(update, user_id, f"No words in topic {text}.")
+        lines = [f"topic {text}: {len(entries)} words", ""]
+        lines.extend(_format_topic_words_line(entry, _user_dict_lang(user_id)) for entry in entries)
+        chunks = _split_text_chunks("\n".join(lines))
+        for idx, chunk in enumerate(chunks):
+            markup = _db_search_markup(user_id) if idx == len(chunks) - 1 else None
+            await update.message.reply_text(
+                f"```text\n{chunk}\n```",
+                reply_markup=markup,
+                parse_mode="Markdown",
+            )
+        return DB_SEARCH
     if text == SEND_LEARN_TEXT and context.user_data.get("db_search_weak_ids"):
         ids = list(dict.fromkeys(context.user_data.get("db_search_weak_ids") or []))
         db_path = get_db_path()
@@ -1718,6 +1787,7 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("db_search_weak_ids", None)
         return await _send_db_search_prompt(update, user_id, f"Added to learning: {added}")
     if action == "db_search_matches":
+        context.user_data.pop("db_search_topic_pick", None)
         context.user_data.pop("db_search_weak_ids", None)
         entries = list_all_words(get_db_path())
         blocks = _list_match_pairs(entries, _user_dict_lang(user_id))
@@ -1733,6 +1803,7 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         return DB_SEARCH
     if action == "db_search_weak_words":
+        context.user_data.pop("db_search_topic_pick", None)
         mode = _mode_l1_de(user_id)
         entries = list_sm2_weak_words(get_db_path(), user_id=user_id, mode=mode, min_wrong_streak=4)
         if not entries:
@@ -1749,6 +1820,15 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown",
             )
         return DB_SEARCH
+    if action == "db_search_topic_words":
+        context.user_data.pop("db_search_weak_ids", None)
+        markup, topics = _db_search_topic_markup(user_id)
+        if not topics:
+            return await _send_db_search_prompt(update, user_id, "No topics found in DB.")
+        context.user_data["db_search_topic_pick"] = True
+        await update.message.reply_text("Choose topic:", reply_markup=markup)
+        return DB_SEARCH
+    context.user_data.pop("db_search_topic_pick", None)
     context.user_data.pop("db_search_weak_ids", None)
     entry = search_word(get_db_path(), text)
     if not entry:
@@ -1775,9 +1855,10 @@ async def db_search_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     action = _action_key_from_text(text, user_id)
     if action in {"back", "stop"}:
+        context.user_data.pop("db_search_topic_pick", None)
         context.user_data.pop("db_search_weak_ids", None)
         return await _send_db_search_prompt(update, user_id, None)
-    if action in {"db_search_matches", "db_search_weak_words"} or text == SEND_LEARN_TEXT:
+    if action in {"db_search_matches", "db_search_weak_words", "db_search_topic_words"} or text == SEND_LEARN_TEXT:
         return await db_search_input(update, context)
     if text in {QUIZ_FIELDS_TEXT, "delete"}:
         return await add_edit(update, context)

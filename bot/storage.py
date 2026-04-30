@@ -3275,6 +3275,23 @@ def list_all_words(db_path):
     return [_row_to_entry(row) for row in rows]
 
 
+def list_words_by_topic(db_path, topic):
+    """Handle list words by topic."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian
+            , ukrainian, english, topic
+            FROM words
+            WHERE topic = ?
+            ORDER BY created_at ASC
+            """,
+            (_safe_text(topic),),
+        ).fetchall()
+    return [_row_to_entry(row) for row in rows]
+
+
 def list_sm2_weak_words(db_path, user_id, mode, min_wrong_streak=4):
     """Handle list sm2 weak words."""
     init_db(db_path)
