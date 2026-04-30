@@ -2143,13 +2143,11 @@ def learning_mark_preview_next(db_path, user_id, word_id, first_interval_seconds
     return True
 
 
-def learning_due_entry(db_path, user_id):
+def learning_due_entry(db_path, user_id, exclude_word_id=None):
     """Handle learning due entry."""
     init_db(db_path)
     now_iso = _utc_now_iso()
-    with _connect(db_path) as conn:
-        row = conn.execute(
-            """
+    base_query = """
             SELECT
                 w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ,
                 w.russian, w.ukrainian, w.english, w.topic,
@@ -2162,14 +2160,33 @@ def learning_due_entry(db_path, user_id):
               AND li.status = 'active'
               AND li.preview_done = 1
               AND li.next_due <= ?
+    """
+    order_clause = """
             ORDER BY
               CASE WHEN li.step_index = 0 THEN 0 ELSE 1 END ASC,
               CASE WHEN li.step_index = 0 THEN li.created_at ELSE NULL END ASC,
               CASE WHEN li.step_index > 0 THEN RANDOM() ELSE 0 END
             LIMIT 1
-            """,
-            (int(user_id), now_iso),
-        ).fetchone()
+    """
+    with _connect(db_path) as conn:
+        row = None
+        if exclude_word_id:
+            row = conn.execute(
+                f"""
+                {base_query}
+                  AND w.id != ?
+                {order_clause}
+                """,
+                (int(user_id), now_iso, _safe_text(exclude_word_id)),
+            ).fetchone()
+        if row is None:
+            row = conn.execute(
+                f"""
+                {base_query}
+                {order_clause}
+                """,
+                (int(user_id), now_iso),
+            ).fetchone()
     return _row_to_entry(row) if row else None
 
 

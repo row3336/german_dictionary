@@ -2025,9 +2025,11 @@ async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return LEARNING_QUIZ
 
-    entry = learning_due_entry(get_db_path(), user_id=user_id)
+    last_learning_word_id = context.user_data.get("last_learning_prompt_word_id")
+    entry = learning_due_entry(get_db_path(), user_id=user_id, exclude_word_id=last_learning_word_id)
     if not entry:
         context.user_data["learning_preview_mode"] = False
+        context.user_data.pop("last_learning_prompt_word_id", None)
         if prefix_text:
             await update.message.reply_text(prefix_text, parse_mode="Markdown")
         await update.message.reply_text(
@@ -2040,6 +2042,7 @@ async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TY
         return LEARNING_QUIZ
     context.user_data["quiz_entry"] = entry
     context.user_data["learning_preview_mode"] = False
+    context.user_data["last_learning_prompt_word_id"] = entry.get("id")
     prompt_text = _format_ru_question(entry, _user_dict_lang(user_id))
     if prefix_text:
         prompt_text = f"{prefix_text}\n\n{prompt_text}"
