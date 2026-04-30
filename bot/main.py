@@ -3940,7 +3940,11 @@ def _pick_due_entry(context, user_id, mode, word_type=None):
         learning_pool = []
         sm2_pool = []
         for item in entries:
-            if str(item.get("learning_done_at") or "").strip():
+            srs = item.get("srs") or {}
+            reps = int(srs.get("repetitions", 0) or 0)
+            has_non_learning = bool(item.get("has_non_learning_history"))
+            # Fresh = moved from learning and has no non-learning history yet.
+            if str(item.get("learning_done_at") or "").strip() and not has_non_learning and reps <= 1:
                 learning_pool.append(item)
             else:
                 sm2_pool.append(item)
@@ -3951,7 +3955,7 @@ def _pick_due_entry(context, user_id, mode, word_type=None):
             if learning_pool:
                 mixed.append(learning_pool.pop(0))
             if sm2_pool:
-                take = random.randint(1, 2)
+                take = random.randint(2, 3)
                 for _ in range(take):
                     if not sm2_pool:
                         break

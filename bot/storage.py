@@ -8,6 +8,7 @@ from pathlib import Path
 
 DEFAULT_EASE = 2.5
 MIN_EASE = 1.3
+MAX_EASE = 3.5
 WEAK_ACTIVE_MIN_ERRORS = 2
 WEAK_ACTIVE_MIN_STREAK_WRONG = 2
 WEAK_ACTIVE_CLEAR_STREAK = 3
@@ -570,6 +571,8 @@ def _row_to_entry(row):
         entry["learning_batch_id"] = row["learning_batch_id"] or ""
     if "learning_done_at" in row.keys():
         entry["learning_done_at"] = row["learning_done_at"] or ""
+    if "has_non_learning_history" in row.keys():
+        entry["has_non_learning_history"] = bool(row["has_non_learning_history"])
     return entry
 
 
@@ -1766,6 +1769,13 @@ def select_due(db_path, user_id, mode, word_type=None, topics=None, today=None):
         SELECT
             w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ, w.russian,
             w.ukrainian, w.english, w.topic, ldone.done_at AS learning_done_at,
+            CASE WHEN EXISTS (
+                SELECT 1
+                FROM quiz_events qe
+                WHERE qe.user_id = ?
+                  AND qe.word_id = w.id
+                  AND qe.mode != 'learning'
+            ) THEN 1 ELSE 0 END AS has_non_learning_history,
             p.interval AS p_interval, p.repetitions AS p_repetitions, p.ease AS p_ease, p.due AS p_due
         FROM words w
         LEFT JOIN progress p
@@ -1785,7 +1795,7 @@ def select_due(db_path, user_id, mode, word_type=None, topics=None, today=None):
             w.created_at ASC
     """
 
-    params = [int(user_id), mode, int(user_id)] + where_params
+    params = [int(user_id), mode, int(user_id), int(user_id)] + where_params
     with _connect(db_path) as conn:
         rows = conn.execute(query, tuple(params)).fetchall()
 
@@ -1798,7 +1808,7 @@ def select_due(db_path, user_id, mode, word_type=None, topics=None, today=None):
 
 
 def update_sm2(srs, quality, today=None, interval_divisor=1.0):
-    """Handle update sm2."""
+    """Handle FSRS-like update in existing SM2 storage format."""
     if today is None:
         today = date.today()
 
@@ -1809,26 +1819,28 @@ def update_sm2(srs, quality, today=None, interval_divisor=1.0):
         interval_divisor = 1.0
     if interval_divisor <= 0:
         interval_divisor = 1.0
-    interval = int(srs.get("interval", 1))
-    repetitions = int(srs.get("repetitions", 0))
+    interval = max(1, int(srs.get("interval", 1)))
+    repetitions = max(0, int(srs.get("repetitions", 0)))
     ease = float(srs.get("ease", DEFAULT_EASE))
+    ease = max(MIN_EASE, min(MAX_EASE, ease))
 
     if quality < 3:
-        repetitions = 0
-        interval = 1
+        # Softer than classic SM2 reset: step back one stage and shorten interval.
+        repetitions = max(0, repetitions - 1)
+        ease = max(MIN_EASE, ease - 0.25)
+        interval = max(1, int(round(interval * 0.4)))
     else:
-        if repetitions == 0:
-            interval = 2
-        elif repetitions == 1:
-            interval = 6
-        else:
-            interval = int(round(interval * ease))
         repetitions += 1
-
-    ease = ease + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02))
-    ease = max(MIN_EASE, ease)
-
-    interval = max(1, int(interval / interval_divisor))
+        ease = min(MAX_EASE, ease + 0.05 * (quality - 3))
+        if repetitions == 1:
+            interval = 1
+        elif repetitions == 2:
+            interval = 3
+        else:
+            growth = 1.7 + (ease - DEFAULT_EASE) * 0.35 + (quality - 3) * 0.08
+            growth = max(1.3, min(2.3, growth))
+            effective_growth = 1.0 + ((growth - 1.0) / interval_divisor)
+            interval = max(1, int(round(interval * effective_growth)))
     due = today + timedelta(days=interval)
     return {
         "interval": interval,
