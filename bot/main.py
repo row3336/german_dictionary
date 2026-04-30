@@ -4407,6 +4407,20 @@ def _ai_prompt(word, clarification):
     )
 
 
+def _split_leading_article(raw_word):
+    """Extract leading der/die/das article from raw input."""
+    text = str(raw_word or "").strip()
+    if not text:
+        return "", ""
+    parts = text.split(None, 1)
+    if len(parts) < 2:
+        return "", text
+    first = parts[0].strip().lower()
+    if first not in {"der", "die", "das"}:
+        return "", text
+    return first, parts[1].strip()
+
+
 def _ai_precheck_prompt(word):
     """Handle ai precheck prompt."""
     return (
@@ -4620,8 +4634,10 @@ def _format_ai_preview(entry, dict_lang, has_synonym=False):
 async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, word, clarification):
     """Handle process ai word."""
     has_queue = bool(context.user_data.get("add_queue"))
+    forced_article, normalized_word = _split_leading_article(word)
+    lookup_word = normalized_word if forced_article and normalized_word else word
 
-    reject_reason = _prefilter_reject_reason(word)
+    reject_reason = _prefilter_reject_reason(lookup_word)
     if reject_reason:
         if has_queue:
             logging.info("Queue skip filtered word: %s", word)
@@ -4633,7 +4649,7 @@ async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, w
         )
         return ADD_INPUT
 
-    existing = find_existing_word(get_db_path(), word)
+    existing = find_existing_word(get_db_path(), lookup_word)
     if existing:
         existing_type = existing.get("type", "word")
         existing_value = existing.get("infinitive", "") if existing_type == "verb" else existing.get("german", "")
@@ -4656,7 +4672,11 @@ async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, w
         return MENU
 
     context.user_data["pending_word"] = word
-    prompt_text = _ai_prompt(word, clarification)
+    ai_word = lookup_word
+    extra_note = ""
+    if forced_article:
+        extra_note = f" Input already includes article '{forced_article}'. Keep this article and do not infer another one."
+    prompt_text = _ai_prompt(ai_word, f"{clarification or ''}{extra_note}".strip())
     context.user_data["last_ai_prompt"] = prompt_text
     try:
         response_text = generate_fields(prompt_text)
@@ -4689,6 +4709,11 @@ async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, w
         return ADD_CLARIFY
 
     entry = _normalize_ai_entry(entry)
+    if forced_article and entry.get("type") == "nomen":
+        entry["article"] = forced_article
+        german = str(entry.get("german", "")).strip()
+        _, german_no_article = _split_leading_article(german)
+        entry["german"] = german_no_article or german
     if _is_non_infinitive_verb_input(word, entry):
         inf = entry.get("infinitive", "")
         existing_inf = find_existing_word(get_db_path(), inf) if inf else None
