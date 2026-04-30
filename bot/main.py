@@ -123,6 +123,7 @@ from .storage import (
     search_word,
     has_translation_collision,
     list_all_words,
+    list_learning_active_words,
     list_words_by_topic,
     list_sm2_weak_words,
     get_synonym_group,
@@ -647,6 +648,7 @@ def _action_key_from_text(text, user_id):
         ("db_search", "db_search"),
         ("db_search_matches", "db_search_matches"),
         ("db_search_topic_words", "db_search_topic_words"),
+        ("db_search_topics_lern", "db_search_topics_lern"),
         ("db_search_weak_words", "db_search_weak_words"),
         ("settings", "settings"),
         ("info", "info"),
@@ -722,7 +724,10 @@ def _db_search_markup(user_id):
     """Handle db search markup."""
     lang = _user_interface_lang(user_id)
     return ReplyKeyboardMarkup(
-        [[t(lang, "db_search_matches"), t(lang, "db_search_topic_words"), t(lang, "db_search_weak_words"), t(lang, "back")]],
+        [
+            [t(lang, "db_search_matches"), t(lang, "db_search_topic_words"), t(lang, "db_search_topics_lern"), t(lang, "db_search_weak_words")],
+            [t(lang, "back")],
+        ],
         resize_keyboard=True,
     )
 
@@ -758,8 +763,8 @@ def _db_search_topic_markup(user_id):
     return ReplyKeyboardMarkup(rows, resize_keyboard=True), topics
 
 
-def _format_topic_words_line(entry, dict_lang):
-    """Handle format topic words line."""
+def _format_topic_words_line(entry):
+    """Handle format topic words line (base form only)."""
     entry_type = str(entry.get("type", "")).strip().lower()
     if entry_type == "verb":
         base = str(entry.get("infinitive", "")).strip()
@@ -768,8 +773,21 @@ def _format_topic_words_line(entry, dict_lang):
     if entry_type == "nomen":
         article = str(entry.get("article", "")).strip()
         base = f"{article} {base}".strip() if article else base
-    translation = _entry_translation(entry, dict_lang)
-    return f"{base} [{entry_type}] - {translation}"
+    return f"{base} [{entry_type}]"
+
+
+def _format_topic_learning_line(entry):
+    """Handle format learning line grouped by topic."""
+    entry_type = str(entry.get("type", "")).strip().lower()
+    topic = str(entry.get("topic", "")).strip() or "-"
+    if entry_type == "verb":
+        base = str(entry.get("infinitive", "")).strip()
+    else:
+        base = str(entry.get("german", "")).strip()
+    if entry_type == "nomen":
+        article = str(entry.get("article", "")).strip()
+        base = f"{article} {base}".strip() if article else base
+    return f"[{topic}] - [{base}]"
 
 
 def _split_text_chunks(text, max_size=3500):
@@ -1759,7 +1777,24 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not entries:
             return await _send_db_search_prompt(update, user_id, f"No words in topic {text}.")
         lines = [f"topic {text}: {len(entries)} words", ""]
-        lines.extend(_format_topic_words_line(entry, _user_dict_lang(user_id)) for entry in entries)
+        lines.extend(_format_topic_words_line(entry) for entry in entries)
+        chunks = _split_text_chunks("\n".join(lines))
+        for idx, chunk in enumerate(chunks):
+            markup = _db_search_markup(user_id) if idx == len(chunks) - 1 else None
+            await update.message.reply_text(
+                f"```text\n{chunk}\n```",
+                reply_markup=markup,
+                parse_mode="Markdown",
+            )
+        return DB_SEARCH
+    if action == "db_search_topics_lern":
+        context.user_data.pop("db_search_topic_pick", None)
+        context.user_data.pop("db_search_weak_ids", None)
+        entries = list_learning_active_words(get_db_path(), user_id=user_id)
+        if not entries:
+            return await _send_db_search_prompt(update, user_id, "No words in learning queue.")
+        lines = [f"learning queue: {len(entries)} words", ""]
+        lines.extend(_format_topic_learning_line(entry) for entry in entries)
         chunks = _split_text_chunks("\n".join(lines))
         for idx, chunk in enumerate(chunks):
             markup = _db_search_markup(user_id) if idx == len(chunks) - 1 else None
@@ -1858,7 +1893,7 @@ async def db_search_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("db_search_topic_pick", None)
         context.user_data.pop("db_search_weak_ids", None)
         return await _send_db_search_prompt(update, user_id, None)
-    if action in {"db_search_matches", "db_search_weak_words", "db_search_topic_words"} or text == SEND_LEARN_TEXT:
+    if action in {"db_search_matches", "db_search_weak_words", "db_search_topic_words", "db_search_topics_lern"} or text == SEND_LEARN_TEXT:
         return await db_search_input(update, context)
     if text in {QUIZ_FIELDS_TEXT, "delete"}:
         return await add_edit(update, context)

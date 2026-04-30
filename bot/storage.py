@@ -3292,6 +3292,30 @@ def list_words_by_topic(db_path, topic):
     return [_row_to_entry(row) for row in rows]
 
 
+def list_learning_active_words(db_path, user_id):
+    """Handle list active learning words."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.russian
+                , w.ukrainian, w.english, w.topic
+            FROM learning_items li
+            JOIN words w ON w.id = li.word_id
+            WHERE li.user_id = ?
+              AND li.status = 'active'
+            ORDER BY
+                CASE WHEN trim(coalesce(w.topic, '')) GLOB '[0-9]*' THEN 0 ELSE 1 END ASC,
+                CASE WHEN trim(coalesce(w.topic, '')) GLOB '[0-9]*' THEN CAST(trim(w.topic) AS INTEGER) ELSE NULL END ASC,
+                w.topic ASC,
+                li.created_at ASC
+            """,
+            (int(user_id),),
+        ).fetchall()
+    return [_row_to_entry(row) for row in rows]
+
+
 def list_sm2_weak_words(db_path, user_id, mode, min_wrong_streak=4):
     """Handle list sm2 weak words."""
     init_db(db_path)
