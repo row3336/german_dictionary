@@ -3316,6 +3316,44 @@ def list_learning_active_words(db_path, user_id):
     return [_row_to_entry(row) for row in rows]
 
 
+def list_learning_queue_words(db_path, user_id, topics=None):
+    """Handle list new words queued for learning (not touched, not in learning items)."""
+    init_db(db_path)
+    where_topics = ""
+    params = [int(user_id), int(user_id)]
+    if topics:
+        clean_topics = [_safe_text(x) for x in topics if _safe_text(x)]
+        if clean_topics:
+            placeholders = ",".join("?" for _ in clean_topics)
+            where_topics = f" AND w.topic IN ({placeholders})"
+            params.extend(clean_topics)
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.russian
+                , w.ukrainian, w.english, w.topic
+            FROM words w
+            WHERE NOT EXISTS (
+                SELECT 1 FROM quiz_events e
+                WHERE e.user_id = ? AND e.word_id = w.id
+            )
+              AND NOT EXISTS (
+                SELECT 1 FROM learning_items li
+                WHERE li.user_id = ? AND li.word_id = w.id
+              )
+            {where_topics}
+            ORDER BY
+                CASE WHEN trim(coalesce(w.topic, '')) GLOB '[0-9]*' THEN 0 ELSE 1 END ASC,
+                CASE WHEN trim(coalesce(w.topic, '')) GLOB '[0-9]*' THEN CAST(trim(w.topic) AS INTEGER) ELSE NULL END ASC,
+                w.topic ASC,
+                w.created_at ASC
+            """.format(where_topics=where_topics),
+            tuple(params),
+        ).fetchall()
+    return [_row_to_entry(row) for row in rows]
+
+
 def list_sm2_weak_words(db_path, user_id, mode, min_wrong_streak=4):
     """Handle list sm2 weak words."""
     init_db(db_path)

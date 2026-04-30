@@ -123,7 +123,7 @@ from .storage import (
     search_word,
     has_translation_collision,
     list_all_words,
-    list_learning_active_words,
+    list_learning_queue_words,
     list_words_by_topic,
     list_sm2_weak_words,
     get_synonym_group,
@@ -723,13 +723,19 @@ def _add_input_markup(user_id):
 def _db_search_markup(user_id):
     """Handle db search markup."""
     lang = _user_interface_lang(user_id)
-    return ReplyKeyboardMarkup(
-        [
-            [t(lang, "db_search_matches"), t(lang, "db_search_topic_words"), t(lang, "db_search_topics_lern"), t(lang, "db_search_weak_words")],
-            [t(lang, "back")],
-        ],
-        resize_keyboard=True,
-    )
+    actions = [
+        t(lang, "db_search_matches"),
+        t(lang, "db_search_topic_words"),
+        t(lang, "db_search_topics_lern"),
+        t(lang, "db_search_weak_words"),
+    ]
+    rows = [actions[i:i + 4] for i in range(0, len(actions), 4)]
+    back = t(lang, "back")
+    if rows and len(rows[-1]) < 4:
+        rows[-1].append(back)
+    else:
+        rows.append([back])
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 
 def _db_search_weak_markup(user_id):
@@ -757,9 +763,12 @@ def _db_search_topic_markup(user_id):
         if len(row) == 4:
             rows.append(row)
             row = []
+    back = t(lang, "back")
     if row:
+        row.append(back)
         rows.append(row)
-    rows.append([t(lang, "back")])
+    else:
+        rows.append([back])
     return ReplyKeyboardMarkup(rows, resize_keyboard=True), topics
 
 
@@ -1771,28 +1780,28 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if text not in topics:
             await update.message.reply_text("Choose topic:", reply_markup=markup)
             return DB_SEARCH
-        context.user_data.pop("db_search_topic_pick", None)
         context.user_data.pop("db_search_weak_ids", None)
         entries = list_words_by_topic(get_db_path(), text)
         if not entries:
-            return await _send_db_search_prompt(update, user_id, f"No words in topic {text}.")
+            await update.message.reply_text(f"No words in topic {text}.", reply_markup=markup)
+            return DB_SEARCH
         lines = [f"topic {text}: {len(entries)} words", ""]
         lines.extend(_format_topic_words_line(entry) for entry in entries)
         chunks = _split_text_chunks("\n".join(lines))
         for idx, chunk in enumerate(chunks):
-            markup = _db_search_markup(user_id) if idx == len(chunks) - 1 else None
+            reply_markup = markup if idx == len(chunks) - 1 else None
             await update.message.reply_text(
                 f"```text\n{chunk}\n```",
-                reply_markup=markup,
+                reply_markup=reply_markup,
                 parse_mode="Markdown",
             )
         return DB_SEARCH
     if action == "db_search_topics_lern":
         context.user_data.pop("db_search_topic_pick", None)
         context.user_data.pop("db_search_weak_ids", None)
-        entries = list_learning_active_words(get_db_path(), user_id=user_id)
+        entries = list_learning_queue_words(get_db_path(), user_id=user_id)
         if not entries:
-            return await _send_db_search_prompt(update, user_id, "No words in learning queue.")
+            return await _send_db_search_prompt(update, user_id, "No new queued words for learning.")
         lines = [f"learning queue: {len(entries)} words", ""]
         lines.extend(_format_topic_learning_line(entry) for entry in entries)
         chunks = _split_text_chunks("\n".join(lines))
