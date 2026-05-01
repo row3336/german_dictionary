@@ -1,5 +1,6 @@
 
 import asyncio
+import html
 import logging
 import os
 import random
@@ -2444,32 +2445,53 @@ def _normalize_proxy_input(raw):
 
 
 def _vf_parse_noun(html_text):
-    body = re.sub(r"<[^>]+>", " ", html_text or "")
-    body = re.sub(r"\s+", " ", body).strip().lower()
+    text = html_text or ""
     article = ""
-    for cand in ("der ", "die ", "das "):
-        m = re.search(rf"\b{cand}([a-zäöüß-]+)\b", body)
-        if m:
-            article = cand.strip()
-            break
     plural = ""
-    m_plural = re.search(r"\bplural\b[:\s]+([a-zäöüß\-/ ]{2,60})", body)
+    m_article = re.search(r'The article is "((?:der|die|das)\s+[^"]+)"', text, flags=re.IGNORECASE)
+    if m_article:
+        phrase = m_article.group(1).strip()
+        parts = phrase.split()
+        if parts:
+            article = parts[0].lower()
+    m_plural = re.search(r'nominative plural "([^"]+)"', text, flags=re.IGNORECASE)
     if m_plural:
         plural = m_plural.group(1).strip()
+    if not article or not plural:
+        body = re.sub(r"<[^>]+>", " ", text)
+        body = html.unescape(body)
+        body = re.sub(r"\s+", " ", body).strip()
+        if not article:
+            m2 = re.search(r'\bThe article is "((?:der|die|das)\s+[^"]+)"', body, flags=re.IGNORECASE)
+            if m2:
+                article = m2.group(1).split()[0].lower()
+        if not plural:
+            m2 = re.search(r'\bnominative plural "([^"]+)"', body, flags=re.IGNORECASE)
+            if m2:
+                plural = m2.group(1).strip()
     return {"article": article, "plural": plural}
 
 
 def _vf_parse_verb(html_text):
-    body = re.sub(r"<[^>]+>", " ", html_text or "")
-    body = re.sub(r"\s+", " ", body).strip().lower()
+    text = html_text or ""
     pr = ""
     p2 = ""
-    m_pr = re.search(r"\bpr[äa]teritum\b[:\s]+([a-zäöüß\-/ ]{2,80})", body)
-    if m_pr:
-        pr = m_pr.group(1).strip()
-    m_p2 = re.search(r"\bpartizip ii\b[:\s]+([a-zäöüß\-/ ]{2,80})", body)
-    if m_p2:
-        p2 = m_p2.group(1).strip()
+    m = re.search(r'<p[^>]+id="stammformen"[^>]*>(.*?)</p>', text, flags=re.IGNORECASE | re.DOTALL)
+    if m:
+        chunk = m.group(1)
+        chunk = re.sub(r"<a[^>]*>.*?</a>", " ", chunk, flags=re.IGNORECASE | re.DOTALL)
+        chunk = re.sub(r"<[^>]+>", "", chunk)
+        chunk = html.unescape(chunk)
+        chunk = re.sub(r"\s+", " ", chunk).strip()
+        parts = [x.strip() for x in chunk.split("·") if x.strip()]
+        if len(parts) >= 2:
+            pr = re.sub(r"[^A-Za-zÄÖÜäöüß -]+", "", parts[1]).strip()
+        if len(parts) >= 3:
+            p2_raw = re.sub(r"[^A-Za-zÄÖÜäöüß -]+", "", parts[2]).strip()
+            p2_tokens = [t for t in p2_raw.split() if t]
+            if p2_tokens and p2_tokens[0].lower() in {"hat", "haben", "ist", "sein"}:
+                p2_tokens = p2_tokens[1:]
+            p2 = " ".join(p2_tokens).strip()
     return {"prateritum": pr, "partizip2": p2}
 
 
