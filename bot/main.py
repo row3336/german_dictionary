@@ -6,6 +6,7 @@ import random
 import re
 import shutil
 import subprocess
+import time as time_mod
 from logging.handlers import TimedRotatingFileHandler
 from datetime import date, datetime, time, timedelta, timezone
 
@@ -142,6 +143,13 @@ from .storage import (
     set_progress,
     update_word_fields,
     list_pending_word_flags,
+    list_vf_candidates,
+    save_vf_check_result,
+    list_latest_vf_mismatches,
+    approve_vf_checks,
+    list_approved_vf_checks,
+    mark_vf_check_applied,
+    list_latest_vf_retryable,
     is_banned_word,
     log_quiz_event,
     reset_periodicity,
@@ -213,6 +221,21 @@ SYN_REMOVE_TEXT = "remove"
 SYN_AUTO_TEXT = "auto by"
 SYN_CLEAR_TEXT = "clear group"
 SYN_FLAG_TEXT = "flag!"
+PARSE_VF_TEXT = "parse_VF"
+VF_SET_PROXY_TEXT = "set_proxy"
+VF_TEST_PROXY_TEXT = "test_proxy"
+VF_SET_SLEEP_TEXT = "set_sleep"
+VF_SET_JITTER_TEXT = "set_jitter"
+VF_DRY_RUN_NEW_TEXT = "dry_run_new"
+VF_DRY_RUN_ALL_TEXT = "dry_run_all"
+VF_SHOW_DIFF_TEXT = "show_diff"
+VF_APPROVE_TEXT = "approve_ids"
+VF_APPLY_TEXT = "apply_approved"
+VF_VERIFY_TEXT = "verify_changes"
+VF_RETRY_TEXT = "retry_failed"
+VF_PROXY_KEY = "vf_proxy"
+VF_SLEEP_KEY = "vf_sleep_sec"
+VF_JITTER_KEY = "vf_jitter_pct"
 SYN_CONFIRM_TEXT = "Confirm"
 SYN_CANCEL_TEXT = "Cancel"
 QUIZ_FIELDS_TEXT = "fields"
@@ -323,7 +346,7 @@ def _settings_menu_keys(user_id):
     """Handle settings menu keys."""
     lang = _user_interface_lang(user_id)
     return [
-        ["flags!", t(lang, "algo_settings")],
+        [PARSE_VF_TEXT, t(lang, "algo_settings")],
         [t(lang, "interface_lang_btn"), t(lang, "dict_lang_btn")],
         [t(lang, "dump"), t(lang, "back")],
     ]
@@ -689,6 +712,7 @@ def _action_key_from_text(text, user_id):
     mapping[LEARNING_RESET_TEXT] = "learning_reset"
     mapping[SEND_LEARN_TEXT] = "send_learn"
     mapping["flags!"] = "review_flags"
+    mapping[PARSE_VF_TEXT] = "review_flags"
     mapping["Back"] = "back"
     mapping["Stop"] = "stop"
     return mapping.get(text.strip(), "")
@@ -2312,13 +2336,212 @@ async def quiz_verb_weak_menu_choice(update: Update, context: ContextTypes.DEFAU
     return QUIZ_VERB_WEAK_MENU
 
 
+def _vf_menu_markup():
+    """Build compact VF menu keyboard."""
+    items = [
+        VF_SET_PROXY_TEXT,
+        VF_TEST_PROXY_TEXT,
+        VF_SET_SLEEP_TEXT,
+        VF_SET_JITTER_TEXT,
+        VF_DRY_RUN_NEW_TEXT,
+        VF_DRY_RUN_ALL_TEXT,
+        VF_SHOW_DIFF_TEXT,
+        VF_APPROVE_TEXT,
+        VF_APPLY_TEXT,
+        VF_VERIFY_TEXT,
+        VF_RETRY_TEXT,
+    ]
+    rows = [items[i:i + 4] for i in range(0, len(items), 4)]
+    if rows and len(rows[-1]) < 4:
+        rows[-1].append(BACK_TEXT)
+    else:
+        rows.append([BACK_TEXT])
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True)
+
+
+def _vf_settings_snapshot():
+    """Return vf parser settings."""
+    db_path = get_db_path()
+    proxy = _safe_text(get_setting(db_path, VF_PROXY_KEY, "")).strip()
+    sleep_sec = _get_int_setting(db_path, VF_SLEEP_KEY, 60)
+    jitter_pct = _get_int_setting(db_path, VF_JITTER_KEY, 20)
+    return proxy, max(1, sleep_sec), max(0, min(80, jitter_pct))
+
+
+def _safe_text(value):
+    return str(value or "")
+
+
+def _mask_proxy(proxy_url):
+    token = _safe_text(proxy_url).strip()
+    if "@" not in token:
+        return token
+    left, right = token.rsplit("@", 1)
+    if "://" in left and ":" in left:
+        scheme, creds = left.split("://", 1)
+        user = creds.split(":", 1)[0]
+        return f"{scheme}://{user}:***@{right}"
+    return f"***@{right}"
+
+
+def _vf_parse_noun(html_text):
+    body = re.sub(r"<[^>]+>", " ", html_text or "")
+    body = re.sub(r"\s+", " ", body).strip().lower()
+    article = ""
+    for cand in ("der ", "die ", "das "):
+        m = re.search(rf"\b{cand}([a-zäöüß-]+)\b", body)
+        if m:
+            article = cand.strip()
+            break
+    plural = ""
+    m_plural = re.search(r"\bplural\b[:\s]+([a-zäöüß\-/ ]{2,60})", body)
+    if m_plural:
+        plural = m_plural.group(1).strip()
+    return {"article": article, "plural": plural}
+
+
+def _vf_parse_verb(html_text):
+    body = re.sub(r"<[^>]+>", " ", html_text or "")
+    body = re.sub(r"\s+", " ", body).strip().lower()
+    pr = ""
+    p2 = ""
+    m_pr = re.search(r"\bpr[äa]teritum\b[:\s]+([a-zäöüß\-/ ]{2,80})", body)
+    if m_pr:
+        pr = m_pr.group(1).strip()
+    m_p2 = re.search(r"\bpartizip ii\b[:\s]+([a-zäöüß\-/ ]{2,80})", body)
+    if m_p2:
+        p2 = m_p2.group(1).strip()
+    return {"prateritum": pr, "partizip2": p2}
+
+
+def _vf_fetch_word(base_form, proxy_url, user_agent, timeout_sec=30):
+    url = f"https://www.verbformen.com/?w={base_form}"
+    cmd = [
+        "curl",
+        "-L",
+        "--compressed",
+        "-A",
+        user_agent,
+        "--max-time",
+        str(int(timeout_sec)),
+        "--fail-with-body",
+    ]
+    if proxy_url:
+        cmd.extend(["-x", proxy_url])
+    cmd.append(url)
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise RuntimeError((proc.stderr or proc.stdout or "curl failed").strip()[:300])
+    return proc.stdout
+
+
+def _vf_user_agent():
+    agents = [
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
+        "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    ]
+    return random.choice(agents)
+
+
+def _vf_compare(local_entry, remote_data):
+    word_type = (local_entry.get("type") or "").strip().lower()
+    diff = {}
+    if word_type == "nomen":
+        for key in ("article", "plural"):
+            local_v = _normalize_answer(local_entry.get(key, ""))
+            remote_v = _normalize_answer(remote_data.get(key, ""))
+            if remote_v and local_v != remote_v:
+                diff[key] = {"local": local_entry.get(key, ""), "remote": remote_data.get(key, "")}
+    elif word_type == "verb":
+        for key in ("prateritum", "partizip2"):
+            local_v = _normalize_answer(local_entry.get(key, ""))
+            remote_v = _normalize_answer(remote_data.get(key, ""))
+            if remote_v and local_v != remote_v:
+                diff[key] = {"local": local_entry.get(key, ""), "remote": remote_data.get(key, "")}
+    return diff
+
+
+def _vf_apply_single(db_path, row):
+    entry = get_word_by_id(db_path, row.get("word_id"))
+    if not entry:
+        return False
+    remote = row.get("remote_payload") or {}
+    updates = {}
+    if row.get("word_type") == "nomen":
+        for key in ("article", "plural"):
+            value = _safe_text(remote.get(key)).strip()
+            if value:
+                updates[key] = value
+    elif row.get("word_type") == "verb":
+        for key in ("prateritum", "partizip2"):
+            value = _safe_text(remote.get(key)).strip()
+            if value:
+                updates[key] = value
+    if not updates:
+        return False
+    updated = dict(entry)
+    updated.update(updates)
+    return bool(update_word_fields(db_path, entry.get("id"), updated))
+
+
+async def _send_vf_menu(update, prefix_text=None):
+    proxy, sleep_sec, jitter_pct = _vf_settings_snapshot()
+    lines = [
+        "parse_VF:",
+        f"proxy = {_mask_proxy(proxy) or '-'}",
+        f"sleep = {sleep_sec}s",
+        f"jitter = {jitter_pct}%",
+        "",
+        "approve format: approve 12,19,25",
+    ]
+    text = "\n".join(lines)
+    if prefix_text:
+        text = f"{prefix_text}\n\n{text}"
+    await update.message.reply_text(text, reply_markup=_vf_menu_markup())
+    return SETTINGS_MENU
+
+
 async def settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle settings menu choice."""
     text = update.message.text.strip()
     user_id = update.effective_user.id
     action = _action_key_from_text(text, user_id)
 
+    if context.user_data.get("vf_waiting") and action != "back":
+        wait = context.user_data.get("vf_waiting")
+        context.user_data.pop("vf_waiting", None)
+        if wait == "proxy":
+            set_setting(get_db_path(), VF_PROXY_KEY, text.strip())
+            return await _send_vf_menu(update, "✅ proxy saved")
+        if wait == "sleep":
+            try:
+                value = max(1, int(text.strip()))
+            except ValueError:
+                return await _send_vf_menu(update, "❌ sleep must be integer seconds")
+            set_setting(get_db_path(), VF_SLEEP_KEY, str(value))
+            return await _send_vf_menu(update, "✅ sleep saved")
+        if wait == "jitter":
+            try:
+                value = int(text.strip())
+            except ValueError:
+                return await _send_vf_menu(update, "❌ jitter must be integer percent")
+            value = max(0, min(80, value))
+            set_setting(get_db_path(), VF_JITTER_KEY, str(value))
+            return await _send_vf_menu(update, "✅ jitter saved")
+
+    if context.user_data.get("vf_menu") and (text == BACK_TEXT or action == "back"):
+        context.user_data.pop("vf_menu", None)
+        context.user_data.pop("vf_waiting", None)
+        await update.message.reply_text(
+            t(_user_interface_lang(user_id), "settings_title"),
+            reply_markup=ReplyKeyboardMarkup(_settings_menu_keys(user_id), resize_keyboard=True),
+        )
+        return SETTINGS_MENU
+
     if action == "back":
+        context.user_data.pop("vf_waiting", None)
+        context.user_data.pop("vf_menu", None)
         return await _back_to_main_menu(update)
 
     if action == "interface_lang":
@@ -2338,26 +2561,166 @@ async def settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
         return DUMP_MENU
 
     if action == "review_flags":
-        items = list_pending_word_flags(get_db_path(), limit=500)
-        if not items:
-            await update.message.reply_text(
-                "✅ No flagged words.",
-                reply_markup=ReplyKeyboardMarkup(_settings_menu_keys(user_id), resize_keyboard=True),
-            )
+        context.user_data["vf_menu"] = True
+        return await _send_vf_menu(update)
+
+    if context.user_data.get("vf_menu"):
+        db_path = get_db_path()
+        proxy, sleep_sec, jitter_pct = _vf_settings_snapshot()
+
+        if text == VF_SET_PROXY_TEXT:
+            context.user_data["vf_waiting"] = "proxy"
+            await update.message.reply_text("Send proxy url:", reply_markup=ReplyKeyboardRemove())
             return SETTINGS_MENU
-        lines = []
-        for row in items:
-            word_type = row.get("type", "")
-            base = row.get("infinitive", "") if word_type == "verb" else row.get("german", "")
-            article = (row.get("article", "") or "").strip()
-            left = f"{article} {base}".strip()
-            right = _entry_translation(row, _user_dict_lang(user_id))
-            lines.append(f"{left} >> {right}")
-        chunks = _split_text_chunks("\n".join(lines))
-        for idx, chunk in enumerate(chunks):
-            markup = ReplyKeyboardMarkup(_settings_menu_keys(user_id), resize_keyboard=True) if idx == len(chunks) - 1 else None
-            await update.message.reply_text(chunk, reply_markup=markup)
-        return SETTINGS_MENU
+        if text == VF_SET_SLEEP_TEXT:
+            context.user_data["vf_waiting"] = "sleep"
+            await update.message.reply_text("Send sleep in seconds:", reply_markup=ReplyKeyboardRemove())
+            return SETTINGS_MENU
+        if text == VF_SET_JITTER_TEXT:
+            context.user_data["vf_waiting"] = "jitter"
+            await update.message.reply_text("Send jitter percent (0-80):", reply_markup=ReplyKeyboardRemove())
+            return SETTINGS_MENU
+
+        if text == VF_TEST_PROXY_TEXT:
+            if not proxy:
+                return await _send_vf_menu(update, "❌ proxy is required")
+            try:
+                _vf_fetch_word("Haus", proxy, _vf_user_agent(), timeout_sec=20)
+                return await _send_vf_menu(update, "✅ proxy ok")
+            except Exception as exc:
+                return await _send_vf_menu(update, f"❌ proxy failed: {exc}")
+
+        if text in {VF_DRY_RUN_NEW_TEXT, VF_DRY_RUN_ALL_TEXT, VF_RETRY_TEXT}:
+            if not proxy:
+                return await _send_vf_menu(update, "❌ proxy is required")
+            if text == VF_RETRY_TEXT:
+                retry_rows = list_latest_vf_retryable(db_path, user_id, limit=500)
+                ids = {row.get("word_id") for row in retry_rows}
+                candidates = [w for w in list_vf_candidates(db_path, user_id, only_unchecked=False, limit=0) if w.get("id") in ids]
+            else:
+                candidates = list_vf_candidates(
+                    db_path,
+                    user_id,
+                    only_unchecked=(text == VF_DRY_RUN_NEW_TEXT),
+                    limit=0,
+                )
+            if not candidates:
+                return await _send_vf_menu(update, "No candidates.")
+            checked = 0
+            mismatch = 0
+            match = 0
+            not_found = 0
+            errors = 0
+            for item in candidates:
+                word_type = item.get("type")
+                base = item.get("infinitive") if word_type == "verb" else item.get("german")
+                base = _safe_text(base).strip()
+                if not base:
+                    continue
+                local_payload = {}
+                if word_type == "nomen":
+                    local_payload = {"article": item.get("article", ""), "plural": item.get("plural", "")}
+                elif word_type == "verb":
+                    local_payload = {"prateritum": item.get("prateritum", ""), "partizip2": item.get("partizip2", "")}
+                try:
+                    html = _vf_fetch_word(base, proxy, _vf_user_agent(), timeout_sec=30)
+                    if "verbformen" not in html.lower():
+                        raise RuntimeError("unexpected response")
+                    remote = _vf_parse_noun(html) if word_type == "nomen" else _vf_parse_verb(html)
+                    if not any(_safe_text(v).strip() for v in remote.values()):
+                        status = "not_found"
+                        not_found += 1
+                        diff = {}
+                    else:
+                        diff = _vf_compare(item, remote)
+                        status = "mismatch" if diff else "match"
+                        mismatch += int(bool(diff))
+                        match += int(not diff)
+                    save_vf_check_result(
+                        db_path,
+                        user_id,
+                        item.get("id"),
+                        word_type,
+                        base,
+                        status,
+                        retryable=False,
+                        local_payload=local_payload,
+                        remote_payload=remote,
+                        diff_payload=diff,
+                        source_hash=item.get("vf_source_hash", ""),
+                    )
+                    checked += 1
+                except Exception as exc:
+                    save_vf_check_result(
+                        db_path,
+                        user_id,
+                        item.get("id"),
+                        word_type,
+                        base,
+                        "fetch_error",
+                        retryable=True,
+                        local_payload=local_payload,
+                        remote_payload={"error": str(exc)},
+                        diff_payload={},
+                        source_hash=item.get("vf_source_hash", ""),
+                    )
+                    errors += 1
+                time_mod.sleep(max(1, sleep_sec + random.randint(-max(0, int(sleep_sec * jitter_pct / 100)), max(0, int(sleep_sec * jitter_pct / 100)))))
+            return await _send_vf_menu(
+                update,
+                f"dry-run done: checked={checked}, match={match}, mismatch={mismatch}, not_found={not_found}, fetch_error={errors}",
+            )
+
+        if text == VF_SHOW_DIFF_TEXT:
+            rows = list_latest_vf_mismatches(db_path, user_id, limit=300)
+            if not rows:
+                return await _send_vf_menu(update, "No mismatches.")
+            lines = ["mismatches (use: approve id1,id2):"]
+            for row in rows:
+                diff = row.get("diff_payload") or {}
+                fields = ",".join(sorted(diff.keys())) or "-"
+                lines.append(f"{row['id']}: {row.get('base_form','')} [{row.get('word_type','')}] -> {fields}")
+            chunks = _split_text_chunks("\n".join(lines))
+            for idx, chunk in enumerate(chunks):
+                markup = _vf_menu_markup() if idx == len(chunks) - 1 else None
+                await update.message.reply_text(f"```text\n{chunk}\n```", parse_mode="Markdown", reply_markup=markup)
+            return SETTINGS_MENU
+
+        if text.startswith("approve "):
+            raw = text.split(" ", 1)[1]
+            ids = [x.strip() for x in raw.replace(";", ",").split(",") if x.strip()]
+            changed = approve_vf_checks(db_path, user_id, ids)
+            return await _send_vf_menu(update, f"approved: {changed}")
+
+        if text == VF_APPLY_TEXT:
+            rows = list_approved_vf_checks(db_path, user_id, only_not_applied=True)
+            if not rows:
+                return await _send_vf_menu(update, "No approved rows.")
+            applied = 0
+            for row in rows:
+                if _vf_apply_single(db_path, row):
+                    applied += 1
+                mark_vf_check_applied(db_path, row.get("id"))
+            return await _send_vf_menu(update, f"applied: {applied}/{len(rows)}")
+
+        if text == VF_VERIFY_TEXT:
+            rows = list_approved_vf_checks(db_path, user_id, only_not_applied=False)
+            if not rows:
+                return await _send_vf_menu(update, "No approved history.")
+            ok = 0
+            bad = 0
+            for row in rows:
+                entry = get_word_by_id(db_path, row.get("word_id"))
+                if not entry:
+                    continue
+                diff = _vf_compare(entry, row.get("remote_payload") or {})
+                if diff:
+                    bad += 1
+                else:
+                    ok += 1
+            return await _send_vf_menu(update, f"verify: ok={ok}, still_diff={bad}")
+
+        return await _send_vf_menu(update, "Use parse_VF buttons.")
 
     if action == "suggested_words":
         suggestions_path = _create_suggestions_dump_file()

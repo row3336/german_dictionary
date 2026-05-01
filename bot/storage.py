@@ -375,6 +375,25 @@ def init_db(db_path):
                 payload TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
+
+            CREATE TABLE IF NOT EXISTS vf_checks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                word_id TEXT NOT NULL,
+                word_type TEXT NOT NULL,
+                base_form TEXT NOT NULL,
+                status TEXT NOT NULL,
+                retryable INTEGER NOT NULL DEFAULT 0,
+                local_payload TEXT NOT NULL DEFAULT '',
+                remote_payload TEXT NOT NULL DEFAULT '',
+                diff_payload TEXT NOT NULL DEFAULT '',
+                source_hash TEXT NOT NULL DEFAULT '',
+                approved INTEGER NOT NULL DEFAULT 0,
+                applied INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
+            );
             """
         )
         _ensure_schema(conn)
@@ -382,6 +401,28 @@ def init_db(db_path):
 
 def _ensure_schema(conn):
     """Handle ensure schema."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS vf_checks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            word_id TEXT NOT NULL,
+            word_type TEXT NOT NULL,
+            base_form TEXT NOT NULL,
+            status TEXT NOT NULL,
+            retryable INTEGER NOT NULL DEFAULT 0,
+            local_payload TEXT NOT NULL DEFAULT '',
+            remote_payload TEXT NOT NULL DEFAULT '',
+            diff_payload TEXT NOT NULL DEFAULT '',
+            source_hash TEXT NOT NULL DEFAULT '',
+            approved INTEGER NOT NULL DEFAULT 0,
+            applied INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
+        )
+        """
+    )
     word_cols = {
         row["name"] if isinstance(row, sqlite3.Row) else row[1]
         for row in conn.execute("PRAGMA table_info(words)").fetchall()
@@ -519,6 +560,32 @@ def _safe_text(value):
     if value is None:
         return ""
     return str(value)
+
+
+def _vf_source_hash(entry):
+    """Build deterministic hash source for VF checks."""
+    entry_type = _safe_text(entry.get("type")).strip().lower()
+    if entry_type == "nomen":
+        raw = "|".join(
+            [
+                entry_type,
+                _safe_text(entry.get("article")).strip().lower(),
+                _safe_text(entry.get("german")).strip().lower(),
+                _safe_text(entry.get("plural")).strip().lower(),
+            ]
+        )
+    elif entry_type == "verb":
+        raw = "|".join(
+            [
+                entry_type,
+                _safe_text(entry.get("infinitive")).strip().lower(),
+                _safe_text(entry.get("prateritum")).strip().lower(),
+                _safe_text(entry.get("partizip2")).strip().lower(),
+            ]
+        )
+    else:
+        raw = entry_type
+    return str(abs(hash(raw)))
 
 
 def _safe_int(value, default=0):
@@ -3673,3 +3740,198 @@ def create_template_from_word(raw_word):
         "partizip2": "",
         "russian": "",
     }
+
+
+def list_vf_candidates(db_path, user_id, only_unchecked=True, limit=0):
+    """List noun/verb words for VF check with optional unchanged skip."""
+    init_db(db_path)
+    candidates = []
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT id, type, article, german, plural, infinitive, prateritum, partizip2
+            , russian, ukrainian, english, topic
+            FROM words
+            WHERE type IN ('nomen', 'verb')
+            ORDER BY created_at ASC
+            """
+        ).fetchall()
+        for row in rows:
+            entry = _row_to_entry(row)
+            source_hash = _vf_source_hash(entry)
+            last = conn.execute(
+                """
+                SELECT source_hash
+                FROM vf_checks
+                WHERE user_id = ? AND word_id = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (int(user_id), _safe_text(entry.get("id"))),
+            ).fetchone()
+            if only_unchecked and last and _safe_text(last["source_hash"]) == source_hash:
+                continue
+            entry["vf_source_hash"] = source_hash
+            candidates.append(entry)
+            if limit and len(candidates) >= int(limit):
+                break
+    return candidates
+
+
+def save_vf_check_result(
+    db_path,
+    user_id,
+    word_id,
+    word_type,
+    base_form,
+    status,
+    retryable=False,
+    local_payload=None,
+    remote_payload=None,
+    diff_payload=None,
+    source_hash="",
+):
+    """Persist single VF check result."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO vf_checks (
+                user_id, word_id, word_type, base_form, status, retryable,
+                local_payload, remote_payload, diff_payload, source_hash, approved, applied, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, CURRENT_TIMESTAMP)
+            """,
+            (
+                int(user_id),
+                _safe_text(word_id),
+                _safe_text(word_type),
+                _safe_text(base_form),
+                _safe_text(status),
+                1 if retryable else 0,
+                json.dumps(local_payload or {}, ensure_ascii=False),
+                json.dumps(remote_payload or {}, ensure_ascii=False),
+                json.dumps(diff_payload or {}, ensure_ascii=False),
+                _safe_text(source_hash),
+            ),
+        )
+
+
+def list_latest_vf_mismatches(db_path, user_id, limit=200):
+    """Return latest mismatch rows per word."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            WITH latest AS (
+                SELECT MAX(id) AS id
+                FROM vf_checks
+                WHERE user_id = ?
+                GROUP BY word_id
+            )
+            SELECT c.*
+            FROM vf_checks c
+            JOIN latest l ON l.id = c.id
+            WHERE c.status = 'mismatch'
+            ORDER BY c.id DESC
+            LIMIT ?
+            """,
+            (int(user_id), int(limit)),
+        ).fetchall()
+    items = []
+    for row in rows:
+        item = dict(row)
+        for key in ("local_payload", "remote_payload", "diff_payload"):
+            raw = item.get(key)
+            try:
+                item[key] = json.loads(raw) if raw else {}
+            except Exception:
+                item[key] = {}
+        items.append(item)
+    return items
+
+
+def approve_vf_checks(db_path, user_id, ids):
+    """Mark selected vf check rows as approved."""
+    clean_ids = [int(x) for x in ids if str(x).strip().isdigit()]
+    if not clean_ids:
+        return 0
+    init_db(db_path)
+    placeholders = ",".join("?" for _ in clean_ids)
+    with _connect(db_path) as conn:
+        cur = conn.execute(
+            f"""
+            UPDATE vf_checks
+            SET approved = 1, updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = ? AND id IN ({placeholders})
+            """,
+            (int(user_id), *clean_ids),
+        )
+    return int(cur.rowcount or 0)
+
+
+def list_approved_vf_checks(db_path, user_id, only_not_applied=True):
+    """List approved checks to apply."""
+    init_db(db_path)
+    where = "WHERE user_id = ? AND approved = 1"
+    if only_not_applied:
+        where += " AND applied = 0"
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            f"""
+            SELECT *
+            FROM vf_checks
+            {where}
+            ORDER BY id ASC
+            """,
+            (int(user_id),),
+        ).fetchall()
+    items = []
+    for row in rows:
+        item = dict(row)
+        for key in ("local_payload", "remote_payload", "diff_payload"):
+            raw = item.get(key)
+            try:
+                item[key] = json.loads(raw) if raw else {}
+            except Exception:
+                item[key] = {}
+        items.append(item)
+    return items
+
+
+def mark_vf_check_applied(db_path, check_id):
+    """Mark VF check row as applied."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        conn.execute(
+            """
+            UPDATE vf_checks
+            SET applied = 1, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (int(check_id),),
+        )
+
+
+def list_latest_vf_retryable(db_path, user_id, limit=200):
+    """List latest retryable failures."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            WITH latest AS (
+                SELECT MAX(id) AS id
+                FROM vf_checks
+                WHERE user_id = ?
+                GROUP BY word_id
+            )
+            SELECT c.*
+            FROM vf_checks c
+            JOIN latest l ON l.id = c.id
+            WHERE c.retryable = 1
+            ORDER BY c.id DESC
+            LIMIT ?
+            """,
+            (int(user_id), int(limit)),
+        ).fetchall()
+    return [dict(row) for row in rows]
