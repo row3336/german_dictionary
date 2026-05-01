@@ -954,7 +954,10 @@ def _allowed_edit_fields(source):
 
 def _quiz_edit_root_markup(user_id):
     """Handle quiz edit root markup."""
-    return ReplyKeyboardMarkup([[QUIZ_FIELDS_TEXT], ["delete", t(_user_interface_lang(user_id), "back")]], resize_keyboard=True)
+    return ReplyKeyboardMarkup(
+        [[QUIZ_FIELDS_TEXT, SEND_LEARN_TEXT], ["delete", t(_user_interface_lang(user_id), "back")]],
+        resize_keyboard=True,
+    )
 
 
 def _dict_lang_tag(user_id):
@@ -1947,9 +1950,9 @@ async def db_search_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("db_search_topic_pick", None)
         context.user_data.pop("db_search_weak_ids", None)
         return await _send_db_search_prompt(update, user_id, None)
-    if action in {"db_search_matches", "db_search_weak_words", "db_search_topic_words", "db_search_topics_lern"} or text == SEND_LEARN_TEXT:
+    if action in {"db_search_matches", "db_search_weak_words", "db_search_topic_words", "db_search_topics_lern"}:
         return await db_search_input(update, context)
-    if text in {QUIZ_FIELDS_TEXT, "delete"}:
+    if text in {QUIZ_FIELDS_TEXT, SEND_LEARN_TEXT, "delete"}:
         return await add_edit(update, context)
     # Any other text is treated as a new search query.
     return await db_search_input(update, context)
@@ -3605,6 +3608,14 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=_edit_fields_markup("quiz"),
             )
             return ADD_EDIT
+        if token == SEND_LEARN_TEXT:
+            added = _send_entry_to_learning(update, context, entry_key="quiz_edit_entry")
+            context.user_data["edit_stage"] = "pick_scope"
+            state = context.user_data.get("edit_return_state")
+            prefix = "✅ Added to learning." if added else "Already in learning."
+            if state == DB_SEARCH_VIEW:
+                return await _send_db_search_prompt(update, update.effective_user.id, prefix)
+            return await _show_quiz_prompt_after_edit(update, context, prefix)
         if token == "delete":
             word_id = entry.get("id")
             if not word_id:
@@ -3643,7 +3654,7 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return await _send_db_search_prompt(update, update.effective_user.id, prefix)
             return await _back_to_tests(update, context)
         await update.message.reply_text(
-            "Use buttons: fields, delete, back.",
+            "Use buttons: fields, send_learn, delete, back.",
             reply_markup=_quiz_edit_root_markup(update.effective_user.id),
         )
         return ADD_EDIT
