@@ -3384,7 +3384,7 @@ def list_learning_active_words(db_path, user_id):
 
 
 def list_learning_queue_words(db_path, user_id, topics=None):
-    """Handle list new words queued for learning (not touched, not in learning items)."""
+    """Handle new words that have no first touch and are not completed in learning."""
     init_db(db_path)
     where_topics = ""
     params = [int(user_id), int(user_id)]
@@ -3407,7 +3407,7 @@ def list_learning_queue_words(db_path, user_id, topics=None):
             )
               AND NOT EXISTS (
                 SELECT 1 FROM learning_items li
-                WHERE li.user_id = ? AND li.word_id = w.id
+                WHERE li.user_id = ? AND li.word_id = w.id AND li.status = 'completed'
               )
             {where_topics}
             ORDER BY
