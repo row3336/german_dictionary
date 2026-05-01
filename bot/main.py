@@ -2412,6 +2412,31 @@ def _mask_proxy(proxy_url):
     return f"***@{right}"
 
 
+def _normalize_proxy_input(raw):
+    """Normalize proxy input to curl-compatible URL."""
+    token = _safe_text(raw).strip()
+    if not token:
+        return ""
+    if "://" in token:
+        return token
+    # Support host:port:user:pass format from proxy providers.
+    parts = token.split(":")
+    if len(parts) >= 4 and parts[1].isdigit():
+        host = parts[0].strip()
+        port = parts[1].strip()
+        user = parts[2].strip()
+        password = ":".join(parts[3:]).strip()
+        if host and port and user and password:
+            return f"socks5://{user}:{password}@{host}:{port}"
+    # Support host:port format (no auth), default to socks5.
+    if len(parts) == 2 and parts[1].isdigit():
+        host = parts[0].strip()
+        port = parts[1].strip()
+        if host and port:
+            return f"socks5://{host}:{port}"
+    return token
+
+
 def _vf_parse_noun(html_text):
     body = re.sub(r"<[^>]+>", " ", html_text or "")
     body = re.sub(r"\s+", " ", body).strip().lower()
@@ -2540,7 +2565,8 @@ async def settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
         wait = context.user_data.get("vf_waiting")
         context.user_data.pop("vf_waiting", None)
         if wait == "proxy":
-            set_setting(get_db_path(), VF_PROXY_KEY, text.strip())
+            proxy_value = _normalize_proxy_input(text.strip())
+            set_setting(get_db_path(), VF_PROXY_KEY, proxy_value)
             return await _send_vf_menu(update, "✅ proxy saved")
         if wait == "sleep":
             try:
