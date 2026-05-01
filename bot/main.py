@@ -6,7 +6,6 @@ import random
 import re
 import shutil
 import subprocess
-import time as time_mod
 from logging.handlers import TimedRotatingFileHandler
 from datetime import date, datetime, time, timedelta, timezone
 
@@ -234,9 +233,12 @@ VF_APPROVE_TEXT = "approve_ids"
 VF_APPLY_TEXT = "apply_approved"
 VF_VERIFY_TEXT = "verify_changes"
 VF_RETRY_TEXT = "retry_failed"
+VF_STOP_TEXT = "stop_parse"
 VF_PROXY_KEY = "vf_proxy"
 VF_SLEEP_KEY = "vf_sleep_sec"
 VF_JITTER_KEY = "vf_jitter_pct"
+VF_RUNNING_TASKS = {}
+VF_STOP_FLAGS = {}
 SYN_CONFIRM_TEXT = "Confirm"
 SYN_CANCEL_TEXT = "Cancel"
 QUIZ_FIELDS_TEXT = "fields"
@@ -2378,6 +2380,7 @@ def _vf_menu_markup():
         VF_APPLY_TEXT,
         VF_VERIFY_TEXT,
         VF_RETRY_TEXT,
+        VF_STOP_TEXT,
     ]
     rows = [items[i:i + 4] for i in range(0, len(items), 4)]
     if rows and len(rows[-1]) < 4:
@@ -2538,6 +2541,122 @@ def _vf_apply_single(db_path, row):
     return bool(update_word_fields(db_path, entry.get("id"), updated))
 
 
+async def _vf_run_dry_task(bot, chat_id, user_id, candidates, sleep_sec, jitter_pct, proxy, label):
+    """Run VF dry check in background with progress and stop support."""
+    db_path = get_db_path()
+    total = len(candidates)
+    nouns = sum(1 for x in candidates if (x.get("type") or "").strip().lower() == "nomen")
+    verbs = sum(1 for x in candidates if (x.get("type") or "").strip().lower() == "verb")
+    await bot.send_message(
+        chat_id=chat_id,
+        text=f"VF parse started ({label}). total={total}, nomen={nouns}, verb={verbs}",
+    )
+    checked = 0
+    mismatch = 0
+    match = 0
+    not_found = 0
+    errors = 0
+    ban_streak = 0
+    for item in candidates:
+        if VF_STOP_FLAGS.get(int(user_id)):
+            await bot.send_message(
+                chat_id=chat_id,
+                text=(
+                    f"VF parse stopped by user. checked={checked}/{total}, match={match}, "
+                    f"mismatch={mismatch}, not_found={not_found}, fetch_error={errors}"
+                ),
+            )
+            return
+        word_type = item.get("type")
+        base = item.get("infinitive") if word_type == "verb" else item.get("german")
+        base = _safe_text(base).strip()
+        if not base:
+            continue
+        local_payload = {}
+        if word_type == "nomen":
+            local_payload = {"article": item.get("article", ""), "plural": item.get("plural", "")}
+        elif word_type == "verb":
+            local_payload = {"prateritum": item.get("prateritum", ""), "partizip2": item.get("partizip2", "")}
+        try:
+            html = await asyncio.to_thread(_vf_fetch_word, base, proxy, _vf_user_agent(), 30)
+            if "verbformen" not in html.lower():
+                raise RuntimeError("unexpected response")
+            remote = _vf_parse_noun(html) if word_type == "nomen" else _vf_parse_verb(html)
+            if not any(_safe_text(v).strip() for v in remote.values()):
+                status = "not_found"
+                not_found += 1
+                diff = {}
+            else:
+                diff = _vf_compare(item, remote)
+                status = "mismatch" if diff else "match"
+                mismatch += int(bool(diff))
+                match += int(not diff)
+            ban_streak = 0
+            save_vf_check_result(
+                db_path,
+                user_id,
+                item.get("id"),
+                word_type,
+                base,
+                status,
+                retryable=False,
+                local_payload=local_payload,
+                remote_payload=remote,
+                diff_payload=diff,
+                source_hash=item.get("vf_source_hash", ""),
+            )
+            checked += 1
+        except Exception as exc:
+            errors += 1
+            checked += 1
+            ban_streak += 1
+            save_vf_check_result(
+                db_path,
+                user_id,
+                item.get("id"),
+                word_type,
+                base,
+                "fetch_error",
+                retryable=True,
+                local_payload=local_payload,
+                remote_payload={"error": str(exc)},
+                diff_payload={},
+                source_hash=item.get("vf_source_hash", ""),
+            )
+
+        if checked % 5 == 0 or checked == total:
+            progress = int((checked * 100) / total) if total else 100
+            await bot.send_message(
+                chat_id=chat_id,
+                text=(
+                    f"VF progress: {checked}/{total} ({progress}%) | "
+                    f"match={match}, mismatch={mismatch}, not_found={not_found}, fetch_error={errors}"
+                ),
+            )
+
+        if ban_streak >= 10:
+            await bot.send_message(
+                chat_id=chat_id,
+                text=(
+                    "Emergency stop: 10 consecutive fetch errors. "
+                    "Possible ban/rate-limit. Stop parsing now and adjust proxy/sleep."
+                ),
+            )
+            return
+
+        jitter = max(0, int(sleep_sec * jitter_pct / 100))
+        delay = max(1, sleep_sec + random.randint(-jitter, jitter))
+        await asyncio.sleep(delay)
+
+    await bot.send_message(
+        chat_id=chat_id,
+        text=(
+            f"VF parse done. checked={checked}/{total}, match={match}, "
+            f"mismatch={mismatch}, not_found={not_found}, fetch_error={errors}"
+        ),
+    )
+
+
 async def _send_vf_menu(update, prefix_text=None):
     proxy, sleep_sec, jitter_pct = _vf_settings_snapshot()
     lines = [
@@ -2647,6 +2766,9 @@ async def settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
         if text in {VF_DRY_RUN_NEW_TEXT, VF_DRY_RUN_ALL_TEXT, VF_RETRY_TEXT}:
             if not proxy:
                 return await _send_vf_menu(update, "❌ proxy is required")
+            running = VF_RUNNING_TASKS.get(int(user_id))
+            if running and not running.done():
+                return await _send_vf_menu(update, "Parser is already running. Use stop_parse.")
             if text == VF_RETRY_TEXT:
                 retry_rows = list_latest_vf_retryable(db_path, user_id, limit=500)
                 ids = {row.get("word_id") for row in retry_rows}
@@ -2660,70 +2782,29 @@ async def settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
                 )
             if not candidates:
                 return await _send_vf_menu(update, "No candidates.")
-            checked = 0
-            mismatch = 0
-            match = 0
-            not_found = 0
-            errors = 0
-            for item in candidates:
-                word_type = item.get("type")
-                base = item.get("infinitive") if word_type == "verb" else item.get("german")
-                base = _safe_text(base).strip()
-                if not base:
-                    continue
-                local_payload = {}
-                if word_type == "nomen":
-                    local_payload = {"article": item.get("article", ""), "plural": item.get("plural", "")}
-                elif word_type == "verb":
-                    local_payload = {"prateritum": item.get("prateritum", ""), "partizip2": item.get("partizip2", "")}
-                try:
-                    html = _vf_fetch_word(base, proxy, _vf_user_agent(), timeout_sec=30)
-                    if "verbformen" not in html.lower():
-                        raise RuntimeError("unexpected response")
-                    remote = _vf_parse_noun(html) if word_type == "nomen" else _vf_parse_verb(html)
-                    if not any(_safe_text(v).strip() for v in remote.values()):
-                        status = "not_found"
-                        not_found += 1
-                        diff = {}
-                    else:
-                        diff = _vf_compare(item, remote)
-                        status = "mismatch" if diff else "match"
-                        mismatch += int(bool(diff))
-                        match += int(not diff)
-                    save_vf_check_result(
-                        db_path,
-                        user_id,
-                        item.get("id"),
-                        word_type,
-                        base,
-                        status,
-                        retryable=False,
-                        local_payload=local_payload,
-                        remote_payload=remote,
-                        diff_payload=diff,
-                        source_hash=item.get("vf_source_hash", ""),
-                    )
-                    checked += 1
-                except Exception as exc:
-                    save_vf_check_result(
-                        db_path,
-                        user_id,
-                        item.get("id"),
-                        word_type,
-                        base,
-                        "fetch_error",
-                        retryable=True,
-                        local_payload=local_payload,
-                        remote_payload={"error": str(exc)},
-                        diff_payload={},
-                        source_hash=item.get("vf_source_hash", ""),
-                    )
-                    errors += 1
-                time_mod.sleep(max(1, sleep_sec + random.randint(-max(0, int(sleep_sec * jitter_pct / 100)), max(0, int(sleep_sec * jitter_pct / 100)))))
-            return await _send_vf_menu(
-                update,
-                f"dry-run done: checked={checked}, match={match}, mismatch={mismatch}, not_found={not_found}, fetch_error={errors}",
+            VF_STOP_FLAGS[int(user_id)] = False
+            label = "retry_failed" if text == VF_RETRY_TEXT else ("dry_run_new" if text == VF_DRY_RUN_NEW_TEXT else "dry_run_all")
+            task = asyncio.create_task(
+                _vf_run_dry_task(
+                    context.bot,
+                    update.effective_chat.id,
+                    int(user_id),
+                    candidates,
+                    sleep_sec,
+                    jitter_pct,
+                    proxy,
+                    label,
+                )
             )
+            VF_RUNNING_TASKS[int(user_id)] = task
+            return await _send_vf_menu(update, f"Started {label}. Running in background.")
+
+        if text == VF_STOP_TEXT:
+            running = VF_RUNNING_TASKS.get(int(user_id))
+            if not running or running.done():
+                return await _send_vf_menu(update, "No active parser task.")
+            VF_STOP_FLAGS[int(user_id)] = True
+            return await _send_vf_menu(update, "Stop requested. Waiting current request to finish...")
 
         if text == VF_SHOW_DIFF_TEXT:
             rows = list_latest_vf_mismatches(db_path, user_id, limit=300)
