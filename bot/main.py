@@ -63,6 +63,7 @@ from .app_config import (
     QUIZ_ARTICLE,
     QUIZ_ARTICLE_WEAK,
     QUIZ_DE_RU,
+    QUIZ_PL_SG,
     QUIZ_PARTIZIP2_WEAK,
     QUIZ_PLURAL_WEAK,
     QUIZ_PRATERITUM_WEAK,
@@ -241,6 +242,7 @@ SYN_CANCEL_TEXT = "Cancel"
 QUIZ_FIELDS_TEXT = "fields"
 QUIZ_RU_DE_TEXT = "Ru > De"
 QUIZ_DE_RU_TEXT = "De > Ru"
+QUIZ_PL_SG_TEXT = "pl > sg"
 LEARNING_TEXT = "Learning"
 LEARNING_START_TEXT = "learning session"
 LEARNING_ADD_TEXT = "add for learning"
@@ -317,10 +319,15 @@ def _mode_de_l1(user_id):
     return f"de_{dict_lang}"
 
 
+def _mode_pl_sg(user_id):
+    """Handle mode pl sg."""
+    return f"pl_sg_{_user_dict_lang(user_id)}"
+
+
 def _tests_menu_keys(user_id):
     """Handle tests menu keys."""
     return [
-        [LEARNING_TEXT, QUIZ_RU_DE_TEXT, QUIZ_DE_RU_TEXT],
+        [LEARNING_TEXT, QUIZ_RU_DE_TEXT, QUIZ_DE_RU_TEXT, QUIZ_PL_SG_TEXT],
         [t(_user_interface_lang(user_id), "back")],
     ]
 
@@ -704,6 +711,7 @@ def _action_key_from_text(text, user_id):
         mapping[t("en", key)] = action
     mapping[QUIZ_RU_DE_TEXT] = "quiz_l1_de"
     mapping[QUIZ_DE_RU_TEXT] = "quiz_de_l1"
+    mapping[QUIZ_PL_SG_TEXT] = "quiz_pl_sg"
     mapping[LEARNING_TEXT] = "learning"
     mapping[LEARNING_START_TEXT] = "learning_start"
     mapping[LEARNING_ADD_TEXT] = "learning_add"
@@ -1308,6 +1316,17 @@ async def _show_quiz_prompt_after_edit(update: Update, context: ContextTypes.DEF
             parse_mode="Markdown",
         )
         return QUIZ_DE_RU
+
+    if state == QUIZ_PL_SG:
+        text = _format_pl_sg_question(entry)
+        if prefix_text:
+            text = f"{prefix_text}\n\n{text}"
+        await update.message.reply_text(
+            text,
+            reply_markup=_quiz_markup(update.effective_user.id, article=False),
+            parse_mode="Markdown",
+        )
+        return QUIZ_PL_SG
 
     if state == QUIZ_ARTICLE:
         text = _format_article_question(entry)
@@ -2048,6 +2067,15 @@ async def tests_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             update,
             context,
             f"{QUIZ_DE_RU_TEXT}:\n\n{_topic_filter_banner()}",
+        )
+    if action == "quiz_pl_sg":
+        _reset_retry_state(context)
+        _clear_last_answer(context)
+        _reset_session(context, _mode_pl_sg(user_id))
+        return await _send_pl_sg_prompt(
+            update,
+            context,
+            f"{QUIZ_PL_SG_TEXT}:\n\n{_topic_filter_banner()}",
         )
     if action == "learning":
         return await _send_learning_menu(update, user_id)
@@ -3582,6 +3610,8 @@ async def _return_from_synonyms(update: Update, context: ContextTypes.DEFAULT_TY
         return await _send_ru_de_prompt(update, context, prefix)
     if return_state == QUIZ_DE_RU:
         return await _send_de_ru_prompt(update, context, prefix)
+    if return_state == QUIZ_PL_SG:
+        return await _send_pl_sg_prompt(update, context, prefix)
     if return_state == QUIZ_ARTICLE:
         return await _send_article_prompt(update, context, prefix)
     if return_state == QUIZ_ARTICLE_WEAK:
@@ -3748,6 +3778,8 @@ async def _flag_current_word(update: Update, context: ContextTypes.DEFAULT_TYPE,
         return await _show_quiz_prompt_after_edit(update, context, "✅ Flag saved.", state_override=QUIZ_RU_DE)
     if return_state == QUIZ_DE_RU:
         return await _show_quiz_prompt_after_edit(update, context, "✅ Flag saved.", state_override=QUIZ_DE_RU)
+    if return_state == QUIZ_PL_SG:
+        return await _show_quiz_prompt_after_edit(update, context, "✅ Flag saved.", state_override=QUIZ_PL_SG)
     if return_state == QUIZ_ARTICLE:
         return await _show_quiz_prompt_after_edit(update, context, "✅ Flag saved.", state_override=QUIZ_ARTICLE)
     if return_state == QUIZ_ARTICLE_WEAK:
@@ -3851,6 +3883,50 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     feedback = _format_feedback_de_ru(entry, ok, _user_dict_lang(update.effective_user.id))
     return await _send_de_ru_prompt(update, context, feedback)
+
+
+async def quiz_pl_sg(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle quiz plural to singular."""
+    text = update.message.text.strip()
+    action = _action_key_from_text(text, update.effective_user.id)
+    if action == "back":
+        return await _back_to_tests(update, context)
+    if action == "stop":
+        return await _stop_with_summary(update, context, _mode_pl_sg(update.effective_user.id))
+    if text == INPUT_ERR_TEXT:
+        applied = _apply_input_err(update, context, _mode_pl_sg(update.effective_user.id))
+        prefix = "✅ Fixed previous answer." if applied else "Nothing to fix."
+        return await _send_pl_sg_prompt(update, context, prefix)
+    if text == SEND_LEARN_TEXT:
+        added = _send_entry_to_learning(update, context, entry_key="quiz_entry")
+        prefix = "✅ Added to learning." if added else "Already in learning."
+        return await _send_pl_sg_prompt(update, context, prefix)
+    if text == FLAG_TEXT:
+        return await _flag_current_word(update, context, QUIZ_PL_SG)
+    if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
+        return await _start_quiz_edit(update, context, QUIZ_PL_SG)
+
+    entry = context.user_data.get("quiz_entry")
+    if not entry:
+        return await _send_pl_sg_prompt(update, context, None)
+    is_retry = bool(context.user_data.get("quiz_is_retry"))
+    if text == I_DONT_KNOW_TEXT:
+        ok = False
+    else:
+        expected = f"{_normalize_answer(entry.get('article', ''))} {_normalize_answer(entry.get('german', ''))}".strip()
+        got = _normalize_answer(text)
+        ok = got == expected
+    mode = _mode_pl_sg(update.effective_user.id)
+    if not is_retry:
+        _remember_last_answer(context, entry, mode, ok)
+        _update_srs_for_entry(update.effective_user.id, entry, mode, ok)
+        _mark_session_word(context, mode, entry.get("id"))
+    context.user_data["quiz_last_answered_entry"] = entry
+    _register_retry_result(context, mode, entry.get("id"), ok, is_retry)
+    if not is_retry and ok:
+        _set_retry_since_last(context, mode, _retry_since_last(context, mode) + 1)
+    feedback = _format_feedback_pl_sg(entry, ok)
+    return await _send_pl_sg_prompt(update, context, feedback)
 
 
 async def quiz_article(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -4309,6 +4385,34 @@ def _format_de_ru_question(entry):
     return "\n".join(lines)
 
 
+def _is_pl_sg_eligible(entry):
+    """Exclude nouns where plural and singular forms are identical and article is die."""
+    if _low_word(entry.get("type", "")) != "nomen":
+        return False
+    singular_article = _normalize_answer(entry.get("article", ""))
+    singular = _normalize_answer(entry.get("german", ""))
+    plural = _normalize_answer(entry.get("plural", ""))
+    if not singular or not plural:
+        return False
+    if singular_article == "die" and singular == plural:
+        return False
+    return True
+
+
+def _format_pl_sg_question(entry):
+    """Handle format plural->singular question."""
+    plural = _cap_word(entry.get("plural", ""))
+    return f">>    die {_md_escape(plural)} -> singular?"
+
+
+def _format_feedback_pl_sg(entry, ok):
+    """Handle format feedback plural->singular."""
+    status = "Correct ✅" if ok else "Wrong ❌"
+    article = str(entry.get("article", "")).strip()
+    german = _cap_word(entry.get("german", ""))
+    return f"{status} >>>     {_md_escape((article + ' ' + german).strip())}"
+
+
 def _format_article_question(entry):
     """Handle format article question."""
     return f">>     {_md_escape(_cap_word(entry.get('german', '')))} ?"
@@ -4455,7 +4559,7 @@ def _pick_due_entry(context, user_id, mode, word_type=None):
 
     last_ids = context.user_data.setdefault("last_quiz_ids", {})
     last_id = last_ids.get(mode)
-    is_sm2_mode = mode in {_mode_l1_de(user_id), _mode_de_l1(user_id)}
+    is_sm2_mode = mode in {_mode_l1_de(user_id), _mode_de_l1(user_id), _mode_pl_sg(user_id)}
 
     if is_sm2_mode:
         bucket = context.user_data.setdefault("sm2_cycle_queue", {})
@@ -4750,6 +4854,56 @@ async def _send_de_ru_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
         parse_mode="Markdown",
     )
     return QUIZ_DE_RU
+
+
+async def _send_pl_sg_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
+    """Handle send pl sg prompt."""
+    mode = _mode_pl_sg(update.effective_user.id)
+    entry = _maybe_take_retry_entry(context, mode)
+    if not entry:
+        context.user_data["quiz_is_retry"] = False
+        attempts = 0
+        entry = None
+        while attempts < 30:
+            attempts += 1
+            candidate = _pick_due_entry(context, update.effective_user.id, mode, word_type="nomen")
+            if not candidate:
+                break
+            if _is_pl_sg_eligible(candidate):
+                entry = candidate
+                break
+        if not entry and attempts > 0:
+            count = _session_count(context, mode)
+            if prefix_text:
+                await update.message.reply_text(prefix_text, parse_mode="Markdown")
+            await update.message.reply_text(f"session words = {count}")
+            await update.message.reply_text(
+                "No due plural>singular nouns.",
+                reply_markup=_quiz_idle_markup(update.effective_user.id),
+            )
+            return QUIZ_PL_SG
+    if not entry:
+        count = _session_count(context, mode)
+        if prefix_text:
+            await update.message.reply_text(prefix_text, parse_mode="Markdown")
+        await update.message.reply_text(f"session words = {count}")
+        await update.message.reply_text(
+            "No due words. Add more or wait until due date.",
+            reply_markup=_quiz_idle_markup(update.effective_user.id),
+        )
+        return QUIZ_PL_SG
+
+    context.user_data["quiz_entry"] = entry
+    prompt_text = _format_pl_sg_question(entry)
+    if prefix_text:
+        prompt_text = f"{prefix_text}\n\n{prompt_text}"
+
+    await update.message.reply_text(
+        prompt_text,
+        reply_markup=_quiz_markup(update.effective_user.id, article=False),
+        parse_mode="Markdown",
+    )
+    return QUIZ_PL_SG
 
 
 async def _send_article_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
@@ -5324,6 +5478,8 @@ def _interval_divisor_for_mode(user_id, mode):
     """Handle interval divisor for mode."""
     if mode == MODE_RU_DE:
         return 1.65
+    if mode == _mode_pl_sg(user_id):
+        return 1.65
     if mode == _mode_de_l1(user_id):
         return 2.0
     return 1.0
@@ -5798,6 +5954,7 @@ def main():
             ADD_EDIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_edit)],
             QUIZ_RU_DE: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_ru_de)],
             QUIZ_DE_RU: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_de_ru)],
+            QUIZ_PL_SG: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_pl_sg)],
             QUIZ_ARTICLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_article)],
             QUIZ_ARTICLE_WEAK: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_article_weak)],
             QUIZ_PLURAL_WEAK: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_plural_weak)],
