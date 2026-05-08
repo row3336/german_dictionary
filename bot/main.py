@@ -3511,8 +3511,9 @@ async def add_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["precheck_items"] = items
     await _reply_text_with_retry(
         update.message,
-        _format_precheck_list(items),
+        f"```text\n{_format_precheck_list(items)}\n```",
         reply_markup=ReplyKeyboardMarkup(PRECHECK_KEYS, resize_keyboard=True),
+        parse_mode="Markdown",
     )
     return ADD_PRECHECK
 
@@ -3692,8 +3693,9 @@ async def add_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["precheck_items"] = items
     await _reply_text_with_retry(
         update.message,
-        _format_precheck_list(items),
+        f"```text\n{_format_precheck_list(items)}\n```",
         reply_markup=ReplyKeyboardMarkup(PRECHECK_KEYS, resize_keyboard=True),
+        parse_mode="Markdown",
     )
     return ADD_PRECHECK
 
