@@ -100,6 +100,7 @@ NUMERIC_RE = re.compile(r"^\s*[+-]?(?:(?:\d{1,3}(?:[.,]\d{3})+)|\d+)(?:[.,]\d+)?
 ALLOWED_AI_TYPES = {
     "nomen",
     "verb",
+    "phrase",
     "adjektiv",
     "pronomen",
     "adverb",

@@ -1643,6 +1643,13 @@ def _parse_add_line_spec(raw_line):
             "partizip2": parts[2] if len(parts) > 2 else "",
         }
         return item
+    if forced_type == "phrase":
+        phrase = " ".join(parts[0].split())
+        item["lookup_word"] = phrase
+        item["forced_fields"] = {
+            "german": phrase,
+        }
+        return item
     if forced_type == "nomen":
         first = parts[0]
         article, base = _split_leading_article(first)
@@ -1653,6 +1660,13 @@ def _parse_add_line_spec(raw_line):
             "plural": parts[1] if len(parts) > 1 else "",
         }
         return item
+    # Auto phrase mode for multi-word input without comma-separated forms.
+    if "," not in body and len(body.split()) > 1:
+        phrase = " ".join(body.split())
+        item["forced_type"] = "phrase"
+        item["lookup_word"] = phrase
+        item["forced_fields"] = {"german": phrase}
+        return item
     item["lookup_word"] = parts[0]
     return item
 
@@ -1662,7 +1676,7 @@ def _exists_word_for_type(forced_type, lookup_word):
     word = _normalize_lookup_text(lookup_word)
     if not word:
         return False
-    if forced_type not in {"nomen", "verb"}:
+    if forced_type not in {"nomen", "verb", "phrase"}:
         return bool(find_existing_word(get_db_path(), lookup_word))
     for entry in list_all_words(get_db_path()):
         et = _type_label(entry.get("type", ""))
@@ -1672,6 +1686,8 @@ def _exists_word_for_type(forced_type, lookup_word):
             variants = {_normalize_lookup_text(entry.get("infinitive", ""))}
             variants.update(_russian_variants(entry.get("prateritum", "")))
             variants.update(_russian_variants(entry.get("partizip2", "")))
+        elif forced_type == "phrase":
+            variants = {_normalize_lookup_text(entry.get("german", ""))}
         else:
             variants = {_normalize_lookup_text(entry.get("german", ""))}
             variants.update(_russian_variants(entry.get("plural", "")))
@@ -5344,6 +5360,7 @@ def _ai_prompt(word, clarification):
         "Return only a JSON object and nothing else. "
         "Detect German part of speech. Allowed types: "
         "nomen, verb, adjektiv, pronomen, adverb, praeposition, konjunktion, partikel. "
+        "Phrase type is also allowed for fixed expressions: return type=phrase, german, russian. "
         "For nomen return: type, article, german, plural, russian. "
         "For verb return: type, infinitive, prateritum, partizip2, russian. "
         "For adjektiv return: type, german, komparativ, superlativ, russian. "
@@ -5372,7 +5389,7 @@ def _ai_precheck_prompt(word):
     return (
         "Return only a JSON object and nothing else. "
         "Detect German part of speech. Allowed types: "
-        "nomen, verb, adjektiv, pronomen, adverb, praeposition, konjunktion, partikel. "
+        "nomen, verb, phrase, adjektiv, pronomen, adverb, praeposition, konjunktion, partikel. "
         "Correct spelling if needed. "
         "Return JSON fields: type, value (corrected base form). "
         "For nouns, value is the singular base form (no article). "
@@ -5437,7 +5454,7 @@ async def _precheck_words(update: Update, context: ContextTypes.DEFAULT_TYPE, wo
             raw = str(raw_item)
             lookup_word = raw
             forced_type = ""
-        if forced_type in {"nomen", "verb"} and lookup_word:
+        if forced_type in {"nomen", "verb", "phrase"} and lookup_word:
             items.append(
                 {
                     "original": raw,
@@ -5638,7 +5655,7 @@ async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, w
         return ADD_INPUT
 
     existing = None
-    if forced_type in {"nomen", "verb"}:
+    if forced_type in {"nomen", "verb", "phrase"}:
         if _exists_word_for_type(forced_type, lookup_word):
             existing = {"type": forced_type, "value": lookup_word}
     else:
@@ -5673,7 +5690,7 @@ async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, w
     extra_note = ""
     if forced_article:
         extra_note = f" Input already includes article '{forced_article}'. Keep this article and do not infer another one."
-    if forced_type in {"nomen", "verb"}:
+    if forced_type in {"nomen", "verb", "phrase"}:
         extra_note = f"{extra_note} Force part of speech: {forced_type}.".strip()
     prompt_text = _ai_prompt(ai_word, f"{clarification or ''}{extra_note}".strip())
     context.user_data["last_ai_prompt"] = prompt_text
@@ -5708,7 +5725,7 @@ async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, w
         return ADD_CLARIFY
 
     entry = _normalize_ai_entry(entry)
-    if forced_type in {"nomen", "verb"}:
+    if forced_type in {"nomen", "verb", "phrase"}:
         entry["type"] = forced_type
     for key, value in forced_fields.items():
         if key in entry and str(value or "").strip():
