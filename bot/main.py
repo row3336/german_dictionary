@@ -1455,6 +1455,58 @@ def _format_db_search_card(entry, dict_lang):
     return _md_escape(german)
 
 
+def _select_db_search_primary(token):
+    """Pick primary DB-search entry preferring non-phrase exact matches."""
+    candidate = _normalize_lookup_text(token)
+    if not candidate:
+        return None
+    rows = list_all_words(get_db_path())
+    exact_non_phrase = []
+    exact_phrase = []
+    for row in rows:
+        entry_type = _type_label(row.get("type", ""))
+        forms = {
+            _normalize_lookup_text(row.get("german", "")),
+            _normalize_lookup_text(row.get("infinitive", "")),
+            _normalize_lookup_text(row.get("plural", "")),
+            _normalize_lookup_text(row.get("prateritum", "")),
+            _normalize_lookup_text(row.get("partizip2", "")),
+            _normalize_lookup_text(row.get("russian", "")),
+            _normalize_lookup_text(row.get("ukrainian", "")),
+            _normalize_lookup_text(row.get("english", "")),
+        }
+        if candidate in forms:
+            if entry_type == "phrase":
+                exact_phrase.append(row)
+            else:
+                exact_non_phrase.append(row)
+    if exact_non_phrase:
+        return exact_non_phrase[0]
+    if exact_phrase:
+        return exact_phrase[0]
+    return search_word(get_db_path(), token)
+
+
+def _find_phrase_side_matches(token, primary_entry):
+    """Collect phrase matches containing token excluding primary card."""
+    candidate = _normalize_lookup_text(token)
+    if not candidate:
+        return []
+    primary_id = (primary_entry or {}).get("id")
+    out = []
+    for row in list_all_words(get_db_path()):
+        if _type_label(row.get("type", "")) != "phrase":
+            continue
+        if primary_id and row.get("id") == primary_id:
+            continue
+        phrase = _normalize_lookup_text(row.get("german", ""))
+        if not phrase:
+            continue
+        if candidate in phrase:
+            out.append(row)
+    return out
+
+
 def _format_match_line(entry, dict_lang):
     """Handle format match line."""
     entry_type = _low_word(entry.get("type", ""))
@@ -2092,13 +2144,24 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop("db_search_topic_pick", None)
     context.user_data.pop("db_search_words_lists_menu", None)
     context.user_data.pop("db_search_weak_ids", None)
-    entry = search_word(get_db_path(), text)
+    entry = _select_db_search_primary(text)
     if not entry:
         return await _send_db_search_prompt(update, user_id, "Not found.")
+    phrase_matches = _find_phrase_side_matches(text, entry)
     await update.message.reply_text(
-        _format_db_search_card(entry, _user_dict_lang(user_id)),
+        f"```text\n{_format_word_card(entry, title='Word card:')}\n```",
         parse_mode="Markdown",
     )
+    if phrase_matches:
+        lines = ["Phrase matches:"]
+        for item in phrase_matches:
+            phrase = _safe_text(item.get("german", "")).strip()
+            trans = _entry_translation(item, _user_dict_lang(user_id))
+            if trans:
+                lines.append(f"- {phrase} -> {trans}")
+            else:
+                lines.append(f"- {phrase}")
+        await update.message.reply_text(f"```text\n{chr(10).join(lines)}\n```", parse_mode="Markdown")
     await update.message.reply_text(
         "Choose edit action:",
         reply_markup=_quiz_edit_root_markup(user_id),
