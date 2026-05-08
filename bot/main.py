@@ -4292,9 +4292,9 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == I_DONT_KNOW_TEXT:
         ok = False
     else:
-        answer = _normalize_answer(text)
+        answer_variants = set(_russian_variants(text))
         variants = _russian_variants(_entry_translation(entry, _user_dict_lang(update.effective_user.id)))
-        ok = answer in variants
+        ok = bool(answer_variants.intersection(set(variants)))
     mode = _mode_de_l1(update.effective_user.id)
     if not is_retry:
         _remember_last_answer(context, entry, mode, ok)
