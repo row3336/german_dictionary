@@ -5913,7 +5913,7 @@ def _interval_divisor_for_mode(user_id, mode):
     if mode == MODE_RU_DE:
         return 1.65
     if mode == _mode_pl_sg(user_id):
-        return 1.65
+        return 2.0
     if mode == _mode_de_l1(user_id):
         return 2.0
     return 1.0
