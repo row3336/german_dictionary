@@ -1367,7 +1367,7 @@ async def _show_quiz_prompt_after_edit(update: Update, context: ContextTypes.DEF
     if state == QUIZ_PARTIZIP2_WEAK:
         return await _send_partizip2_weak_prompt(update, context, prefix_text)
     if state == LEARNING_QUIZ:
-        return await _send_learning_prompt(update, context, prefix_text)
+        return await _send_learning_prompt(update, context, prefix_text, force_entry=context.user_data.get("quiz_entry"))
 
     if state == DB_SEARCH_VIEW:
         text = _format_db_search_card(entry, _user_dict_lang(update.effective_user.id))
@@ -2439,7 +2439,7 @@ async def _learning_add_words(update: Update, context: ContextTypes.DEFAULT_TYPE
     return LEARNING_MENU
 
 
-async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
+async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text, force_entry=None):
     """Handle send learning prompt."""
     user_id = update.effective_user.id
     preview_entry = learning_preview_entry(get_db_path(), user_id=user_id)
@@ -2460,7 +2460,9 @@ async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TY
         return LEARNING_QUIZ
 
     last_learning_word_id = context.user_data.get("last_learning_prompt_word_id")
-    entry = learning_due_entry(get_db_path(), user_id=user_id, exclude_word_id=last_learning_word_id)
+    entry = force_entry
+    if not entry:
+        entry = learning_due_entry(get_db_path(), user_id=user_id, exclude_word_id=last_learning_word_id)
     if not entry:
         context.user_data["learning_preview_mode"] = False
         context.user_data.pop("last_learning_prompt_word_id", None)
@@ -2560,7 +2562,7 @@ async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == INPUT_ERR_TEXT:
         applied = _apply_input_err_learning(update, context)
         prefix = "✅ Fixed previous answer." if applied else "Nothing to fix."
-        return await _send_learning_prompt(update, context, prefix)
+        return await _send_learning_prompt(update, context, prefix, force_entry=context.user_data.get("quiz_entry"))
 
     if action == "learning_skip" or text == LEARNING_SKIP_TEXT:
         snapshot = _capture_transaction_snapshot(user_id, entry.get("id"), ["learning"])
