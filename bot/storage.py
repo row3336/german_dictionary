@@ -925,8 +925,22 @@ def get_statistics_snapshot(db_path, user_id, mode):
             ).fetchone()
             return int((row["cnt"] if row else 0) or 0)
 
+        def _today_mode_prefix_count(prefix):
+            row = conn.execute(
+                """
+                SELECT COUNT(DISTINCT e.word_id) AS cnt
+                FROM quiz_events e
+                WHERE e.user_id = ?
+                  AND e.mode LIKE ?
+                  AND date(e.created_at) = date(?)
+                """,
+                (user_id, f"{prefix}%", today.isoformat()),
+            ).fetchone()
+            return int((row["cnt"] if row else 0) or 0)
+
         today_complete_sm2_ru_de = _today_mode_count("ru_de")
         today_complete_sm2_de_ru = _today_mode_count("de_ru")
+        today_complete_pl_sg = _today_mode_prefix_count("pl_sg_")
         today_complete_weak_article = _today_mode_count("weak_article")
         today_complete_weak_plural = _today_mode_count("weak_plural")
         today_complete_weak_partizip2 = _today_mode_count("weak_partizip2")
@@ -1085,6 +1099,7 @@ def get_statistics_snapshot(db_path, user_id, mode):
         "today_complete": today_complete,
         "today_complete_sm2_ru_de": today_complete_sm2_ru_de,
         "today_complete_sm2_de_ru": today_complete_sm2_de_ru,
+        "today_complete_pl_sg": today_complete_pl_sg,
         "today_complete_weak_article": today_complete_weak_article,
         "today_complete_weak_plural": today_complete_weak_plural,
         "today_complete_weak_partizip2": today_complete_weak_partizip2,

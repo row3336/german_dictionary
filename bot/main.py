@@ -1849,6 +1849,7 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines = [
             f"today complete fsrs Ru > De = {stats['today_complete_sm2_ru_de']}",
             f"today complete fsrs De > Ru = {stats['today_complete_sm2_de_ru']}",
+            f"today complete pl > sing = {stats.get('today_complete_pl_sg', 0)}",
             "",
             f"today complete weak article = {stats['today_complete_weak_article']}",
             f"today complete weak plural = {stats['today_complete_weak_plural']}",
