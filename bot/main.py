@@ -1600,18 +1600,84 @@ def _scan_words_before_ai(lines):
     existing = []
     recognition = []
     for raw in lines:
-        word = raw.strip()
-        if not word:
+        parsed = _parse_add_line_spec(raw)
+        if not parsed:
             continue
-        reason = _prefilter_reject_reason(word)
+        reason = _prefilter_reject_reason(parsed.get("lookup_word", ""))
         if reason:
-            filtered.append(word)
+            filtered.append({"raw": parsed.get("raw", raw), "reason": reason})
             continue
-        if find_existing_word(get_db_path(), word):
-            existing.append(word)
+        if _exists_word_for_type(parsed.get("forced_type"), parsed.get("lookup_word", "")):
+            existing.append({"raw": parsed.get("raw", raw), "reason": "Already in database for this type."})
             continue
-        recognition.append(word)
+        recognition.append(parsed)
     return filtered, existing, recognition
+
+
+def _parse_add_line_spec(raw_line):
+    """Parse add-word line with optional [type] and comma-separated forms."""
+    raw = str(raw_line or "").strip()
+    if not raw:
+        return None
+    m = re.match(r"^(.*?)\s*\[([a-zA-Z_]+)\]\s*$", raw)
+    forced_type = ""
+    body = raw
+    if m:
+        body = m.group(1).strip()
+        forced_type = _type_label(m.group(2))
+    parts = [x.strip() for x in body.split(",") if x.strip()]
+    if not parts:
+        return None
+    item = {
+        "raw": raw,
+        "body": body,
+        "forced_type": forced_type,
+        "lookup_word": "",
+        "forced_fields": {},
+    }
+    if forced_type == "verb":
+        item["lookup_word"] = parts[0]
+        item["forced_fields"] = {
+            "infinitive": parts[0],
+            "prateritum": parts[1] if len(parts) > 1 else "",
+            "partizip2": parts[2] if len(parts) > 2 else "",
+        }
+        return item
+    if forced_type == "nomen":
+        first = parts[0]
+        article, base = _split_leading_article(first)
+        item["lookup_word"] = base or first
+        item["forced_fields"] = {
+            "article": article,
+            "german": base or first,
+            "plural": parts[1] if len(parts) > 1 else "",
+        }
+        return item
+    item["lookup_word"] = parts[0]
+    return item
+
+
+def _exists_word_for_type(forced_type, lookup_word):
+    """Type-aware duplicate check for add pipeline."""
+    word = _normalize_lookup_text(lookup_word)
+    if not word:
+        return False
+    if forced_type not in {"nomen", "verb"}:
+        return bool(find_existing_word(get_db_path(), lookup_word))
+    for entry in list_all_words(get_db_path()):
+        et = _type_label(entry.get("type", ""))
+        if et != forced_type:
+            continue
+        if forced_type == "verb":
+            variants = {_normalize_lookup_text(entry.get("infinitive", ""))}
+            variants.update(_russian_variants(entry.get("prateritum", "")))
+            variants.update(_russian_variants(entry.get("partizip2", "")))
+        else:
+            variants = {_normalize_lookup_text(entry.get("german", ""))}
+            variants.update(_russian_variants(entry.get("plural", "")))
+        if word in variants:
+            return True
+    return False
 
 
 def _prefilter_reject_reason(word):
@@ -3380,6 +3446,10 @@ async def add_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     items = await _precheck_words(update, context, recognition)
     if items is None:
         return MENU
+    for row in filtered:
+        items.append({"original": row.get("raw", ""), "word": "", "type": "-", "skipped_reason": row.get("reason", "")})
+    for row in existing:
+        items.append({"original": row.get("raw", ""), "word": "", "type": "-", "skipped_reason": row.get("reason", "")})
     context.user_data["precheck_items"] = items
     await _reply_text_with_retry(
         update.message,
@@ -3420,7 +3490,18 @@ async def add_precheck(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ADD_PRECHECK
 
     items = context.user_data.get("precheck_items") or []
-    recognition = [x.get("word") for x in items if x.get("word")]
+    recognition = []
+    for x in items:
+        if not x.get("word"):
+            continue
+        recognition.append(
+            {
+                "raw": x.get("original", x.get("word", "")),
+                "lookup_word": x.get("word", ""),
+                "forced_type": x.get("forced_type", ""),
+                "forced_fields": dict(x.get("forced_fields") or {}),
+            }
+        )
     context.user_data.pop("precheck_items", None)
     filtered = context.user_data.pop("precheck_filtered", [])
     existing = context.user_data.pop("precheck_existing", [])
@@ -3457,8 +3538,6 @@ def _parse_precheck_edit_lines(lines):
         raw = re.sub(r"^\d+\.\s*", "", raw).strip()
         if not raw:
             continue
-        if "[" in raw and "]" in raw:
-            raw = raw.split("[", 1)[0].strip()
         if "(from " in raw:
             raw = raw.split("(from ", 1)[0].strip()
         if " - " in raw:
@@ -3482,7 +3561,9 @@ async def add_precheck_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=ReplyKeyboardMarkup(_stop_keys(update.effective_user.id), resize_keyboard=True),
         )
         return ADD_PRECHECK_EDIT
-    recognition = _parse_precheck_edit_lines(lines)
+    recognition_raw = _parse_precheck_edit_lines(lines)
+    recognition = [_parse_add_line_spec(x) for x in recognition_raw]
+    recognition = [x for x in recognition if x]
     if not recognition:
         await _reply_text_with_retry(
             update.message,
@@ -3546,6 +3627,10 @@ async def add_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     items = await _precheck_words(update, context, recognition)
     if items is None:
         return MENU
+    for row in filtered:
+        items.append({"original": row.get("raw", ""), "word": "", "type": "-", "skipped_reason": row.get("reason", "")})
+    for row in existing:
+        items.append({"original": row.get("raw", ""), "word": "", "type": "-", "skipped_reason": row.get("reason", "")})
     context.user_data["precheck_items"] = items
     await _reply_text_with_retry(
         update.message,
@@ -5314,7 +5399,8 @@ def _parse_precheck_entry(entry):
 def _format_precheck_list(items):
     """Handle format precheck list."""
     lines = [f"Precheck list (topic: {_current_topic_value()}):"]
-    for idx, item in enumerate(items, start=1):
+    active = [x for x in items if x.get("word")]
+    for idx, item in enumerate(active, start=1):
         word = item.get("word", "")
         item_type = item.get("type", "?")
         original = item.get("original", "")
@@ -5322,6 +5408,12 @@ def _format_precheck_list(items):
             lines.append(f"{idx}. {word} [{item_type}] (from {original})")
         else:
             lines.append(f"{idx}. {word} [{item_type}]")
+    skipped = [x for x in items if x.get("skipped_reason")]
+    if skipped:
+        lines.append("")
+        lines.append("Skipped:")
+        for item in skipped:
+            lines.append(f"- {item.get('original','')} -> {item.get('skipped_reason','')}")
     return "\n".join(lines)
 
 
@@ -5336,8 +5428,27 @@ async def _precheck_words(update: Update, context: ContextTypes.DEFAULT_TYPE, wo
         return None
 
     items = []
-    for raw in words:
-        prompt_text = _ai_precheck_prompt(raw)
+    for raw_item in words:
+        if isinstance(raw_item, dict):
+            raw = raw_item.get("raw", "")
+            lookup_word = raw_item.get("lookup_word", raw)
+            forced_type = raw_item.get("forced_type", "")
+        else:
+            raw = str(raw_item)
+            lookup_word = raw
+            forced_type = ""
+        if forced_type in {"nomen", "verb"} and lookup_word:
+            items.append(
+                {
+                    "original": raw,
+                    "word": lookup_word,
+                    "type": forced_type,
+                    "forced_fields": dict(raw_item.get("forced_fields") or {}) if isinstance(raw_item, dict) else {},
+                    "forced_type": forced_type,
+                }
+            )
+            continue
+        prompt_text = _ai_precheck_prompt(lookup_word)
         try:
             response_text = generate_fields(prompt_text)
         except Exception:
@@ -5348,7 +5459,13 @@ async def _precheck_words(update: Update, context: ContextTypes.DEFAULT_TYPE, wo
         if not parsed:
             items.append({"original": raw, "word": raw, "type": "?"})
             continue
-        items.append({"original": raw, "word": parsed["word"], "type": parsed["type"]})
+        item = {"original": raw, "word": parsed["word"], "type": parsed["type"]}
+        if isinstance(raw_item, dict):
+            if raw_item.get("forced_fields"):
+                item["forced_fields"] = dict(raw_item.get("forced_fields") or {})
+            if raw_item.get("forced_type"):
+                item["forced_type"] = raw_item.get("forced_type")
+        items.append(item)
     return items
 
 
@@ -5495,27 +5612,46 @@ def _format_ai_preview(entry, dict_lang, has_synonym=False):
 async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, word, clarification):
     """Handle process ai word."""
     has_queue = bool(context.user_data.get("add_queue"))
-    forced_article, normalized_word = _split_leading_article(word)
-    lookup_word = normalized_word if forced_article and normalized_word else word
+    if isinstance(word, dict):
+        raw_word = str(word.get("raw", "")).strip() or str(word.get("lookup_word", "")).strip()
+        forced_type = _type_label(word.get("forced_type", ""))
+        forced_fields = dict(word.get("forced_fields") or {})
+        lookup_word = str(word.get("lookup_word", raw_word)).strip() or raw_word
+    else:
+        raw_word = str(word or "").strip()
+        forced_type = ""
+        forced_fields = {}
+        lookup_word = raw_word
+    forced_article, normalized_word = _split_leading_article(lookup_word)
+    lookup_word = normalized_word if forced_article and normalized_word else lookup_word
 
     reject_reason = _prefilter_reject_reason(lookup_word)
     if reject_reason:
         if has_queue:
-            logging.info("Queue skip filtered word: %s", word)
+            logging.info("Queue skip filtered word: %s", raw_word)
             return ADD_INPUT
         await _reply_text_with_retry(
             update.message,
-            f"{reject_reason} Skipped: {word}",
+            f"{reject_reason} Skipped: {raw_word}",
             reply_markup=ReplyKeyboardMarkup(_add_keys(update.effective_user.id), resize_keyboard=True),
         )
         return ADD_INPUT
 
-    existing = find_existing_word(get_db_path(), lookup_word)
+    existing = None
+    if forced_type in {"nomen", "verb"}:
+        if _exists_word_for_type(forced_type, lookup_word):
+            existing = {"type": forced_type, "value": lookup_word}
+    else:
+        existing = find_existing_word(get_db_path(), lookup_word)
     if existing:
-        existing_type = existing.get("type", "word")
-        existing_value = existing.get("infinitive", "") if existing_type == "verb" else existing.get("german", "")
+        if isinstance(existing, dict) and "value" in existing:
+            existing_type = existing.get("type", "word")
+            existing_value = existing.get("value", "")
+        else:
+            existing_type = existing.get("type", "word")
+            existing_value = existing.get("infinitive", "") if existing_type == "verb" else existing.get("german", "")
         if has_queue:
-            logging.info("Queue skip existing word: %s", word)
+            logging.info("Queue skip existing word: %s", raw_word)
             return ADD_INPUT
         await _reply_text_with_retry(
             update.message,
@@ -5532,17 +5668,19 @@ async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, w
         )
         return MENU
 
-    context.user_data["pending_word"] = word
+    context.user_data["pending_word"] = raw_word
     ai_word = lookup_word
     extra_note = ""
     if forced_article:
         extra_note = f" Input already includes article '{forced_article}'. Keep this article and do not infer another one."
+    if forced_type in {"nomen", "verb"}:
+        extra_note = f"{extra_note} Force part of speech: {forced_type}.".strip()
     prompt_text = _ai_prompt(ai_word, f"{clarification or ''}{extra_note}".strip())
     context.user_data["last_ai_prompt"] = prompt_text
     try:
         response_text = generate_fields(prompt_text)
     except Exception as exc:
-        logging.exception("AI request failed for word: %s", word)
+        logging.exception("AI request failed for word: %s", raw_word)
         await _reply_text_with_retry(
             update.message,
             f"Error: AI request failed: {exc}",
@@ -5554,14 +5692,14 @@ async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, w
     if entry is None or not _validate_ai_entry(entry):
         logging.warning(
             "AI parse failed word=%s clarification=%s raw=%s",
-            word,
+            raw_word,
             clarification,
             (response_text or "")[:500],
         )
         await _reply_text_with_retry(
             update.message,
             (
-                f"Error: AI failed to parse for word: {word}\n"
+                f"Error: AI failed to parse for word: {raw_word}\n"
                 f"Clarification: {clarification or '-'}\n"
                 "Use Confirm, Clarify AI, Clarify field, Reject, Ban, or Stop."
             ),
@@ -5570,19 +5708,24 @@ async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, w
         return ADD_CLARIFY
 
     entry = _normalize_ai_entry(entry)
+    if forced_type in {"nomen", "verb"}:
+        entry["type"] = forced_type
+    for key, value in forced_fields.items():
+        if key in entry and str(value or "").strip():
+            entry[key] = str(value).strip()
     if forced_article and entry.get("type") == "nomen":
         entry["article"] = forced_article
         german = str(entry.get("german", "")).strip()
         _, german_no_article = _split_leading_article(german)
         entry["german"] = german_no_article or german
-    if _is_non_infinitive_verb_input(word, entry):
+    if _is_non_infinitive_verb_input(raw_word, entry):
         inf = entry.get("infinitive", "")
-        existing_inf = find_existing_word(get_db_path(), inf) if inf else None
+        existing_inf = _exists_word_for_type("verb", inf) if inf else None
         if existing_inf:
-            msg = f"❌ Verb form detected: {word}. Base infinitive: {inf}. Already in database, not saved."
+            msg = f"❌ Verb form detected: {raw_word}. Base infinitive: {inf}. Already in database, not saved."
             if has_queue:
                 await _reply_text_with_retry(update.message, msg)
-                logging.info("Queue skip non-infinitive verb input (existing infinitive): %s -> %s", word, inf)
+                logging.info("Queue skip non-infinitive verb input (existing infinitive): %s -> %s", raw_word, inf)
                 return ADD_INPUT
             await _reply_text_with_retry(
                 update.message,
