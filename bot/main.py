@@ -331,7 +331,7 @@ def _tests_menu_keys(user_id):
     """Handle tests menu keys."""
     return [
         [LEARNING_TEXT, QUIZ_RU_DE_TEXT, QUIZ_DE_RU_TEXT, QUIZ_PL_SG_TEXT],
-        [t(_user_interface_lang(user_id), "back")],
+        [t(_user_interface_lang(user_id), "topic_filter"), t(_user_interface_lang(user_id), "back")],
     ]
 
 
@@ -340,7 +340,7 @@ def _ru_de_menu_keys(user_id):
     return [
         [STANDARD_SM2_TEXT, TEST_ARTICLE_WEAK_TEXT],
         [TEST_PLURAL_WEAK_TEXT, TEST_VERB_WEAK_TEXT],
-        [t(_user_interface_lang(user_id), "topic_filter"), t(_user_interface_lang(user_id), "back")],
+        [t(_user_interface_lang(user_id), "back")],
     ]
 
 
@@ -681,6 +681,8 @@ def _action_key_from_text(text, user_id):
         ("db_search", "db_search"),
         ("db_search_matches", "db_search_matches"),
         ("db_search_topic_words", "db_search_topic_words"),
+        ("db_search_topics_lists", "db_search_topics_lists"),
+        ("db_search_verbs_lists", "db_search_verbs_lists"),
         ("db_search_topics_lern", "db_search_topics_lern"),
         ("db_search_weak_words", "db_search_weak_words"),
         ("settings", "settings"),
@@ -771,6 +773,15 @@ def _db_search_markup(user_id):
     else:
         rows.append([back])
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
+
+
+def _db_search_words_lists_markup(user_id):
+    """Handle words lists submenu markup."""
+    lang = _user_interface_lang(user_id)
+    return ReplyKeyboardMarkup(
+        [[t(lang, "db_search_topics_lists"), t(lang, "db_search_verbs_lists"), t(lang, "back")]],
+        resize_keyboard=True,
+    )
 
 
 def _db_search_weak_markup(user_id):
@@ -1816,10 +1827,17 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     user_id = update.effective_user.id
     action = _action_key_from_text(text, user_id)
+    in_words_lists = bool(context.user_data.get("db_search_words_lists_menu"))
     if context.user_data.get("db_search_topic_pick") and action == "back":
         context.user_data.pop("db_search_topic_pick", None)
+        if in_words_lists:
+            await update.message.reply_text("words_lists:", reply_markup=_db_search_words_lists_markup(user_id))
+            return DB_SEARCH
         return await _send_db_search_prompt(update, user_id, None)
     if action == "back":
+        if in_words_lists:
+            context.user_data.pop("db_search_words_lists_menu", None)
+            return await _send_db_search_prompt(update, user_id, None)
         context.user_data.pop("db_search_topic_pick", None)
         context.user_data.pop("db_search_weak_ids", None)
         await update.message.reply_text(t(_user_interface_lang(user_id), "main_menu"), reply_markup=_main_menu_markup(user_id))
@@ -1914,14 +1932,42 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         return DB_SEARCH
     if action == "db_search_topic_words":
+        context.user_data["db_search_words_lists_menu"] = True
+        await update.message.reply_text("words_lists:", reply_markup=_db_search_words_lists_markup(user_id))
+        return DB_SEARCH
+    if action == "db_search_topics_lists":
         context.user_data.pop("db_search_weak_ids", None)
+        context.user_data["db_search_words_lists_menu"] = True
         markup, topics = _db_search_topic_markup(user_id)
         if not topics:
-            return await _send_db_search_prompt(update, user_id, "No topics found in DB.")
+            await update.message.reply_text("No topics found in DB.", reply_markup=_db_search_words_lists_markup(user_id))
+            return DB_SEARCH
         context.user_data["db_search_topic_pick"] = True
         await update.message.reply_text("Choose topic:", reply_markup=markup)
         return DB_SEARCH
+    if action == "db_search_verbs_lists":
+        context.user_data.pop("db_search_weak_ids", None)
+        context.user_data["db_search_words_lists_menu"] = True
+        entries = [x for x in list_all_words(get_db_path()) if (x.get("type") or "").strip().lower() == "verb"]
+        if not entries:
+            await update.message.reply_text("No verbs found.", reply_markup=_db_search_words_lists_markup(user_id))
+            return DB_SEARCH
+        lines = [f"verbs: {len(entries)}", ""]
+        for entry in entries:
+            inf = _safe_text(entry.get("infinitive", "")).strip()
+            if inf:
+                lines.append(inf)
+        chunks = _split_text_chunks("\n".join(lines))
+        for idx, chunk in enumerate(chunks):
+            markup = _db_search_words_lists_markup(user_id) if idx == len(chunks) - 1 else None
+            await update.message.reply_text(
+                f"```text\n{chunk}\n```",
+                reply_markup=markup,
+                parse_mode="Markdown",
+            )
+        return DB_SEARCH
     context.user_data.pop("db_search_topic_pick", None)
+    context.user_data.pop("db_search_words_lists_menu", None)
     context.user_data.pop("db_search_weak_ids", None)
     entry = search_word(get_db_path(), text)
     if not entry:
@@ -1948,10 +1994,18 @@ async def db_search_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     action = _action_key_from_text(text, user_id)
     if action in {"back", "stop"}:
+        context.user_data.pop("db_search_words_lists_menu", None)
         context.user_data.pop("db_search_topic_pick", None)
         context.user_data.pop("db_search_weak_ids", None)
         return await _send_db_search_prompt(update, user_id, None)
-    if action in {"db_search_matches", "db_search_weak_words", "db_search_topic_words", "db_search_topics_lern"}:
+    if action in {
+        "db_search_matches",
+        "db_search_weak_words",
+        "db_search_topic_words",
+        "db_search_topics_lists",
+        "db_search_verbs_lists",
+        "db_search_topics_lern",
+    }:
         return await db_search_input(update, context)
     if text in {QUIZ_FIELDS_TEXT, SEND_LEARN_TEXT, "delete"}:
         return await add_edit(update, context)
@@ -2085,6 +2139,16 @@ async def tests_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     if action == "learning":
         return await _send_learning_menu(update, user_id)
+    if action == "topic_filter":
+        current = _topic_filter_value()
+        topics = list_topics(get_db_path())
+        topics_line = ", ".join(topics) if topics else "-"
+        await update.message.reply_text(
+            f"Current topic filter: {current}\nTopics: {topics_line}\nSend e.g. 1+2+food or 'all'.",
+            reply_markup=ReplyKeyboardMarkup([[t(_user_interface_lang(user_id), "back")]], resize_keyboard=True),
+        )
+        context.user_data["topic_return"] = "tests_menu"
+        return TOPIC_FILTER_EDIT
 
     await update.message.reply_text(
         "Use tests menu buttons.",
@@ -3141,6 +3205,12 @@ async def topic_filter_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return ADD_INPUT
         if return_to == "algo":
             return await _send_algo_settings_menu(update, user_id)
+        if return_to == "tests_menu":
+            await update.message.reply_text(
+                t(_user_interface_lang(user_id), "tests") + ":",
+                reply_markup=ReplyKeyboardMarkup(_tests_menu_keys(user_id), resize_keyboard=True),
+            )
+            return TESTS_MENU
         await update.message.reply_text(
             t(_user_interface_lang(user_id), "settings_title"),
             reply_markup=ReplyKeyboardMarkup(_settings_menu_keys(user_id), resize_keyboard=True),
@@ -3171,6 +3241,12 @@ async def topic_filter_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=ReplyKeyboardMarkup(_algo_settings_menu_keys(user_id), resize_keyboard=True),
         )
         return ALGO_SETTINGS_MENU
+    if return_to == "tests_menu":
+        await update.message.reply_text(
+            f"✅ Topic filter set to: {value}",
+            reply_markup=ReplyKeyboardMarkup(_tests_menu_keys(user_id), resize_keyboard=True),
+        )
+        return TESTS_MENU
 
     await update.message.reply_text(
         f"✅ Topic filter set to: {value}",
