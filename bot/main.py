@@ -1662,6 +1662,17 @@ def _parse_add_line_spec(raw_line):
             "plural": parts[1] if len(parts) > 1 else "",
         }
         return item
+    # Article-led inputs must stay nouns, never auto-phrases.
+    article_auto, base_auto = _split_leading_article(parts[0])
+    if article_auto:
+        item["forced_type"] = "nomen"
+        item["lookup_word"] = base_auto or parts[0]
+        item["forced_fields"] = {
+            "article": article_auto,
+            "german": base_auto or parts[0],
+            "plural": parts[1] if len(parts) > 1 else "",
+        }
+        return item
     # Auto phrase mode for multi-word input without comma-separated forms.
     if "," not in body and len(body.split()) > 1:
         phrase = " ".join(body.split())
