@@ -680,6 +680,7 @@ def _action_key_from_text(text, user_id):
         ("tests", "tests"),
         ("db_search", "db_search"),
         ("db_search_matches", "db_search_matches"),
+        ("db_search_plural_match", "db_search_plural_match"),
         ("db_search_topic_words", "db_search_topic_words"),
         ("db_search_topics_lists", "db_search_topics_lists"),
         ("db_search_verbs_lists", "db_search_verbs_lists"),
@@ -762,6 +763,7 @@ def _db_search_markup(user_id):
     lang = _user_interface_lang(user_id)
     actions = [
         t(lang, "db_search_matches"),
+        t(lang, "db_search_plural_match"),
         t(lang, "db_search_topic_words"),
         t(lang, "db_search_topics_lern"),
         t(lang, "db_search_weak_words"),
@@ -1995,6 +1997,33 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown",
             )
         return DB_SEARCH
+    if action == "db_search_plural_match":
+        context.user_data.pop("db_search_topic_pick", None)
+        context.user_data.pop("db_search_weak_ids", None)
+        entries = []
+        for row in list_all_words(get_db_path()):
+            if (row.get("type") or "").strip().lower() != "nomen":
+                continue
+            sg = _normalize_answer(row.get("german", ""))
+            pl = _normalize_answer(row.get("plural", ""))
+            if sg and pl and sg == pl:
+                entries.append(row)
+        if not entries:
+            return await _send_db_search_prompt(update, user_id, "No plural==singular words found.")
+        lines = [f"plural_match: {len(entries)}", ""]
+        for e in entries:
+            article = (e.get("article") or "").strip()
+            german = _cap_word(e.get("german", ""))
+            lines.append(f"{article} {german}".strip())
+        chunks = _split_text_chunks("\n".join(lines))
+        for idx, chunk in enumerate(chunks):
+            markup = _db_search_markup(user_id) if idx == len(chunks) - 1 else None
+            await update.message.reply_text(
+                f"```text\n{chunk}\n```",
+                reply_markup=markup,
+                parse_mode="Markdown",
+            )
+        return DB_SEARCH
     if action == "db_search_weak_words":
         context.user_data.pop("db_search_topic_pick", None)
         mode = _mode_l1_de(user_id)
@@ -2082,6 +2111,7 @@ async def db_search_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await _send_db_search_prompt(update, user_id, None)
     if action in {
         "db_search_matches",
+        "db_search_plural_match",
         "db_search_weak_words",
         "db_search_topic_words",
         "db_search_topics_lists",
@@ -4230,9 +4260,20 @@ async def quiz_pl_sg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == I_DONT_KNOW_TEXT:
         ok = False
     else:
-        expected = f"{_normalize_answer(entry.get('article', ''))} {_normalize_answer(entry.get('german', ''))}".strip()
         got = _normalize_answer(text)
-        ok = got == expected
+        singular = _normalize_answer(entry.get("german", ""))
+        plural = _normalize_answer(entry.get("plural", ""))
+        article_ok = False
+        german_ok = False
+        if len(got.split()) >= 2:
+            got_article = got.split()[0]
+            got_word = " ".join(got.split()[1:])
+            article_ok = _article_matches(got_article, entry.get("article", ""))
+            german_ok = got_word == singular
+            ok = article_ok and german_ok
+        else:
+            # If singular and plural are identical, allow answer with article only.
+            ok = singular == plural and _article_matches(got, entry.get("article", ""))
     mode = _mode_pl_sg(update.effective_user.id)
     if not is_retry:
         _remember_last_answer(context, entry, mode, ok)
@@ -4265,7 +4306,7 @@ async def quiz_article(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ok = False
     else:
         expected = entry.get("article", "")
-        ok = _normalize_answer(text) == _normalize_answer(expected)
+        ok = _article_matches(text, expected)
     mode = MODE_ARTICLE
     if not is_retry:
         _update_srs_for_entry(update.effective_user.id, entry, mode, ok)
@@ -4335,7 +4376,7 @@ async def quiz_article_weak(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     state = get_form_state(get_db_path(), update.effective_user.id, entry.get("id"), "article")
     snapshot = _capture_transaction_snapshot(update.effective_user.id, entry.get("id"), ["weak_article"])
-    ok = _normalize_answer(text) == _normalize_answer(entry.get("article", ""))
+    ok = _article_matches(text, entry.get("article", ""))
     update_form_stats(get_db_path(), update.effective_user.id, entry.get("id"), {"article": ok})
     if not state["active"] and state["review_stage"] > 0:
         stage_snapshot = update_weak_review_state(get_db_path(), update.effective_user.id, entry.get("id"), "article", ok)
@@ -4579,13 +4620,13 @@ def _check_ru_de_strict(entry, answer_text):
         for cand in synonyms:
             if (cand.get("type") or "").strip().lower() != "nomen":
                 continue
-            article_ok = article_in == _normalize_answer(cand.get("article", ""))
+            article_ok = _article_matches(article_in, cand.get("article", ""))
             german_ok = german_in == _normalize_answer(cand.get("german", ""))
             plural_ok = plural_in == _normalize_plural_value(cand.get("plural", ""))
             if article_ok and german_ok and plural_ok:
                 return True, {"article": True, "plural": True}
         return False, {
-            "article": article_in == _normalize_answer(entry.get("article", "")),
+            "article": _article_matches(article_in, entry.get("article", "")),
             "plural": plural_in == _normalize_plural_value(entry.get("plural", "")),
         }
 
@@ -4647,6 +4688,22 @@ def _cap_word(word):
 def _low_word(word):
     """Handle low word."""
     return str(word or "").strip().lower()
+
+
+def _article_variants(text):
+    """Split comma-separated article variants and normalize."""
+    raw = str(text or "")
+    parts = [p.strip() for p in raw.split(",") if p.strip()]
+    if not parts:
+        return set()
+    return {_normalize_answer(p) for p in parts if _normalize_answer(p)}
+
+
+def _article_matches(answer, expected_text):
+    """Check whether answer matches one of expected article variants."""
+    ans = _normalize_answer(answer)
+    variants = _article_variants(expected_text)
+    return bool(ans) and ans in variants
 
 
 def _format_ru_question(entry, dict_lang):
