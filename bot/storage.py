@@ -8,6 +8,7 @@ from pathlib import Path
 
 DEFAULT_EASE = 2.5
 MIN_EASE = 1.3
+MAX_EASE = 3.5
 WEAK_ACTIVE_MIN_ERRORS = 2
 WEAK_ACTIVE_MIN_STREAK_WRONG = 2
 WEAK_ACTIVE_CLEAR_STREAK = 3
@@ -374,6 +375,25 @@ def init_db(db_path):
                 payload TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
+
+            CREATE TABLE IF NOT EXISTS vf_checks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                word_id TEXT NOT NULL,
+                word_type TEXT NOT NULL,
+                base_form TEXT NOT NULL,
+                status TEXT NOT NULL,
+                retryable INTEGER NOT NULL DEFAULT 0,
+                local_payload TEXT NOT NULL DEFAULT '',
+                remote_payload TEXT NOT NULL DEFAULT '',
+                diff_payload TEXT NOT NULL DEFAULT '',
+                source_hash TEXT NOT NULL DEFAULT '',
+                approved INTEGER NOT NULL DEFAULT 0,
+                applied INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
+            );
             """
         )
         _ensure_schema(conn)
@@ -381,6 +401,28 @@ def init_db(db_path):
 
 def _ensure_schema(conn):
     """Handle ensure schema."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS vf_checks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            word_id TEXT NOT NULL,
+            word_type TEXT NOT NULL,
+            base_form TEXT NOT NULL,
+            status TEXT NOT NULL,
+            retryable INTEGER NOT NULL DEFAULT 0,
+            local_payload TEXT NOT NULL DEFAULT '',
+            remote_payload TEXT NOT NULL DEFAULT '',
+            diff_payload TEXT NOT NULL DEFAULT '',
+            source_hash TEXT NOT NULL DEFAULT '',
+            approved INTEGER NOT NULL DEFAULT 0,
+            applied INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
+        )
+        """
+    )
     word_cols = {
         row["name"] if isinstance(row, sqlite3.Row) else row[1]
         for row in conn.execute("PRAGMA table_info(words)").fetchall()
@@ -520,6 +562,32 @@ def _safe_text(value):
     return str(value)
 
 
+def _vf_source_hash(entry):
+    """Build deterministic hash source for VF checks."""
+    entry_type = _safe_text(entry.get("type")).strip().lower()
+    if entry_type == "nomen":
+        raw = "|".join(
+            [
+                entry_type,
+                _safe_text(entry.get("article")).strip().lower(),
+                _safe_text(entry.get("german")).strip().lower(),
+                _safe_text(entry.get("plural")).strip().lower(),
+            ]
+        )
+    elif entry_type == "verb":
+        raw = "|".join(
+            [
+                entry_type,
+                _safe_text(entry.get("infinitive")).strip().lower(),
+                _safe_text(entry.get("prateritum")).strip().lower(),
+                _safe_text(entry.get("partizip2")).strip().lower(),
+            ]
+        )
+    else:
+        raw = entry_type
+    return str(abs(hash(raw)))
+
+
 def _safe_int(value, default=0):
     """Handle safe int."""
     try:
@@ -570,6 +638,8 @@ def _row_to_entry(row):
         entry["learning_batch_id"] = row["learning_batch_id"] or ""
     if "learning_done_at" in row.keys():
         entry["learning_done_at"] = row["learning_done_at"] or ""
+    if "has_non_learning_history" in row.keys():
+        entry["has_non_learning_history"] = bool(row["has_non_learning_history"])
     return entry
 
 
@@ -855,8 +925,22 @@ def get_statistics_snapshot(db_path, user_id, mode):
             ).fetchone()
             return int((row["cnt"] if row else 0) or 0)
 
+        def _today_mode_prefix_count(prefix):
+            row = conn.execute(
+                """
+                SELECT COUNT(DISTINCT e.word_id) AS cnt
+                FROM quiz_events e
+                WHERE e.user_id = ?
+                  AND e.mode LIKE ?
+                  AND date(e.created_at) = date(?)
+                """,
+                (user_id, f"{prefix}%", today.isoformat()),
+            ).fetchone()
+            return int((row["cnt"] if row else 0) or 0)
+
         today_complete_sm2_ru_de = _today_mode_count("ru_de")
         today_complete_sm2_de_ru = _today_mode_count("de_ru")
+        today_complete_pl_sg = _today_mode_prefix_count("pl_sg_")
         today_complete_weak_article = _today_mode_count("weak_article")
         today_complete_weak_plural = _today_mode_count("weak_plural")
         today_complete_weak_partizip2 = _today_mode_count("weak_partizip2")
@@ -1015,6 +1099,7 @@ def get_statistics_snapshot(db_path, user_id, mode):
         "today_complete": today_complete,
         "today_complete_sm2_ru_de": today_complete_sm2_ru_de,
         "today_complete_sm2_de_ru": today_complete_sm2_de_ru,
+        "today_complete_pl_sg": today_complete_pl_sg,
         "today_complete_weak_article": today_complete_weak_article,
         "today_complete_weak_plural": today_complete_weak_plural,
         "today_complete_weak_partizip2": today_complete_weak_partizip2,
@@ -1713,7 +1798,15 @@ def _progress_for_row(row):
     }
 
 
-def select_due(db_path, user_id, mode, word_type=None, topics=None, today=None):
+def select_due(
+    db_path,
+    user_id,
+    mode,
+    word_type=None,
+    topics=None,
+    today=None,
+    exclude_correct_today=False,
+):
     """Handle select due."""
     if today is None:
         today = date.today()
@@ -1759,6 +1852,19 @@ def select_due(db_path, user_id, mode, word_type=None, topics=None, today=None):
             placeholders = ",".join("?" for _ in clean_topics)
             where_clauses.append(f"w.topic IN ({placeholders})")
             where_params.extend(clean_topics)
+    if exclude_correct_today:
+        where_clauses.append(
+            """NOT EXISTS (
+                SELECT 1
+                FROM quiz_events qe2
+                WHERE qe2.user_id = ?
+                  AND qe2.word_id = w.id
+                  AND qe2.mode = ?
+                  AND qe2.is_correct = 1
+                  AND date(qe2.created_at) = date(?)
+            )"""
+        )
+        where_params.extend([int(user_id), mode, due_today])
 
     where_sql = " AND ".join(where_clauses)
 
@@ -1766,6 +1872,13 @@ def select_due(db_path, user_id, mode, word_type=None, topics=None, today=None):
         SELECT
             w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ, w.russian,
             w.ukrainian, w.english, w.topic, ldone.done_at AS learning_done_at,
+            CASE WHEN EXISTS (
+                SELECT 1
+                FROM quiz_events qe
+                WHERE qe.user_id = ?
+                  AND qe.word_id = w.id
+                  AND qe.mode != 'learning'
+            ) THEN 1 ELSE 0 END AS has_non_learning_history,
             p.interval AS p_interval, p.repetitions AS p_repetitions, p.ease AS p_ease, p.due AS p_due
         FROM words w
         LEFT JOIN progress p
@@ -1785,7 +1898,7 @@ def select_due(db_path, user_id, mode, word_type=None, topics=None, today=None):
             w.created_at ASC
     """
 
-    params = [int(user_id), mode, int(user_id)] + where_params
+    params = [int(user_id), mode, int(user_id), int(user_id)] + where_params
     with _connect(db_path) as conn:
         rows = conn.execute(query, tuple(params)).fetchall()
 
@@ -1798,7 +1911,7 @@ def select_due(db_path, user_id, mode, word_type=None, topics=None, today=None):
 
 
 def update_sm2(srs, quality, today=None, interval_divisor=1.0):
-    """Handle update sm2."""
+    """Handle FSRS-like update in existing SM2 storage format."""
     if today is None:
         today = date.today()
 
@@ -1809,26 +1922,28 @@ def update_sm2(srs, quality, today=None, interval_divisor=1.0):
         interval_divisor = 1.0
     if interval_divisor <= 0:
         interval_divisor = 1.0
-    interval = int(srs.get("interval", 1))
-    repetitions = int(srs.get("repetitions", 0))
+    interval = max(1, int(srs.get("interval", 1)))
+    repetitions = max(0, int(srs.get("repetitions", 0)))
     ease = float(srs.get("ease", DEFAULT_EASE))
+    ease = max(MIN_EASE, min(MAX_EASE, ease))
 
     if quality < 3:
-        repetitions = 0
-        interval = 1
+        # Softer than classic SM2 reset: step back one stage and shorten interval.
+        repetitions = max(0, repetitions - 1)
+        ease = max(MIN_EASE, ease - 0.25)
+        interval = max(1, int(round(interval * 0.4)))
     else:
-        if repetitions == 0:
-            interval = 2
-        elif repetitions == 1:
-            interval = 6
-        else:
-            interval = int(round(interval * ease))
         repetitions += 1
-
-    ease = ease + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02))
-    ease = max(MIN_EASE, ease)
-
-    interval = max(1, int(interval / interval_divisor))
+        ease = min(MAX_EASE, ease + 0.05 * (quality - 3))
+        if repetitions == 1:
+            interval = 1
+        elif repetitions == 2:
+            interval = 3
+        else:
+            growth = 1.7 + (ease - DEFAULT_EASE) * 0.35 + (quality - 3) * 0.08
+            growth = max(1.3, min(2.3, growth))
+            effective_growth = 1.0 + ((growth - 1.0) / interval_divisor)
+            interval = max(1, int(round(interval * effective_growth)))
     due = today + timedelta(days=interval)
     return {
         "interval": interval,
@@ -2131,13 +2246,11 @@ def learning_mark_preview_next(db_path, user_id, word_id, first_interval_seconds
     return True
 
 
-def learning_due_entry(db_path, user_id):
-    """Handle learning due entry."""
+def learning_due_entries(db_path, user_id, exclude_word_id=None):
+    """Return due learning entries."""
     init_db(db_path)
     now_iso = _utc_now_iso()
-    with _connect(db_path) as conn:
-        row = conn.execute(
-            """
+    base_query = """
             SELECT
                 w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ,
                 w.russian, w.ukrainian, w.english, w.topic,
@@ -2150,15 +2263,41 @@ def learning_due_entry(db_path, user_id):
               AND li.status = 'active'
               AND li.preview_done = 1
               AND li.next_due <= ?
+    """
+    order_clause = """
             ORDER BY
               CASE WHEN li.step_index = 0 THEN 0 ELSE 1 END ASC,
               CASE WHEN li.step_index = 0 THEN li.created_at ELSE NULL END ASC,
-              CASE WHEN li.step_index > 0 THEN RANDOM() ELSE 0 END
-            LIMIT 1
-            """,
-            (int(user_id), now_iso),
-        ).fetchone()
-    return _row_to_entry(row) if row else None
+              li.next_due ASC,
+              li.updated_at ASC
+    """
+    with _connect(db_path) as conn:
+        if exclude_word_id:
+            rows = conn.execute(
+                f"""
+                {base_query}
+                  AND w.id != ?
+                {order_clause}
+                """,
+                (int(user_id), now_iso, _safe_text(exclude_word_id)),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                f"""
+                {base_query}
+                {order_clause}
+                """,
+                (int(user_id), now_iso),
+            ).fetchall()
+    return [_row_to_entry(row) for row in rows]
+
+
+def learning_due_entry(db_path, user_id, exclude_word_id=None):
+    """Handle learning due entry."""
+    entries = learning_due_entries(db_path, user_id, exclude_word_id=exclude_word_id)
+    if not entries and exclude_word_id:
+        entries = learning_due_entries(db_path, user_id, exclude_word_id=None)
+    return entries[0] if entries else None
 
 
 def learning_update_result(db_path, user_id, word_id, ok, intervals_seconds):
@@ -3246,6 +3385,85 @@ def list_all_words(db_path):
     return [_row_to_entry(row) for row in rows]
 
 
+def list_words_by_topic(db_path, topic):
+    """Handle list words by topic."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian
+            , ukrainian, english, topic
+            FROM words
+            WHERE topic = ?
+            ORDER BY created_at ASC
+            """,
+            (_safe_text(topic),),
+        ).fetchall()
+    return [_row_to_entry(row) for row in rows]
+
+
+def list_learning_active_words(db_path, user_id):
+    """Handle list active learning words."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.russian
+                , w.ukrainian, w.english, w.topic
+            FROM learning_items li
+            JOIN words w ON w.id = li.word_id
+            WHERE li.user_id = ?
+              AND li.status = 'active'
+            ORDER BY
+                CASE WHEN trim(coalesce(w.topic, '')) GLOB '[0-9]*' THEN 0 ELSE 1 END ASC,
+                CASE WHEN trim(coalesce(w.topic, '')) GLOB '[0-9]*' THEN CAST(trim(w.topic) AS INTEGER) ELSE NULL END ASC,
+                w.topic ASC,
+                li.created_at ASC
+            """,
+            (int(user_id),),
+        ).fetchall()
+    return [_row_to_entry(row) for row in rows]
+
+
+def list_learning_queue_words(db_path, user_id, topics=None):
+    """Handle new words that have no first touch and are not completed in learning."""
+    init_db(db_path)
+    where_topics = ""
+    params = [int(user_id), int(user_id)]
+    if topics:
+        clean_topics = [_safe_text(x) for x in topics if _safe_text(x)]
+        if clean_topics:
+            placeholders = ",".join("?" for _ in clean_topics)
+            where_topics = f" AND w.topic IN ({placeholders})"
+            params.extend(clean_topics)
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.russian
+                , w.ukrainian, w.english, w.topic
+            FROM words w
+            WHERE NOT EXISTS (
+                SELECT 1 FROM quiz_events e
+                WHERE e.user_id = ? AND e.word_id = w.id
+            )
+              AND NOT EXISTS (
+                SELECT 1 FROM learning_items li
+                WHERE li.user_id = ? AND li.word_id = w.id AND li.status = 'completed'
+              )
+            {where_topics}
+            ORDER BY
+                CASE WHEN trim(coalesce(w.topic, '')) GLOB '[0-9]*' THEN 0 ELSE 1 END ASC,
+                CASE WHEN trim(coalesce(w.topic, '')) GLOB '[0-9]*' THEN CAST(trim(w.topic) AS INTEGER) ELSE NULL END ASC,
+                w.topic ASC,
+                w.created_at ASC
+            """.format(where_topics=where_topics),
+            tuple(params),
+        ).fetchall()
+    return [_row_to_entry(row) for row in rows]
+
+
 def list_sm2_weak_words(db_path, user_id, mode, min_wrong_streak=4):
     """Handle list sm2 weak words."""
     init_db(db_path)
@@ -3565,3 +3783,198 @@ def create_template_from_word(raw_word):
         "partizip2": "",
         "russian": "",
     }
+
+
+def list_vf_candidates(db_path, user_id, only_unchecked=True, limit=0):
+    """List noun/verb words for VF check with optional unchanged skip."""
+    init_db(db_path)
+    candidates = []
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT id, type, article, german, plural, infinitive, prateritum, partizip2
+            , russian, ukrainian, english, topic
+            FROM words
+            WHERE type IN ('nomen', 'verb')
+            ORDER BY created_at ASC
+            """
+        ).fetchall()
+        for row in rows:
+            entry = _row_to_entry(row)
+            source_hash = _vf_source_hash(entry)
+            last = conn.execute(
+                """
+                SELECT source_hash
+                FROM vf_checks
+                WHERE user_id = ? AND word_id = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (int(user_id), _safe_text(entry.get("id"))),
+            ).fetchone()
+            if only_unchecked and last and _safe_text(last["source_hash"]) == source_hash:
+                continue
+            entry["vf_source_hash"] = source_hash
+            candidates.append(entry)
+            if limit and len(candidates) >= int(limit):
+                break
+    return candidates
+
+
+def save_vf_check_result(
+    db_path,
+    user_id,
+    word_id,
+    word_type,
+    base_form,
+    status,
+    retryable=False,
+    local_payload=None,
+    remote_payload=None,
+    diff_payload=None,
+    source_hash="",
+):
+    """Persist single VF check result."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO vf_checks (
+                user_id, word_id, word_type, base_form, status, retryable,
+                local_payload, remote_payload, diff_payload, source_hash, approved, applied, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, CURRENT_TIMESTAMP)
+            """,
+            (
+                int(user_id),
+                _safe_text(word_id),
+                _safe_text(word_type),
+                _safe_text(base_form),
+                _safe_text(status),
+                1 if retryable else 0,
+                json.dumps(local_payload or {}, ensure_ascii=False),
+                json.dumps(remote_payload or {}, ensure_ascii=False),
+                json.dumps(diff_payload or {}, ensure_ascii=False),
+                _safe_text(source_hash),
+            ),
+        )
+
+
+def list_latest_vf_mismatches(db_path, user_id, limit=200):
+    """Return latest mismatch rows per word."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            WITH latest AS (
+                SELECT MAX(id) AS id
+                FROM vf_checks
+                WHERE user_id = ?
+                GROUP BY word_id
+            )
+            SELECT c.*
+            FROM vf_checks c
+            JOIN latest l ON l.id = c.id
+            WHERE c.status = 'mismatch'
+            ORDER BY c.id DESC
+            LIMIT ?
+            """,
+            (int(user_id), int(limit)),
+        ).fetchall()
+    items = []
+    for row in rows:
+        item = dict(row)
+        for key in ("local_payload", "remote_payload", "diff_payload"):
+            raw = item.get(key)
+            try:
+                item[key] = json.loads(raw) if raw else {}
+            except Exception:
+                item[key] = {}
+        items.append(item)
+    return items
+
+
+def approve_vf_checks(db_path, user_id, ids):
+    """Mark selected vf check rows as approved."""
+    clean_ids = [int(x) for x in ids if str(x).strip().isdigit()]
+    if not clean_ids:
+        return 0
+    init_db(db_path)
+    placeholders = ",".join("?" for _ in clean_ids)
+    with _connect(db_path) as conn:
+        cur = conn.execute(
+            f"""
+            UPDATE vf_checks
+            SET approved = 1, updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = ? AND id IN ({placeholders})
+            """,
+            (int(user_id), *clean_ids),
+        )
+    return int(cur.rowcount or 0)
+
+
+def list_approved_vf_checks(db_path, user_id, only_not_applied=True):
+    """List approved checks to apply."""
+    init_db(db_path)
+    where = "WHERE user_id = ? AND approved = 1"
+    if only_not_applied:
+        where += " AND applied = 0"
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            f"""
+            SELECT *
+            FROM vf_checks
+            {where}
+            ORDER BY id ASC
+            """,
+            (int(user_id),),
+        ).fetchall()
+    items = []
+    for row in rows:
+        item = dict(row)
+        for key in ("local_payload", "remote_payload", "diff_payload"):
+            raw = item.get(key)
+            try:
+                item[key] = json.loads(raw) if raw else {}
+            except Exception:
+                item[key] = {}
+        items.append(item)
+    return items
+
+
+def mark_vf_check_applied(db_path, check_id):
+    """Mark VF check row as applied."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        conn.execute(
+            """
+            UPDATE vf_checks
+            SET applied = 1, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (int(check_id),),
+        )
+
+
+def list_latest_vf_retryable(db_path, user_id, limit=200):
+    """List latest retryable failures."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            WITH latest AS (
+                SELECT MAX(id) AS id
+                FROM vf_checks
+                WHERE user_id = ?
+                GROUP BY word_id
+            )
+            SELECT c.*
+            FROM vf_checks c
+            JOIN latest l ON l.id = c.id
+            WHERE c.retryable = 1
+            ORDER BY c.id DESC
+            LIMIT ?
+            """,
+            (int(user_id), int(limit)),
+        ).fetchall()
+    return [dict(row) for row in rows]

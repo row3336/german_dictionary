@@ -1,5 +1,6 @@
 
 import asyncio
+import html
 import logging
 import os
 import random
@@ -62,6 +63,7 @@ from .app_config import (
     QUIZ_ARTICLE,
     QUIZ_ARTICLE_WEAK,
     QUIZ_DE_RU,
+    QUIZ_PL_SG,
     QUIZ_PARTIZIP2_WEAK,
     QUIZ_PLURAL_WEAK,
     QUIZ_PRATERITUM_WEAK,
@@ -123,6 +125,8 @@ from .storage import (
     search_word,
     has_translation_collision,
     list_all_words,
+    list_learning_queue_words,
+    list_words_by_topic,
     list_sm2_weak_words,
     get_synonym_group,
     get_synonym_group_id,
@@ -140,6 +144,13 @@ from .storage import (
     set_progress,
     update_word_fields,
     list_pending_word_flags,
+    list_vf_candidates,
+    save_vf_check_result,
+    list_latest_vf_mismatches,
+    approve_vf_checks,
+    list_approved_vf_checks,
+    mark_vf_check_applied,
+    list_latest_vf_retryable,
     is_banned_word,
     log_quiz_event,
     reset_periodicity,
@@ -150,6 +161,7 @@ from .storage import (
     learning_add_word_by_id,
     learning_batch_mark_notified,
     learning_batch_update_ready_state,
+    learning_due_entries,
     learning_due_entry,
     learning_get_or_create_batch,
     learning_pick_new_words,
@@ -204,24 +216,44 @@ TEST_PLURAL_WEAK_TEXT = "Plural Weak Mode"
 TEST_VERB_WEAK_TEXT = "Verb Forms Weak Mode"
 TEST_PRATERITUM_WEAK_TEXT = "Prateritum Weak Mode"
 TEST_PARTIZIP2_WEAK_TEXT = "Partizip2 Weak Mode"
-STANDARD_SM2_TEXT = "Standart mode SM2"
+STANDARD_SM2_TEXT = "Standart mode FSRS"
 SYNONYMS_TEXT = "synonyms"
 SYN_ADD_TEXT = "add"
 SYN_REMOVE_TEXT = "remove"
 SYN_AUTO_TEXT = "auto by"
 SYN_CLEAR_TEXT = "clear group"
 SYN_FLAG_TEXT = "flag!"
+PARSE_VF_TEXT = "parse_VF"
+VF_SET_PROXY_TEXT = "set_proxy"
+VF_TEST_PROXY_TEXT = "test_proxy"
+VF_SET_SLEEP_TEXT = "set_sleep"
+VF_SET_JITTER_TEXT = "set_jitter"
+VF_DRY_RUN_NEW_TEXT = "dry_run_new"
+VF_DRY_RUN_ALL_TEXT = "dry_run_all"
+VF_SHOW_DIFF_TEXT = "show_diff"
+VF_APPROVE_TEXT = "approve_ids"
+VF_APPLY_TEXT = "apply_approved"
+VF_VERIFY_TEXT = "verify_changes"
+VF_RETRY_TEXT = "retry_failed"
+VF_STOP_TEXT = "stop_parse"
+VF_PROXY_KEY = "vf_proxy"
+VF_SLEEP_KEY = "vf_sleep_sec"
+VF_JITTER_KEY = "vf_jitter_pct"
+VF_RUNNING_TASKS = {}
+VF_STOP_FLAGS = {}
 SYN_CONFIRM_TEXT = "Confirm"
 SYN_CANCEL_TEXT = "Cancel"
 QUIZ_FIELDS_TEXT = "fields"
 QUIZ_RU_DE_TEXT = "Ru > De"
 QUIZ_DE_RU_TEXT = "De > Ru"
+QUIZ_PL_SG_TEXT = "pl > sg"
 LEARNING_TEXT = "Learning"
 LEARNING_START_TEXT = "learning session"
 LEARNING_ADD_TEXT = "add for learning"
 LEARNING_SKIP_TEXT = "skip_learning"
 LEARNING_NEXT_TEXT = "next"
 LEARNING_RESET_TEXT = "reset learning"
+LEARNING_MIX_MODE_TEXT = "mix_mode"
 SEND_LEARN_TEXT = "send_learn"
 
 RETRY_GAP_QUESTIONS = 3
@@ -233,6 +265,7 @@ LEARNING_INTERVALS_DEFAULT = "30,120,600,3600,10800,18000"
 LEARNING_REMINDER_INTERVAL_DEFAULT = 60
 LEARNING_REMINDER_COOLDOWN_DEFAULT = 900
 LEARNING_READY_QUORUM_DEFAULT = 70
+LEARNING_MIX_MODE_DEFAULT = "0"
 LEARNING_REMINDER_JOB_NAME = "learning_reminder_job"
 SM2_REPORT_UTC_HOUR_DEFAULT = 3
 SM2_REPORT_JOB_NAME = "sm2_daily_report_job"
@@ -292,11 +325,16 @@ def _mode_de_l1(user_id):
     return f"de_{dict_lang}"
 
 
+def _mode_pl_sg(user_id):
+    """Handle mode pl sg."""
+    return f"pl_sg_{_user_dict_lang(user_id)}"
+
+
 def _tests_menu_keys(user_id):
     """Handle tests menu keys."""
     return [
-        [LEARNING_TEXT, QUIZ_RU_DE_TEXT, QUIZ_DE_RU_TEXT],
-        [t(_user_interface_lang(user_id), "back")],
+        [LEARNING_TEXT, QUIZ_RU_DE_TEXT, QUIZ_DE_RU_TEXT, QUIZ_PL_SG_TEXT],
+        [t(_user_interface_lang(user_id), "topic_filter"), t(_user_interface_lang(user_id), "back")],
     ]
 
 
@@ -305,14 +343,14 @@ def _ru_de_menu_keys(user_id):
     return [
         [STANDARD_SM2_TEXT, TEST_ARTICLE_WEAK_TEXT],
         [TEST_PLURAL_WEAK_TEXT, TEST_VERB_WEAK_TEXT],
-        [t(_user_interface_lang(user_id), "topic_filter"), t(_user_interface_lang(user_id), "back")],
+        [t(_user_interface_lang(user_id), "back")],
     ]
 
 
 def _learning_menu_keys(user_id):
     """Handle learning menu keys."""
     return [
-        [LEARNING_START_TEXT, LEARNING_ADD_TEXT, LEARNING_RESET_TEXT],
+        [LEARNING_START_TEXT, LEARNING_MIX_MODE_TEXT, LEARNING_ADD_TEXT, LEARNING_RESET_TEXT],
         [t(_user_interface_lang(user_id), "back")],
     ]
 
@@ -321,7 +359,7 @@ def _settings_menu_keys(user_id):
     """Handle settings menu keys."""
     lang = _user_interface_lang(user_id)
     return [
-        ["flags!", t(lang, "algo_settings")],
+        [PARSE_VF_TEXT, t(lang, "algo_settings")],
         [t(lang, "interface_lang_btn"), t(lang, "dict_lang_btn")],
         [t(lang, "dump"), t(lang, "back")],
     ]
@@ -431,6 +469,73 @@ def _learning_ready_quorum(db_path):
     """Handle learning ready quorum."""
     value = _get_int_setting(db_path, LEARNING_READY_QUORUM_KEY, LEARNING_READY_QUORUM_DEFAULT)
     return min(100, max(1, value))
+
+
+def _learning_mix_mode_key(user_id):
+    """Handle learning mix mode key."""
+    return f"learning_mix_mode:{int(user_id)}"
+
+
+def _learning_mix_mode_enabled(user_id):
+    """Handle learning mix mode enabled."""
+    value = get_setting(get_db_path(), _learning_mix_mode_key(user_id), LEARNING_MIX_MODE_DEFAULT)
+    return str(value).strip().lower() in {"1", "true", "on", "yes"}
+
+
+def _set_learning_mix_mode(user_id, enabled):
+    """Persist learning mix mode."""
+    set_setting(get_db_path(), _learning_mix_mode_key(user_id), "1" if enabled else "0")
+
+
+def _build_learning_topic_mix_queue(entries):
+    """Build weighted mixed queue by topic."""
+    buckets = {}
+    for entry in entries:
+        topic = str(entry.get("topic") or "").strip() or "-"
+        buckets.setdefault(topic, []).append(entry)
+    for values in buckets.values():
+        random.shuffle(values)
+    mixed = []
+    last_topic = None
+    while True:
+        candidates = [(topic, values) for topic, values in buckets.items() if values]
+        if not candidates:
+            break
+        topic_pool = candidates
+        if last_topic and len(candidates) > 1:
+            alt = [(topic, values) for topic, values in candidates if topic != last_topic]
+            if alt:
+                topic_pool = alt
+        topics = [topic for topic, _ in topic_pool]
+        weights = [len(values) for _, values in topic_pool]
+        selected_topic = random.choices(topics, weights=weights, k=1)[0]
+        mixed.append(buckets[selected_topic].pop(0))
+        last_topic = selected_topic
+    return mixed
+
+
+def _pick_learning_due_entry(context, user_id, exclude_word_id=None):
+    """Pick next due learning entry with optional topic-mix mode."""
+    if not _learning_mix_mode_enabled(user_id):
+        return learning_due_entry(get_db_path(), user_id=user_id, exclude_word_id=exclude_word_id)
+    queue_key = "learning_mix_queue"
+    queue = context.user_data.get(queue_key)
+    if not isinstance(queue, list) or not queue:
+        due_entries = learning_due_entries(get_db_path(), user_id=user_id, exclude_word_id=exclude_word_id)
+        if not due_entries and exclude_word_id:
+            due_entries = learning_due_entries(get_db_path(), user_id=user_id, exclude_word_id=None)
+        queue = _build_learning_topic_mix_queue(due_entries)
+        context.user_data[queue_key] = queue
+    while queue:
+        entry = queue.pop(0)
+        wid = entry.get("id")
+        if exclude_word_id and wid == exclude_word_id:
+            continue
+        if not wid:
+            continue
+        return entry
+    context.user_data.pop(queue_key, None)
+    return None
 
 
 def _sm2_report_hour_utc(db_path):
@@ -645,6 +750,11 @@ def _action_key_from_text(text, user_id):
         ("tests", "tests"),
         ("db_search", "db_search"),
         ("db_search_matches", "db_search_matches"),
+        ("db_search_plural_match", "db_search_plural_match"),
+        ("db_search_topic_words", "db_search_topic_words"),
+        ("db_search_topics_lists", "db_search_topics_lists"),
+        ("db_search_verbs_lists", "db_search_verbs_lists"),
+        ("db_search_topics_lern", "db_search_topics_lern"),
         ("db_search_weak_words", "db_search_weak_words"),
         ("settings", "settings"),
         ("info", "info"),
@@ -677,14 +787,17 @@ def _action_key_from_text(text, user_id):
         mapping[t("en", key)] = action
     mapping[QUIZ_RU_DE_TEXT] = "quiz_l1_de"
     mapping[QUIZ_DE_RU_TEXT] = "quiz_de_l1"
+    mapping[QUIZ_PL_SG_TEXT] = "quiz_pl_sg"
     mapping[LEARNING_TEXT] = "learning"
     mapping[LEARNING_START_TEXT] = "learning_start"
     mapping[LEARNING_ADD_TEXT] = "learning_add"
     mapping[LEARNING_SKIP_TEXT] = "learning_skip"
     mapping[LEARNING_NEXT_TEXT] = "learning_next"
     mapping[LEARNING_RESET_TEXT] = "learning_reset"
+    mapping[LEARNING_MIX_MODE_TEXT] = "learning_mix_mode"
     mapping[SEND_LEARN_TEXT] = "send_learn"
     mapping["flags!"] = "review_flags"
+    mapping[PARSE_VF_TEXT] = "review_flags"
     mapping["Back"] = "back"
     mapping["Stop"] = "stop"
     return mapping.get(text.strip(), "")
@@ -719,13 +832,90 @@ def _add_input_markup(user_id):
 def _db_search_markup(user_id):
     """Handle db search markup."""
     lang = _user_interface_lang(user_id)
-    return ReplyKeyboardMarkup([[t(lang, "db_search_matches"), t(lang, "db_search_weak_words"), t(lang, "back")]], resize_keyboard=True)
+    actions = [
+        t(lang, "db_search_matches"),
+        t(lang, "db_search_plural_match"),
+        t(lang, "db_search_topic_words"),
+        t(lang, "db_search_topics_lern"),
+        t(lang, "db_search_weak_words"),
+    ]
+    rows = [actions[i:i + 4] for i in range(0, len(actions), 4)]
+    back = t(lang, "back")
+    if rows and len(rows[-1]) < 4:
+        rows[-1].append(back)
+    else:
+        rows.append([back])
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True)
+
+
+def _db_search_words_lists_markup(user_id):
+    """Handle words lists submenu markup."""
+    lang = _user_interface_lang(user_id)
+    return ReplyKeyboardMarkup(
+        [[t(lang, "db_search_topics_lists"), t(lang, "db_search_verbs_lists"), t(lang, "back")]],
+        resize_keyboard=True,
+    )
 
 
 def _db_search_weak_markup(user_id):
     """Handle db search weak markup."""
     lang = _user_interface_lang(user_id)
     return ReplyKeyboardMarkup([[SEND_LEARN_TEXT, t(lang, "back")]], resize_keyboard=True)
+
+
+def _topic_sort_key(token):
+    """Handle topic sort key with numeric priority."""
+    value = str(token or "").strip()
+    if value.isdigit():
+        return (0, int(value), value)
+    return (1, value.lower(), value)
+
+
+def _db_search_topic_markup(user_id):
+    """Handle db search topic selector markup."""
+    lang = _user_interface_lang(user_id)
+    topics = sorted(list_topics(get_db_path()), key=_topic_sort_key)
+    rows = []
+    row = []
+    for item in topics:
+        row.append(str(item))
+        if len(row) == 4:
+            rows.append(row)
+            row = []
+    back = t(lang, "back")
+    if row:
+        row.append(back)
+        rows.append(row)
+    else:
+        rows.append([back])
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True), topics
+
+
+def _format_topic_words_line(entry):
+    """Handle format topic words line (base form only)."""
+    entry_type = str(entry.get("type", "")).strip().lower()
+    if entry_type == "verb":
+        base = str(entry.get("infinitive", "")).strip()
+    else:
+        base = str(entry.get("german", "")).strip()
+    if entry_type == "nomen":
+        article = str(entry.get("article", "")).strip()
+        base = f"{article} {base}".strip() if article else base
+    return f"{base} [{entry_type}]"
+
+
+def _format_topic_learning_line(entry):
+    """Handle format learning line grouped by topic."""
+    entry_type = str(entry.get("type", "")).strip().lower()
+    topic = str(entry.get("topic", "")).strip() or "-"
+    if entry_type == "verb":
+        base = str(entry.get("infinitive", "")).strip()
+    else:
+        base = str(entry.get("german", "")).strip()
+    if entry_type == "nomen":
+        article = str(entry.get("article", "")).strip()
+        base = f"{article} {base}".strip() if article else base
+    return f"[{topic}] - [{base}]"
 
 
 def _split_text_chunks(text, max_size=3500):
@@ -849,7 +1039,10 @@ def _allowed_edit_fields(source):
 
 def _quiz_edit_root_markup(user_id):
     """Handle quiz edit root markup."""
-    return ReplyKeyboardMarkup([[QUIZ_FIELDS_TEXT], ["delete", t(_user_interface_lang(user_id), "back")]], resize_keyboard=True)
+    return ReplyKeyboardMarkup(
+        [[QUIZ_FIELDS_TEXT, SEND_LEARN_TEXT], ["delete", t(_user_interface_lang(user_id), "back")]],
+        resize_keyboard=True,
+    )
 
 
 def _dict_lang_tag(user_id):
@@ -1214,6 +1407,17 @@ async def _show_quiz_prompt_after_edit(update: Update, context: ContextTypes.DEF
         )
         return QUIZ_DE_RU
 
+    if state == QUIZ_PL_SG:
+        text = _format_pl_sg_question(entry)
+        if prefix_text:
+            text = f"{prefix_text}\n\n{text}"
+        await update.message.reply_text(
+            text,
+            reply_markup=_quiz_markup(update.effective_user.id, article=False),
+            parse_mode="Markdown",
+        )
+        return QUIZ_PL_SG
+
     if state == QUIZ_ARTICLE:
         text = _format_article_question(entry)
         if prefix_text:
@@ -1234,7 +1438,7 @@ async def _show_quiz_prompt_after_edit(update: Update, context: ContextTypes.DEF
     if state == QUIZ_PARTIZIP2_WEAK:
         return await _send_partizip2_weak_prompt(update, context, prefix_text)
     if state == LEARNING_QUIZ:
-        return await _send_learning_prompt(update, context, prefix_text)
+        return await _send_learning_prompt(update, context, prefix_text, force_entry=context.user_data.get("quiz_entry"))
 
     if state == DB_SEARCH_VIEW:
         text = _format_db_search_card(entry, _user_dict_lang(update.effective_user.id))
@@ -1320,6 +1524,58 @@ def _format_db_search_card(entry, dict_lang):
     if translation:
         return f"{_md_escape(german)} - {_md_escape(translation)}"
     return _md_escape(german)
+
+
+def _select_db_search_primary(token):
+    """Pick primary DB-search entry preferring non-phrase exact matches."""
+    candidate = _normalize_lookup_text(token)
+    if not candidate:
+        return None
+    rows = list_all_words(get_db_path())
+    exact_non_phrase = []
+    exact_phrase = []
+    for row in rows:
+        entry_type = _type_label(row.get("type", ""))
+        forms = {
+            _normalize_lookup_text(row.get("german", "")),
+            _normalize_lookup_text(row.get("infinitive", "")),
+            _normalize_lookup_text(row.get("plural", "")),
+            _normalize_lookup_text(row.get("prateritum", "")),
+            _normalize_lookup_text(row.get("partizip2", "")),
+            _normalize_lookup_text(row.get("russian", "")),
+            _normalize_lookup_text(row.get("ukrainian", "")),
+            _normalize_lookup_text(row.get("english", "")),
+        }
+        if candidate in forms:
+            if entry_type == "phrase":
+                exact_phrase.append(row)
+            else:
+                exact_non_phrase.append(row)
+    if exact_non_phrase:
+        return exact_non_phrase[0]
+    if exact_phrase:
+        return exact_phrase[0]
+    return search_word(get_db_path(), token)
+
+
+def _find_phrase_side_matches(token, primary_entry):
+    """Collect phrase matches containing token excluding primary card."""
+    candidate = _normalize_lookup_text(token)
+    if not candidate:
+        return []
+    primary_id = (primary_entry or {}).get("id")
+    out = []
+    for row in list_all_words(get_db_path()):
+        if _type_label(row.get("type", "")) != "phrase":
+            continue
+        if primary_id and row.get("id") == primary_id:
+            continue
+        phrase = _normalize_lookup_text(row.get("german", ""))
+        if not phrase:
+            continue
+        if candidate in phrase:
+            out.append(row)
+    return out
 
 
 def _format_match_line(entry, dict_lang):
@@ -1469,18 +1725,111 @@ def _scan_words_before_ai(lines):
     existing = []
     recognition = []
     for raw in lines:
-        word = raw.strip()
-        if not word:
+        parsed = _parse_add_line_spec(raw)
+        if not parsed:
             continue
-        reason = _prefilter_reject_reason(word)
+        reason = _prefilter_reject_reason(parsed.get("lookup_word", ""))
         if reason:
-            filtered.append(word)
+            filtered.append({"raw": parsed.get("raw", raw), "reason": reason})
             continue
-        if find_existing_word(get_db_path(), word):
-            existing.append(word)
+        if _exists_word_for_type(parsed.get("forced_type"), parsed.get("lookup_word", "")):
+            existing.append({"raw": parsed.get("raw", raw), "reason": "Already in database for this type."})
             continue
-        recognition.append(word)
+        recognition.append(parsed)
     return filtered, existing, recognition
+
+
+def _parse_add_line_spec(raw_line):
+    """Parse add-word line with optional [type] and comma-separated forms."""
+    raw = str(raw_line or "").strip()
+    if not raw:
+        return None
+    m = re.match(r"^(.*?)\s*\[([a-zA-Z_]+)\]\s*$", raw)
+    forced_type = ""
+    body = raw
+    if m:
+        body = m.group(1).strip()
+        forced_type = _type_label(m.group(2))
+    parts = [x.strip() for x in body.split(",") if x.strip()]
+    if not parts:
+        return None
+    item = {
+        "raw": raw,
+        "body": body,
+        "forced_type": forced_type,
+        "lookup_word": "",
+        "forced_fields": {},
+    }
+    if forced_type == "verb":
+        item["lookup_word"] = parts[0]
+        item["forced_fields"] = {
+            "infinitive": parts[0],
+            "prateritum": parts[1] if len(parts) > 1 else "",
+            "partizip2": parts[2] if len(parts) > 2 else "",
+        }
+        return item
+    if forced_type == "phrase":
+        phrase = " ".join(parts[0].split())
+        item["lookup_word"] = phrase
+        item["forced_fields"] = {
+            "german": phrase,
+        }
+        return item
+    if forced_type == "nomen":
+        first = parts[0]
+        article, base = _split_leading_article(first)
+        item["lookup_word"] = base or first
+        item["forced_fields"] = {
+            "article": article,
+            "german": base or first,
+            "plural": parts[1] if len(parts) > 1 else "",
+        }
+        return item
+    # Article-led inputs must stay nouns, never auto-phrases.
+    article_auto, base_auto = _split_leading_article(parts[0])
+    if article_auto:
+        item["forced_type"] = "nomen"
+        item["lookup_word"] = base_auto or parts[0]
+        item["forced_fields"] = {
+            "article": article_auto,
+            "german": base_auto or parts[0],
+            "plural": parts[1] if len(parts) > 1 else "",
+        }
+        return item
+    # Auto phrase mode for multi-word input without comma-separated forms.
+    if "," not in body and len(body.split()) > 1:
+        phrase = " ".join(body.split())
+        item["forced_type"] = "phrase"
+        item["lookup_word"] = phrase
+        item["forced_fields"] = {"german": phrase}
+        return item
+    item["lookup_word"] = parts[0]
+    return item
+
+
+def _exists_word_for_type(forced_type, lookup_word):
+    """Type-aware duplicate check for add pipeline."""
+    word = _normalize_lookup_text(lookup_word)
+    if not word:
+        return False
+    if forced_type not in {"nomen", "verb", "phrase"}:
+        return bool(find_existing_word(get_db_path(), lookup_word))
+    for entry in list_all_words(get_db_path()):
+        et = _type_label(entry.get("type", ""))
+        if et != forced_type:
+            continue
+        if forced_type == "verb":
+            variants = {_normalize_lookup_text(entry.get("infinitive", ""))}
+            variants.update(_russian_variants(entry.get("prateritum", "")))
+            variants.update(_russian_variants(entry.get("partizip2", "")))
+        elif forced_type == "phrase":
+            variants = {_normalize_lookup_text(entry.get("german", ""))}
+        else:
+            variants = {_normalize_lookup_text(entry.get("german", ""))}
+            variants.update(_russian_variants(entry.get("plural", "")))
+        if word in variants:
+            return True
+    return False
 
 
 def _prefilter_reject_reason(word):
@@ -1632,8 +1981,9 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         stats = get_statistics_snapshot(get_db_path(), user_id=user_id, mode=_mode_l1_de(user_id))
         word_types = stats.get("word_types") or {}
         lines = [
-            f"today complete sm2 Ru > De = {stats['today_complete_sm2_ru_de']}",
-            f"today complete sm2 De > Ru = {stats['today_complete_sm2_de_ru']}",
+            f"today complete fsrs Ru > De = {stats['today_complete_sm2_ru_de']}",
+            f"today complete fsrs De > Ru = {stats['today_complete_sm2_de_ru']}",
+            f"today complete pl > sing = {stats.get('today_complete_pl_sg', 0)}",
             "",
             f"today complete weak article = {stats['today_complete_weak_article']}",
             f"today complete weak plural = {stats['today_complete_weak_plural']}",
@@ -1645,7 +1995,7 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"3 correct streak = {stats.get('streak_3', stats.get('streak_3p', 0))}",
             f"2 correct streak = {stats.get('streak_2', 0)}",
             f"1 correct = {stats.get('streak_1', 0)}",
-            f"wrong sm2 = {stats.get('wrong_sm2', 0)}",
+            f"wrong fsrs = {stats.get('wrong_sm2', 0)}",
             "",
             (
                 f"weak article = {stats['weak_article']} "
@@ -1675,7 +2025,7 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"words in dict = {stats['total_words']}",
             f"never touched = {stats['never_answered']}",
             f"words weekly = +{stats['weekly_words']}",
-            f"learning->sm2 2+ (week) = {stats['learning_to_sm2_week']}",
+            f"learning->fsrs 2+ (week) = {stats['learning_to_sm2_week']}",
             "",
             "word types:",
             *[f"{k} = {word_types[k]}" for k in sorted(word_types.keys())],
@@ -1696,10 +2046,59 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     user_id = update.effective_user.id
     action = _action_key_from_text(text, user_id)
+    in_words_lists = bool(context.user_data.get("db_search_words_lists_menu"))
+    if context.user_data.get("db_search_topic_pick") and action == "back":
+        context.user_data.pop("db_search_topic_pick", None)
+        if in_words_lists:
+            await update.message.reply_text("words_lists:", reply_markup=_db_search_words_lists_markup(user_id))
+            return DB_SEARCH
+        return await _send_db_search_prompt(update, user_id, None)
     if action == "back":
+        if in_words_lists:
+            context.user_data.pop("db_search_words_lists_menu", None)
+            return await _send_db_search_prompt(update, user_id, None)
+        context.user_data.pop("db_search_topic_pick", None)
         context.user_data.pop("db_search_weak_ids", None)
         await update.message.reply_text(t(_user_interface_lang(user_id), "main_menu"), reply_markup=_main_menu_markup(user_id))
         return MENU
+    if context.user_data.get("db_search_topic_pick"):
+        markup, topics = _db_search_topic_markup(user_id)
+        if text not in topics:
+            await update.message.reply_text("Choose topic:", reply_markup=markup)
+            return DB_SEARCH
+        context.user_data.pop("db_search_weak_ids", None)
+        entries = list_words_by_topic(get_db_path(), text)
+        if not entries:
+            await update.message.reply_text(f"No words in topic {text}.", reply_markup=markup)
+            return DB_SEARCH
+        lines = [f"topic {text}: {len(entries)} words", ""]
+        lines.extend(_format_topic_words_line(entry) for entry in entries)
+        chunks = _split_text_chunks("\n".join(lines))
+        for idx, chunk in enumerate(chunks):
+            reply_markup = markup if idx == len(chunks) - 1 else None
+            await update.message.reply_text(
+                f"```text\n{chunk}\n```",
+                reply_markup=reply_markup,
+                parse_mode="Markdown",
+            )
+        return DB_SEARCH
+    if action == "db_search_topics_lern":
+        context.user_data.pop("db_search_topic_pick", None)
+        context.user_data.pop("db_search_weak_ids", None)
+        entries = list_learning_queue_words(get_db_path(), user_id=user_id)
+        if not entries:
+            return await _send_db_search_prompt(update, user_id, "No new queued words for learning.")
+        lines = [f"learning queue: {len(entries)} words", ""]
+        lines.extend(_format_topic_learning_line(entry) for entry in entries)
+        chunks = _split_text_chunks("\n".join(lines))
+        for idx, chunk in enumerate(chunks):
+            markup = _db_search_markup(user_id) if idx == len(chunks) - 1 else None
+            await update.message.reply_text(
+                f"```text\n{chunk}\n```",
+                reply_markup=markup,
+                parse_mode="Markdown",
+            )
+        return DB_SEARCH
     if text == SEND_LEARN_TEXT and context.user_data.get("db_search_weak_ids"):
         ids = list(dict.fromkeys(context.user_data.get("db_search_weak_ids") or []))
         db_path = get_db_path()
@@ -1718,6 +2117,7 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("db_search_weak_ids", None)
         return await _send_db_search_prompt(update, user_id, f"Added to learning: {added}")
     if action == "db_search_matches":
+        context.user_data.pop("db_search_topic_pick", None)
         context.user_data.pop("db_search_weak_ids", None)
         entries = list_all_words(get_db_path())
         blocks = _list_match_pairs(entries, _user_dict_lang(user_id))
@@ -1732,7 +2132,35 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown",
             )
         return DB_SEARCH
+    if action == "db_search_plural_match":
+        context.user_data.pop("db_search_topic_pick", None)
+        context.user_data.pop("db_search_weak_ids", None)
+        entries = []
+        for row in list_all_words(get_db_path()):
+            if (row.get("type") or "").strip().lower() != "nomen":
+                continue
+            sg = _normalize_answer(row.get("german", ""))
+            pl = _normalize_answer(row.get("plural", ""))
+            if sg and pl and sg == pl:
+                entries.append(row)
+        if not entries:
+            return await _send_db_search_prompt(update, user_id, "No plural==singular words found.")
+        lines = [f"plural_match: {len(entries)}", ""]
+        for e in entries:
+            article = (e.get("article") or "").strip()
+            german = _cap_word(e.get("german", ""))
+            lines.append(f"{article} {german}".strip())
+        chunks = _split_text_chunks("\n".join(lines))
+        for idx, chunk in enumerate(chunks):
+            markup = _db_search_markup(user_id) if idx == len(chunks) - 1 else None
+            await update.message.reply_text(
+                f"```text\n{chunk}\n```",
+                reply_markup=markup,
+                parse_mode="Markdown",
+            )
+        return DB_SEARCH
     if action == "db_search_weak_words":
+        context.user_data.pop("db_search_topic_pick", None)
         mode = _mode_l1_de(user_id)
         entries = list_sm2_weak_words(get_db_path(), user_id=user_id, mode=mode, min_wrong_streak=4)
         if not entries:
@@ -1749,14 +2177,62 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown",
             )
         return DB_SEARCH
+    if action == "db_search_topic_words":
+        context.user_data["db_search_words_lists_menu"] = True
+        await update.message.reply_text("words_lists:", reply_markup=_db_search_words_lists_markup(user_id))
+        return DB_SEARCH
+    if action == "db_search_topics_lists":
+        context.user_data.pop("db_search_weak_ids", None)
+        context.user_data["db_search_words_lists_menu"] = True
+        markup, topics = _db_search_topic_markup(user_id)
+        if not topics:
+            await update.message.reply_text("No topics found in DB.", reply_markup=_db_search_words_lists_markup(user_id))
+            return DB_SEARCH
+        context.user_data["db_search_topic_pick"] = True
+        await update.message.reply_text("Choose topic:", reply_markup=markup)
+        return DB_SEARCH
+    if action == "db_search_verbs_lists":
+        context.user_data.pop("db_search_weak_ids", None)
+        context.user_data["db_search_words_lists_menu"] = True
+        entries = [x for x in list_all_words(get_db_path()) if (x.get("type") or "").strip().lower() == "verb"]
+        if not entries:
+            await update.message.reply_text("No verbs found.", reply_markup=_db_search_words_lists_markup(user_id))
+            return DB_SEARCH
+        lines = [f"verbs: {len(entries)}", ""]
+        for entry in entries:
+            inf = _safe_text(entry.get("infinitive", "")).strip()
+            if inf:
+                lines.append(inf)
+        chunks = _split_text_chunks("\n".join(lines))
+        for idx, chunk in enumerate(chunks):
+            markup = _db_search_words_lists_markup(user_id) if idx == len(chunks) - 1 else None
+            await update.message.reply_text(
+                f"```text\n{chunk}\n```",
+                reply_markup=markup,
+                parse_mode="Markdown",
+            )
+        return DB_SEARCH
+    context.user_data.pop("db_search_topic_pick", None)
+    context.user_data.pop("db_search_words_lists_menu", None)
     context.user_data.pop("db_search_weak_ids", None)
-    entry = search_word(get_db_path(), text)
+    entry = _select_db_search_primary(text)
     if not entry:
         return await _send_db_search_prompt(update, user_id, "Not found.")
+    phrase_matches = _find_phrase_side_matches(text, entry)
     await update.message.reply_text(
-        _format_db_search_card(entry, _user_dict_lang(user_id)),
+        f"```text\n{_format_word_card(entry, title='Word card:')}\n```",
         parse_mode="Markdown",
     )
+    if phrase_matches:
+        lines = ["Phrase matches:"]
+        for item in phrase_matches:
+            phrase = _safe_text(item.get("german", "")).strip()
+            trans = _entry_translation(item, _user_dict_lang(user_id))
+            if trans:
+                lines.append(f"- {phrase} -> {trans}")
+            else:
+                lines.append(f"- {phrase}")
+        await update.message.reply_text(f"```text\n{chr(10).join(lines)}\n```", parse_mode="Markdown")
     await update.message.reply_text(
         "Choose edit action:",
         reply_markup=_quiz_edit_root_markup(user_id),
@@ -1775,11 +2251,21 @@ async def db_search_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     action = _action_key_from_text(text, user_id)
     if action in {"back", "stop"}:
+        context.user_data.pop("db_search_words_lists_menu", None)
+        context.user_data.pop("db_search_topic_pick", None)
         context.user_data.pop("db_search_weak_ids", None)
         return await _send_db_search_prompt(update, user_id, None)
-    if action in {"db_search_matches", "db_search_weak_words"} or text == SEND_LEARN_TEXT:
+    if action in {
+        "db_search_matches",
+        "db_search_plural_match",
+        "db_search_weak_words",
+        "db_search_topic_words",
+        "db_search_topics_lists",
+        "db_search_verbs_lists",
+        "db_search_topics_lern",
+    }:
         return await db_search_input(update, context)
-    if text in {QUIZ_FIELDS_TEXT, "delete"}:
+    if text in {QUIZ_FIELDS_TEXT, SEND_LEARN_TEXT, "delete"}:
         return await add_edit(update, context)
     # Any other text is treated as a new search query.
     return await db_search_input(update, context)
@@ -1861,6 +2347,7 @@ async def _send_learning_menu(update: Update, user_id):
             "",
             f"{t(_user_interface_lang(user_id), 'learning_daily_qty')} = {_learning_daily_qty(get_db_path())}",
             f"{t(_user_interface_lang(user_id), 'learning_intervals')} = {_learning_intervals_text(get_db_path())}",
+            f"{LEARNING_MIX_MODE_TEXT} = {'ON' if _learning_mix_mode_enabled(user_id) else 'OFF'}",
             f"active = {stats.get('active_count', 0)}",
             f"preview_pending = {stats.get('preview_pending', 0)}",
             f"due_now = {stats.get('due_count', 0)} / need {stats.get('ready_needed', 0)}",
@@ -1900,8 +2387,27 @@ async def tests_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context,
             f"{QUIZ_DE_RU_TEXT}:\n\n{_topic_filter_banner()}",
         )
+    if action == "quiz_pl_sg":
+        _reset_retry_state(context)
+        _clear_last_answer(context)
+        _reset_session(context, _mode_pl_sg(user_id))
+        return await _send_pl_sg_prompt(
+            update,
+            context,
+            f"{QUIZ_PL_SG_TEXT}:\n\n{_topic_filter_banner()}",
+        )
     if action == "learning":
         return await _send_learning_menu(update, user_id)
+    if action == "topic_filter":
+        current = _topic_filter_value()
+        topics = list_topics(get_db_path())
+        topics_line = ", ".join(topics) if topics else "-"
+        await update.message.reply_text(
+            f"Current topic filter: {current}\nTopics: {topics_line}\nSend e.g. 1+2+food or 'all'.",
+            reply_markup=ReplyKeyboardMarkup([[t(_user_interface_lang(user_id), "back")]], resize_keyboard=True),
+        )
+        context.user_data["topic_return"] = "tests_menu"
+        return TOPIC_FILTER_EDIT
 
     await update.message.reply_text(
         "Use tests menu buttons.",
@@ -2005,7 +2511,7 @@ async def _learning_add_words(update: Update, context: ContextTypes.DEFAULT_TYPE
     return LEARNING_MENU
 
 
-async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
+async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text, force_entry=None):
     """Handle send learning prompt."""
     user_id = update.effective_user.id
     preview_entry = learning_preview_entry(get_db_path(), user_id=user_id)
@@ -2025,9 +2531,14 @@ async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return LEARNING_QUIZ
 
-    entry = learning_due_entry(get_db_path(), user_id=user_id)
+    last_learning_word_id = context.user_data.get("last_learning_prompt_word_id")
+    entry = force_entry
+    if not entry:
+        entry = _pick_learning_due_entry(context, user_id, exclude_word_id=last_learning_word_id)
     if not entry:
         context.user_data["learning_preview_mode"] = False
+        context.user_data.pop("last_learning_prompt_word_id", None)
+        context.user_data.pop("learning_mix_queue", None)
         if prefix_text:
             await update.message.reply_text(prefix_text, parse_mode="Markdown")
         await update.message.reply_text(
@@ -2040,6 +2551,7 @@ async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TY
         return LEARNING_QUIZ
     context.user_data["quiz_entry"] = entry
     context.user_data["learning_preview_mode"] = False
+    context.user_data["last_learning_prompt_word_id"] = entry.get("id")
     prompt_text = _format_ru_question(entry, _user_dict_lang(user_id))
     if prefix_text:
         prompt_text = f"{prefix_text}\n\n{prompt_text}"
@@ -2067,14 +2579,22 @@ async def learning_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
         return TESTS_MENU
     if action == "learning_add":
         return await _learning_add_words(update, context)
+    if action == "learning_mix_mode":
+        enabled = _learning_mix_mode_enabled(user_id)
+        _set_learning_mix_mode(user_id, not enabled)
+        context.user_data.pop("learning_mix_queue", None)
+        await update.message.reply_text(f"{LEARNING_MIX_MODE_TEXT} = {'ON' if not enabled else 'OFF'}")
+        return await _send_learning_menu(update, user_id)
     if action == "learning_reset":
         learning_reset_session(get_db_path(), user_id=user_id)
+        context.user_data.pop("learning_mix_queue", None)
         await update.message.reply_text(
             "Learning session reset. Words returned to new.",
             reply_markup=ReplyKeyboardMarkup(_learning_menu_keys(user_id), resize_keyboard=True),
         )
         return LEARNING_MENU
     if action == "learning_start":
+        context.user_data.pop("learning_mix_queue", None)
         return await _send_learning_prompt(update, context, None)
     await update.message.reply_text(
         "Use learning menu buttons.",
@@ -2123,12 +2643,14 @@ async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == INPUT_ERR_TEXT:
         applied = _apply_input_err_learning(update, context)
         prefix = "✅ Fixed previous answer." if applied else "Nothing to fix."
-        return await _send_learning_prompt(update, context, prefix)
+        context.user_data.pop("learning_mix_queue", None)
+        return await _send_learning_prompt(update, context, prefix, force_entry=context.user_data.get("quiz_entry"))
 
     if action == "learning_skip" or text == LEARNING_SKIP_TEXT:
         snapshot = _capture_transaction_snapshot(user_id, entry.get("id"), ["learning"])
         learning_skip_word(get_db_path(), user_id=user_id, word_id=entry.get("id"))
         _log_transaction(user_id, "learning:skip", snapshot)
+        context.user_data.pop("learning_mix_queue", None)
         return await _send_learning_prompt(update, context, "Skipped for learning.")
 
     if text == I_DONT_KNOW_TEXT:
@@ -2156,7 +2678,8 @@ async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _log_transaction(user_id, "learning:answer", snapshot)
     feedback = _format_feedback_ru_de(entry, ok)
     if result.get("completed"):
-        feedback = f"{feedback}\n\nLearning done ✅, sent to sm2"
+        feedback = f"{feedback}\n\nLearning done ✅, sent to fsrs"
+    context.user_data.pop("learning_mix_queue", None)
     return await _send_learning_prompt(update, context, feedback)
 
 
@@ -2184,13 +2707,376 @@ async def quiz_verb_weak_menu_choice(update: Update, context: ContextTypes.DEFAU
     return QUIZ_VERB_WEAK_MENU
 
 
+def _vf_menu_markup():
+    """Build compact VF menu keyboard."""
+    items = [
+        VF_SET_PROXY_TEXT,
+        VF_TEST_PROXY_TEXT,
+        VF_SET_SLEEP_TEXT,
+        VF_SET_JITTER_TEXT,
+        VF_DRY_RUN_NEW_TEXT,
+        VF_DRY_RUN_ALL_TEXT,
+        VF_SHOW_DIFF_TEXT,
+        VF_APPROVE_TEXT,
+        VF_APPLY_TEXT,
+        VF_VERIFY_TEXT,
+        VF_RETRY_TEXT,
+        VF_STOP_TEXT,
+    ]
+    rows = [items[i:i + 4] for i in range(0, len(items), 4)]
+    if rows and len(rows[-1]) < 4:
+        rows[-1].append(BACK_TEXT)
+    else:
+        rows.append([BACK_TEXT])
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True)
+
+
+def _vf_settings_snapshot():
+    """Return vf parser settings."""
+    db_path = get_db_path()
+    proxy = _safe_text(get_setting(db_path, VF_PROXY_KEY, "")).strip()
+    sleep_sec = _get_int_setting(db_path, VF_SLEEP_KEY, 60)
+    jitter_pct = _get_int_setting(db_path, VF_JITTER_KEY, 20)
+    return proxy, max(1, sleep_sec), max(0, min(80, jitter_pct))
+
+
+def _safe_text(value):
+    return str(value or "")
+
+
+def _mask_proxy(proxy_url):
+    token = _safe_text(proxy_url).strip()
+    if "@" not in token:
+        return token
+    left, right = token.rsplit("@", 1)
+    if "://" in left and ":" in left:
+        scheme, creds = left.split("://", 1)
+        user = creds.split(":", 1)[0]
+        return f"{scheme}://{user}:***@{right}"
+    return f"***@{right}"
+
+
+def _normalize_proxy_input(raw):
+    """Normalize proxy input to curl-compatible URL."""
+    token = _safe_text(raw).strip()
+    if not token:
+        return ""
+    if "://" in token:
+        return token
+    # Support host:port:user:pass format from proxy providers.
+    parts = token.split(":")
+    if len(parts) >= 4 and parts[1].isdigit():
+        host = parts[0].strip()
+        port = parts[1].strip()
+        user = parts[2].strip()
+        password = ":".join(parts[3:]).strip()
+        if host and port and user and password:
+            return f"socks5://{user}:{password}@{host}:{port}"
+    # Support host:port format (no auth), default to socks5.
+    if len(parts) == 2 and parts[1].isdigit():
+        host = parts[0].strip()
+        port = parts[1].strip()
+        if host and port:
+            return f"socks5://{host}:{port}"
+    return token
+
+
+def _vf_parse_noun(html_text):
+    text = html_text or ""
+    article = ""
+    plural = ""
+    m_article = re.search(r'The article is "((?:der|die|das)\s+[^"]+)"', text, flags=re.IGNORECASE)
+    if m_article:
+        phrase = m_article.group(1).strip()
+        parts = phrase.split()
+        if parts:
+            article = parts[0].lower()
+    m_plural = re.search(r'nominative plural "([^"]+)"', text, flags=re.IGNORECASE)
+    if m_plural:
+        plural = m_plural.group(1).strip()
+    if not article or not plural:
+        body = re.sub(r"<[^>]+>", " ", text)
+        body = html.unescape(body)
+        body = re.sub(r"\s+", " ", body).strip()
+        if not article:
+            m2 = re.search(r'\bThe article is "((?:der|die|das)\s+[^"]+)"', body, flags=re.IGNORECASE)
+            if m2:
+                article = m2.group(1).split()[0].lower()
+        if not plural:
+            m2 = re.search(r'\bnominative plural "([^"]+)"', body, flags=re.IGNORECASE)
+            if m2:
+                plural = m2.group(1).strip()
+    return {"article": article, "plural": plural}
+
+
+def _vf_parse_verb(html_text):
+    text = html_text or ""
+    pr = ""
+    p2 = ""
+    m = re.search(r'<p[^>]+id="stammformen"[^>]*>(.*?)</p>', text, flags=re.IGNORECASE | re.DOTALL)
+    if m:
+        chunk = m.group(1)
+        chunk = re.sub(r"<a[^>]*>.*?</a>", " ", chunk, flags=re.IGNORECASE | re.DOTALL)
+        chunk = re.sub(r"<[^>]+>", "", chunk)
+        chunk = html.unescape(chunk)
+        chunk = re.sub(r"\s+", " ", chunk).strip()
+        parts = [x.strip() for x in chunk.split("·") if x.strip()]
+        if len(parts) >= 2:
+            pr = re.sub(r"[^A-Za-zÄÖÜäöüß -]+", "", parts[1]).strip()
+        if len(parts) >= 3:
+            p2_raw = re.sub(r"[^A-Za-zÄÖÜäöüß -]+", "", parts[2]).strip()
+            p2_tokens = [t for t in p2_raw.split() if t]
+            if p2_tokens and p2_tokens[0].lower() in {"hat", "haben", "ist", "sein"}:
+                p2_tokens = p2_tokens[1:]
+            p2 = " ".join(p2_tokens).strip()
+    return {"prateritum": pr, "partizip2": p2}
+
+
+def _vf_fetch_word(base_form, proxy_url, user_agent, timeout_sec=30):
+    url = f"https://www.verbformen.com/?w={base_form}"
+    cmd = [
+        "curl",
+        "-L",
+        "--compressed",
+        "-A",
+        user_agent,
+        "--max-time",
+        str(int(timeout_sec)),
+        "--fail-with-body",
+    ]
+    if proxy_url:
+        cmd.extend(["-x", proxy_url])
+    cmd.append(url)
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise RuntimeError((proc.stderr or proc.stdout or "curl failed").strip()[:300])
+    return proc.stdout
+
+
+def _vf_user_agent():
+    agents = [
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
+        "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    ]
+    return random.choice(agents)
+
+
+def _vf_compare(local_entry, remote_data):
+    word_type = (local_entry.get("type") or "").strip().lower()
+    diff = {}
+    if word_type == "nomen":
+        for key in ("article", "plural"):
+            local_v = _normalize_answer(local_entry.get(key, ""))
+            remote_v = _normalize_answer(remote_data.get(key, ""))
+            if remote_v and local_v != remote_v:
+                diff[key] = {"local": local_entry.get(key, ""), "remote": remote_data.get(key, "")}
+    elif word_type == "verb":
+        for key in ("prateritum", "partizip2"):
+            local_v = _normalize_answer(local_entry.get(key, ""))
+            remote_v = _normalize_answer(remote_data.get(key, ""))
+            if remote_v and local_v != remote_v:
+                diff[key] = {"local": local_entry.get(key, ""), "remote": remote_data.get(key, "")}
+    return diff
+
+
+def _vf_apply_single(db_path, row):
+    entry = get_word_by_id(db_path, row.get("word_id"))
+    if not entry:
+        return False
+    remote = row.get("remote_payload") or {}
+    updates = {}
+    if row.get("word_type") == "nomen":
+        for key in ("article", "plural"):
+            value = _safe_text(remote.get(key)).strip()
+            if value:
+                updates[key] = value
+    elif row.get("word_type") == "verb":
+        for key in ("prateritum", "partizip2"):
+            value = _safe_text(remote.get(key)).strip()
+            if value:
+                updates[key] = value
+    if not updates:
+        return False
+    updated = dict(entry)
+    updated.update(updates)
+    return bool(update_word_fields(db_path, entry.get("id"), updated))
+
+
+async def _vf_run_dry_task(bot, chat_id, user_id, candidates, sleep_sec, jitter_pct, proxy, label):
+    """Run VF dry check in background with progress and stop support."""
+    db_path = get_db_path()
+    total = len(candidates)
+    nouns = sum(1 for x in candidates if (x.get("type") or "").strip().lower() == "nomen")
+    verbs = sum(1 for x in candidates if (x.get("type") or "").strip().lower() == "verb")
+    await bot.send_message(
+        chat_id=chat_id,
+        text=f"VF parse started ({label}). total={total}, nomen={nouns}, verb={verbs}",
+    )
+    checked = 0
+    mismatch = 0
+    match = 0
+    not_found = 0
+    errors = 0
+    ban_streak = 0
+    for item in candidates:
+        if VF_STOP_FLAGS.get(int(user_id)):
+            await bot.send_message(
+                chat_id=chat_id,
+                text=(
+                    f"VF parse stopped by user. checked={checked}/{total}, match={match}, "
+                    f"mismatch={mismatch}, not_found={not_found}, fetch_error={errors}"
+                ),
+            )
+            return
+        word_type = item.get("type")
+        base = item.get("infinitive") if word_type == "verb" else item.get("german")
+        base = _safe_text(base).strip()
+        if not base:
+            continue
+        local_payload = {}
+        if word_type == "nomen":
+            local_payload = {"article": item.get("article", ""), "plural": item.get("plural", "")}
+        elif word_type == "verb":
+            local_payload = {"prateritum": item.get("prateritum", ""), "partizip2": item.get("partizip2", "")}
+        try:
+            html = await asyncio.to_thread(_vf_fetch_word, base, proxy, _vf_user_agent(), 30)
+            if "verbformen" not in html.lower():
+                raise RuntimeError("unexpected response")
+            remote = _vf_parse_noun(html) if word_type == "nomen" else _vf_parse_verb(html)
+            if not any(_safe_text(v).strip() for v in remote.values()):
+                status = "not_found"
+                not_found += 1
+                diff = {}
+            else:
+                diff = _vf_compare(item, remote)
+                status = "mismatch" if diff else "match"
+                mismatch += int(bool(diff))
+                match += int(not diff)
+            ban_streak = 0
+            save_vf_check_result(
+                db_path,
+                user_id,
+                item.get("id"),
+                word_type,
+                base,
+                status,
+                retryable=False,
+                local_payload=local_payload,
+                remote_payload=remote,
+                diff_payload=diff,
+                source_hash=item.get("vf_source_hash", ""),
+            )
+            checked += 1
+        except Exception as exc:
+            errors += 1
+            checked += 1
+            ban_streak += 1
+            save_vf_check_result(
+                db_path,
+                user_id,
+                item.get("id"),
+                word_type,
+                base,
+                "fetch_error",
+                retryable=True,
+                local_payload=local_payload,
+                remote_payload={"error": str(exc)},
+                diff_payload={},
+                source_hash=item.get("vf_source_hash", ""),
+            )
+
+        if checked % 5 == 0 or checked == total:
+            progress = int((checked * 100) / total) if total else 100
+            await bot.send_message(
+                chat_id=chat_id,
+                text=(
+                    f"VF progress: {checked}/{total} ({progress}%) | "
+                    f"match={match}, mismatch={mismatch}, not_found={not_found}, fetch_error={errors}"
+                ),
+            )
+
+        if ban_streak >= 10:
+            await bot.send_message(
+                chat_id=chat_id,
+                text=(
+                    "Emergency stop: 10 consecutive fetch errors. "
+                    "Possible ban/rate-limit. Stop parsing now and adjust proxy/sleep."
+                ),
+            )
+            return
+
+        jitter = max(0, int(sleep_sec * jitter_pct / 100))
+        delay = max(1, sleep_sec + random.randint(-jitter, jitter))
+        await asyncio.sleep(delay)
+
+    await bot.send_message(
+        chat_id=chat_id,
+        text=(
+            f"VF parse done. checked={checked}/{total}, match={match}, "
+            f"mismatch={mismatch}, not_found={not_found}, fetch_error={errors}"
+        ),
+    )
+
+
+async def _send_vf_menu(update, prefix_text=None):
+    proxy, sleep_sec, jitter_pct = _vf_settings_snapshot()
+    lines = [
+        "parse_VF:",
+        f"proxy = {_mask_proxy(proxy) or '-'}",
+        f"sleep = {sleep_sec}s",
+        f"jitter = {jitter_pct}%",
+        "",
+        "approve format: approve 12,19,25",
+    ]
+    text = "\n".join(lines)
+    if prefix_text:
+        text = f"{prefix_text}\n\n{text}"
+    await update.message.reply_text(text, reply_markup=_vf_menu_markup())
+    return SETTINGS_MENU
+
+
 async def settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle settings menu choice."""
     text = update.message.text.strip()
     user_id = update.effective_user.id
     action = _action_key_from_text(text, user_id)
 
+    if context.user_data.get("vf_waiting") and action != "back":
+        wait = context.user_data.get("vf_waiting")
+        context.user_data.pop("vf_waiting", None)
+        if wait == "proxy":
+            proxy_value = _normalize_proxy_input(text.strip())
+            set_setting(get_db_path(), VF_PROXY_KEY, proxy_value)
+            return await _send_vf_menu(update, "✅ proxy saved")
+        if wait == "sleep":
+            try:
+                value = max(1, int(text.strip()))
+            except ValueError:
+                return await _send_vf_menu(update, "❌ sleep must be integer seconds")
+            set_setting(get_db_path(), VF_SLEEP_KEY, str(value))
+            return await _send_vf_menu(update, "✅ sleep saved")
+        if wait == "jitter":
+            try:
+                value = int(text.strip())
+            except ValueError:
+                return await _send_vf_menu(update, "❌ jitter must be integer percent")
+            value = max(0, min(80, value))
+            set_setting(get_db_path(), VF_JITTER_KEY, str(value))
+            return await _send_vf_menu(update, "✅ jitter saved")
+
+    if context.user_data.get("vf_menu") and (text == BACK_TEXT or action == "back"):
+        context.user_data.pop("vf_menu", None)
+        context.user_data.pop("vf_waiting", None)
+        await update.message.reply_text(
+            t(_user_interface_lang(user_id), "settings_title"),
+            reply_markup=ReplyKeyboardMarkup(_settings_menu_keys(user_id), resize_keyboard=True),
+        )
+        return SETTINGS_MENU
+
     if action == "back":
+        context.user_data.pop("vf_waiting", None)
+        context.user_data.pop("vf_menu", None)
         return await _back_to_main_menu(update)
 
     if action == "interface_lang":
@@ -2210,26 +3096,128 @@ async def settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
         return DUMP_MENU
 
     if action == "review_flags":
-        items = list_pending_word_flags(get_db_path(), limit=500)
-        if not items:
-            await update.message.reply_text(
-                "✅ No flagged words.",
-                reply_markup=ReplyKeyboardMarkup(_settings_menu_keys(user_id), resize_keyboard=True),
-            )
+        context.user_data["vf_menu"] = True
+        return await _send_vf_menu(update)
+
+    if context.user_data.get("vf_menu"):
+        db_path = get_db_path()
+        proxy, sleep_sec, jitter_pct = _vf_settings_snapshot()
+
+        if text == VF_SET_PROXY_TEXT:
+            context.user_data["vf_waiting"] = "proxy"
+            await update.message.reply_text("Send proxy url:", reply_markup=ReplyKeyboardRemove())
             return SETTINGS_MENU
-        lines = []
-        for row in items:
-            word_type = row.get("type", "")
-            base = row.get("infinitive", "") if word_type == "verb" else row.get("german", "")
-            article = (row.get("article", "") or "").strip()
-            left = f"{article} {base}".strip()
-            right = _entry_translation(row, _user_dict_lang(user_id))
-            lines.append(f"{left} >> {right}")
-        chunks = _split_text_chunks("\n".join(lines))
-        for idx, chunk in enumerate(chunks):
-            markup = ReplyKeyboardMarkup(_settings_menu_keys(user_id), resize_keyboard=True) if idx == len(chunks) - 1 else None
-            await update.message.reply_text(chunk, reply_markup=markup)
-        return SETTINGS_MENU
+        if text == VF_SET_SLEEP_TEXT:
+            context.user_data["vf_waiting"] = "sleep"
+            await update.message.reply_text("Send sleep in seconds:", reply_markup=ReplyKeyboardRemove())
+            return SETTINGS_MENU
+        if text == VF_SET_JITTER_TEXT:
+            context.user_data["vf_waiting"] = "jitter"
+            await update.message.reply_text("Send jitter percent (0-80):", reply_markup=ReplyKeyboardRemove())
+            return SETTINGS_MENU
+
+        if text == VF_TEST_PROXY_TEXT:
+            if not proxy:
+                return await _send_vf_menu(update, "❌ proxy is required")
+            try:
+                _vf_fetch_word("Haus", proxy, _vf_user_agent(), timeout_sec=20)
+                return await _send_vf_menu(update, "✅ proxy ok")
+            except Exception as exc:
+                return await _send_vf_menu(update, f"❌ proxy failed: {exc}")
+
+        if text in {VF_DRY_RUN_NEW_TEXT, VF_DRY_RUN_ALL_TEXT, VF_RETRY_TEXT}:
+            if not proxy:
+                return await _send_vf_menu(update, "❌ proxy is required")
+            running = VF_RUNNING_TASKS.get(int(user_id))
+            if running and not running.done():
+                return await _send_vf_menu(update, "Parser is already running. Use stop_parse.")
+            if text == VF_RETRY_TEXT:
+                retry_rows = list_latest_vf_retryable(db_path, user_id, limit=500)
+                ids = {row.get("word_id") for row in retry_rows}
+                candidates = [w for w in list_vf_candidates(db_path, user_id, only_unchecked=False, limit=0) if w.get("id") in ids]
+            else:
+                candidates = list_vf_candidates(
+                    db_path,
+                    user_id,
+                    only_unchecked=(text == VF_DRY_RUN_NEW_TEXT),
+                    limit=0,
+                )
+            if not candidates:
+                return await _send_vf_menu(update, "No candidates.")
+            VF_STOP_FLAGS[int(user_id)] = False
+            label = "retry_failed" if text == VF_RETRY_TEXT else ("dry_run_new" if text == VF_DRY_RUN_NEW_TEXT else "dry_run_all")
+            task = asyncio.create_task(
+                _vf_run_dry_task(
+                    context.bot,
+                    update.effective_chat.id,
+                    int(user_id),
+                    candidates,
+                    sleep_sec,
+                    jitter_pct,
+                    proxy,
+                    label,
+                )
+            )
+            VF_RUNNING_TASKS[int(user_id)] = task
+            return await _send_vf_menu(update, f"Started {label}. Running in background.")
+
+        if text == VF_STOP_TEXT:
+            running = VF_RUNNING_TASKS.get(int(user_id))
+            if not running or running.done():
+                return await _send_vf_menu(update, "No active parser task.")
+            VF_STOP_FLAGS[int(user_id)] = True
+            return await _send_vf_menu(update, "Stop requested. Waiting current request to finish...")
+
+        if text == VF_SHOW_DIFF_TEXT:
+            rows = list_latest_vf_mismatches(db_path, user_id, limit=300)
+            if not rows:
+                return await _send_vf_menu(update, "No mismatches.")
+            lines = ["mismatches (use: approve id1,id2):"]
+            for row in rows:
+                diff = row.get("diff_payload") or {}
+                fields = ",".join(sorted(diff.keys())) or "-"
+                lines.append(f"{row['id']}: {row.get('base_form','')} [{row.get('word_type','')}] -> {fields}")
+            chunks = _split_text_chunks("\n".join(lines))
+            for idx, chunk in enumerate(chunks):
+                markup = _vf_menu_markup() if idx == len(chunks) - 1 else None
+                await update.message.reply_text(f"```text\n{chunk}\n```", parse_mode="Markdown", reply_markup=markup)
+            return SETTINGS_MENU
+
+        if text.startswith("approve "):
+            raw = text.split(" ", 1)[1]
+            ids = [x.strip() for x in raw.replace(";", ",").split(",") if x.strip()]
+            changed = approve_vf_checks(db_path, user_id, ids)
+            return await _send_vf_menu(update, f"approved: {changed}")
+
+        if text == VF_APPLY_TEXT:
+            rows = list_approved_vf_checks(db_path, user_id, only_not_applied=True)
+            if not rows:
+                return await _send_vf_menu(update, "No approved rows.")
+            applied = 0
+            for row in rows:
+                if _vf_apply_single(db_path, row):
+                    applied += 1
+                mark_vf_check_applied(db_path, row.get("id"))
+            return await _send_vf_menu(update, f"applied: {applied}/{len(rows)}")
+
+        if text == VF_VERIFY_TEXT:
+            rows = list_approved_vf_checks(db_path, user_id, only_not_applied=False)
+            if not rows:
+                return await _send_vf_menu(update, "No approved history.")
+            ok = 0
+            bad = 0
+            for row in rows:
+                entry = get_word_by_id(db_path, row.get("word_id"))
+                if not entry:
+                    continue
+                diff = _vf_compare(entry, row.get("remote_payload") or {})
+                if diff:
+                    bad += 1
+                else:
+                    ok += 1
+            return await _send_vf_menu(update, f"verify: ok={ok}, still_diff={bad}")
+
+        return await _send_vf_menu(update, "Use parse_VF buttons.")
 
     if action == "suggested_words":
         suggestions_path = _create_suggestions_dump_file()
@@ -2273,7 +3261,7 @@ async def algo_settings_menu_choice(update: Update, context: ContextTypes.DEFAUL
         context.user_data["algo_setting_edit"] = SESSION_RETRY_GAP_KEY
         context.user_data["algo_edit_return"] = "algo"
         await update.message.reply_text(
-            "Enter ses.rtr_gap (number of SM2 questions between retries):",
+            "Enter ses.rtr_gap (number of FSRS questions between retries):",
             reply_markup=ReplyKeyboardRemove(),
         )
         return ALGO_SETTINGS_EDIT
@@ -2490,6 +3478,12 @@ async def topic_filter_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return ADD_INPUT
         if return_to == "algo":
             return await _send_algo_settings_menu(update, user_id)
+        if return_to == "tests_menu":
+            await update.message.reply_text(
+                t(_user_interface_lang(user_id), "tests") + ":",
+                reply_markup=ReplyKeyboardMarkup(_tests_menu_keys(user_id), resize_keyboard=True),
+            )
+            return TESTS_MENU
         await update.message.reply_text(
             t(_user_interface_lang(user_id), "settings_title"),
             reply_markup=ReplyKeyboardMarkup(_settings_menu_keys(user_id), resize_keyboard=True),
@@ -2520,6 +3514,12 @@ async def topic_filter_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=ReplyKeyboardMarkup(_algo_settings_menu_keys(user_id), resize_keyboard=True),
         )
         return ALGO_SETTINGS_MENU
+    if return_to == "tests_menu":
+        await update.message.reply_text(
+            f"✅ Topic filter set to: {value}",
+            reply_markup=ReplyKeyboardMarkup(_tests_menu_keys(user_id), resize_keyboard=True),
+        )
+        return TESTS_MENU
 
     await update.message.reply_text(
         f"✅ Topic filter set to: {value}",
@@ -2653,11 +3653,16 @@ async def add_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     items = await _precheck_words(update, context, recognition)
     if items is None:
         return MENU
+    for row in filtered:
+        items.append({"original": row.get("raw", ""), "word": "", "type": "-", "skipped_reason": row.get("reason", "")})
+    for row in existing:
+        items.append({"original": row.get("raw", ""), "word": "", "type": "-", "skipped_reason": row.get("reason", "")})
     context.user_data["precheck_items"] = items
     await _reply_text_with_retry(
         update.message,
-        _format_precheck_list(items),
+        f"```text\n{_format_precheck_list(items)}\n```",
         reply_markup=ReplyKeyboardMarkup(PRECHECK_KEYS, resize_keyboard=True),
+        parse_mode="Markdown",
     )
     return ADD_PRECHECK
 
@@ -2693,7 +3698,18 @@ async def add_precheck(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ADD_PRECHECK
 
     items = context.user_data.get("precheck_items") or []
-    recognition = [x.get("word") for x in items if x.get("word")]
+    recognition = []
+    for x in items:
+        if not x.get("word"):
+            continue
+        recognition.append(
+            {
+                "raw": x.get("original", x.get("word", "")),
+                "lookup_word": x.get("word", ""),
+                "forced_type": x.get("forced_type", ""),
+                "forced_fields": dict(x.get("forced_fields") or {}),
+            }
+        )
     context.user_data.pop("precheck_items", None)
     filtered = context.user_data.pop("precheck_filtered", [])
     existing = context.user_data.pop("precheck_existing", [])
@@ -2730,8 +3746,6 @@ def _parse_precheck_edit_lines(lines):
         raw = re.sub(r"^\d+\.\s*", "", raw).strip()
         if not raw:
             continue
-        if "[" in raw and "]" in raw:
-            raw = raw.split("[", 1)[0].strip()
         if "(from " in raw:
             raw = raw.split("(from ", 1)[0].strip()
         if " - " in raw:
@@ -2755,7 +3769,9 @@ async def add_precheck_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=ReplyKeyboardMarkup(_stop_keys(update.effective_user.id), resize_keyboard=True),
         )
         return ADD_PRECHECK_EDIT
-    recognition = _parse_precheck_edit_lines(lines)
+    recognition_raw = _parse_precheck_edit_lines(lines)
+    recognition = [_parse_add_line_spec(x) for x in recognition_raw]
+    recognition = [x for x in recognition if x]
     if not recognition:
         await _reply_text_with_retry(
             update.message,
@@ -2819,11 +3835,16 @@ async def add_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     items = await _precheck_words(update, context, recognition)
     if items is None:
         return MENU
+    for row in filtered:
+        items.append({"original": row.get("raw", ""), "word": "", "type": "-", "skipped_reason": row.get("reason", "")})
+    for row in existing:
+        items.append({"original": row.get("raw", ""), "word": "", "type": "-", "skipped_reason": row.get("reason", "")})
     context.user_data["precheck_items"] = items
     await _reply_text_with_retry(
         update.message,
-        _format_precheck_list(items),
+        f"```text\n{_format_precheck_list(items)}\n```",
         reply_markup=ReplyKeyboardMarkup(PRECHECK_KEYS, resize_keyboard=True),
+        parse_mode="Markdown",
     )
     return ADD_PRECHECK
 
@@ -2979,6 +4000,14 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=_edit_fields_markup("quiz"),
             )
             return ADD_EDIT
+        if token == SEND_LEARN_TEXT:
+            added = _send_entry_to_learning(update, context, entry_key="quiz_edit_entry")
+            context.user_data["edit_stage"] = "pick_scope"
+            state = context.user_data.get("edit_return_state")
+            prefix = "✅ Added to learning." if added else "Already in learning."
+            if state == DB_SEARCH_VIEW:
+                return await _send_db_search_prompt(update, update.effective_user.id, prefix)
+            return await _show_quiz_prompt_after_edit(update, context, prefix)
         if token == "delete":
             word_id = entry.get("id")
             if not word_id:
@@ -3017,7 +4046,7 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return await _send_db_search_prompt(update, update.effective_user.id, prefix)
             return await _back_to_tests(update, context)
         await update.message.reply_text(
-            "Use buttons: fields, delete, back.",
+            "Use buttons: fields, send_learn, delete, back.",
             reply_markup=_quiz_edit_root_markup(update.effective_user.id),
         )
         return ADD_EDIT
@@ -3091,6 +4120,8 @@ async def _return_from_synonyms(update: Update, context: ContextTypes.DEFAULT_TY
         return await _send_ru_de_prompt(update, context, prefix)
     if return_state == QUIZ_DE_RU:
         return await _send_de_ru_prompt(update, context, prefix)
+    if return_state == QUIZ_PL_SG:
+        return await _send_pl_sg_prompt(update, context, prefix)
     if return_state == QUIZ_ARTICLE:
         return await _send_article_prompt(update, context, prefix)
     if return_state == QUIZ_ARTICLE_WEAK:
@@ -3257,6 +4288,8 @@ async def _flag_current_word(update: Update, context: ContextTypes.DEFAULT_TYPE,
         return await _show_quiz_prompt_after_edit(update, context, "✅ Flag saved.", state_override=QUIZ_RU_DE)
     if return_state == QUIZ_DE_RU:
         return await _show_quiz_prompt_after_edit(update, context, "✅ Flag saved.", state_override=QUIZ_DE_RU)
+    if return_state == QUIZ_PL_SG:
+        return await _show_quiz_prompt_after_edit(update, context, "✅ Flag saved.", state_override=QUIZ_PL_SG)
     if return_state == QUIZ_ARTICLE:
         return await _show_quiz_prompt_after_edit(update, context, "✅ Flag saved.", state_override=QUIZ_ARTICLE)
     if return_state == QUIZ_ARTICLE_WEAK:
@@ -3345,9 +4378,9 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == I_DONT_KNOW_TEXT:
         ok = False
     else:
-        answer = _normalize_answer(text)
+        answer_variants = set(_russian_variants(text))
         variants = _russian_variants(_entry_translation(entry, _user_dict_lang(update.effective_user.id)))
-        ok = answer in variants
+        ok = bool(answer_variants.intersection(set(variants)))
     mode = _mode_de_l1(update.effective_user.id)
     if not is_retry:
         _remember_last_answer(context, entry, mode, ok)
@@ -3360,6 +4393,61 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     feedback = _format_feedback_de_ru(entry, ok, _user_dict_lang(update.effective_user.id))
     return await _send_de_ru_prompt(update, context, feedback)
+
+
+async def quiz_pl_sg(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle quiz plural to singular."""
+    text = update.message.text.strip()
+    action = _action_key_from_text(text, update.effective_user.id)
+    if action == "back":
+        return await _back_to_tests(update, context)
+    if action == "stop":
+        return await _stop_with_summary(update, context, _mode_pl_sg(update.effective_user.id))
+    if text == INPUT_ERR_TEXT:
+        applied = _apply_input_err(update, context, _mode_pl_sg(update.effective_user.id))
+        prefix = "✅ Fixed previous answer." if applied else "Nothing to fix."
+        return await _send_pl_sg_prompt(update, context, prefix)
+    if text == SEND_LEARN_TEXT:
+        added = _send_entry_to_learning(update, context, entry_key="quiz_entry")
+        prefix = "✅ Added to learning." if added else "Already in learning."
+        return await _send_pl_sg_prompt(update, context, prefix)
+    if text == FLAG_TEXT:
+        return await _flag_current_word(update, context, QUIZ_PL_SG)
+    if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
+        return await _start_quiz_edit(update, context, QUIZ_PL_SG)
+
+    entry = context.user_data.get("quiz_entry")
+    if not entry:
+        return await _send_pl_sg_prompt(update, context, None)
+    is_retry = bool(context.user_data.get("quiz_is_retry"))
+    if text == I_DONT_KNOW_TEXT:
+        ok = False
+    else:
+        got = _normalize_answer(text)
+        singular = _normalize_answer(entry.get("german", ""))
+        plural = _normalize_answer(entry.get("plural", ""))
+        article_ok = False
+        german_ok = False
+        if len(got.split()) >= 2:
+            got_article = got.split()[0]
+            got_word = " ".join(got.split()[1:])
+            article_ok = _article_matches(got_article, entry.get("article", ""))
+            german_ok = got_word == singular
+            ok = article_ok and german_ok
+        else:
+            # If singular and plural are identical, allow answer with article only.
+            ok = singular == plural and _article_matches(got, entry.get("article", ""))
+    mode = _mode_pl_sg(update.effective_user.id)
+    if not is_retry:
+        _remember_last_answer(context, entry, mode, ok)
+        _update_srs_for_entry(update.effective_user.id, entry, mode, ok)
+        _mark_session_word(context, mode, entry.get("id"))
+    context.user_data["quiz_last_answered_entry"] = entry
+    _register_retry_result(context, mode, entry.get("id"), ok, is_retry)
+    if not is_retry and ok:
+        _set_retry_since_last(context, mode, _retry_since_last(context, mode) + 1)
+    feedback = _format_feedback_pl_sg(entry, ok)
+    return await _send_pl_sg_prompt(update, context, feedback)
 
 
 async def quiz_article(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3381,7 +4469,7 @@ async def quiz_article(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ok = False
     else:
         expected = entry.get("article", "")
-        ok = _normalize_answer(text) == _normalize_answer(expected)
+        ok = _article_matches(text, expected)
     mode = MODE_ARTICLE
     if not is_retry:
         _update_srs_for_entry(update.effective_user.id, entry, mode, ok)
@@ -3451,7 +4539,7 @@ async def quiz_article_weak(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     state = get_form_state(get_db_path(), update.effective_user.id, entry.get("id"), "article")
     snapshot = _capture_transaction_snapshot(update.effective_user.id, entry.get("id"), ["weak_article"])
-    ok = _normalize_answer(text) == _normalize_answer(entry.get("article", ""))
+    ok = _article_matches(text, entry.get("article", ""))
     update_form_stats(get_db_path(), update.effective_user.id, entry.get("id"), {"article": ok})
     if not state["active"] and state["review_stage"] > 0:
         stage_snapshot = update_weak_review_state(get_db_path(), update.effective_user.id, entry.get("id"), "article", ok)
@@ -3695,13 +4783,13 @@ def _check_ru_de_strict(entry, answer_text):
         for cand in synonyms:
             if (cand.get("type") or "").strip().lower() != "nomen":
                 continue
-            article_ok = article_in == _normalize_answer(cand.get("article", ""))
+            article_ok = _article_matches(article_in, cand.get("article", ""))
             german_ok = german_in == _normalize_answer(cand.get("german", ""))
             plural_ok = plural_in == _normalize_plural_value(cand.get("plural", ""))
             if article_ok and german_ok and plural_ok:
                 return True, {"article": True, "plural": True}
         return False, {
-            "article": article_in == _normalize_answer(entry.get("article", "")),
+            "article": _article_matches(article_in, entry.get("article", "")),
             "plural": plural_in == _normalize_plural_value(entry.get("plural", "")),
         }
 
@@ -3765,6 +4853,22 @@ def _low_word(word):
     return str(word or "").strip().lower()
 
 
+def _article_variants(text):
+    """Split comma-separated article variants and normalize."""
+    raw = str(text or "")
+    parts = [p.strip() for p in raw.split(",") if p.strip()]
+    if not parts:
+        return set()
+    return {_normalize_answer(p) for p in parts if _normalize_answer(p)}
+
+
+def _article_matches(answer, expected_text):
+    """Check whether answer matches one of expected article variants."""
+    ans = _normalize_answer(answer)
+    variants = _article_variants(expected_text)
+    return bool(ans) and ans in variants
+
+
 def _format_ru_question(entry, dict_lang):
     """Handle format ru question."""
     value = _normalize_russian_singular(_entry_translation(entry, dict_lang))
@@ -3816,6 +4920,34 @@ def _format_de_ru_question(entry):
         lines.append(_md_escape(german))
     lines.append(">>    ❓")
     return "\n".join(lines)
+
+
+def _is_pl_sg_eligible(entry):
+    """Exclude nouns where plural and singular forms are identical and article is die."""
+    if _low_word(entry.get("type", "")) != "nomen":
+        return False
+    singular_article = _normalize_answer(entry.get("article", ""))
+    singular = _normalize_answer(entry.get("german", ""))
+    plural = _normalize_answer(entry.get("plural", ""))
+    if not singular or not plural:
+        return False
+    if singular_article == "die" and singular == plural:
+        return False
+    return True
+
+
+def _format_pl_sg_question(entry):
+    """Handle format plural->singular question."""
+    plural = _cap_word(entry.get("plural", ""))
+    return f">>    die {_md_escape(plural)} -> singular?"
+
+
+def _format_feedback_pl_sg(entry, ok):
+    """Handle format feedback plural->singular."""
+    status = "Correct ✅" if ok else "Wrong ❌"
+    article = str(entry.get("article", "")).strip()
+    german = _cap_word(entry.get("german", ""))
+    return f"{status} >>>     {_md_escape((article + ' ' + german).strip())}"
 
 
 def _format_article_question(entry):
@@ -3927,6 +5059,8 @@ def _format_feedback_article(entry, ok, dict_lang):
 
 def _pick_due_entry(context, user_id, mode, word_type=None):
     """Handle pick due entry."""
+    is_sm2_mode = mode in {_mode_l1_de(user_id), _mode_de_l1(user_id), _mode_pl_sg(user_id)}
+
     def _fetch_due():
         return select_due(
             get_db_path(),
@@ -3934,13 +5068,18 @@ def _pick_due_entry(context, user_id, mode, word_type=None):
             mode=mode,
             word_type=word_type,
             topics=_topic_filter_for_query(),
+            exclude_correct_today=is_sm2_mode,
         )
 
     def _build_sm2_queue(entries):
         learning_pool = []
         sm2_pool = []
         for item in entries:
-            if str(item.get("learning_done_at") or "").strip():
+            srs = item.get("srs") or {}
+            reps = int(srs.get("repetitions", 0) or 0)
+            has_non_learning = bool(item.get("has_non_learning_history"))
+            # Fresh = moved from learning and has no non-learning history yet.
+            if str(item.get("learning_done_at") or "").strip() and not has_non_learning and reps <= 1:
                 learning_pool.append(item)
             else:
                 sm2_pool.append(item)
@@ -3951,7 +5090,7 @@ def _pick_due_entry(context, user_id, mode, word_type=None):
             if learning_pool:
                 mixed.append(learning_pool.pop(0))
             if sm2_pool:
-                take = random.randint(1, 2)
+                take = random.randint(2, 3)
                 for _ in range(take):
                     if not sm2_pool:
                         break
@@ -3960,8 +5099,6 @@ def _pick_due_entry(context, user_id, mode, word_type=None):
 
     last_ids = context.user_data.setdefault("last_quiz_ids", {})
     last_id = last_ids.get(mode)
-    is_sm2_mode = mode in {_mode_l1_de(user_id), _mode_de_l1(user_id)}
-
     if is_sm2_mode:
         bucket = context.user_data.setdefault("sm2_cycle_queue", {})
         queue = bucket.get(mode)
@@ -4257,6 +5394,56 @@ async def _send_de_ru_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
     return QUIZ_DE_RU
 
 
+async def _send_pl_sg_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
+    """Handle send pl sg prompt."""
+    mode = _mode_pl_sg(update.effective_user.id)
+    entry = _maybe_take_retry_entry(context, mode)
+    if not entry:
+        context.user_data["quiz_is_retry"] = False
+        attempts = 0
+        entry = None
+        while attempts < 30:
+            attempts += 1
+            candidate = _pick_due_entry(context, update.effective_user.id, mode, word_type="nomen")
+            if not candidate:
+                break
+            if _is_pl_sg_eligible(candidate):
+                entry = candidate
+                break
+        if not entry and attempts > 0:
+            count = _session_count(context, mode)
+            if prefix_text:
+                await update.message.reply_text(prefix_text, parse_mode="Markdown")
+            await update.message.reply_text(f"session words = {count}")
+            await update.message.reply_text(
+                "No due plural>singular nouns.",
+                reply_markup=_quiz_idle_markup(update.effective_user.id),
+            )
+            return QUIZ_PL_SG
+    if not entry:
+        count = _session_count(context, mode)
+        if prefix_text:
+            await update.message.reply_text(prefix_text, parse_mode="Markdown")
+        await update.message.reply_text(f"session words = {count}")
+        await update.message.reply_text(
+            "No due words. Add more or wait until due date.",
+            reply_markup=_quiz_idle_markup(update.effective_user.id),
+        )
+        return QUIZ_PL_SG
+
+    context.user_data["quiz_entry"] = entry
+    prompt_text = _format_pl_sg_question(entry)
+    if prefix_text:
+        prompt_text = f"{prefix_text}\n\n{prompt_text}"
+
+    await update.message.reply_text(
+        prompt_text,
+        reply_markup=_quiz_markup(update.effective_user.id, article=False),
+        parse_mode="Markdown",
+    )
+    return QUIZ_PL_SG
+
+
 async def _send_article_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
     """Handle send article prompt."""
     mode = MODE_ARTICLE
@@ -4394,6 +5581,7 @@ def _ai_prompt(word, clarification):
         "Return only a JSON object and nothing else. "
         "Detect German part of speech. Allowed types: "
         "nomen, verb, adjektiv, pronomen, adverb, praeposition, konjunktion, partikel. "
+        "Phrase type is also allowed for fixed expressions: return type=phrase, german, russian. "
         "For nomen return: type, article, german, plural, russian. "
         "For verb return: type, infinitive, prateritum, partizip2, russian. "
         "For adjektiv return: type, german, komparativ, superlativ, russian. "
@@ -4403,12 +5591,26 @@ def _ai_prompt(word, clarification):
     )
 
 
+def _split_leading_article(raw_word):
+    """Extract leading der/die/das article from raw input."""
+    text = str(raw_word or "").strip()
+    if not text:
+        return "", ""
+    parts = text.split(None, 1)
+    if len(parts) < 2:
+        return "", text
+    first = parts[0].strip().lower()
+    if first not in {"der", "die", "das"}:
+        return "", text
+    return first, parts[1].strip()
+
+
 def _ai_precheck_prompt(word):
     """Handle ai precheck prompt."""
     return (
         "Return only a JSON object and nothing else. "
         "Detect German part of speech. Allowed types: "
-        "nomen, verb, adjektiv, pronomen, adverb, praeposition, konjunktion, partikel. "
+        "nomen, verb, phrase, adjektiv, pronomen, adverb, praeposition, konjunktion, partikel. "
         "Correct spelling if needed. "
         "Return JSON fields: type, value (corrected base form). "
         "For nouns, value is the singular base form (no article). "
@@ -4435,7 +5637,8 @@ def _parse_precheck_entry(entry):
 def _format_precheck_list(items):
     """Handle format precheck list."""
     lines = [f"Precheck list (topic: {_current_topic_value()}):"]
-    for idx, item in enumerate(items, start=1):
+    active = [x for x in items if x.get("word")]
+    for idx, item in enumerate(active, start=1):
         word = item.get("word", "")
         item_type = item.get("type", "?")
         original = item.get("original", "")
@@ -4443,6 +5646,12 @@ def _format_precheck_list(items):
             lines.append(f"{idx}. {word} [{item_type}] (from {original})")
         else:
             lines.append(f"{idx}. {word} [{item_type}]")
+    skipped = [x for x in items if x.get("skipped_reason")]
+    if skipped:
+        lines.append("")
+        lines.append("Skipped:")
+        for item in skipped:
+            lines.append(f"- {item.get('original','')} -> {item.get('skipped_reason','')}")
     return "\n".join(lines)
 
 
@@ -4457,8 +5666,27 @@ async def _precheck_words(update: Update, context: ContextTypes.DEFAULT_TYPE, wo
         return None
 
     items = []
-    for raw in words:
-        prompt_text = _ai_precheck_prompt(raw)
+    for raw_item in words:
+        if isinstance(raw_item, dict):
+            raw = raw_item.get("raw", "")
+            lookup_word = raw_item.get("lookup_word", raw)
+            forced_type = raw_item.get("forced_type", "")
+        else:
+            raw = str(raw_item)
+            lookup_word = raw
+            forced_type = ""
+        if forced_type in {"nomen", "verb", "phrase"} and lookup_word:
+            items.append(
+                {
+                    "original": raw,
+                    "word": lookup_word,
+                    "type": forced_type,
+                    "forced_fields": dict(raw_item.get("forced_fields") or {}) if isinstance(raw_item, dict) else {},
+                    "forced_type": forced_type,
+                }
+            )
+            continue
+        prompt_text = _ai_precheck_prompt(lookup_word)
         try:
             response_text = generate_fields(prompt_text)
         except Exception:
@@ -4469,7 +5697,13 @@ async def _precheck_words(update: Update, context: ContextTypes.DEFAULT_TYPE, wo
         if not parsed:
             items.append({"original": raw, "word": raw, "type": "?"})
             continue
-        items.append({"original": raw, "word": parsed["word"], "type": parsed["type"]})
+        item = {"original": raw, "word": parsed["word"], "type": parsed["type"]}
+        if isinstance(raw_item, dict):
+            if raw_item.get("forced_fields"):
+                item["forced_fields"] = dict(raw_item.get("forced_fields") or {})
+            if raw_item.get("forced_type"):
+                item["forced_type"] = raw_item.get("forced_type")
+        items.append(item)
     return items
 
 
@@ -4616,25 +5850,46 @@ def _format_ai_preview(entry, dict_lang, has_synonym=False):
 async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, word, clarification):
     """Handle process ai word."""
     has_queue = bool(context.user_data.get("add_queue"))
+    if isinstance(word, dict):
+        raw_word = str(word.get("raw", "")).strip() or str(word.get("lookup_word", "")).strip()
+        forced_type = _type_label(word.get("forced_type", ""))
+        forced_fields = dict(word.get("forced_fields") or {})
+        lookup_word = str(word.get("lookup_word", raw_word)).strip() or raw_word
+    else:
+        raw_word = str(word or "").strip()
+        forced_type = ""
+        forced_fields = {}
+        lookup_word = raw_word
+    forced_article, normalized_word = _split_leading_article(lookup_word)
+    lookup_word = normalized_word if forced_article and normalized_word else lookup_word
 
-    reject_reason = _prefilter_reject_reason(word)
+    reject_reason = _prefilter_reject_reason(lookup_word)
     if reject_reason:
         if has_queue:
-            logging.info("Queue skip filtered word: %s", word)
+            logging.info("Queue skip filtered word: %s", raw_word)
             return ADD_INPUT
         await _reply_text_with_retry(
             update.message,
-            f"{reject_reason} Skipped: {word}",
+            f"{reject_reason} Skipped: {raw_word}",
             reply_markup=ReplyKeyboardMarkup(_add_keys(update.effective_user.id), resize_keyboard=True),
         )
         return ADD_INPUT
 
-    existing = find_existing_word(get_db_path(), word)
+    existing = None
+    if forced_type in {"nomen", "verb", "phrase"}:
+        if _exists_word_for_type(forced_type, lookup_word):
+            existing = {"type": forced_type, "value": lookup_word}
+    else:
+        existing = find_existing_word(get_db_path(), lookup_word)
     if existing:
-        existing_type = existing.get("type", "word")
-        existing_value = existing.get("infinitive", "") if existing_type == "verb" else existing.get("german", "")
+        if isinstance(existing, dict) and "value" in existing:
+            existing_type = existing.get("type", "word")
+            existing_value = existing.get("value", "")
+        else:
+            existing_type = existing.get("type", "word")
+            existing_value = existing.get("infinitive", "") if existing_type == "verb" else existing.get("german", "")
         if has_queue:
-            logging.info("Queue skip existing word: %s", word)
+            logging.info("Queue skip existing word: %s", raw_word)
             return ADD_INPUT
         await _reply_text_with_retry(
             update.message,
@@ -4651,13 +5906,19 @@ async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, w
         )
         return MENU
 
-    context.user_data["pending_word"] = word
-    prompt_text = _ai_prompt(word, clarification)
+    context.user_data["pending_word"] = raw_word
+    ai_word = lookup_word
+    extra_note = ""
+    if forced_article:
+        extra_note = f" Input already includes article '{forced_article}'. Keep this article and do not infer another one."
+    if forced_type in {"nomen", "verb", "phrase"}:
+        extra_note = f"{extra_note} Force part of speech: {forced_type}.".strip()
+    prompt_text = _ai_prompt(ai_word, f"{clarification or ''}{extra_note}".strip())
     context.user_data["last_ai_prompt"] = prompt_text
     try:
         response_text = generate_fields(prompt_text)
     except Exception as exc:
-        logging.exception("AI request failed for word: %s", word)
+        logging.exception("AI request failed for word: %s", raw_word)
         await _reply_text_with_retry(
             update.message,
             f"Error: AI request failed: {exc}",
@@ -4669,14 +5930,14 @@ async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, w
     if entry is None or not _validate_ai_entry(entry):
         logging.warning(
             "AI parse failed word=%s clarification=%s raw=%s",
-            word,
+            raw_word,
             clarification,
             (response_text or "")[:500],
         )
         await _reply_text_with_retry(
             update.message,
             (
-                f"Error: AI failed to parse for word: {word}\n"
+                f"Error: AI failed to parse for word: {raw_word}\n"
                 f"Clarification: {clarification or '-'}\n"
                 "Use Confirm, Clarify AI, Clarify field, Reject, Ban, or Stop."
             ),
@@ -4685,14 +5946,24 @@ async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, w
         return ADD_CLARIFY
 
     entry = _normalize_ai_entry(entry)
-    if _is_non_infinitive_verb_input(word, entry):
+    if forced_type in {"nomen", "verb", "phrase"}:
+        entry["type"] = forced_type
+    for key, value in forced_fields.items():
+        if key in entry and str(value or "").strip():
+            entry[key] = str(value).strip()
+    if forced_article and entry.get("type") == "nomen":
+        entry["article"] = forced_article
+        german = str(entry.get("german", "")).strip()
+        _, german_no_article = _split_leading_article(german)
+        entry["german"] = german_no_article or german
+    if _is_non_infinitive_verb_input(raw_word, entry):
         inf = entry.get("infinitive", "")
-        existing_inf = find_existing_word(get_db_path(), inf) if inf else None
+        existing_inf = _exists_word_for_type("verb", inf) if inf else None
         if existing_inf:
-            msg = f"❌ Verb form detected: {word}. Base infinitive: {inf}. Already in database, not saved."
+            msg = f"❌ Verb form detected: {raw_word}. Base infinitive: {inf}. Already in database, not saved."
             if has_queue:
                 await _reply_text_with_retry(update.message, msg)
-                logging.info("Queue skip non-infinitive verb input (existing infinitive): %s -> %s", word, inf)
+                logging.info("Queue skip non-infinitive verb input (existing infinitive): %s -> %s", raw_word, inf)
                 return ADD_INPUT
             await _reply_text_with_retry(
                 update.message,
@@ -4804,6 +6075,8 @@ def _interval_divisor_for_mode(user_id, mode):
     """Handle interval divisor for mode."""
     if mode == MODE_RU_DE:
         return 1.65
+    if mode == _mode_pl_sg(user_id):
+        return 2.0
     if mode == _mode_de_l1(user_id):
         return 2.0
     return 1.0
@@ -4945,18 +6218,6 @@ async def _auto_dump_job(context: ContextTypes.DEFAULT_TYPE):
                 filename=dump_path.name,
                 caption=f"✅ Auto dump created: {dump_path.name}",
             )
-            report_day = (datetime.now(timezone.utc).date() - timedelta(days=1)).isoformat()
-            retention = get_daily_first_touch_retention(
-                get_db_path(),
-                user_id=owner_id,
-                target_date=report_day,
-                modes=(_mode_l1_de(owner_id), _mode_de_l1(owner_id)),
-            )
-            await context.bot.send_message(
-                chat_id=owner_id,
-                text=f"```text\n{_format_retention_daily_text(retention)}\n```",
-                parse_mode="Markdown",
-            )
         except Exception:
             logging.exception("Auto dump job failed")
     cleanup_transaction_logs(get_db_path(), days=7)
@@ -5085,11 +6346,11 @@ def _configure_learning_reminders(app: Application):
 def _format_sm2_report_text(total, peak_hour, peak_count):
     """Handle format sm2 report text."""
     if total <= 0:
-        return "SM2 today: 0 due."
+        return "FSRS today: 0 due."
     if peak_hour is None:
-        return f"SM2 today: {total} due."
+        return f"FSRS today: {total} due."
     return (
-        f"SM2 today: {total} due.\n"
+        f"FSRS today: {total} due.\n"
         f"Peak hour ~{peak_hour:02d}:00 UTC (approx), count {peak_count}."
     )
 
@@ -5144,7 +6405,7 @@ async def _sm2_daily_report_job(context: ContextTypes.DEFAULT_TYPE):
         if peak_hour is not None:
             set_setting(db_path, "sm2_peak_hour_today", str(int(peak_hour)))
     except Exception:
-        logging.exception("SM2 daily report failed")
+        logging.exception("FSRS daily report failed")
         return
 
 
@@ -5177,11 +6438,11 @@ async def _sm2_peak_notify_job(context: ContextTypes.DEFAULT_TYPE):
     try:
         await context.bot.send_message(
             chat_id=owner_id,
-            text=f"SM2 peak window now. Due today: {total}.",
+            text=f"FSRS peak window now. Due today: {total}.",
         )
         set_setting(db_path, SM2_PEAK_NOTIFY_DATE_KEY, today)
     except Exception:
-        logging.exception("SM2 peak notify failed")
+        logging.exception("FSRS peak notify failed")
         return
 
 
@@ -5290,6 +6551,7 @@ def main():
             ADD_EDIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_edit)],
             QUIZ_RU_DE: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_ru_de)],
             QUIZ_DE_RU: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_de_ru)],
+            QUIZ_PL_SG: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_pl_sg)],
             QUIZ_ARTICLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_article)],
             QUIZ_ARTICLE_WEAK: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_article_weak)],
             QUIZ_PLURAL_WEAK: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_plural_weak)],
