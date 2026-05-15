@@ -2246,8 +2246,8 @@ def learning_mark_preview_next(db_path, user_id, word_id, first_interval_seconds
     return True
 
 
-def learning_due_entry(db_path, user_id, exclude_word_id=None):
-    """Handle learning due entry."""
+def learning_due_entries(db_path, user_id, exclude_word_id=None):
+    """Return due learning entries."""
     init_db(db_path)
     now_iso = _utc_now_iso()
     base_query = """
@@ -2268,29 +2268,36 @@ def learning_due_entry(db_path, user_id, exclude_word_id=None):
             ORDER BY
               CASE WHEN li.step_index = 0 THEN 0 ELSE 1 END ASC,
               CASE WHEN li.step_index = 0 THEN li.created_at ELSE NULL END ASC,
-              CASE WHEN li.step_index > 0 THEN RANDOM() ELSE 0 END
-            LIMIT 1
+              li.next_due ASC,
+              li.updated_at ASC
     """
     with _connect(db_path) as conn:
-        row = None
         if exclude_word_id:
-            row = conn.execute(
+            rows = conn.execute(
                 f"""
                 {base_query}
                   AND w.id != ?
                 {order_clause}
                 """,
                 (int(user_id), now_iso, _safe_text(exclude_word_id)),
-            ).fetchone()
-        if row is None:
-            row = conn.execute(
+            ).fetchall()
+        else:
+            rows = conn.execute(
                 f"""
                 {base_query}
                 {order_clause}
                 """,
                 (int(user_id), now_iso),
-            ).fetchone()
-    return _row_to_entry(row) if row else None
+            ).fetchall()
+    return [_row_to_entry(row) for row in rows]
+
+
+def learning_due_entry(db_path, user_id, exclude_word_id=None):
+    """Handle learning due entry."""
+    entries = learning_due_entries(db_path, user_id, exclude_word_id=exclude_word_id)
+    if not entries and exclude_word_id:
+        entries = learning_due_entries(db_path, user_id, exclude_word_id=None)
+    return entries[0] if entries else None
 
 
 def learning_update_result(db_path, user_id, word_id, ok, intervals_seconds):

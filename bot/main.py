@@ -161,6 +161,7 @@ from .storage import (
     learning_add_word_by_id,
     learning_batch_mark_notified,
     learning_batch_update_ready_state,
+    learning_due_entries,
     learning_due_entry,
     learning_get_or_create_batch,
     learning_pick_new_words,
@@ -252,6 +253,7 @@ LEARNING_ADD_TEXT = "add for learning"
 LEARNING_SKIP_TEXT = "skip_learning"
 LEARNING_NEXT_TEXT = "next"
 LEARNING_RESET_TEXT = "reset learning"
+LEARNING_MIX_MODE_TEXT = "mix_mode"
 SEND_LEARN_TEXT = "send_learn"
 
 RETRY_GAP_QUESTIONS = 3
@@ -263,6 +265,7 @@ LEARNING_INTERVALS_DEFAULT = "30,120,600,3600,10800,18000"
 LEARNING_REMINDER_INTERVAL_DEFAULT = 60
 LEARNING_REMINDER_COOLDOWN_DEFAULT = 900
 LEARNING_READY_QUORUM_DEFAULT = 70
+LEARNING_MIX_MODE_DEFAULT = "0"
 LEARNING_REMINDER_JOB_NAME = "learning_reminder_job"
 SM2_REPORT_UTC_HOUR_DEFAULT = 3
 SM2_REPORT_JOB_NAME = "sm2_daily_report_job"
@@ -347,7 +350,7 @@ def _ru_de_menu_keys(user_id):
 def _learning_menu_keys(user_id):
     """Handle learning menu keys."""
     return [
-        [LEARNING_START_TEXT, LEARNING_ADD_TEXT, LEARNING_RESET_TEXT],
+        [LEARNING_START_TEXT, LEARNING_MIX_MODE_TEXT, LEARNING_ADD_TEXT, LEARNING_RESET_TEXT],
         [t(_user_interface_lang(user_id), "back")],
     ]
 
@@ -466,6 +469,73 @@ def _learning_ready_quorum(db_path):
     """Handle learning ready quorum."""
     value = _get_int_setting(db_path, LEARNING_READY_QUORUM_KEY, LEARNING_READY_QUORUM_DEFAULT)
     return min(100, max(1, value))
+
+
+def _learning_mix_mode_key(user_id):
+    """Handle learning mix mode key."""
+    return f"learning_mix_mode:{int(user_id)}"
+
+
+def _learning_mix_mode_enabled(user_id):
+    """Handle learning mix mode enabled."""
+    value = get_setting(get_db_path(), _learning_mix_mode_key(user_id), LEARNING_MIX_MODE_DEFAULT)
+    return str(value).strip().lower() in {"1", "true", "on", "yes"}
+
+
+def _set_learning_mix_mode(user_id, enabled):
+    """Persist learning mix mode."""
+    set_setting(get_db_path(), _learning_mix_mode_key(user_id), "1" if enabled else "0")
+
+
+def _build_learning_topic_mix_queue(entries):
+    """Build weighted mixed queue by topic."""
+    buckets = {}
+    for entry in entries:
+        topic = str(entry.get("topic") or "").strip() or "-"
+        buckets.setdefault(topic, []).append(entry)
+    for values in buckets.values():
+        random.shuffle(values)
+    mixed = []
+    last_topic = None
+    while True:
+        candidates = [(topic, values) for topic, values in buckets.items() if values]
+        if not candidates:
+            break
+        topic_pool = candidates
+        if last_topic and len(candidates) > 1:
+            alt = [(topic, values) for topic, values in candidates if topic != last_topic]
+            if alt:
+                topic_pool = alt
+        topics = [topic for topic, _ in topic_pool]
+        weights = [len(values) for _, values in topic_pool]
+        selected_topic = random.choices(topics, weights=weights, k=1)[0]
+        mixed.append(buckets[selected_topic].pop(0))
+        last_topic = selected_topic
+    return mixed
+
+
+def _pick_learning_due_entry(context, user_id, exclude_word_id=None):
+    """Pick next due learning entry with optional topic-mix mode."""
+    if not _learning_mix_mode_enabled(user_id):
+        return learning_due_entry(get_db_path(), user_id=user_id, exclude_word_id=exclude_word_id)
+    queue_key = "learning_mix_queue"
+    queue = context.user_data.get(queue_key)
+    if not isinstance(queue, list) or not queue:
+        due_entries = learning_due_entries(get_db_path(), user_id=user_id, exclude_word_id=exclude_word_id)
+        if not due_entries and exclude_word_id:
+            due_entries = learning_due_entries(get_db_path(), user_id=user_id, exclude_word_id=None)
+        queue = _build_learning_topic_mix_queue(due_entries)
+        context.user_data[queue_key] = queue
+    while queue:
+        entry = queue.pop(0)
+        wid = entry.get("id")
+        if exclude_word_id and wid == exclude_word_id:
+            continue
+        if not wid:
+            continue
+        return entry
+    context.user_data.pop(queue_key, None)
+    return None
 
 
 def _sm2_report_hour_utc(db_path):
@@ -724,6 +794,7 @@ def _action_key_from_text(text, user_id):
     mapping[LEARNING_SKIP_TEXT] = "learning_skip"
     mapping[LEARNING_NEXT_TEXT] = "learning_next"
     mapping[LEARNING_RESET_TEXT] = "learning_reset"
+    mapping[LEARNING_MIX_MODE_TEXT] = "learning_mix_mode"
     mapping[SEND_LEARN_TEXT] = "send_learn"
     mapping["flags!"] = "review_flags"
     mapping[PARSE_VF_TEXT] = "review_flags"
@@ -2276,6 +2347,7 @@ async def _send_learning_menu(update: Update, user_id):
             "",
             f"{t(_user_interface_lang(user_id), 'learning_daily_qty')} = {_learning_daily_qty(get_db_path())}",
             f"{t(_user_interface_lang(user_id), 'learning_intervals')} = {_learning_intervals_text(get_db_path())}",
+            f"{LEARNING_MIX_MODE_TEXT} = {'ON' if _learning_mix_mode_enabled(user_id) else 'OFF'}",
             f"active = {stats.get('active_count', 0)}",
             f"preview_pending = {stats.get('preview_pending', 0)}",
             f"due_now = {stats.get('due_count', 0)} / need {stats.get('ready_needed', 0)}",
@@ -2462,10 +2534,11 @@ async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TY
     last_learning_word_id = context.user_data.get("last_learning_prompt_word_id")
     entry = force_entry
     if not entry:
-        entry = learning_due_entry(get_db_path(), user_id=user_id, exclude_word_id=last_learning_word_id)
+        entry = _pick_learning_due_entry(context, user_id, exclude_word_id=last_learning_word_id)
     if not entry:
         context.user_data["learning_preview_mode"] = False
         context.user_data.pop("last_learning_prompt_word_id", None)
+        context.user_data.pop("learning_mix_queue", None)
         if prefix_text:
             await update.message.reply_text(prefix_text, parse_mode="Markdown")
         await update.message.reply_text(
@@ -2506,14 +2579,22 @@ async def learning_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
         return TESTS_MENU
     if action == "learning_add":
         return await _learning_add_words(update, context)
+    if action == "learning_mix_mode":
+        enabled = _learning_mix_mode_enabled(user_id)
+        _set_learning_mix_mode(user_id, not enabled)
+        context.user_data.pop("learning_mix_queue", None)
+        await update.message.reply_text(f"{LEARNING_MIX_MODE_TEXT} = {'ON' if not enabled else 'OFF'}")
+        return await _send_learning_menu(update, user_id)
     if action == "learning_reset":
         learning_reset_session(get_db_path(), user_id=user_id)
+        context.user_data.pop("learning_mix_queue", None)
         await update.message.reply_text(
             "Learning session reset. Words returned to new.",
             reply_markup=ReplyKeyboardMarkup(_learning_menu_keys(user_id), resize_keyboard=True),
         )
         return LEARNING_MENU
     if action == "learning_start":
+        context.user_data.pop("learning_mix_queue", None)
         return await _send_learning_prompt(update, context, None)
     await update.message.reply_text(
         "Use learning menu buttons.",
@@ -2562,12 +2643,14 @@ async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == INPUT_ERR_TEXT:
         applied = _apply_input_err_learning(update, context)
         prefix = "✅ Fixed previous answer." if applied else "Nothing to fix."
+        context.user_data.pop("learning_mix_queue", None)
         return await _send_learning_prompt(update, context, prefix, force_entry=context.user_data.get("quiz_entry"))
 
     if action == "learning_skip" or text == LEARNING_SKIP_TEXT:
         snapshot = _capture_transaction_snapshot(user_id, entry.get("id"), ["learning"])
         learning_skip_word(get_db_path(), user_id=user_id, word_id=entry.get("id"))
         _log_transaction(user_id, "learning:skip", snapshot)
+        context.user_data.pop("learning_mix_queue", None)
         return await _send_learning_prompt(update, context, "Skipped for learning.")
 
     if text == I_DONT_KNOW_TEXT:
@@ -2596,6 +2679,7 @@ async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     feedback = _format_feedback_ru_de(entry, ok)
     if result.get("completed"):
         feedback = f"{feedback}\n\nLearning done ✅, sent to fsrs"
+    context.user_data.pop("learning_mix_queue", None)
     return await _send_learning_prompt(update, context, feedback)
 
 
