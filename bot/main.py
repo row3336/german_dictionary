@@ -4905,7 +4905,7 @@ def _nomen_with_edge_emoji(article_text, noun_text):
     mapping = {"der": "🔵", "die": "🔴", "das": "🟢"}
     variants = [v for v in _article_variants(article_text) if v in mapping]
     edge = mapping.get((variants[0] if variants else ""), "⚪")
-    article = _article_with_emoji(article_text)
+    article = str(article_text or "").strip()
     noun = _cap_word(noun_text)
     core = f"{article} {noun}".strip() if article else noun
     return f"{edge} {core} {edge}".strip()
