@@ -3391,7 +3391,7 @@ def list_all_words(db_path):
         rows = conn.execute(
             """
             SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian
-            , ukrainian, english, topic
+            , ukrainian, english, image, example, topic
             FROM words
             ORDER BY created_at ASC
             """
@@ -3406,7 +3406,7 @@ def list_words_by_topic(db_path, topic):
         rows = conn.execute(
             """
             SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian
-            , ukrainian, english, topic
+            , ukrainian, english, image, example, topic
             FROM words
             WHERE topic = ?
             ORDER BY created_at ASC
