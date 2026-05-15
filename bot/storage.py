@@ -2317,7 +2317,7 @@ def learning_due_entries(db_path, user_id, exclude_word_id=None):
     base_query = """
             SELECT
                 w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ,
-                w.russian, w.ukrainian, w.english, w.topic,
+                w.russian, w.ukrainian, w.english, w.image, w.example, w.topic,
                 li.step_index AS learning_step,
                 li.next_due AS learning_due,
                 li.batch_id AS learning_batch_id
@@ -3583,7 +3583,7 @@ def find_word_by_value(db_path, token):
         row = conn.execute(
             """
             SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian
-            , ukrainian, english, topic
+            , ukrainian, english, image, example, topic
             FROM words
             WHERE id = ?
                OR lower(trim(german)) = ?
@@ -3637,7 +3637,7 @@ def search_word(db_path, token):
         row = conn.execute(
             """
             SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian
-            , ukrainian, english, topic
+            , ukrainian, english, image, example, topic
             FROM words
             WHERE id = ?
                OR lower(trim(german)) IN (?, ?)
@@ -3678,7 +3678,7 @@ def search_word(db_path, token):
         rows = conn.execute(
             """
             SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian
-            , ukrainian, english, topic
+            , ukrainian, english, image, example, topic
             FROM words
             WHERE lower(german) LIKE ? OR lower(german) LIKE ?
                OR lower(infinitive) LIKE ? OR lower(infinitive) LIKE ?
