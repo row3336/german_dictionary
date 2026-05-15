@@ -4902,9 +4902,11 @@ def _append_hint_lines(lines, entry, ok):
         return lines
     lines.append("")
     if image:
-        lines.append(f"image: {_md_escape(image)}")
+        lines.append(_md_escape(image))
     if example:
-        lines.append(f"example: {_md_escape(example)}")
+        if image:
+            lines.append("")
+        lines.append(_md_escape(example))
     return lines
 
 
