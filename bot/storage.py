@@ -1798,7 +1798,15 @@ def _progress_for_row(row):
     }
 
 
-def select_due(db_path, user_id, mode, word_type=None, topics=None, today=None):
+def select_due(
+    db_path,
+    user_id,
+    mode,
+    word_type=None,
+    topics=None,
+    today=None,
+    exclude_correct_today=False,
+):
     """Handle select due."""
     if today is None:
         today = date.today()
@@ -1844,6 +1852,19 @@ def select_due(db_path, user_id, mode, word_type=None, topics=None, today=None):
             placeholders = ",".join("?" for _ in clean_topics)
             where_clauses.append(f"w.topic IN ({placeholders})")
             where_params.extend(clean_topics)
+    if exclude_correct_today:
+        where_clauses.append(
+            """NOT EXISTS (
+                SELECT 1
+                FROM quiz_events qe2
+                WHERE qe2.user_id = ?
+                  AND qe2.word_id = w.id
+                  AND qe2.mode = ?
+                  AND qe2.is_correct = 1
+                  AND date(qe2.created_at) = date(?)
+            )"""
+        )
+        where_params.extend([int(user_id), mode, due_today])
 
     where_sql = " AND ".join(where_clauses)
 

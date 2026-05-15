@@ -4975,6 +4975,8 @@ def _format_feedback_article(entry, ok, dict_lang):
 
 def _pick_due_entry(context, user_id, mode, word_type=None):
     """Handle pick due entry."""
+    is_sm2_mode = mode in {_mode_l1_de(user_id), _mode_de_l1(user_id), _mode_pl_sg(user_id)}
+
     def _fetch_due():
         return select_due(
             get_db_path(),
@@ -4982,6 +4984,7 @@ def _pick_due_entry(context, user_id, mode, word_type=None):
             mode=mode,
             word_type=word_type,
             topics=_topic_filter_for_query(),
+            exclude_correct_today=is_sm2_mode,
         )
 
     def _build_sm2_queue(entries):
@@ -5012,8 +5015,6 @@ def _pick_due_entry(context, user_id, mode, word_type=None):
 
     last_ids = context.user_data.setdefault("last_quiz_ids", {})
     last_id = last_ids.get(mode)
-    is_sm2_mode = mode in {_mode_l1_de(user_id), _mode_de_l1(user_id), _mode_pl_sg(user_id)}
-
     if is_sm2_mode:
         bucket = context.user_data.setdefault("sm2_cycle_queue", {})
         queue = bucket.get(mode)
