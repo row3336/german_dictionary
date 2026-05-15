@@ -103,6 +103,7 @@ from .app_config import (
     SM2_REPORT_HOUR_KEY,
     SM2_REPORT_DATE_KEY,
     SM2_PEAK_NOTIFY_DATE_KEY,
+    SM2_WEEKLY_REPORT_WEEK_KEY,
     get_suggestions_path,
     is_owner,
 )
@@ -179,6 +180,7 @@ from .storage import (
     delete_transaction_logs,
     cleanup_transaction_logs,
     get_daily_first_touch_retention,
+    get_weekly_first_touch_retention,
     _parse_learning_intervals,
     sm2_due_forecast,
     WEAK_ACTIVE_MIN_ERRORS,
@@ -2034,7 +2036,7 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"words in dict = {stats['total_words']}",
             f"never touched = {stats['never_answered']}",
             f"words weekly = +{stats['weekly_words']}",
-            f"learning->fsrs 2+ (week) = {stats['learning_to_sm2_week']}",
+            f"learning weekly = {stats.get('learning_weekly', 0)}",
             "",
             "word types:",
             *[f"{k} = {word_types[k]}" for k in sorted(word_types.keys())],
@@ -6306,6 +6308,31 @@ def _format_retention_daily_text(retention):
     )
 
 
+def _format_retention_weekly_text(retention):
+    """Handle weekly first-touch retention text."""
+    ws = retention.get("week_start", "")
+    we = retention.get("week_end", "")
+    total = int(retention.get("total") or 0)
+    correct = int(retention.get("correct") or 0)
+    rate = float(retention.get("rate") or 0.0)
+    if total <= 0:
+        return f"#weekly\nRetention rate ({ws}..{we}, first touch): no data."
+    if rate < 70.0:
+        zone = "<70%: overload"
+    elif 80.0 <= rate <= 90.0:
+        zone = "80-90%: optimal"
+    elif rate > 95.0:
+        zone = ">95%: too easy (you can add more new words)"
+    else:
+        zone = "outside optimal range"
+    return (
+        f"#weekly\n"
+        f"Retention rate ({ws}..{we}, first touch): {rate:.1f}%\n"
+        f"Correct: {correct}/{total}\n"
+        f"{zone}"
+    )
+
+
 def _configure_auto_dump(app: Application, mode: str):
     """Handle configure auto dump."""
     job_queue = app.job_queue
@@ -6459,6 +6486,26 @@ async def _sm2_daily_report_job(context: ContextTypes.DEFAULT_TYPE):
             text=f"```text\n{_format_retention_daily_text(retention)}\n```",
             parse_mode="Markdown",
         )
+        # Weekly report: send once on Monday after report hour, for previous week.
+        report_hour = _sm2_report_hour_utc(db_path)
+        if now.weekday() == 0 and now.hour >= report_hour:
+            prev_ref = now.date() - timedelta(days=7)
+            prev_ws = prev_ref - timedelta(days=prev_ref.weekday())
+            prev_ws_iso = prev_ws.isoformat()
+            last_weekly = get_setting(db_path, SM2_WEEKLY_REPORT_WEEK_KEY, "")
+            if last_weekly != prev_ws_iso:
+                weekly = get_weekly_first_touch_retention(
+                    db_path,
+                    user_id=owner_id,
+                    week_start=prev_ws_iso,
+                    modes=(_mode_l1_de(owner_id), _mode_de_l1(owner_id)),
+                )
+                await context.bot.send_message(
+                    chat_id=owner_id,
+                    text=f"```text\n{_format_retention_weekly_text(weekly)}\n```",
+                    parse_mode="Markdown",
+                )
+                set_setting(db_path, SM2_WEEKLY_REPORT_WEEK_KEY, prev_ws_iso)
         set_setting(db_path, SM2_REPORT_DATE_KEY, today)
         set_setting(db_path, "sm2_peak_hour_today", "")
         set_setting(db_path, SM2_PEAK_NOTIFY_DATE_KEY, "")
@@ -6556,6 +6603,8 @@ def _prepare_storage():
         set_setting(db_path, LEARNING_READY_QUORUM_KEY, str(LEARNING_READY_QUORUM_DEFAULT))
     if not get_setting(db_path, SM2_REPORT_HOUR_KEY):
         set_setting(db_path, SM2_REPORT_HOUR_KEY, str(SM2_REPORT_UTC_HOUR_DEFAULT))
+    if not get_setting(db_path, SM2_WEEKLY_REPORT_WEEK_KEY):
+        set_setting(db_path, SM2_WEEKLY_REPORT_WEEK_KEY, "")
     cleanup_transaction_logs(db_path, days=7)
 
 

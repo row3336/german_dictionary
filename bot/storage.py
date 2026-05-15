@@ -1012,22 +1012,17 @@ def get_statistics_snapshot(db_path, user_id, mode):
             or 0
         )
 
-        learning_to_sm2_week = int(
+        learning_weekly = int(
             conn.execute(
                 """
-                SELECT COUNT(DISTINCT p.word_id) AS cnt
-                FROM progress p
-                JOIN learning_items li
-                  ON li.user_id = p.user_id
-                 AND li.word_id = p.word_id
-                 AND li.status IN ('completed', 'skipped')
-                WHERE p.user_id = ?
-                  AND p.mode = ?
-                  AND p.repetitions >= 2
-                  AND date(p.updated_at) >= date(?)
-                  AND date(p.updated_at) < date(?)
+                SELECT COUNT(DISTINCT li.word_id) AS cnt
+                FROM learning_items li
+                WHERE li.user_id = ?
+                  AND li.status IN ('completed', 'skipped')
+                  AND date(li.updated_at) >= date(?)
+                  AND date(li.updated_at) < date(?)
                 """,
-                (user_id, mode, ws, we),
+                (user_id, ws, we),
             ).fetchone()["cnt"]
             or 0
         )
@@ -1117,7 +1112,7 @@ def get_statistics_snapshot(db_path, user_id, mode):
         "never_answered": never_answered,
         "retention_7d_pct": retention_7d_pct,
         "new_words_tested_week": new_words_tested,
-        "learning_to_sm2_week": learning_to_sm2_week,
+        "learning_weekly": learning_weekly,
         "weak_resolved_week": weak_resolved,
     }
 
@@ -1170,6 +1165,63 @@ def get_daily_first_touch_retention(db_path, user_id, target_date=None, modes=No
     correct = int((row["correct_cnt"] if row else 0) or 0)
     rate = round((correct / total) * 100, 1) if total > 0 else 0.0
     return {"date": day, "total": total, "correct": correct, "rate": rate}
+
+
+def get_weekly_first_touch_retention(db_path, user_id, week_start=None, modes=None):
+    """First-touch retention for a calendar week [Mon..Mon)."""
+    init_db(db_path)
+    user_id = int(user_id)
+    selected_modes = tuple(modes or (QUIZ_RU_DE, QUIZ_DE_RU))
+    if not selected_modes:
+        return {"week_start": "", "week_end": "", "total": 0, "correct": 0, "rate": 0.0}
+    if week_start:
+        ws = date.fromisoformat(str(week_start))
+    else:
+        today = date.today()
+        ws = today - timedelta(days=today.weekday())
+    we = ws + timedelta(days=7)
+    ws_iso = ws.isoformat()
+    we_iso = we.isoformat()
+    placeholders = ",".join("?" for _ in selected_modes)
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            f"""
+            WITH week_events AS (
+                SELECT id, word_id, is_correct, created_at
+                FROM quiz_events
+                WHERE user_id = ?
+                  AND mode IN ({placeholders})
+                  AND date(created_at) >= date(?)
+                  AND date(created_at) < date(?)
+            ),
+            first_ts AS (
+                SELECT word_id, MIN(created_at) AS first_created_at
+                FROM week_events
+                GROUP BY word_id
+            ),
+            first_rows AS (
+                SELECT e.word_id, e.is_correct, e.id
+                FROM week_events e
+                JOIN first_ts f
+                  ON f.word_id = e.word_id
+                 AND f.first_created_at = e.created_at
+            ),
+            first_pick AS (
+                SELECT word_id, is_correct
+                FROM first_rows
+                WHERE id IN (SELECT MIN(id) FROM first_rows GROUP BY word_id)
+            )
+            SELECT
+                COUNT(*) AS total,
+                SUM(CASE WHEN is_correct = 1 THEN 1 ELSE 0 END) AS correct
+            FROM first_pick
+            """,
+            (user_id, *selected_modes, ws_iso, we_iso),
+        ).fetchone()
+    total = int(row["total"] or 0) if row else 0
+    correct = int(row["correct"] or 0) if row else 0
+    rate = round((correct / total) * 100, 1) if total > 0 else 0.0
+    return {"week_start": ws_iso, "week_end": we_iso, "total": total, "correct": correct, "rate": rate}
 
 
 def snapshot_user_word_state(db_path, user_id, word_id, modes=None):

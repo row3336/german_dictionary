@@ -37,6 +37,7 @@ LEARNING_READY_QUORUM_KEY = "learning_ready_quorum_pct"
 SM2_REPORT_HOUR_KEY = "sm2_report_utc_hour"
 SM2_REPORT_DATE_KEY = "sm2_report_date"
 SM2_PEAK_NOTIFY_DATE_KEY = "sm2_peak_notify_date"
+SM2_WEEKLY_REPORT_WEEK_KEY = "sm2_weekly_report_week"
 
 ARTICLE_SET = {
     "der",
