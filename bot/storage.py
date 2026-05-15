@@ -1883,7 +1883,7 @@ def select_due(
     query = f"""
         SELECT
             w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ, w.russian,
-            w.ukrainian, w.english, w.topic, ldone.done_at AS learning_done_at,
+            w.ukrainian, w.english, w.image, w.example, w.topic, ldone.done_at AS learning_done_at,
             CASE WHEN EXISTS (
                 SELECT 1
                 FROM quiz_events qe
@@ -2189,7 +2189,7 @@ def learning_preview_entry(db_path, user_id):
             """
             SELECT
                 w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ,
-                w.russian, w.ukrainian, w.english, w.topic,
+                w.russian, w.ukrainian, w.english, w.image, w.example, w.topic,
                 li.step_index AS learning_step,
                 li.next_due AS learning_due,
                 li.batch_id AS learning_batch_id
