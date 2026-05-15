@@ -4493,15 +4493,14 @@ async def quiz_article(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def _weak_status(ok):
     """Handle weak status."""
-    return "Correct ✅" if ok else "Wrong ❌"
+    return _status_text(ok)
 
 
 def _format_feedback_plural_weak(entry, ok):
     """Handle format feedback plural weak."""
-    article = str(entry.get("article", "")).strip()
-    german = _cap_word(entry.get("german", ""))
+    wrapped = _nomen_with_edge_emoji(entry.get("article", ""), entry.get("german", ""))
     plural = _cap_word(entry.get("plural", ""))
-    headline = f"{_weak_status(ok)} >>>     {_md_escape((article + ' ' + german).strip())}"
+    headline = f"{_weak_status(ok)} >>>     {_md_escape(wrapped)}"
     lines = [headline]
     if plural:
         lines.extend(["", f"_pl. die {_md_escape(plural)}_"])
@@ -4896,6 +4895,22 @@ def _article_with_emoji(text):
     return ", ".join(out)
 
 
+def _status_text(ok):
+    """Neutral monochrome status markers."""
+    return "Correct ⚪" if ok else "Wrong ⚫"
+
+
+def _nomen_with_edge_emoji(article_text, noun_text):
+    """Wrap noun answer with edge emoji before article and after noun."""
+    mapping = {"der": "🔵", "die": "🔴", "das": "🟢"}
+    variants = [v for v in _article_variants(article_text) if v in mapping]
+    edge = mapping.get((variants[0] if variants else ""), "⚪")
+    article = _article_with_emoji(article_text)
+    noun = _cap_word(noun_text)
+    core = f"{article} {noun}".strip() if article else noun
+    return f"{edge} {core} {edge}".strip()
+
+
 def _append_hint_lines(lines, entry, ok):
     """Append image/example hints after wrong answers."""
     if ok:
@@ -4989,10 +5004,8 @@ def _format_pl_sg_question(entry):
 
 def _format_feedback_pl_sg(entry, ok):
     """Handle format feedback plural->singular."""
-    status = "Correct ✅" if ok else "Wrong ❌"
-    article = _article_with_emoji(entry.get("article", ""))
-    german = _cap_word(entry.get("german", ""))
-    lines = [f"{status} >>>     {_md_escape((article + ' ' + german).strip())}"]
+    status = _status_text(ok)
+    lines = [f"{status} >>>     {_md_escape(_nomen_with_edge_emoji(entry.get('article', ''), entry.get('german', '')))}"]
     _append_hint_lines(lines, entry, ok)
     return "\n".join(lines)
 
@@ -5004,17 +5017,17 @@ def _format_article_question(entry):
 
 def _format_feedback_ru_de(entry, ok):
     """Handle format feedback ru de."""
-    status = "Correct ✅" if ok else "Wrong ❌"
+    status = _status_text(ok)
     word_type = entry.get("type", "")
     article = _article_with_emoji(entry.get("article", "")) if word_type == "nomen" else str(entry.get("article", "")).strip()
     if word_type == "nomen":
-        base = _cap_word(entry.get("german", ""))
+        answer = _nomen_with_edge_emoji(entry.get("article", ""), entry.get("german", ""))
     elif word_type == "verb":
         base = _low_word(entry.get("infinitive", ""))
+        answer = f"{article} {base}".strip() if article else base
     else:
         base = _low_word(entry.get("german", ""))
-
-    answer = f"{article} {base}".strip() if article else base
+        answer = f"{article} {base}".strip() if article else base
     headline = f"{status} >>>     *{_md_escape(answer)}*"
     lines = [headline]
 
@@ -5055,9 +5068,7 @@ def _format_learning_preview_prompt(entry, dict_lang):
     word_type = _low_word(entry.get("type", ""))
     lines = []
     if word_type == "nomen":
-        article = _article_with_emoji(entry.get("article", ""))
-        german = _cap_word(entry.get("german", ""))
-        answer = f"{article} {german}".strip() if article else german
+        answer = _nomen_with_edge_emoji(entry.get("article", ""), entry.get("german", ""))
         lines.append(f"*{_md_escape(answer)}*")
         plural = _cap_word(entry.get("plural", ""))
         if plural:
@@ -5087,7 +5098,7 @@ def _format_learning_preview_prompt(entry, dict_lang):
 
 def _format_feedback_de_ru(entry, ok, dict_lang):
     """Handle format feedback de ru."""
-    status = "Correct ✅" if ok else "Wrong ❌"
+    status = _status_text(ok)
     lines = [f"{status} >>>     *{_md_escape(_low_word(_entry_translation(entry, dict_lang)))}*"]
     _append_hint_lines(lines, entry, ok)
     return "\n".join(lines)
@@ -5095,11 +5106,9 @@ def _format_feedback_de_ru(entry, ok, dict_lang):
 
 def _format_feedback_article(entry, ok, dict_lang):
     """Handle format feedback article."""
-    status = "Correct ✅" if ok else "Wrong ❌"
-    article = _article_with_emoji(entry.get("article", ""))
-    german = _cap_word(entry.get("german", ""))
+    status = _status_text(ok)
     plural = _cap_word(entry.get("plural", ""))
-    headline = f"{status} >>>     {_md_escape((article + ' ' + german).strip())}"
+    headline = f"{status} >>>     {_md_escape(_nomen_with_edge_emoji(entry.get('article', ''), entry.get('german', '')))}"
     lines = [headline.strip()]
     if plural:
         lines.append("")
