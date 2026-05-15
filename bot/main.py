@@ -4498,9 +4498,11 @@ def _format_feedback_plural_weak(entry, ok):
     german = _cap_word(entry.get("german", ""))
     plural = _cap_word(entry.get("plural", ""))
     headline = f"{_weak_status(ok)} >>>     {_md_escape((article + ' ' + german).strip())}"
+    lines = [headline]
     if plural:
-        return f"{headline}\n\n_pl. die {_md_escape(plural)}_"
-    return headline
+        lines.extend(["", f"_pl. die {_md_escape(plural)}_"])
+    _append_hint_lines(lines, entry, ok)
+    return "\n".join(lines)
 
 
 def _format_feedback_prateritum_weak(entry, ok):
@@ -4508,9 +4510,11 @@ def _format_feedback_prateritum_weak(entry, ok):
     infinitive = _low_word(entry.get("infinitive", ""))
     pr = _low_word(entry.get("prateritum", ""))
     headline = f"{_weak_status(ok)} >>>     {_md_escape(infinitive)}"
+    lines = [headline]
     if pr:
-        return f"{headline}\n\n_{_md_escape(pr)}_"
-    return headline
+        lines.extend(["", f"_{_md_escape(pr)}_"])
+    _append_hint_lines(lines, entry, ok)
+    return "\n".join(lines)
 
 
 def _format_feedback_partizip2_weak(entry, ok):
@@ -4518,9 +4522,11 @@ def _format_feedback_partizip2_weak(entry, ok):
     infinitive = _low_word(entry.get("infinitive", ""))
     p2 = _expected_partizip2(entry)
     headline = f"{_weak_status(ok)} >>>     {_md_escape(infinitive)}"
+    lines = [headline]
     if p2:
-        return f"{headline}\n\n_{_md_escape(p2)}_"
-    return headline
+        lines.extend(["", f"_{_md_escape(p2)}_"])
+    _append_hint_lines(lines, entry, ok)
+    return "\n".join(lines)
 
 
 async def quiz_article_weak(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -4886,6 +4892,22 @@ def _article_with_emoji(text):
     return ", ".join(out)
 
 
+def _append_hint_lines(lines, entry, ok):
+    """Append image/example hints after wrong answers."""
+    if ok:
+        return lines
+    image = str(entry.get("image", "") or "").strip()
+    example = str(entry.get("example", "") or "").strip()
+    if not image and not example:
+        return lines
+    lines.append("")
+    if image:
+        lines.append(f"image: {_md_escape(image)}")
+    if example:
+        lines.append(f"example: {_md_escape(example)}")
+    return lines
+
+
 def _format_ru_question(entry, dict_lang):
     """Handle format ru question."""
     value = _normalize_russian_singular(_entry_translation(entry, dict_lang))
@@ -4964,7 +4986,9 @@ def _format_feedback_pl_sg(entry, ok):
     status = "Correct ✅" if ok else "Wrong ❌"
     article = _article_with_emoji(entry.get("article", ""))
     german = _cap_word(entry.get("german", ""))
-    return f"{status} >>>     {_md_escape((article + ' ' + german).strip())}"
+    lines = [f"{status} >>>     {_md_escape((article + ' ' + german).strip())}"]
+    _append_hint_lines(lines, entry, ok)
+    return "\n".join(lines)
 
 
 def _format_article_question(entry):
@@ -5016,6 +5040,7 @@ def _format_feedback_ru_de(entry, ok):
             lines.append("")
             lines.append(f"_  {_md_escape(forms)}_")
 
+    _append_hint_lines(lines, entry, ok)
     return "\n".join(lines)
 
 
@@ -5057,7 +5082,9 @@ def _format_learning_preview_prompt(entry, dict_lang):
 def _format_feedback_de_ru(entry, ok, dict_lang):
     """Handle format feedback de ru."""
     status = "Correct ✅" if ok else "Wrong ❌"
-    return f"{status} >>>     *{_md_escape(_low_word(_entry_translation(entry, dict_lang)))}*"
+    lines = [f"{status} >>>     *{_md_escape(_low_word(_entry_translation(entry, dict_lang)))}*"]
+    _append_hint_lines(lines, entry, ok)
+    return "\n".join(lines)
 
 
 def _format_feedback_article(entry, ok, dict_lang):
@@ -5071,6 +5098,7 @@ def _format_feedback_article(entry, ok, dict_lang):
     if plural:
         lines.append("")
         lines.append(f"_pl. die {_md_escape(plural)}_")
+    _append_hint_lines(lines, entry, ok)
     return "\n".join(lines)
 
 
