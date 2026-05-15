@@ -1381,8 +1381,9 @@ def _apply_input_err_learning(update, context):
 
 async def _show_quiz_prompt_after_edit(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text, state_override=None):
     """Handle show quiz prompt after edit."""
-    context.user_data.pop("quiz_edit_entry", None)
     state = state_override or context.user_data.get("edit_return_state")
+    if state != DB_SEARCH_VIEW:
+        context.user_data.pop("quiz_edit_entry", None)
     entry = context.user_data.get("quiz_entry")
     if not entry:
         return await _back_to_tests(update, context)
@@ -1443,10 +1444,14 @@ async def _show_quiz_prompt_after_edit(update: Update, context: ContextTypes.DEF
         return await _send_learning_prompt(update, context, prefix_text, force_entry=context.user_data.get("quiz_entry"))
 
     if state == DB_SEARCH_VIEW:
-        text = _format_db_search_card(entry, _user_dict_lang(update.effective_user.id))
         if prefix_text:
-            text = f"{prefix_text}\n\n{text}"
-        await update.message.reply_text(text, parse_mode="Markdown")
+            await update.message.reply_text(prefix_text, parse_mode="Markdown")
+        await update.message.reply_text(
+            f"```text\n{_format_word_card(entry, title='Word card:')}\n```",
+            parse_mode="Markdown",
+        )
+        context.user_data["quiz_edit_entry"] = entry
+        context.user_data["edit_source"] = "quiz"
         context.user_data["edit_stage"] = "pick_scope"
         await update.message.reply_text(
             "Choose edit action:",
