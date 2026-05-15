@@ -231,6 +231,8 @@ def init_db(db_path):
                 russian TEXT NOT NULL DEFAULT '',
                 ukrainian TEXT NOT NULL DEFAULT '',
                 english TEXT NOT NULL DEFAULT '',
+                image TEXT NOT NULL DEFAULT '',
+                example TEXT NOT NULL DEFAULT '',
                 topic TEXT NOT NULL DEFAULT '1',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
@@ -445,16 +447,18 @@ def _ensure_schema(conn):
                 russian TEXT NOT NULL DEFAULT '',
                 ukrainian TEXT NOT NULL DEFAULT '',
                 english TEXT NOT NULL DEFAULT '',
+                image TEXT NOT NULL DEFAULT '',
+                example TEXT NOT NULL DEFAULT '',
                 topic TEXT NOT NULL DEFAULT '1',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
             INSERT INTO words_new (
                 id, type, article, german, plural, infinitive, prateritum, partizip2, komparativ, superlativ,
-                russian, ukrainian, english, topic, created_at
+                russian, ukrainian, english, image, example, topic, created_at
             )
             SELECT
                 id, type, article, german, plural, infinitive, prateritum, partizip2, '', '',
-                russian, ukrainian, english, '1', created_at
+                russian, ukrainian, english, '', '', '1', created_at
             FROM words;
             DROP TABLE words;
             ALTER TABLE words_new RENAME TO words;
@@ -471,6 +475,10 @@ def _ensure_schema(conn):
         conn.execute("ALTER TABLE words ADD COLUMN english TEXT NOT NULL DEFAULT ''")
     if "topic" not in word_cols:
         conn.execute("ALTER TABLE words ADD COLUMN topic TEXT NOT NULL DEFAULT '1'")
+    if "image" not in word_cols:
+        conn.execute("ALTER TABLE words ADD COLUMN image TEXT NOT NULL DEFAULT ''")
+    if "example" not in word_cols:
+        conn.execute("ALTER TABLE words ADD COLUMN example TEXT NOT NULL DEFAULT ''")
     if "komparativ" not in word_cols:
         conn.execute("ALTER TABLE words ADD COLUMN komparativ TEXT NOT NULL DEFAULT ''")
     if "superlativ" not in word_cols:
@@ -620,6 +628,8 @@ def _row_to_entry(row):
         "russian": row["russian"] or "",
         "ukrainian": row["ukrainian"] or "",
         "english": row["english"] or "",
+        "image": row["image"] if "image" in row.keys() else "",
+        "example": row["example"] if "example" in row.keys() else "",
         "topic": row["topic"] or "",
     }
     if "review_stage" in row.keys():
@@ -1763,8 +1773,8 @@ def add_word(db_path, entry):
             """
             INSERT INTO words (
                 id, type, article, german, plural, infinitive, prateritum, partizip2, komparativ, superlativ,
-                russian, ukrainian, english, topic
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                russian, ukrainian, english, image, example, topic
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 entry["id"],
@@ -1780,6 +1790,8 @@ def add_word(db_path, entry):
                 _safe_text(entry.get("russian", "")),
                 _safe_text(entry.get("ukrainian", "")),
                 _safe_text(entry.get("english", "")),
+                _safe_text(entry.get("image", "")),
+                _safe_text(entry.get("example", "")),
                 _safe_text(entry.get("topic", "1")) or "1",
             ),
         )
@@ -2843,6 +2855,8 @@ def update_word_fields(db_path, word_id, fields):
         "russian",
         "ukrainian",
         "english",
+        "image",
+        "example",
         "topic",
     }
     init_db(db_path)
@@ -3334,7 +3348,7 @@ def list_synonym_candidates_by_ru(db_path, anchor_word_id):
         rows = conn.execute(
             """
             SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian
-            , ukrainian, english, topic
+            , ukrainian, english, image, example, topic
             FROM words
             WHERE lower(trim(type)) = ?
             """,
@@ -3358,7 +3372,7 @@ def get_word_by_id(db_path, word_id):
         row = conn.execute(
             """
             SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian
-            , ukrainian, english, topic
+            , ukrainian, english, image, example, topic
             FROM words
             WHERE id = ?
             LIMIT 1

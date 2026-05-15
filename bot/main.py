@@ -1005,7 +1005,7 @@ def _edit_fields_markup(source):
                 ["ru", "ukr", "en", "de"],
                 ["article", "plural", "type", "infinitive"],
                 ["prateritum", "partizip2", "komparativ", "superlativ"],
-                [BACK_TEXT],
+                ["image", "example", BACK_TEXT],
             ],
             resize_keyboard=True,
         )
@@ -1015,7 +1015,7 @@ def _edit_fields_markup(source):
                 ["ru", "ukr", "de", SYNONYMS_TEXT],
                 ["article", "plural", "type", "infinitive"],
                 ["prateritum", "partizip2", "komparativ", "superlativ"],
-                [BACK_TEXT],
+                ["image", "example", BACK_TEXT],
             ],
             resize_keyboard=True,
         )
@@ -1027,12 +1027,12 @@ def _allowed_edit_fields(source):
     if source == "add":
         return {
             "ru", "ukr", "en", "de", "article", "plural", "type",
-            "prateritum", "partizip2", "infinitive", "komparativ", "superlativ",
+            "prateritum", "partizip2", "infinitive", "komparativ", "superlativ", "image", "example",
         }
     if source == "quiz":
         return {
             "ru", "ukr", "de", "article", "plural", "prateritum",
-            "partizip2", "infinitive", "type", SYNONYMS_TEXT, "komparativ", "superlativ",
+            "partizip2", "infinitive", "type", SYNONYMS_TEXT, "komparativ", "superlativ", "image", "example",
         }
     return {"russian", "level"}
 
@@ -1080,6 +1080,8 @@ def _set_entry_field(entry, raw_update):
         "russian",
         "ukrainian",
         "english",
+        "image",
+        "example",
         "article",
         "plural",
         "prateritum",
@@ -1472,6 +1474,8 @@ def _format_word_card(entry, title="Word card:"):
         f"russian: {entry.get('russian', '') or '-'}",
         f"ukrainian: {entry.get('ukrainian', '') or '-'}",
         f"english: {entry.get('english', '') or '-'}",
+        f"image: {entry.get('image', '') or '-'}",
+        f"example: {entry.get('example', '') or '-'}",
     ]
     return "\n".join(lines)
 
@@ -4869,6 +4873,19 @@ def _article_matches(answer, expected_text):
     return bool(ans) and ans in variants
 
 
+def _article_with_emoji(text):
+    """Format article variants with color emoji markers."""
+    mapping = {"der": "🔵 der", "die": "🔴 die", "das": "🟢 das"}
+    parts = [p.strip() for p in str(text or "").split(",") if p.strip()]
+    if not parts:
+        return ""
+    out = []
+    for part in parts:
+        token = _normalize_answer(part)
+        out.append(mapping.get(token, part))
+    return ", ".join(out)
+
+
 def _format_ru_question(entry, dict_lang):
     """Handle format ru question."""
     value = _normalize_russian_singular(_entry_translation(entry, dict_lang))
@@ -4945,7 +4962,7 @@ def _format_pl_sg_question(entry):
 def _format_feedback_pl_sg(entry, ok):
     """Handle format feedback plural->singular."""
     status = "Correct ✅" if ok else "Wrong ❌"
-    article = str(entry.get("article", "")).strip()
+    article = _article_with_emoji(entry.get("article", ""))
     german = _cap_word(entry.get("german", ""))
     return f"{status} >>>     {_md_escape((article + ' ' + german).strip())}"
 
@@ -4959,7 +4976,7 @@ def _format_feedback_ru_de(entry, ok):
     """Handle format feedback ru de."""
     status = "Correct ✅" if ok else "Wrong ❌"
     word_type = entry.get("type", "")
-    article = str(entry.get("article", "")).strip()
+    article = _article_with_emoji(entry.get("article", "")) if word_type == "nomen" else str(entry.get("article", "")).strip()
     if word_type == "nomen":
         base = _cap_word(entry.get("german", ""))
     elif word_type == "verb":
@@ -5007,7 +5024,7 @@ def _format_learning_preview_prompt(entry, dict_lang):
     word_type = _low_word(entry.get("type", ""))
     lines = []
     if word_type == "nomen":
-        article = str(entry.get("article", "")).strip()
+        article = _article_with_emoji(entry.get("article", ""))
         german = _cap_word(entry.get("german", ""))
         answer = f"{article} {german}".strip() if article else german
         lines.append(f"*{_md_escape(answer)}*")
@@ -5046,7 +5063,7 @@ def _format_feedback_de_ru(entry, ok, dict_lang):
 def _format_feedback_article(entry, ok, dict_lang):
     """Handle format feedback article."""
     status = "Correct ✅" if ok else "Wrong ❌"
-    article = str(entry.get("article", "")).strip()
+    article = _article_with_emoji(entry.get("article", ""))
     german = _cap_word(entry.get("german", ""))
     plural = _cap_word(entry.get("plural", ""))
     headline = f"{status} >>>     {_md_escape((article + ' ' + german).strip())}"
