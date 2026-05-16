@@ -127,6 +127,8 @@ from .storage import (
     has_translation_collision,
     list_all_words,
     list_learning_queue_words,
+    list_learning_active_words,
+    get_word_study_status,
     list_words_by_topic,
     list_sm2_weak_words,
     get_synonym_group,
@@ -1137,7 +1139,7 @@ async def _start_quiz_edit(update: Update, context: ContextTypes.DEFAULT_TYPE, r
     context.user_data["quiz_edit_entry"] = entry
     context.user_data["edit_stage"] = "pick_scope"
     context.user_data["edit_return_state"] = return_state
-    await update.message.reply_text(_format_word_card(entry, title))
+    await update.message.reply_text(_format_word_card(entry, title, user_id=update.effective_user.id))
     await update.message.reply_text(
         "Choose edit action:",
         reply_markup=_quiz_edit_root_markup(update.effective_user.id),
@@ -1449,7 +1451,7 @@ async def _show_quiz_prompt_after_edit(update: Update, context: ContextTypes.DEF
         if prefix_text:
             await update.message.reply_text(prefix_text, parse_mode="Markdown")
         await update.message.reply_text(
-            f"```text\n{_format_word_card(entry, title='Word card:')}\n```",
+            f"```text\n{_format_word_card(entry, title='Word card:', user_id=update.effective_user.id)}\n```",
             parse_mode="Markdown",
         )
         context.user_data["quiz_edit_entry"] = entry
@@ -1464,11 +1466,15 @@ async def _show_quiz_prompt_after_edit(update: Update, context: ContextTypes.DEF
     return await _back_to_tests(update, context)
 
 
-def _format_word_card(entry, title="Word card:"):
+def _format_word_card(entry, title="Word card:", user_id=None):
     """Handle format word card."""
+    status_line = ""
+    if user_id is not None and entry.get("id"):
+        status_line = get_word_study_status(get_db_path(), user_id, entry.get("id"))
     lines = [
         title,
         f"id: {entry.get('id', '')}",
+        f"status: {status_line or '-'}",
         f"type: {entry.get('type', '')}",
         f"article: {entry.get('article', '') or '-'}",
         f"german: {entry.get('german', '') or '-'}",
@@ -2231,7 +2237,7 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await _send_db_search_prompt(update, user_id, "Not found.")
     phrase_matches = _find_phrase_side_matches(text, entry)
     await update.message.reply_text(
-        f"```text\n{_format_word_card(entry, title='Word card:')}\n```",
+        f"```text\n{_format_word_card(entry, title='Word card:', user_id=user_id)}\n```",
         parse_mode="Markdown",
     )
     if phrase_matches:
@@ -2350,6 +2356,11 @@ async def _send_learning_menu(update: Update, user_id):
         user_id=user_id,
         quorum_pct=_learning_ready_quorum(get_db_path()),
     )
+    active_entries = list_learning_active_words(get_db_path(), user_id=user_id)
+    active_lines = [_format_topic_learning_line(item) for item in active_entries]
+    active_preview = active_lines[:30]
+    if len(active_lines) > 30:
+        active_preview.append(f"... +{len(active_lines) - 30} more")
     msg = "\n".join(
         [
             f"{LEARNING_TEXT}:",
@@ -2364,6 +2375,9 @@ async def _send_learning_menu(update: Update, user_id):
             f"due_now = {stats.get('due_count', 0)} / need {stats.get('ready_needed', 0)}",
             f"completed_in_batch = {stats.get('completed_count', 0)}",
             f"next_due = {_format_eta_from_iso(stats.get('next_due'))}",
+            "",
+            "active words:",
+            *(active_preview if active_preview else ["-"]),
         ]
     )
     await update.message.reply_text(
@@ -3881,7 +3895,7 @@ async def add_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["edit_stage"] = "pick_field"
         entry = context.user_data.get("pending_entry")
         if entry:
-            await update.message.reply_text(_format_word_card(entry, "AI word card:"))
+            await update.message.reply_text(_format_word_card(entry, "AI word card:", user_id=update.effective_user.id))
         await update.message.reply_text(
             "Choose field to edit:",
             reply_markup=_edit_fields_markup("add"),
@@ -3934,7 +3948,7 @@ async def add_clarify(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["edit_stage"] = "pick_field"
         entry = context.user_data.get("pending_entry")
         if entry:
-            await update.message.reply_text(_format_word_card(entry, "AI word card:"))
+            await update.message.reply_text(_format_word_card(entry, "AI word card:", user_id=update.effective_user.id))
         await update.message.reply_text(
             "Choose field to edit:",
             reply_markup=_edit_fields_markup("add"),

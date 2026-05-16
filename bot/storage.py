@@ -3492,6 +3492,60 @@ def list_learning_active_words(db_path, user_id):
     return [_row_to_entry(row) for row in rows]
 
 
+def get_word_study_status(db_path, user_id, word_id):
+    """Return compact status for DB card: queue_learning / learning / fsrs N."""
+    init_db(db_path)
+    uid = int(user_id)
+    wid = _safe_text(word_id)
+    with _connect(db_path) as conn:
+        li = conn.execute(
+            """
+            SELECT status
+            FROM learning_items
+            WHERE user_id = ? AND word_id = ?
+            ORDER BY updated_at DESC, created_at DESC
+            LIMIT 1
+            """,
+            (uid, wid),
+        ).fetchone()
+        if li and _safe_text(li["status"]) == "active":
+            return "learning"
+
+        max_rep_row = conn.execute(
+            """
+            SELECT MAX(repetitions) AS max_rep
+            FROM progress
+            WHERE user_id = ? AND word_id = ?
+            """,
+            (uid, wid),
+        ).fetchone()
+        max_rep = int(max_rep_row["max_rep"] or 0) if max_rep_row else 0
+        if max_rep > 0:
+            return f"fsrs {max_rep}"
+
+        touched = conn.execute(
+            """
+            SELECT 1
+            FROM quiz_events
+            WHERE user_id = ? AND word_id = ?
+            LIMIT 1
+            """,
+            (uid, wid),
+        ).fetchone()
+        completed = conn.execute(
+            """
+            SELECT 1
+            FROM learning_items
+            WHERE user_id = ? AND word_id = ? AND status = 'completed'
+            LIMIT 1
+            """,
+            (uid, wid),
+        ).fetchone()
+    if not touched and not completed:
+        return "queue_learning"
+    return "fsrs 0"
+
+
 def list_learning_queue_words(db_path, user_id, topics=None):
     """Handle new words that have no first touch and are not completed in learning."""
     init_db(db_path)
