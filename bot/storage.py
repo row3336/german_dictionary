@@ -1826,12 +1826,17 @@ def _normalize_word_entry_for_storage(entry):
 
     if word_type == "nomen":
         result["german"] = _cap_word(result.get("german", ""))
-        return result
+    else:
+        for field in ("german", "infinitive", "prateritum", "partizip2", "komparativ", "superlativ"):
+            value = _safe_text(result.get(field, "")).strip().lower()
+            if value:
+                result[field] = value
 
-    for field in ("german", "infinitive", "prateritum", "partizip2", "komparativ", "superlativ"):
+    for field in ("russian", "ukrainian", "english"):
         value = _safe_text(result.get(field, "")).strip().lower()
         if value:
             result[field] = value
+
     return result
 
 
