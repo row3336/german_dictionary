@@ -12,7 +12,7 @@ from datetime import date, datetime, time, timedelta, timezone
 
 from dotenv import load_dotenv
 from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
-from telegram.error import RetryAfter
+from telegram.error import NetworkError, RetryAfter, TimedOut
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -1022,8 +1022,60 @@ def _edit_fields_markup(source):
                 ["image", "example", BACK_TEXT],
             ],
             resize_keyboard=True,
-        )
+    )
     return ReplyKeyboardMarkup([["russian", BACK_TEXT]], resize_keyboard=True)
+
+
+def _type_choice_markup():
+    """Handle type choice markup."""
+    types = ["Nomen", "Verb", "Phrase", "Adjektiv", "Pronomen", "Adverb", "Praeposition", "Konjunktion", "Partikel"]
+    rows = [types[i:i + 4] for i in range(0, len(types), 4)]
+    if rows and len(rows[-1]) < 4:
+        rows[-1].append(BACK_TEXT)
+    else:
+        rows.append([BACK_TEXT])
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True)
+
+
+def _display_type_label(raw_type):
+    """Handle display type label."""
+    token = _type_label(raw_type)
+    mapping = {
+        "nomen": "Nomen",
+        "verb": "Verb",
+        "phrase": "Phrase",
+        "adjektiv": "Adjektiv",
+        "pronomen": "Pronomen",
+        "adverb": "Adverb",
+        "praeposition": "Praeposition",
+        "konjunktion": "Konjunktion",
+        "partikel": "Partikel",
+    }
+    return mapping.get(token, token.capitalize() if token else "?")
+
+
+def _display_ai_entry(entry):
+    """Handle display ai entry."""
+    result = dict(entry or {})
+    entry_type = _type_label(result.get("type", ""))
+    result["type"] = entry_type
+    if entry_type == "phrase":
+        return result
+    if entry_type == "nomen":
+        article = str(result.get("article", "")).strip().lower()
+        if article:
+            result["article"] = article
+        result["german"] = _cap_word(result.get("german", ""))
+    else:
+        for field in ("german", "infinitive", "prateritum", "partizip2", "komparativ", "superlativ"):
+            value = str(result.get(field, "")).strip().lower()
+            if value:
+                result[field] = value
+    for field in ("russian", "ukrainian", "english"):
+        value = str(result.get(field, "")).strip().lower()
+        if value:
+            result[field] = value
+    return result
 
 
 def _allowed_edit_fields(source):
@@ -1139,8 +1191,8 @@ async def _start_quiz_edit(update: Update, context: ContextTypes.DEFAULT_TYPE, r
     context.user_data["quiz_edit_entry"] = entry
     context.user_data["edit_stage"] = "pick_scope"
     context.user_data["edit_return_state"] = return_state
-    await update.message.reply_text(_format_word_card(entry, title, user_id=update.effective_user.id))
-    await update.message.reply_text(
+    await _reply_text_with_retry(update.message, _format_word_card(entry, title, user_id=update.effective_user.id))
+    await _reply_text_with_retry(
         "Choose edit action:",
         reply_markup=_quiz_edit_root_markup(update.effective_user.id),
     )
@@ -1282,7 +1334,8 @@ async def _repeat_current_ru_de(update: Update, context: ContextTypes.DEFAULT_TY
     prompt_text = _format_ru_question(entry, _user_dict_lang(update.effective_user.id))
     if prefix_text:
         prompt_text = f"{prefix_text}\n\n{prompt_text}"
-    await update.message.reply_text(
+    await _reply_text_with_retry(
+        update.message,
         prompt_text,
         reply_markup=_quiz_markup(update.effective_user.id, article=False),
         parse_mode="Markdown",
@@ -1298,7 +1351,8 @@ async def _repeat_current_de_ru(update: Update, context: ContextTypes.DEFAULT_TY
     prompt_text = _format_de_ru_question(entry)
     if prefix_text:
         prompt_text = f"{prefix_text}\n\n{prompt_text}"
-    await update.message.reply_text(
+    await _reply_text_with_retry(
+        update.message,
         prompt_text,
         reply_markup=_quiz_markup(update.effective_user.id, article=False),
         parse_mode="Markdown",
@@ -1396,7 +1450,8 @@ async def _show_quiz_prompt_after_edit(update: Update, context: ContextTypes.DEF
         text = _format_ru_question(entry, _user_dict_lang(update.effective_user.id))
         if prefix_text:
             text = f"{prefix_text}\n\n{text}"
-        await update.message.reply_text(
+        await _reply_text_with_retry(
+            update.message,
             text,
             reply_markup=_quiz_markup(update.effective_user.id, article=False),
             parse_mode="Markdown",
@@ -1407,7 +1462,8 @@ async def _show_quiz_prompt_after_edit(update: Update, context: ContextTypes.DEF
         text = _format_de_ru_question(entry)
         if prefix_text:
             text = f"{prefix_text}\n\n{text}"
-        await update.message.reply_text(
+        await _reply_text_with_retry(
+            update.message,
             text,
             reply_markup=_quiz_markup(update.effective_user.id, article=False),
             parse_mode="Markdown",
@@ -1418,7 +1474,8 @@ async def _show_quiz_prompt_after_edit(update: Update, context: ContextTypes.DEF
         text = _format_pl_sg_question(entry)
         if prefix_text:
             text = f"{prefix_text}\n\n{text}"
-        await update.message.reply_text(
+        await _reply_text_with_retry(
+            update.message,
             text,
             reply_markup=_quiz_markup(update.effective_user.id, article=False),
             parse_mode="Markdown",
@@ -1429,7 +1486,8 @@ async def _show_quiz_prompt_after_edit(update: Update, context: ContextTypes.DEF
         text = _format_article_question(entry)
         if prefix_text:
             text = f"{prefix_text}\n\n{text}"
-        await update.message.reply_text(
+        await _reply_text_with_retry(
+            update.message,
             text,
             reply_markup=_quiz_markup(update.effective_user.id, article=True),
             parse_mode="Markdown",
@@ -1449,15 +1507,17 @@ async def _show_quiz_prompt_after_edit(update: Update, context: ContextTypes.DEF
 
     if state == DB_SEARCH_VIEW:
         if prefix_text:
-            await update.message.reply_text(prefix_text, parse_mode="Markdown")
-        await update.message.reply_text(
+            await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
+        await _reply_text_with_retry(
+            update.message,
             f"```text\n{_format_word_card(entry, title='Word card:', user_id=update.effective_user.id)}\n```",
             parse_mode="Markdown",
         )
         context.user_data["quiz_edit_entry"] = entry
         context.user_data["edit_source"] = "quiz"
         context.user_data["edit_stage"] = "pick_scope"
-        await update.message.reply_text(
+        await _reply_text_with_retry(
+            update.message,
             "Choose edit action:",
             reply_markup=_quiz_edit_root_markup(update.effective_user.id),
         )
@@ -1723,7 +1783,7 @@ async def _open_synonyms_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
     return SYN_MENU
 
-async def _reply_text_with_retry(message, text, max_retries=2, **kwargs):
+async def _reply_text_with_retry(message, text, max_retries=3, **kwargs):
     """Handle reply text with retry."""
     attempts = 0
     while True:
@@ -1734,6 +1794,11 @@ async def _reply_text_with_retry(message, text, max_retries=2, **kwargs):
             if attempts > max_retries:
                 raise
             await asyncio.sleep(int(getattr(exc, "retry_after", 1)) + 1)
+        except (TimedOut, NetworkError):
+            attempts += 1
+            if attempts > max_retries:
+                raise
+            await asyncio.sleep(min(5, attempts * 2))
 
 
 def _scan_words_before_ai(lines):
@@ -2380,7 +2445,8 @@ async def _send_learning_menu(update: Update, user_id):
             *(active_preview if active_preview else ["-"]),
         ]
     )
-    await update.message.reply_text(
+    await _reply_text_with_retry(
+        update.message,
         msg,
         reply_markup=ReplyKeyboardMarkup(_learning_menu_keys(user_id), resize_keyboard=True),
     )
@@ -2529,7 +2595,8 @@ async def _learning_add_words(update: Update, context: ContextTypes.DEFAULT_TYPE
         batch_id=batch_id,
         first_delay_seconds=first_delay,
     )
-    await update.message.reply_text(
+    await _reply_text_with_retry(
+        update.message,
         f"Added for learning: {added}\nStart learning session for first cycle preview.",
         reply_markup=ReplyKeyboardMarkup(_learning_menu_keys(user_id), resize_keyboard=True),
     )
@@ -2546,7 +2613,8 @@ async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TY
         prompt_text = _format_learning_preview_prompt(preview_entry, _user_dict_lang(user_id))
         if prefix_text:
             prompt_text = f"{prefix_text}\n\n{prompt_text}"
-        await update.message.reply_text(
+        await _reply_text_with_retry(
+            update.message,
             prompt_text,
             reply_markup=ReplyKeyboardMarkup(
                 [[LEARNING_NEXT_TEXT, LEARNING_SKIP_TEXT], [AI_CLARIFY_FIELD, t(_user_interface_lang(user_id), "back")]],
@@ -2565,8 +2633,9 @@ async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TY
         context.user_data.pop("last_learning_prompt_word_id", None)
         context.user_data.pop("learning_mix_queue", None)
         if prefix_text:
-            await update.message.reply_text(prefix_text, parse_mode="Markdown")
-        await update.message.reply_text(
+            await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
+        await _reply_text_with_retry(
+            update.message,
             f"No due learning words right now.\nnext_due = {_format_eta_from_iso(learning_status_snapshot(get_db_path(), user_id, _learning_ready_quorum(get_db_path())).get('next_due'))}",
             reply_markup=ReplyKeyboardMarkup(
                 [[INPUT_ERR_TEXT], [t(_user_interface_lang(user_id), "back")]],
@@ -2580,7 +2649,8 @@ async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TY
     prompt_text = _format_ru_question(entry, _user_dict_lang(user_id))
     if prefix_text:
         prompt_text = f"{prefix_text}\n\n{prompt_text}"
-    await update.message.reply_text(
+    await _reply_text_with_retry(
+        update.message,
         prompt_text,
         reply_markup=ReplyKeyboardMarkup(
             [[INPUT_ERR_TEXT, I_DONT_KNOW_TEXT], [LEARNING_SKIP_TEXT, AI_CLARIFY_FIELD, t(_user_interface_lang(user_id), "back")]],
@@ -2597,7 +2667,8 @@ async def learning_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
     user_id = update.effective_user.id
     action = _action_key_from_text(text, user_id)
     if action == "back":
-        await update.message.reply_text(
+        await _reply_text_with_retry(
+            update.message,
             t(_user_interface_lang(user_id), "tests") + ":",
             reply_markup=ReplyKeyboardMarkup(_tests_menu_keys(user_id), resize_keyboard=True),
         )
@@ -2608,12 +2679,13 @@ async def learning_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
         enabled = _learning_mix_mode_enabled(user_id)
         _set_learning_mix_mode(user_id, not enabled)
         context.user_data.pop("learning_mix_queue", None)
-        await update.message.reply_text(f"{LEARNING_MIX_MODE_TEXT} = {'ON' if not enabled else 'OFF'}")
+        await _reply_text_with_retry(update.message, f"{LEARNING_MIX_MODE_TEXT} = {'ON' if not enabled else 'OFF'}")
         return await _send_learning_menu(update, user_id)
     if action == "learning_reset":
         learning_reset_session(get_db_path(), user_id=user_id)
         context.user_data.pop("learning_mix_queue", None)
-        await update.message.reply_text(
+        await _reply_text_with_retry(
+            update.message,
             "Learning session reset. Words returned to new.",
             reply_markup=ReplyKeyboardMarkup(_learning_menu_keys(user_id), resize_keyboard=True),
         )
@@ -2621,7 +2693,8 @@ async def learning_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
     if action == "learning_start":
         context.user_data.pop("learning_mix_queue", None)
         return await _send_learning_prompt(update, context, None)
-    await update.message.reply_text(
+    await _reply_text_with_retry(
+        update.message,
         "Use learning menu buttons.",
         reply_markup=ReplyKeyboardMarkup(_learning_menu_keys(user_id), resize_keyboard=True),
     )
@@ -2659,7 +2732,8 @@ async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             _log_transaction(user_id, "learning:preview_next", snapshot)
             return await _send_learning_prompt(update, context, "Saved. Next preview word.")
-        await update.message.reply_text(
+        await _reply_text_with_retry(
+            update.message,
             "Use next/skip/back.",
             reply_markup=ReplyKeyboardMarkup([[LEARNING_NEXT_TEXT, LEARNING_SKIP_TEXT], [t(_user_interface_lang(user_id), "back")]], resize_keyboard=True),
         )
@@ -2712,7 +2786,8 @@ async def quiz_verb_weak_menu_choice(update: Update, context: ContextTypes.DEFAU
     """Handle quiz verb weak menu choice."""
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "back":
-        await update.message.reply_text(
+        await _reply_text_with_retry(
+            update.message,
             f"{QUIZ_RU_DE_TEXT}:",
             reply_markup=ReplyKeyboardMarkup(_ru_de_menu_keys(update.effective_user.id), resize_keyboard=True),
         )
@@ -2725,10 +2800,11 @@ async def quiz_verb_weak_menu_choice(update: Update, context: ContextTypes.DEFAU
         _reset_weak_drill_state(context, "weak_partizip2")
         _reset_session(context, "weak_partizip2")
         return await _send_partizip2_weak_prompt(update, context, None)
-    await update.message.reply_text(
-        "Use verb weak mode buttons.",
-        reply_markup=ReplyKeyboardMarkup([[TEST_PRATERITUM_WEAK_TEXT, TEST_PARTIZIP2_WEAK_TEXT], [t(_user_interface_lang(update.effective_user.id), "back")]], resize_keyboard=True),
-    )
+        await _reply_text_with_retry(
+            update.message,
+            "Use verb weak mode buttons.",
+            reply_markup=ReplyKeyboardMarkup([[TEST_PRATERITUM_WEAK_TEXT, TEST_PARTIZIP2_WEAK_TEXT], [t(_user_interface_lang(update.effective_user.id), "back")]], resize_keyboard=True),
+        )
     return QUIZ_VERB_WEAK_MENU
 
 
@@ -4076,6 +4152,15 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return ADD_EDIT
 
+    if stage == "enter_value" and context.user_data.get("edit_field") == "type" and text == BACK_TEXT:
+        context.user_data["edit_stage"] = "pick_field"
+        context.user_data.pop("edit_field", None)
+        await update.message.reply_text(
+            "Choose field to edit:",
+            reply_markup=_edit_fields_markup(source),
+        )
+        return ADD_EDIT
+
     if stage == "pick_field":
         field = text.strip().lower()
         allowed_fields = _allowed_edit_fields(source)
@@ -4091,10 +4176,16 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["edit_field"] = field
 
         context.user_data["edit_stage"] = "enter_value"
-        await update.message.reply_text(
-            f"Enter new value for {field}:",
-            reply_markup=ReplyKeyboardMarkup([[t(_user_interface_lang(update.effective_user.id), "back"), t(_user_interface_lang(update.effective_user.id), "stop")]], resize_keyboard=True),
-        )
+        if field == "type":
+            await update.message.reply_text(
+                "Choose new type:",
+                reply_markup=_type_choice_markup(),
+            )
+        else:
+            await update.message.reply_text(
+                f"Enter new value for {field}:",
+                reply_markup=ReplyKeyboardMarkup([[t(_user_interface_lang(update.effective_user.id), "back"), t(_user_interface_lang(update.effective_user.id), "stop")]], resize_keyboard=True),
+            )
         return ADD_EDIT
 
     field = context.user_data.get("edit_field", "")
@@ -4106,11 +4197,22 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return ADD_EDIT
 
-    updated, error = _set_entry_field_value(entry, field, text)
+    if field == "type":
+        normalized_type = _type_label(text)
+        if normalized_type not in ALLOWED_AI_TYPES:
+            await update.message.reply_text(
+                "Use type buttons.",
+                reply_markup=_type_choice_markup(),
+            )
+            return ADD_EDIT
+        updated, error = _set_entry_field_value(entry, field, normalized_type)
+    else:
+        updated, error = _set_entry_field_value(entry, field, text)
     if error:
+        reply_markup = _type_choice_markup() if field == "type" else ReplyKeyboardMarkup([[t(_user_interface_lang(update.effective_user.id), "back"), t(_user_interface_lang(update.effective_user.id), "stop")]], resize_keyboard=True)
         await update.message.reply_text(
             error,
-            reply_markup=ReplyKeyboardMarkup([[t(_user_interface_lang(update.effective_user.id), "back"), t(_user_interface_lang(update.effective_user.id), "stop")]], resize_keyboard=True),
+            reply_markup=reply_markup,
         )
         return ADD_EDIT
 
@@ -4415,7 +4517,7 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_retry and ok:
         _set_retry_since_last(context, mode, _retry_since_last(context, mode) + 1)
 
-    feedback = _format_feedback_de_ru(entry, ok, _user_dict_lang(update.effective_user.id))
+    feedback = _format_feedback_de_ru(entry, ok, _user_dict_lang(update.effective_user.id), update.effective_user.id)
     return await _send_de_ru_prompt(update, context, feedback)
 
 
@@ -5112,11 +5214,13 @@ def _format_learning_preview_prompt(entry, dict_lang):
     return "\n".join(lines)
 
 
-def _format_feedback_de_ru(entry, ok, dict_lang):
+def _format_feedback_de_ru(entry, ok, dict_lang, user_id=None):
     """Handle format feedback de ru."""
     status = _status_text(ok)
     lines = [f"{status} >>>     *{_md_escape(_low_word(_entry_translation(entry, dict_lang)))}*"]
-    _append_hint_lines(lines, entry, ok)
+    card = _format_word_card(entry, title="Word card:", user_id=user_id)
+    if card:
+        lines.extend(["", f"```text\n{card}\n```"])
     return "\n".join(lines)
 
 
@@ -5418,9 +5522,10 @@ async def _send_ru_de_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
     if not entry:
         count = _session_count(context, mode)
         if prefix_text:
-            await update.message.reply_text(prefix_text, parse_mode="Markdown")
-        await update.message.reply_text(f"session words = {count}")
-        await update.message.reply_text(
+            await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
+        await _reply_text_with_retry(update.message, f"session words = {count}")
+        await _reply_text_with_retry(
+            update.message,
             "No due words. Add more or wait until due date.",
             reply_markup=_quiz_idle_markup(update.effective_user.id),
         )
@@ -5431,7 +5536,8 @@ async def _send_ru_de_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
     if prefix_text:
         prompt_text = f"{prefix_text}\n\n{prompt_text}"
 
-    await update.message.reply_text(
+    await _reply_text_with_retry(
+        update.message,
         prompt_text,
         reply_markup=_quiz_markup(update.effective_user.id, article=False),
         parse_mode="Markdown",
@@ -5449,9 +5555,10 @@ async def _send_de_ru_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
     if not entry:
         count = _session_count(context, mode)
         if prefix_text:
-            await update.message.reply_text(prefix_text, parse_mode="Markdown")
-        await update.message.reply_text(f"session words = {count}")
-        await update.message.reply_text(
+            await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
+        await _reply_text_with_retry(update.message, f"session words = {count}")
+        await _reply_text_with_retry(
+            update.message,
             "No due words. Add more or wait until due date.",
             reply_markup=_quiz_idle_markup(update.effective_user.id),
         )
@@ -5462,7 +5569,8 @@ async def _send_de_ru_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
     if prefix_text:
         prompt_text = f"{prefix_text}\n\n{prompt_text}"
 
-    await update.message.reply_text(
+    await _reply_text_with_retry(
+        update.message,
         prompt_text,
         reply_markup=_quiz_markup(update.effective_user.id, article=False),
         parse_mode="Markdown",
@@ -5489,9 +5597,10 @@ async def _send_pl_sg_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
         if not entry and attempts > 0:
             count = _session_count(context, mode)
             if prefix_text:
-                await update.message.reply_text(prefix_text, parse_mode="Markdown")
-            await update.message.reply_text(f"session words = {count}")
-            await update.message.reply_text(
+                await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
+            await _reply_text_with_retry(update.message, f"session words = {count}")
+            await _reply_text_with_retry(
+                update.message,
                 "No due plural>singular nouns.",
                 reply_markup=_quiz_idle_markup(update.effective_user.id),
             )
@@ -5499,9 +5608,10 @@ async def _send_pl_sg_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
     if not entry:
         count = _session_count(context, mode)
         if prefix_text:
-            await update.message.reply_text(prefix_text, parse_mode="Markdown")
-        await update.message.reply_text(f"session words = {count}")
-        await update.message.reply_text(
+            await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
+        await _reply_text_with_retry(update.message, f"session words = {count}")
+        await _reply_text_with_retry(
+            update.message,
             "No due words. Add more or wait until due date.",
             reply_markup=_quiz_idle_markup(update.effective_user.id),
         )
@@ -5512,7 +5622,8 @@ async def _send_pl_sg_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
     if prefix_text:
         prompt_text = f"{prefix_text}\n\n{prompt_text}"
 
-    await update.message.reply_text(
+    await _reply_text_with_retry(
+        update.message,
         prompt_text,
         reply_markup=_quiz_markup(update.effective_user.id, article=False),
         parse_mode="Markdown",
@@ -5529,8 +5640,9 @@ async def _send_article_prompt(update: Update, context: ContextTypes.DEFAULT_TYP
         entry = _pick_due_entry(context, update.effective_user.id, mode, word_type="nomen")
     if not entry:
         if prefix_text:
-            await update.message.reply_text(prefix_text, parse_mode="Markdown")
-        await update.message.reply_text(
+            await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
+        await _reply_text_with_retry(
+            update.message,
             "No due nouns. Add more or wait until due date.",
             reply_markup=ReplyKeyboardMarkup(_tests_menu_keys(update.effective_user.id), resize_keyboard=True),
         )
@@ -5541,7 +5653,8 @@ async def _send_article_prompt(update: Update, context: ContextTypes.DEFAULT_TYP
     if prefix_text:
         prompt_text = f"{prefix_text}\n\n{prompt_text}"
 
-    await update.message.reply_text(
+    await _reply_text_with_retry(
+        update.message,
         prompt_text,
         reply_markup=_quiz_markup(update.effective_user.id, article=True),
         parse_mode="Markdown",
@@ -5554,8 +5667,9 @@ async def _send_article_weak_prompt(update: Update, context: ContextTypes.DEFAUL
     entry = _pick_weak_or_drill_entry(context, update.effective_user.id, "article", word_type="nomen")
     if not entry:
         if prefix_text:
-            await update.message.reply_text(prefix_text, parse_mode="Markdown")
-        await update.message.reply_text(
+            await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
+        await _reply_text_with_retry(
+            update.message,
             "No weak article words.",
             reply_markup=ReplyKeyboardMarkup(_ru_de_menu_keys(update.effective_user.id), resize_keyboard=True),
         )
@@ -5566,7 +5680,8 @@ async def _send_article_weak_prompt(update: Update, context: ContextTypes.DEFAUL
     if prefix_text:
         text = f"{prefix_text}\n\n{text}"
     prompt = text
-    await update.message.reply_text(
+    await _reply_text_with_retry(
+        update.message,
         prompt,
         reply_markup=_weak_article_markup(update.effective_user.id),
         parse_mode="Markdown",
@@ -5579,8 +5694,9 @@ async def _send_plural_weak_prompt(update: Update, context: ContextTypes.DEFAULT
     entry = _pick_weak_or_drill_entry(context, update.effective_user.id, "plural", word_type="nomen")
     if not entry:
         if prefix_text:
-            await update.message.reply_text(prefix_text, parse_mode="Markdown")
-        await update.message.reply_text(
+            await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
+        await _reply_text_with_retry(
+            update.message,
             "No weak plural words.",
             reply_markup=ReplyKeyboardMarkup(_ru_de_menu_keys(update.effective_user.id), resize_keyboard=True),
         )
@@ -5592,7 +5708,8 @@ async def _send_plural_weak_prompt(update: Update, context: ContextTypes.DEFAULT
     if prefix_text:
         text = f"{prefix_text}\n\n{text}"
     prompt = text
-    await update.message.reply_text(
+    await _reply_text_with_retry(
+        update.message,
         prompt,
         reply_markup=_quiz_markup(update.effective_user.id, article=False, allow_idk=True),
         parse_mode="Markdown",
@@ -5605,8 +5722,9 @@ async def _send_prateritum_weak_prompt(update: Update, context: ContextTypes.DEF
     entry = _pick_weak_or_drill_entry(context, update.effective_user.id, "prateritum", word_type="verb")
     if not entry:
         if prefix_text:
-            await update.message.reply_text(prefix_text, parse_mode="Markdown")
-        await update.message.reply_text(
+            await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
+        await _reply_text_with_retry(
+            update.message,
             "No weak prateritum words.",
             reply_markup=ReplyKeyboardMarkup([[TEST_PRATERITUM_WEAK_TEXT, TEST_PARTIZIP2_WEAK_TEXT], [t(_user_interface_lang(update.effective_user.id), "back")]], resize_keyboard=True),
         )
@@ -5617,7 +5735,8 @@ async def _send_prateritum_weak_prompt(update: Update, context: ContextTypes.DEF
     if prefix_text:
         text = f"{prefix_text}\n\n{text}"
     prompt = text
-    await update.message.reply_text(
+    await _reply_text_with_retry(
+        update.message,
         prompt,
         reply_markup=_quiz_markup(update.effective_user.id, article=False, allow_idk=True),
         parse_mode="Markdown",
@@ -5630,8 +5749,9 @@ async def _send_partizip2_weak_prompt(update: Update, context: ContextTypes.DEFA
     entry = _pick_weak_or_drill_entry(context, update.effective_user.id, "partizip2", word_type="verb")
     if not entry:
         if prefix_text:
-            await update.message.reply_text(prefix_text, parse_mode="Markdown")
-        await update.message.reply_text(
+            await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
+        await _reply_text_with_retry(
+            update.message,
             "No weak partizip2 words.",
             reply_markup=ReplyKeyboardMarkup([[TEST_PRATERITUM_WEAK_TEXT, TEST_PARTIZIP2_WEAK_TEXT], [t(_user_interface_lang(update.effective_user.id), "back")]], resize_keyboard=True),
         )
@@ -5642,7 +5762,8 @@ async def _send_partizip2_weak_prompt(update: Update, context: ContextTypes.DEFA
     if prefix_text:
         text = f"{prefix_text}\n\n{text}"
     prompt = text
-    await update.message.reply_text(
+    await _reply_text_with_retry(
+        update.message,
         prompt,
         reply_markup=_quiz_markup(update.effective_user.id, article=False, allow_idk=True),
         parse_mode="Markdown",
@@ -5707,6 +5828,8 @@ def _parse_precheck_entry(entry):
     value = str(value or "").strip()
     if not value:
         return None
+    if entry_type == "nomen":
+        value = _cap_word(value)
     return {"type": entry_type, "word": value}
 
 
@@ -5716,7 +5839,7 @@ def _format_precheck_list(items):
     active = [x for x in items if x.get("word")]
     for idx, item in enumerate(active, start=1):
         word = item.get("word", "")
-        item_type = item.get("type", "?")
+        item_type = _display_type_label(item.get("type", "?"))
         original = item.get("original", "")
         if original and _normalize_lookup_text(original) != _normalize_lookup_text(word):
             lines.append(f"{idx}. {word} [{item_type}] (from {original})")
@@ -5865,6 +5988,7 @@ def _is_non_infinitive_verb_input(raw_word, entry):
 
 def _format_ai_preview(entry, dict_lang, has_synonym=False):
     """Handle format ai preview."""
+    entry = _display_ai_entry(entry)
     entry_type = entry.get("type")
     translation = _entry_translation(entry, dict_lang)
     warn = "❗ has a synonym in DB" if has_synonym else ""
@@ -5874,7 +5998,7 @@ def _format_ai_preview(entry, dict_lang, has_synonym=False):
         plural = entry.get("plural", "")
         extras = f" ({plural})" if plural else ""
         lines = [
-            "Recognized Nomen",
+            f"Recognized {_display_type_label(entry_type)}",
             "",
             f"{art} *{_md_escape(ger)}*{_md_escape(extras)} - {_md_escape(translation)}",
         ]
@@ -5889,7 +6013,7 @@ def _format_ai_preview(entry, dict_lang, has_synonym=False):
         extras = " / ".join([x for x in [pr, p2] if x])
         extras = f" ({extras})" if extras else ""
         lines = [
-            "Recognized Verb",
+            f"Recognized {_display_type_label(entry_type)}",
             "",
             f"*{_md_escape(inf)}*{_md_escape(extras)} - {_md_escape(translation)}",
         ]
@@ -5904,7 +6028,7 @@ def _format_ai_preview(entry, dict_lang, has_synonym=False):
         extras = " / ".join([x for x in [komp, supr] if x])
         extras = f" ({extras})" if extras else ""
         lines = [
-            "Recognized Adjektiv",
+            f"Recognized {_display_type_label(entry_type)}",
             "",
             f"*{_md_escape(ger)}*{_md_escape(extras)} - {_md_escape(translation)}",
         ]
@@ -5914,7 +6038,7 @@ def _format_ai_preview(entry, dict_lang, has_synonym=False):
 
     ger = entry.get("german", "")
     lines = [
-        f"Recognized {entry_type}",
+        f"Recognized {_display_type_label(entry_type)}",
         "",
         f"*{_md_escape(ger)}* - {_md_escape(translation)}",
     ]
