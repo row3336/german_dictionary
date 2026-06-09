@@ -1812,10 +1812,33 @@ def _dedupe_entry(conn, entry):
         raise ValueError("Already in database.")
 
 
+def _normalize_word_entry_for_storage(entry):
+    """Normalize word casing before storing."""
+    result = dict(entry)
+    word_type = _safe_text(result.get("type", "")).strip().lower()
+    result["type"] = word_type
+    if word_type == "phrase":
+        return result
+
+    article = _safe_text(result.get("article", "")).strip().lower()
+    if article:
+        result["article"] = article
+
+    if word_type == "nomen":
+        result["german"] = _cap_word(result.get("german", ""))
+        return result
+
+    for field in ("german", "infinitive", "prateritum", "partizip2", "komparativ", "superlativ"):
+        value = _safe_text(result.get(field, "")).strip().lower()
+        if value:
+            result[field] = value
+    return result
+
+
 def add_word(db_path, entry):
     """Handle add word."""
     init_db(db_path)
-    entry = dict(entry)
+    entry = _normalize_word_entry_for_storage(entry)
     if entry.get("id") in (None, "", "unique"):
         entry["id"] = str(uuid.uuid4())
 
