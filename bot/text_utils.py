@@ -39,6 +39,17 @@ def type_label(raw_type):
     return normalize_lookup_text(raw_type)
 
 
+def cap_word(word):
+    word = str(word or "").strip()
+    if not word:
+        return ""
+    return word[:1].upper() + word[1:].lower()
+
+
+def low_word(word):
+    return str(word or "").strip().lower()
+
+
 def extract_json(text):
     start = text.find("{")
     end = text.rfind("}")

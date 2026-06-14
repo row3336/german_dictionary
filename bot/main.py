@@ -202,6 +202,8 @@ from .i18n import (
     t,
 )
 from .text_utils import (
+    cap_word as _cap_word,
+    low_word as _low_word,
     md_escape as _md_escape,
     normalize_answer as _normalize_answer,
     normalize_lookup_text as _normalize_lookup_text,
@@ -4969,19 +4971,6 @@ def _entry_translation(entry, dict_lang):
     if dict_lang == "en":
         return eng or ru
     return ru
-
-
-def _cap_word(word):
-    """Handle cap word."""
-    word = str(word or "").strip()
-    if not word:
-        return ""
-    return word[:1].upper() + word[1:].lower()
-
-
-def _low_word(word):
-    """Handle low word."""
-    return str(word or "").strip().lower()
 
 
 def _article_variants(text):

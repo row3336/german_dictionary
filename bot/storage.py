@@ -6,6 +6,8 @@ from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
+from .text_utils import cap_word
+
 DEFAULT_EASE = 2.5
 MIN_EASE = 1.3
 MAX_EASE = 3.5
@@ -1825,7 +1827,7 @@ def _normalize_word_entry_for_storage(entry):
         result["article"] = article
 
     if word_type == "nomen":
-        result["german"] = _cap_word(result.get("german", ""))
+        result["german"] = cap_word(result.get("german", ""))
     else:
         for field in ("german", "infinitive", "prateritum", "partizip2", "komparativ", "superlativ"):
             value = _safe_text(result.get(field, "")).strip().lower()
