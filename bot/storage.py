@@ -1990,7 +1990,9 @@ def select_due(
             w.created_at ASC
     """
 
-    params = [int(user_id), mode, int(user_id), int(user_id)] + where_params
+    # Param order must match placeholder order in the query above:
+    # has_non_learning_history (user_id), progress join (user_id, mode), ldone (user_id).
+    params = [int(user_id), int(user_id), mode, int(user_id)] + where_params
     with _connect(db_path) as conn:
         rows = conn.execute(query, tuple(params)).fetchall()
 
