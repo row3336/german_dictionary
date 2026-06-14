@@ -249,7 +249,7 @@ VF_RUNNING_TASKS = {}
 VF_STOP_FLAGS = {}
 SYN_CONFIRM_TEXT = "Confirm"
 SYN_CANCEL_TEXT = "Cancel"
-QUIZ_FIELDS_TEXT = "fields"
+QUIZ_FIELDS_TEXT = "clarify_fields"
 QUIZ_RU_DE_TEXT = "Ru > De"
 QUIZ_DE_RU_TEXT = "De > Ru"
 QUIZ_PL_SG_TEXT = "pl > sg"
@@ -1195,6 +1195,7 @@ async def _start_quiz_edit(update: Update, context: ContextTypes.DEFAULT_TYPE, r
     context.user_data["edit_return_state"] = return_state
     await _reply_text_with_retry(update.message, _format_word_card(entry, title, user_id=update.effective_user.id))
     await _reply_text_with_retry(
+        update.message,
         "Choose edit action:",
         reply_markup=_quiz_edit_root_markup(update.effective_user.id),
     )
@@ -3985,7 +3986,7 @@ async def add_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if text != AI_CONFIRM:
         await update.message.reply_text(
-            "Use: Confirm, Clarify AI, Clarify field, Reject, Ban, or Stop.",
+            "Use: Confirm, Clarify AI, clarify_fields, Reject, Ban, or Stop.",
             reply_markup=ReplyKeyboardMarkup(AI_KEYS, resize_keyboard=True),
         )
         return ADD_CONFIRM
@@ -6128,7 +6129,7 @@ async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, w
             (
                 f"Error: AI failed to parse for word: {raw_word}\n"
                 f"Clarification: {clarification or '-'}\n"
-                "Use Confirm, Clarify AI, Clarify field, Reject, Ban, or Stop."
+                "Use Confirm, Clarify AI, clarify_fields, Reject, Ban, or Stop."
             ),
             reply_markup=ReplyKeyboardMarkup(_clarify_keys(update.effective_user.id), resize_keyboard=True),
         )
