@@ -233,6 +233,15 @@ from .app_config import (
     WEAK_DRILL_REPEATS_DEFAULT,
 )
 from .labels import *  # noqa: F401,F403  (UI button-text constants)
+from .common.lang import (
+    _dict_label,
+    _dict_lang_tag,
+    _mode_de_l1,
+    _mode_l1_de,
+    _mode_pl_sg,
+    _user_dict_lang,
+    _user_interface_lang,
+)
 
 
 # UI button-text labels moved to bot/labels.py.
@@ -258,47 +267,7 @@ def _main_menu_markup(user_id):
     return ReplyKeyboardMarkup(_main_menu_keys(user_id), resize_keyboard=True)
 
 
-def _user_interface_lang(user_id):
-    """Handle user interface lang."""
-    lang = get_setting(get_db_path(), OWNER_INTERFACE_LANG_KEY, "en")
-    return normalize_interface_lang(lang, default="en")
-
-
-def _user_dict_lang(user_id):
-    """Handle user dict lang."""
-    dict_lang = get_setting(get_db_path(), OWNER_DICT_LANG_KEY, "ru")
-    return normalize_dict_lang(dict_lang, default="ru")
-
-
-def _dict_label(user_id):
-    """Handle dict label."""
-    dict_lang = _user_dict_lang(user_id)
-    if dict_lang == "uk":
-        return "Ua"
-    if dict_lang == "en":
-        return "En"
-    return "Ru"
-
-
-def _mode_l1_de(user_id):
-    """Handle mode l1 de."""
-    dict_lang = _user_dict_lang(user_id)
-    if dict_lang == "ru":
-        return MODE_RU_DE
-    return f"{dict_lang}_de"
-
-
-def _mode_de_l1(user_id):
-    """Handle mode de l1."""
-    dict_lang = _user_dict_lang(user_id)
-    if dict_lang == "ru":
-        return MODE_DE_RU
-    return f"de_{dict_lang}"
-
-
-def _mode_pl_sg(user_id):
-    """Handle mode pl sg."""
-    return f"pl_sg_{_user_dict_lang(user_id)}"
+# language/mode helpers moved to bot/common/lang.py
 
 
 def _tests_menu_keys(user_id):
@@ -1068,14 +1037,7 @@ def _quiz_edit_root_markup(user_id):
     )
 
 
-def _dict_lang_tag(user_id):
-    """Handle dict lang tag."""
-    dict_lang = _user_dict_lang(user_id)
-    if dict_lang == "uk":
-        return "UA"
-    if dict_lang == "en":
-        return "EN"
-    return "RU"
+# _dict_lang_tag moved to bot/common/lang.py
 
 
 def _syn_auto_text(user_id):
