@@ -213,70 +213,35 @@ from .text_utils import (
     type_label as _type_label,
 )
 from .retry_logic import maybe_take_retry_entry, register_retry_result
+from .app_config import (
+    LEARNING_DAILY_QTY_DEFAULT,
+    LEARNING_INTERVALS_DEFAULT,
+    LEARNING_MIX_MODE_DEFAULT,
+    LEARNING_READY_QUORUM_DEFAULT,
+    LEARNING_REMINDER_COOLDOWN_DEFAULT,
+    LEARNING_REMINDER_INTERVAL_DEFAULT,
+    LEARNING_REMINDER_JOB_NAME,
+    LEARNING_WARMUP_INTERVALS,
+    OWNER_DICT_LANG_KEY,
+    OWNER_INTERFACE_LANG_KEY,
+    RETRY_GAP_QUESTIONS,
+    RETRY_MAX_REPEATS,
+    SM2_PEAK_JOB_NAME,
+    SM2_REPORT_JOB_NAME,
+    SM2_REPORT_UTC_HOUR_DEFAULT,
+    WEAK_DRILL_GAP_DEFAULT,
+    WEAK_DRILL_REPEATS_DEFAULT,
+)
+from .labels import *  # noqa: F401,F403  (UI button-text constants)
 
 
-OWNER_INTERFACE_LANG_KEY = "owner_interface_lang"
-OWNER_DICT_LANG_KEY = "owner_dict_lang"
-TEST_ARTICLE_WEAK_TEXT = "Article Weak Mode"
-TEST_PLURAL_WEAK_TEXT = "Plural Weak Mode"
-TEST_VERB_WEAK_TEXT = "Verb Forms Weak Mode"
-TEST_PRATERITUM_WEAK_TEXT = "Prateritum Weak Mode"
-TEST_PARTIZIP2_WEAK_TEXT = "Partizip2 Weak Mode"
-STANDARD_SM2_TEXT = "Standart mode FSRS"
-SYNONYMS_TEXT = "synonyms"
-SYN_ADD_TEXT = "add"
-SYN_REMOVE_TEXT = "remove"
-SYN_AUTO_TEXT = "auto by"
-SYN_CLEAR_TEXT = "clear group"
-SYN_FLAG_TEXT = "flag!"
-PARSE_VF_TEXT = "parse_VF"
-VF_SET_PROXY_TEXT = "set_proxy"
-VF_TEST_PROXY_TEXT = "test_proxy"
-VF_SET_SLEEP_TEXT = "set_sleep"
-VF_SET_JITTER_TEXT = "set_jitter"
-VF_DRY_RUN_NEW_TEXT = "dry_run_new"
-VF_DRY_RUN_ALL_TEXT = "dry_run_all"
-VF_SHOW_DIFF_TEXT = "show_diff"
-VF_APPROVE_TEXT = "approve_ids"
-VF_APPLY_TEXT = "apply_approved"
-VF_VERIFY_TEXT = "verify_changes"
-VF_RETRY_TEXT = "retry_failed"
-VF_STOP_TEXT = "stop_parse"
+# UI button-text labels moved to bot/labels.py.
+# Owner/lang setting keys + algorithm defaults moved to bot/app_config.py.
 VF_PROXY_KEY = "vf_proxy"
 VF_SLEEP_KEY = "vf_sleep_sec"
 VF_JITTER_KEY = "vf_jitter_pct"
 VF_RUNNING_TASKS = {}
 VF_STOP_FLAGS = {}
-SYN_CONFIRM_TEXT = "Confirm"
-SYN_CANCEL_TEXT = "Cancel"
-QUIZ_FIELDS_TEXT = "clarify_fields"
-QUIZ_RU_DE_TEXT = "Ru > De"
-QUIZ_DE_RU_TEXT = "De > Ru"
-QUIZ_PL_SG_TEXT = "pl > sg"
-LEARNING_TEXT = "Learning"
-LEARNING_START_TEXT = "learning session"
-LEARNING_ADD_TEXT = "add for learning"
-LEARNING_SKIP_TEXT = "skip_learning"
-LEARNING_NEXT_TEXT = "next"
-LEARNING_RESET_TEXT = "reset learning"
-LEARNING_MIX_MODE_TEXT = "mix_mode"
-SEND_LEARN_TEXT = "send_learn"
-
-RETRY_GAP_QUESTIONS = 3
-RETRY_MAX_REPEATS = 4
-WEAK_DRILL_GAP_DEFAULT = 4
-WEAK_DRILL_REPEATS_DEFAULT = 10
-LEARNING_DAILY_QTY_DEFAULT = 20
-LEARNING_INTERVALS_DEFAULT = "30,120,600,3600,10800,18000"
-LEARNING_REMINDER_INTERVAL_DEFAULT = 60
-LEARNING_REMINDER_COOLDOWN_DEFAULT = 900
-LEARNING_READY_QUORUM_DEFAULT = 70
-LEARNING_MIX_MODE_DEFAULT = "0"
-LEARNING_REMINDER_JOB_NAME = "learning_reminder_job"
-SM2_REPORT_UTC_HOUR_DEFAULT = 3
-SM2_REPORT_JOB_NAME = "sm2_daily_report_job"
-SM2_PEAK_JOB_NAME = "sm2_peak_notify_job"
-LEARNING_WARMUP_INTERVALS = (0, 0, 0)
 
 
 def _main_menu_keys(user_id):
