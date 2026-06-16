@@ -242,6 +242,7 @@ from .common.lang import (
     _user_dict_lang,
     _user_interface_lang,
 )
+from .common.txlog import _capture_transaction_snapshot, _log_transaction
 from .common.settings import (
     _current_topic_value,
     _get_int_setting,
@@ -1022,23 +1023,7 @@ def _clear_last_answer(context):
     context.user_data.pop("last_answered_srs", None)
 
 
-def _capture_transaction_snapshot(user_id, word_id, modes):
-    """Handle capture transaction snapshot."""
-    if not word_id:
-        return None
-    return snapshot_user_word_state(get_db_path(), user_id=user_id, word_id=word_id, modes=modes)
-
-
-def _log_transaction(user_id, action, snapshot):
-    """Handle log transaction."""
-    if not snapshot:
-        return
-    add_transaction_log(
-        get_db_path(),
-        user_id=user_id,
-        action=action,
-        payload={"snapshot": snapshot},
-    )
+# _capture_transaction_snapshot / _log_transaction moved to bot/common/txlog.py
 
 
 def _session_key(mode):
