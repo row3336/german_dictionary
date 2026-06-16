@@ -242,6 +242,30 @@ from .common.lang import (
     _user_dict_lang,
     _user_interface_lang,
 )
+from .common.settings import (
+    _current_topic_value,
+    _get_int_setting,
+    _learning_daily_qty,
+    _learning_intervals_seconds,
+    _learning_intervals_text,
+    _learning_mix_mode_enabled,
+    _learning_mix_mode_key,
+    _learning_ready_quorum,
+    _learning_reminder_cooldown,
+    _learning_reminder_interval,
+    _learning_schedule_seconds,
+    _parse_topic_filter,
+    _session_retry_gap,
+    _session_retry_iterations,
+    _set_learning_mix_mode,
+    _sm2_report_hour_utc,
+    _topic_filter_banner,
+    _topic_filter_for_query,
+    _topic_filter_label,
+    _topic_filter_value,
+    _weak_drill_gap,
+    _weak_drill_repeats,
+)
 
 
 # UI button-text labels moved to bot/labels.py.
@@ -334,97 +358,7 @@ def _learning_settings_menu_keys(user_id):
     ]
 
 
-def _get_int_setting(db_path, key, default):
-    """Handle get int setting."""
-    raw = get_setting(db_path, key, None)
-    try:
-        value = int(raw)
-    except (TypeError, ValueError):
-        value = int(default)
-    return value
-
-
-def _session_retry_gap(db_path):
-    """Handle session retry gap."""
-    value = _get_int_setting(db_path, SESSION_RETRY_GAP_KEY, RETRY_GAP_QUESTIONS)
-    return max(1, value)
-
-
-def _session_retry_iterations(db_path):
-    """Handle session retry iterations."""
-    value = _get_int_setting(db_path, SESSION_RETRY_IT_KEY, RETRY_MAX_REPEATS)
-    return max(1, value)
-
-
-def _weak_drill_gap(db_path):
-    """Handle weak drill gap."""
-    value = _get_int_setting(db_path, WEAK_DRILL_GAP_KEY, WEAK_DRILL_GAP_DEFAULT)
-    return max(1, value)
-
-
-def _weak_drill_repeats(db_path):
-    """Handle weak drill repeats."""
-    value = _get_int_setting(db_path, WEAK_DRILL_REPEATS_KEY, WEAK_DRILL_REPEATS_DEFAULT)
-    return max(1, value)
-
-
-def _learning_daily_qty(db_path):
-    """Handle learning daily qty."""
-    value = _get_int_setting(db_path, LEARNING_DAILY_QTY_KEY, LEARNING_DAILY_QTY_DEFAULT)
-    return max(1, value)
-
-
-def _learning_intervals_seconds(db_path):
-    """Handle learning intervals seconds."""
-    raw = get_setting(db_path, LEARNING_INTERVALS_KEY, LEARNING_INTERVALS_DEFAULT)
-    values = _parse_learning_intervals(raw)
-    if not values:
-        values = _parse_learning_intervals(LEARNING_INTERVALS_DEFAULT)
-    return values
-
-
-def _learning_intervals_text(db_path):
-    """Handle learning intervals text."""
-    return ",".join(str(v) for v in _learning_intervals_seconds(db_path))
-
-
-def _learning_schedule_seconds(db_path):
-    """Handle effective learning schedule with warmup repeats."""
-    return list(LEARNING_WARMUP_INTERVALS) + _learning_intervals_seconds(db_path)
-
-
-def _learning_reminder_interval(db_path):
-    """Handle learning reminder interval."""
-    value = _get_int_setting(db_path, LEARNING_REMINDER_INTERVAL_KEY, LEARNING_REMINDER_INTERVAL_DEFAULT)
-    return max(10, value)
-
-
-def _learning_reminder_cooldown(db_path):
-    """Handle learning reminder cooldown."""
-    value = _get_int_setting(db_path, LEARNING_REMINDER_COOLDOWN_KEY, LEARNING_REMINDER_COOLDOWN_DEFAULT)
-    return max(60, value)
-
-
-def _learning_ready_quorum(db_path):
-    """Handle learning ready quorum."""
-    value = _get_int_setting(db_path, LEARNING_READY_QUORUM_KEY, LEARNING_READY_QUORUM_DEFAULT)
-    return min(100, max(1, value))
-
-
-def _learning_mix_mode_key(user_id):
-    """Handle learning mix mode key."""
-    return f"learning_mix_mode:{int(user_id)}"
-
-
-def _learning_mix_mode_enabled(user_id):
-    """Handle learning mix mode enabled."""
-    value = get_setting(get_db_path(), _learning_mix_mode_key(user_id), LEARNING_MIX_MODE_DEFAULT)
-    return str(value).strip().lower() in {"1", "true", "on", "yes"}
-
-
-def _set_learning_mix_mode(user_id, enabled):
-    """Persist learning mix mode."""
-    set_setting(get_db_path(), _learning_mix_mode_key(user_id), "1" if enabled else "0")
+# settings getters moved to bot/common/settings.py
 
 
 def _build_learning_topic_mix_queue(entries):
@@ -478,64 +412,7 @@ def _pick_learning_due_entry(context, user_id, exclude_word_id=None):
     return None
 
 
-def _sm2_report_hour_utc(db_path):
-    """Handle sm2 report hour utc."""
-    value = _get_int_setting(db_path, SM2_REPORT_HOUR_KEY, SM2_REPORT_UTC_HOUR_DEFAULT)
-    return min(23, max(0, value))
-
-
-def _topic_filter_value():
-    """Handle topic filter value."""
-    raw = str(get_setting(get_db_path(), TOPIC_FILTER_KEY, "1") or "").strip()
-    return raw or "1"
-
-
-def _parse_topic_filter(raw):
-    """Handle parse topic filter."""
-    if not raw:
-        return []
-    normalized = raw.strip().lower()
-    if normalized in {"all", "0", "*"}:
-        return []
-    tokens = []
-    for chunk in raw.replace(",", "+").split("+"):
-        token = chunk.strip()
-        if token == "0":
-            continue
-        if token:
-            tokens.append(token)
-    return tokens
-
-
-def _topic_filter_for_query():
-    """Handle topic filter for query."""
-    raw = _topic_filter_value()
-    topics = _parse_topic_filter(raw)
-    return topics or None
-
-
-def _topic_filter_label():
-    """Handle topic filter label."""
-    raw = _topic_filter_value()
-    topics = _parse_topic_filter(raw)
-    if not topics:
-        return "all"
-    return "+".join(topics)
-
-
-def _topic_filter_banner():
-    """Handle topic filter banner."""
-    label = _topic_filter_label()
-    return f"Topic filter:\n\n🟥 *{_md_escape(label)}* 🟥"
-
-
-def _current_topic_value():
-    """Handle current topic value."""
-    raw = _topic_filter_value()
-    topics = _parse_topic_filter(raw)
-    if not topics:
-        return "1"
-    return topics[0]
+# topic-filter + sm2-report-hour helpers moved to bot/common/settings.py
 
 
 async def _send_algo_settings_menu(update: Update, user_id):
