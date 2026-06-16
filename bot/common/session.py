@@ -31,7 +31,7 @@ def _reset_session(context, mode):
     """Handle reset session."""
     context.user_data["session_mode"] = mode
     context.user_data[_session_key(mode)] = set()
-    _reset_sm2_cycle_state(context, mode)
+    _reset_fsrs_cycle_state(context, mode)
 
 
 def _ensure_session_mode(context, mode):
@@ -60,20 +60,20 @@ def _session_count(context, mode):
 
 # --- FSRS cycle queue ---
 
-def _reset_sm2_cycle_state(context, mode=None):
-    """Handle reset sm2 cycle state."""
-    bucket = context.user_data.get("sm2_cycle_queue")
+def _reset_fsrs_cycle_state(context, mode=None):
+    """Handle reset fsrs cycle state."""
+    bucket = context.user_data.get("fsrs_cycle_queue")
     if not isinstance(bucket, dict):
         return
     if mode:
         bucket.pop(mode, None)
         return
-    context.user_data.pop("sm2_cycle_queue", None)
+    context.user_data.pop("fsrs_cycle_queue", None)
 
 
 def _pick_due_entry(context, user_id, mode, word_type=None):
     """Handle pick due entry."""
-    is_sm2_mode = mode in {_mode_l1_de(user_id), _mode_de_l1(user_id), _mode_pl_sg(user_id)}
+    is_fsrs_mode = mode in {_mode_l1_de(user_id), _mode_de_l1(user_id), _mode_pl_sg(user_id)}
 
     def _fetch_due():
         return select_due(
@@ -82,12 +82,12 @@ def _pick_due_entry(context, user_id, mode, word_type=None):
             mode=mode,
             word_type=word_type,
             topics=_topic_filter_for_query(),
-            exclude_correct_today=is_sm2_mode,
+            exclude_correct_today=is_fsrs_mode,
         )
 
-    def _build_sm2_queue(entries):
+    def _build_fsrs_queue(entries):
         learning_pool = []
-        sm2_pool = []
+        fsrs_pool = []
         for item in entries:
             srs = item.get("srs") or {}
             reps = int(srs.get("repetitions", 0) or 0)
@@ -96,25 +96,25 @@ def _pick_due_entry(context, user_id, mode, word_type=None):
             if str(item.get("learning_done_at") or "").strip() and not has_non_learning and reps <= 1:
                 learning_pool.append(item)
             else:
-                sm2_pool.append(item)
+                fsrs_pool.append(item)
         random.shuffle(learning_pool)
-        random.shuffle(sm2_pool)
+        random.shuffle(fsrs_pool)
         mixed = []
-        while learning_pool or sm2_pool:
+        while learning_pool or fsrs_pool:
             if learning_pool:
                 mixed.append(learning_pool.pop(0))
-            if sm2_pool:
+            if fsrs_pool:
                 take = random.randint(2, 3)
                 for _ in range(take):
-                    if not sm2_pool:
+                    if not fsrs_pool:
                         break
-                    mixed.append(sm2_pool.pop(0))
+                    mixed.append(fsrs_pool.pop(0))
         return mixed
 
     last_ids = context.user_data.setdefault("last_quiz_ids", {})
     last_id = last_ids.get(mode)
-    if is_sm2_mode:
-        bucket = context.user_data.setdefault("sm2_cycle_queue", {})
+    if is_fsrs_mode:
+        bucket = context.user_data.setdefault("fsrs_cycle_queue", {})
         queue = bucket.get(mode)
         if not queue:
             due = _fetch_due()
@@ -123,7 +123,7 @@ def _pick_due_entry(context, user_id, mode, word_type=None):
             pool = [w for w in due if w.get("id") != last_id] if len(due) > 1 else due
             if not pool:
                 pool = due
-            queue = _build_sm2_queue(pool)
+            queue = _build_fsrs_queue(pool)
             if not queue:
                 return None
             bucket[mode] = queue

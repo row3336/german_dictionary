@@ -538,6 +538,25 @@ def _ensure_schema(conn):
     if learning_cols and "updated_at" not in learning_cols:
         conn.execute("ALTER TABLE learning_items ADD COLUMN updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP")
 
+    # Migrate legacy SM2-named settings keys to FSRS names, preserving values.
+    for _old_key, _new_key in (
+        ("sm2_report_utc_hour", "fsrs_report_utc_hour"),
+        ("sm2_report_date", "fsrs_report_date"),
+        ("sm2_peak_notify_date", "fsrs_peak_notify_date"),
+        ("sm2_weekly_report_week", "fsrs_weekly_report_week"),
+        ("sm2_peak_hour_today", "fsrs_peak_hour_today"),
+    ):
+        old_row = conn.execute("SELECT value FROM app_settings WHERE key = ?", (_old_key,)).fetchone()
+        if old_row is None:
+            continue
+        new_row = conn.execute("SELECT 1 FROM app_settings WHERE key = ?", (_new_key,)).fetchone()
+        if new_row is None:
+            conn.execute(
+                "INSERT INTO app_settings (key, value) VALUES (?, ?)",
+                (_new_key, old_row["value"]),
+            )
+        conn.execute("DELETE FROM app_settings WHERE key = ?", (_old_key,))
+
 
 def _normalize_text(text):
     """Handle normalize text."""
@@ -748,7 +767,7 @@ def get_statistics_snapshot(db_path, user_id, mode):
         streak_2 = int(streak_row["s2"] or 0) if streak_row else 0
         streak_1 = int(streak_row["s1"] or 0) if streak_row else 0
         streak_3p = streak_3 + streak_4 + streak_5p
-        wrong_sm2 = int(
+        wrong_fsrs = int(
             conn.execute(
                 """
                 WITH last_events AS (
@@ -950,14 +969,14 @@ def get_statistics_snapshot(db_path, user_id, mode):
             ).fetchone()
             return int((row["cnt"] if row else 0) or 0)
 
-        today_complete_sm2_ru_de = _today_mode_count("ru_de")
-        today_complete_sm2_de_ru = _today_mode_count("de_ru")
+        today_complete_fsrs_ru_de = _today_mode_count("ru_de")
+        today_complete_fsrs_de_ru = _today_mode_count("de_ru")
         today_complete_pl_sg = _today_mode_prefix_count("pl_sg_")
         today_complete_weak_article = _today_mode_count("weak_article")
         today_complete_weak_plural = _today_mode_count("weak_plural")
         today_complete_weak_partizip2 = _today_mode_count("weak_partizip2")
         today_complete_weak_prateritum = _today_mode_count("weak_prateritum")
-        today_complete = today_complete_sm2_ru_de + today_complete_sm2_de_ru
+        today_complete = today_complete_fsrs_ru_de + today_complete_fsrs_de_ru
 
         retention_row = conn.execute(
             """
@@ -1086,7 +1105,7 @@ def get_statistics_snapshot(db_path, user_id, mode):
         "streak_3p": streak_3p,
         "streak_2": streak_2,
         "streak_1": streak_1,
-        "wrong_sm2": wrong_sm2,
+        "wrong_fsrs": wrong_fsrs,
         "weak_article": weak_article,
         "weak_article_stage1": weak_article_stage1,
         "weak_article_stage2": weak_article_stage2,
@@ -1104,8 +1123,8 @@ def get_statistics_snapshot(db_path, user_id, mode):
         "weak_prateritum_stage2": weak_prateritum_stage2,
         "weak_prateritum_stage3": weak_prateritum_stage3,
         "today_complete": today_complete,
-        "today_complete_sm2_ru_de": today_complete_sm2_ru_de,
-        "today_complete_sm2_de_ru": today_complete_sm2_de_ru,
+        "today_complete_fsrs_ru_de": today_complete_fsrs_ru_de,
+        "today_complete_fsrs_de_ru": today_complete_fsrs_de_ru,
         "today_complete_pl_sg": today_complete_pl_sg,
         "today_complete_weak_article": today_complete_weak_article,
         "today_complete_weak_plural": today_complete_weak_plural,
@@ -2006,8 +2025,8 @@ def select_due(
     return result
 
 
-def update_sm2(srs, quality, today=None, interval_divisor=1.0):
-    """Handle FSRS-like update in existing SM2 storage format."""
+def update_fsrs(srs, quality, today=None, interval_divisor=1.0):
+    """Handle FSRS-like update in existing FSRS storage format."""
     if today is None:
         today = date.today()
 
@@ -2024,7 +2043,7 @@ def update_sm2(srs, quality, today=None, interval_divisor=1.0):
     ease = max(MIN_EASE, min(MAX_EASE, ease))
 
     if quality < 3:
-        # Softer than classic SM2 reset: step back one stage and shorten interval.
+        # Softer than classic FSRS reset: step back one stage and shorten interval.
         repetitions = max(0, repetitions - 1)
         ease = max(MIN_EASE, ease - 0.25)
         interval = max(1, int(round(interval * 0.4)))
@@ -2072,7 +2091,7 @@ def update_progress(db_path, user_id, word_id, mode, quality, interval_divisor=1
             if row
             else default_srs()
         )
-        updated = update_sm2(srs, quality, interval_divisor=interval_divisor)
+        updated = update_fsrs(srs, quality, interval_divisor=interval_divisor)
 
         conn.execute(
             """
@@ -2754,8 +2773,8 @@ def learning_active_batches(db_path):
     return [dict(row) for row in rows]
 
 
-def sm2_due_forecast(db_path, user_id, mode):
-    """Handle sm2 due forecast."""
+def fsrs_due_forecast(db_path, user_id, mode):
+    """Handle fsrs due forecast."""
     init_db(db_path)
     today = date.today().isoformat()
     with _connect(db_path) as conn:
@@ -3616,8 +3635,8 @@ def list_learning_queue_words(db_path, user_id, topics=None):
     return [_row_to_entry(row) for row in rows]
 
 
-def list_sm2_weak_words(db_path, user_id, mode, min_wrong_streak=4):
-    """Handle list sm2 weak words."""
+def list_fsrs_weak_words(db_path, user_id, mode, min_wrong_streak=4):
+    """Handle list fsrs weak words."""
     init_db(db_path)
     with _connect(db_path) as conn:
         rows = conn.execute(

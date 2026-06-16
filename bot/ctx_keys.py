@@ -6,7 +6,7 @@ is extracted into its own module. Not yet wired everywhere.
 
 Some keys are dynamic and built from a mode at runtime (kept as helpers):
 - session "seen" set:        f"session_seen_{mode}"
-- sm2 cycle queue bucket:     "sm2_cycle_queue" (dict keyed by mode)
+- fsrs cycle queue bucket:     "fsrs_cycle_queue" (dict keyed by mode)
 - weak drill buckets:         "weak_drill_queue" / "weak_drill_counts" / "weak_drill_since_last" (dicts keyed by mode)
 - retry buckets:              "retry_queue" / "retry_counts" / "retry_since_last" (dicts keyed by mode)
 """

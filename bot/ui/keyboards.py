@@ -18,7 +18,7 @@ from ..labels import (
     QUIZ_DE_RU_TEXT,
     QUIZ_PL_SG_TEXT,
     QUIZ_RU_DE_TEXT,
-    STANDARD_SM2_TEXT,
+    STANDARD_FSRS_TEXT,
     TEST_ARTICLE_WEAK_TEXT,
     TEST_PLURAL_WEAK_TEXT,
     TEST_VERB_WEAK_TEXT,
@@ -50,7 +50,7 @@ def _tests_menu_keys(user_id):
 def _ru_de_menu_keys(user_id):
     """Handle ru de menu keys."""
     return [
-        [STANDARD_SM2_TEXT, TEST_ARTICLE_WEAK_TEXT],
+        [STANDARD_FSRS_TEXT, TEST_ARTICLE_WEAK_TEXT],
         [TEST_PLURAL_WEAK_TEXT, TEST_VERB_WEAK_TEXT],
         [t(_user_interface_lang(user_id), "back")],
     ]

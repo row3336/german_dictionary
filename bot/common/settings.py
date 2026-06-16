@@ -17,8 +17,8 @@ from ..app_config import (
     RETRY_MAX_REPEATS,
     SESSION_RETRY_GAP_KEY,
     SESSION_RETRY_IT_KEY,
-    SM2_REPORT_HOUR_KEY,
-    SM2_REPORT_UTC_HOUR_DEFAULT,
+    FSRS_REPORT_HOUR_KEY,
+    FSRS_REPORT_UTC_HOUR_DEFAULT,
     TOPIC_FILTER_KEY,
     WEAK_DRILL_GAP_DEFAULT,
     WEAK_DRILL_GAP_KEY,
@@ -123,9 +123,9 @@ def _set_learning_mix_mode(user_id, enabled):
     set_setting(get_db_path(), _learning_mix_mode_key(user_id), "1" if enabled else "0")
 
 
-def _sm2_report_hour_utc(db_path):
-    """Handle sm2 report hour utc."""
-    value = _get_int_setting(db_path, SM2_REPORT_HOUR_KEY, SM2_REPORT_UTC_HOUR_DEFAULT)
+def _fsrs_report_hour_utc(db_path):
+    """Handle fsrs report hour utc."""
+    value = _get_int_setting(db_path, FSRS_REPORT_HOUR_KEY, FSRS_REPORT_UTC_HOUR_DEFAULT)
     return min(23, max(0, value))
 
 

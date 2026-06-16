@@ -5,7 +5,7 @@ import unittest
 import warnings
 from datetime import date, timedelta
 
-from bot.storage import add_word, init_db, select_due, sm2_due_forecast
+from bot.storage import add_word, init_db, select_due, fsrs_due_forecast
 
 warnings.filterwarnings("ignore", category=ResourceWarning)
 
@@ -100,13 +100,13 @@ class SelectDueGatingTests(unittest.TestCase):
         self.assertEqual(len(select_due(self.db, user_id=1, mode="de_ru")), 1)
 
     def test_forecast_total_matches_due_queue(self):
-        """sm2_due_forecast total equals select_due count (notification vs actual queue)."""
+        """fsrs_due_forecast total equals select_due count (notification vs actual queue)."""
         for i in range(3):
             e = _add_noun(self.db, f"Wort{i}", f"слово{i}")
             with sqlite3.connect(self.db) as conn:
                 _event(conn, 1, e["id"], "ru_de", 0, f"{self.today} 08:0{i}:00")
         due = select_due(self.db, user_id=1, mode="ru_de")
-        forecast = sm2_due_forecast(self.db, user_id=1, mode="ru_de")
+        forecast = fsrs_due_forecast(self.db, user_id=1, mode="ru_de")
         self.assertEqual(forecast["total"], len(due))
         self.assertEqual(forecast["total"], 3)
 

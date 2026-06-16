@@ -100,10 +100,10 @@ from .app_config import (
     LEARNING_REMINDER_INTERVAL_KEY,
     LEARNING_REMINDER_COOLDOWN_KEY,
     LEARNING_READY_QUORUM_KEY,
-    SM2_REPORT_HOUR_KEY,
-    SM2_REPORT_DATE_KEY,
-    SM2_PEAK_NOTIFY_DATE_KEY,
-    SM2_WEEKLY_REPORT_WEEK_KEY,
+    FSRS_REPORT_HOUR_KEY,
+    FSRS_REPORT_DATE_KEY,
+    FSRS_PEAK_NOTIFY_DATE_KEY,
+    FSRS_WEEKLY_REPORT_WEEK_KEY,
     get_suggestions_path,
     is_owner,
 )
@@ -130,7 +130,7 @@ from .storage import (
     list_learning_active_words,
     get_word_study_status,
     list_words_by_topic,
-    list_sm2_weak_words,
+    list_fsrs_weak_words,
     get_synonym_group,
     get_synonym_group_id,
     get_setting,
@@ -184,7 +184,7 @@ from .storage import (
     get_daily_first_touch_retention,
     get_weekly_first_touch_retention,
     _parse_learning_intervals,
-    sm2_due_forecast,
+    fsrs_due_forecast,
     WEAK_ACTIVE_MIN_ERRORS,
     WEAK_ACTIVE_MIN_STREAK_WRONG,
     WEAK_ACTIVE_CLEAR_STREAK,
@@ -226,9 +226,9 @@ from .app_config import (
     OWNER_INTERFACE_LANG_KEY,
     RETRY_GAP_QUESTIONS,
     RETRY_MAX_REPEATS,
-    SM2_PEAK_JOB_NAME,
-    SM2_REPORT_JOB_NAME,
-    SM2_REPORT_UTC_HOUR_DEFAULT,
+    FSRS_PEAK_JOB_NAME,
+    FSRS_REPORT_JOB_NAME,
+    FSRS_REPORT_UTC_HOUR_DEFAULT,
     WEAK_DRILL_GAP_DEFAULT,
     WEAK_DRILL_REPEATS_DEFAULT,
 )
@@ -253,7 +253,7 @@ from .common.session import (
     _remove_from_retry,
     _reset_retry_state,
     _reset_session,
-    _reset_sm2_cycle_state,
+    _reset_fsrs_cycle_state,
     _reset_weak_drill_state,
     _retry_counts,
     _retry_queue,
@@ -294,7 +294,7 @@ from .common.settings import (
     _session_retry_gap,
     _session_retry_iterations,
     _set_learning_mix_mode,
-    _sm2_report_hour_utc,
+    _fsrs_report_hour_utc,
     _topic_filter_banner,
     _topic_filter_for_query,
     _topic_filter_label,
@@ -371,7 +371,7 @@ def _pick_learning_due_entry(context, user_id, exclude_word_id=None):
     return None
 
 
-# topic-filter + sm2-report-hour helpers moved to bot/common/settings.py
+# topic-filter + fsrs-report-hour helpers moved to bot/common/settings.py
 
 
 async def _send_algo_settings_menu(update: Update, user_id):
@@ -1440,8 +1440,8 @@ def _list_match_pairs(entries, dict_lang):
     return blocks
 
 
-def _format_sm2_weak_line(entry, dict_lang):
-    """Handle format sm2 weak line."""
+def _format_fsrs_weak_line(entry, dict_lang):
+    """Handle format fsrs weak line."""
     streak = int(entry.get("wrong_streak") or 0)
     return f"{_format_match_line(entry, dict_lang)} | wrong_streak={streak}"
 
@@ -1773,8 +1773,8 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         stats = get_statistics_snapshot(get_db_path(), user_id=user_id, mode=_mode_l1_de(user_id))
         word_types = stats.get("word_types") or {}
         lines = [
-            f"today complete fsrs Ru > De = {stats['today_complete_sm2_ru_de']}",
-            f"today complete fsrs De > Ru = {stats['today_complete_sm2_de_ru']}",
+            f"today complete fsrs Ru > De = {stats['today_complete_fsrs_ru_de']}",
+            f"today complete fsrs De > Ru = {stats['today_complete_fsrs_de_ru']}",
             f"today complete pl > sing = {stats.get('today_complete_pl_sg', 0)}",
             "",
             f"today complete weak article = {stats['today_complete_weak_article']}",
@@ -1787,7 +1787,7 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"3 correct streak = {stats.get('streak_3', stats.get('streak_3p', 0))}",
             f"2 correct streak = {stats.get('streak_2', 0)}",
             f"1 correct = {stats.get('streak_1', 0)}",
-            f"wrong fsrs = {stats.get('wrong_sm2', 0)}",
+            f"wrong fsrs = {stats.get('wrong_fsrs', 0)}",
             "",
             (
                 f"weak article = {stats['weak_article']} "
@@ -1954,12 +1954,12 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if action == "db_search_weak_words":
         context.user_data.pop("db_search_topic_pick", None)
         mode = _mode_l1_de(user_id)
-        entries = list_sm2_weak_words(get_db_path(), user_id=user_id, mode=mode, min_wrong_streak=4)
+        entries = list_fsrs_weak_words(get_db_path(), user_id=user_id, mode=mode, min_wrong_streak=4)
         if not entries:
             context.user_data.pop("db_search_weak_ids", None)
             return await _send_db_search_prompt(update, user_id, "No weak words found.")
         context.user_data["db_search_weak_ids"] = [x.get("id") for x in entries if x.get("id")]
-        lines = [_format_sm2_weak_line(entry, _user_dict_lang(user_id)) for entry in entries]
+        lines = [_format_fsrs_weak_line(entry, _user_dict_lang(user_id)) for entry in entries]
         chunks = _split_text_chunks("\n\n".join(lines))
         for idx, chunk in enumerate(chunks):
             markup = _db_search_weak_markup(user_id) if idx == len(chunks) - 1 else None
@@ -2238,7 +2238,7 @@ async def quiz_ru_de_menu_choice(update: Update, context: ContextTypes.DEFAULT_T
         )
         context.user_data["topic_return"] = "ru_de_menu"
         return TOPIC_FILTER_EDIT
-    if text == STANDARD_SM2_TEXT:
+    if text == STANDARD_FSRS_TEXT:
         _reset_retry_state(context)
         _clear_last_answer(context)
         _reset_session(context, _mode_l1_de(user_id))
@@ -4937,7 +4937,7 @@ def _format_feedback_article(entry, ok, dict_lang):
 # _pick_due_entry moved to bot/common/session.py
 
 
-# session-retry glue + _reset_sm2_cycle_state moved to bot/common/session.py
+# session-retry glue + _reset_fsrs_cycle_state moved to bot/common/session.py
 
 
 # weak-drill glue moved to bot/common/session.py
@@ -5740,7 +5740,7 @@ async def _back_to_tests(update: Update, context: ContextTypes.DEFAULT_TYPE = No
     """Handle back to tests."""
     if context is not None:
         _reset_retry_state(context)
-        _reset_sm2_cycle_state(context)
+        _reset_fsrs_cycle_state(context)
         _reset_weak_drill_state(context)
         _clear_last_answer(context)
     user_id = update.effective_user.id
@@ -6050,8 +6050,8 @@ def _configure_learning_reminders(app: Application):
     )
 
 
-def _format_sm2_report_text(total, peak_hour, peak_count):
-    """Handle format sm2 report text."""
+def _format_fsrs_report_text(total, peak_hour, peak_count):
+    """Handle format fsrs report text."""
     if total <= 0:
         return "FSRS today: 0 due."
     if peak_hour is None:
@@ -6062,32 +6062,32 @@ def _format_sm2_report_text(total, peak_hour, peak_count):
     )
 
 
-def _should_send_sm2_daily_report(db_path, now_utc):
-    """Handle should send sm2 daily report."""
+def _should_send_fsrs_daily_report(db_path, now_utc):
+    """Handle should send fsrs daily report."""
     today = now_utc.date().isoformat()
-    last_date = get_setting(db_path, SM2_REPORT_DATE_KEY, "")
+    last_date = get_setting(db_path, FSRS_REPORT_DATE_KEY, "")
     if last_date == today:
         return False
-    report_hour = _sm2_report_hour_utc(db_path)
+    report_hour = _fsrs_report_hour_utc(db_path)
     return now_utc.hour >= report_hour
 
 
-async def _sm2_daily_report_job(context: ContextTypes.DEFAULT_TYPE):
-    """Handle sm2 daily report job."""
+async def _fsrs_daily_report_job(context: ContextTypes.DEFAULT_TYPE):
+    """Handle fsrs daily report job."""
     db_path = get_db_path()
     owner_id = get_owner_id()
     if not owner_id:
         return
     now = datetime.now(timezone.utc)
-    if not _should_send_sm2_daily_report(db_path, now):
+    if not _should_send_fsrs_daily_report(db_path, now):
         return
     today = now.date().isoformat()
     mode = _mode_l1_de(owner_id)
-    forecast = sm2_due_forecast(db_path, owner_id, mode)
+    forecast = fsrs_due_forecast(db_path, owner_id, mode)
     total = int(forecast.get("total", 0))
     peak_hour = forecast.get("peak_hour")
     peak_count = int(forecast.get("peak_count", 0))
-    text = _format_sm2_report_text(total, peak_hour, peak_count)
+    text = _format_fsrs_report_text(total, peak_hour, peak_count)
     try:
         await context.bot.send_message(
             chat_id=owner_id,
@@ -6107,12 +6107,12 @@ async def _sm2_daily_report_job(context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown",
         )
         # Weekly report: send once on Monday after report hour, for previous week.
-        report_hour = _sm2_report_hour_utc(db_path)
+        report_hour = _fsrs_report_hour_utc(db_path)
         if now.weekday() == 0 and now.hour >= report_hour:
             prev_ref = now.date() - timedelta(days=7)
             prev_ws = prev_ref - timedelta(days=prev_ref.weekday())
             prev_ws_iso = prev_ws.isoformat()
-            last_weekly = get_setting(db_path, SM2_WEEKLY_REPORT_WEEK_KEY, "")
+            last_weekly = get_setting(db_path, FSRS_WEEKLY_REPORT_WEEK_KEY, "")
             if last_weekly != prev_ws_iso:
                 weekly = get_weekly_first_touch_retention(
                     db_path,
@@ -6125,31 +6125,31 @@ async def _sm2_daily_report_job(context: ContextTypes.DEFAULT_TYPE):
                     text=f"```text\n{_format_retention_weekly_text(weekly)}\n```",
                     parse_mode="Markdown",
                 )
-                set_setting(db_path, SM2_WEEKLY_REPORT_WEEK_KEY, prev_ws_iso)
-        set_setting(db_path, SM2_REPORT_DATE_KEY, today)
-        set_setting(db_path, "sm2_peak_hour_today", "")
-        set_setting(db_path, SM2_PEAK_NOTIFY_DATE_KEY, "")
+                set_setting(db_path, FSRS_WEEKLY_REPORT_WEEK_KEY, prev_ws_iso)
+        set_setting(db_path, FSRS_REPORT_DATE_KEY, today)
+        set_setting(db_path, "fsrs_peak_hour_today", "")
+        set_setting(db_path, FSRS_PEAK_NOTIFY_DATE_KEY, "")
         if peak_hour is not None:
-            set_setting(db_path, "sm2_peak_hour_today", str(int(peak_hour)))
+            set_setting(db_path, "fsrs_peak_hour_today", str(int(peak_hour)))
     except Exception:
         logging.exception("FSRS daily report failed")
         return
 
 
-async def _sm2_peak_notify_job(context: ContextTypes.DEFAULT_TYPE):
-    """Handle sm2 peak notify job."""
+async def _fsrs_peak_notify_job(context: ContextTypes.DEFAULT_TYPE):
+    """Handle fsrs peak notify job."""
     db_path = get_db_path()
     owner_id = get_owner_id()
     if not owner_id:
         return
     today = date.today().isoformat()
-    peak_notified = get_setting(db_path, SM2_PEAK_NOTIFY_DATE_KEY, "")
+    peak_notified = get_setting(db_path, FSRS_PEAK_NOTIFY_DATE_KEY, "")
     if peak_notified == today:
         return
-    report_date = get_setting(db_path, SM2_REPORT_DATE_KEY, "")
+    report_date = get_setting(db_path, FSRS_REPORT_DATE_KEY, "")
     if report_date != today:
         return
-    peak_hour_raw = get_setting(db_path, "sm2_peak_hour_today", "")
+    peak_hour_raw = get_setting(db_path, "fsrs_peak_hour_today", "")
     try:
         peak_hour = int(peak_hour_raw)
     except (TypeError, ValueError):
@@ -6158,7 +6158,7 @@ async def _sm2_peak_notify_job(context: ContextTypes.DEFAULT_TYPE):
     if now.hour < peak_hour:
         return
     mode = _mode_l1_de(owner_id)
-    forecast = sm2_due_forecast(db_path, owner_id, mode)
+    forecast = fsrs_due_forecast(db_path, owner_id, mode)
     total = int(forecast.get("total", 0))
     if total <= 0:
         return
@@ -6167,33 +6167,33 @@ async def _sm2_peak_notify_job(context: ContextTypes.DEFAULT_TYPE):
             chat_id=owner_id,
             text=f"FSRS peak window now. Due today: {total}.",
         )
-        set_setting(db_path, SM2_PEAK_NOTIFY_DATE_KEY, today)
+        set_setting(db_path, FSRS_PEAK_NOTIFY_DATE_KEY, today)
     except Exception:
         logging.exception("FSRS peak notify failed")
         return
 
 
-def _configure_sm2_reports(app: Application):
-    """Handle configure sm2 reports."""
+def _configure_fsrs_reports(app: Application):
+    """Handle configure fsrs reports."""
     job_queue = app.job_queue
     if job_queue is None:
         return
-    for job in job_queue.get_jobs_by_name(SM2_REPORT_JOB_NAME):
+    for job in job_queue.get_jobs_by_name(FSRS_REPORT_JOB_NAME):
         job.schedule_removal()
-    for job in job_queue.get_jobs_by_name(SM2_PEAK_JOB_NAME):
+    for job in job_queue.get_jobs_by_name(FSRS_PEAK_JOB_NAME):
         job.schedule_removal()
     # Run frequently and guard by date/hour so reports still work after restarts.
     job_queue.run_repeating(
-        _sm2_daily_report_job,
+        _fsrs_daily_report_job,
         interval=600,
         first=30,
-        name=SM2_REPORT_JOB_NAME,
+        name=FSRS_REPORT_JOB_NAME,
     )
     job_queue.run_repeating(
-        _sm2_peak_notify_job,
+        _fsrs_peak_notify_job,
         interval=900,
         first=900,
-        name=SM2_PEAK_JOB_NAME,
+        name=FSRS_PEAK_JOB_NAME,
     )
 
 
@@ -6221,10 +6221,10 @@ def _prepare_storage():
         set_setting(db_path, LEARNING_REMINDER_COOLDOWN_KEY, str(LEARNING_REMINDER_COOLDOWN_DEFAULT))
     if not get_setting(db_path, LEARNING_READY_QUORUM_KEY):
         set_setting(db_path, LEARNING_READY_QUORUM_KEY, str(LEARNING_READY_QUORUM_DEFAULT))
-    if not get_setting(db_path, SM2_REPORT_HOUR_KEY):
-        set_setting(db_path, SM2_REPORT_HOUR_KEY, str(SM2_REPORT_UTC_HOUR_DEFAULT))
-    if not get_setting(db_path, SM2_WEEKLY_REPORT_WEEK_KEY):
-        set_setting(db_path, SM2_WEEKLY_REPORT_WEEK_KEY, "")
+    if not get_setting(db_path, FSRS_REPORT_HOUR_KEY):
+        set_setting(db_path, FSRS_REPORT_HOUR_KEY, str(FSRS_REPORT_UTC_HOUR_DEFAULT))
+    if not get_setting(db_path, FSRS_WEEKLY_REPORT_WEEK_KEY):
+        set_setting(db_path, FSRS_WEEKLY_REPORT_WEEK_KEY, "")
     cleanup_transaction_logs(db_path, days=7)
 
 
@@ -6243,7 +6243,7 @@ def main():
     mode = get_setting(get_db_path(), AUTO_DUMP_SETTING_KEY, "off")
     _configure_auto_dump(app, mode)
     _configure_learning_reminders(app)
-    _configure_sm2_reports(app)
+    _configure_fsrs_reports(app)
     conv = ConversationHandler(
         entry_points=[
             CommandHandler("start", start),

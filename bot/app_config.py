@@ -34,10 +34,10 @@ LEARNING_INTERVALS_KEY = "learning_intervals_sec"
 LEARNING_REMINDER_INTERVAL_KEY = "learning_reminder_interval_sec"
 LEARNING_REMINDER_COOLDOWN_KEY = "learning_reminder_cooldown_sec"
 LEARNING_READY_QUORUM_KEY = "learning_ready_quorum_pct"
-SM2_REPORT_HOUR_KEY = "sm2_report_utc_hour"
-SM2_REPORT_DATE_KEY = "sm2_report_date"
-SM2_PEAK_NOTIFY_DATE_KEY = "sm2_peak_notify_date"
-SM2_WEEKLY_REPORT_WEEK_KEY = "sm2_weekly_report_week"
+FSRS_REPORT_HOUR_KEY = "fsrs_report_utc_hour"
+FSRS_REPORT_DATE_KEY = "fsrs_report_date"
+FSRS_PEAK_NOTIFY_DATE_KEY = "fsrs_peak_notify_date"
+FSRS_WEEKLY_REPORT_WEEK_KEY = "fsrs_weekly_report_week"
 
 OWNER_INTERFACE_LANG_KEY = "owner_interface_lang"
 OWNER_DICT_LANG_KEY = "owner_dict_lang"
@@ -53,9 +53,9 @@ LEARNING_REMINDER_COOLDOWN_DEFAULT = 900
 LEARNING_READY_QUORUM_DEFAULT = 70
 LEARNING_MIX_MODE_DEFAULT = "0"
 LEARNING_REMINDER_JOB_NAME = "learning_reminder_job"
-SM2_REPORT_UTC_HOUR_DEFAULT = 3
-SM2_REPORT_JOB_NAME = "sm2_daily_report_job"
-SM2_PEAK_JOB_NAME = "sm2_peak_notify_job"
+FSRS_REPORT_UTC_HOUR_DEFAULT = 3
+FSRS_REPORT_JOB_NAME = "fsrs_daily_report_job"
+FSRS_PEAK_JOB_NAME = "fsrs_peak_notify_job"
 LEARNING_WARMUP_INTERVALS = (0, 0, 0)
 
 ARTICLE_SET = {
