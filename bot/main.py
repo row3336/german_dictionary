@@ -450,13 +450,12 @@ def _run_unit_tests_report():
         "python3",
         "-m",
         "unittest",
+        "discover",
+        "-s",
+        "tests",
+        "-p",
+        "test_*.py",
         "-v",
-        "tests.test_retry_logic",
-        "tests.test_sm2_logic",
-        "tests.test_weak_modes",
-        "tests.test_learning_logic",
-        "tests.test_adjektiv_forms",
-        "tests.test_transaction_log",
     ]
     try:
         env = dict(os.environ)
