@@ -485,6 +485,11 @@ def _ensure_schema(conn):
         conn.execute("ALTER TABLE words ADD COLUMN komparativ TEXT NOT NULL DEFAULT ''")
     if "superlativ" not in word_cols:
         conn.execute("ALTER TABLE words ADD COLUMN superlativ TEXT NOT NULL DEFAULT ''")
+    if "updated_at" not in word_cols:
+        # SQLite forbids a non-constant default on ADD COLUMN, so add with '' then
+        # backfill existing rows to their created_at (unedited == created time).
+        conn.execute("ALTER TABLE words ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''")
+        conn.execute("UPDATE words SET updated_at = created_at WHERE updated_at = ''")
     conn.execute("UPDATE words SET topic = '1' WHERE trim(coalesce(topic, '')) = ''")
     _repair_word_fk_tables(conn)
     _ensure_indexes(conn)
@@ -1874,8 +1879,8 @@ def add_word(db_path, entry):
             """
             INSERT INTO words (
                 id, type, article, german, plural, infinitive, prateritum, partizip2, komparativ, superlativ,
-                russian, ukrainian, english, image, example, topic
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                russian, ukrainian, english, image, example, topic, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             """,
             (
                 entry["id"],
@@ -2932,7 +2937,8 @@ def update_word_translations(db_path, word_id, ukrainian=None, english=None):
             """
             UPDATE words
             SET ukrainian = COALESCE(?, ukrainian),
-                english = COALESCE(?, english)
+                english = COALESCE(?, english),
+                updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
             (
@@ -2980,7 +2986,7 @@ def update_word_fields(db_path, word_id, fields):
 
     parts = [f"{key} = ?" for key in values]
     params = list(values.values()) + [_safe_text(word_id)]
-    query = f"UPDATE words SET {', '.join(parts)} WHERE id = ?"
+    query = f"UPDATE words SET {', '.join(parts)}, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
 
     with _connect(db_path) as conn:
         conn.execute(query, tuple(params))
