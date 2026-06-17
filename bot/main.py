@@ -511,65 +511,47 @@ async def _send_learning_settings_menu(update: Update, user_id):
 
 
 def _run_unit_tests_report():
-    """Handle run unit tests report."""
+    """Run the unit test suite + DB smoke check; return a compact summary."""
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    cmd = [
-        "python3",
-        "-m",
-        "unittest",
-        "discover",
-        "-s",
-        "tests",
-        "-p",
-        "test_*.py",
-        "-v",
-    ]
+    env = dict(os.environ)
+    env["PYTHONWARNINGS"] = "ignore::ResourceWarning"
+
+    cmd = ["python3", "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"]
     try:
-        env = dict(os.environ)
-        env["PYTHONWARNINGS"] = "ignore::ResourceWarning"
         proc = subprocess.run(
-            cmd,
-            cwd=root_dir,
-            capture_output=True,
-            text=True,
-            timeout=120,
-            check=False,
-            env=env,
+            cmd, cwd=root_dir, capture_output=True, text=True, timeout=120, check=False, env=env
         )
     except Exception as exc:
         return f"unit tests failed to run: {exc}"
-    out = (proc.stdout or "").strip()
-    err = (proc.stderr or "").strip()
-    text = out
-    if err:
-        text = f"{text}\n{err}".strip()
+
+    out = f"{proc.stdout or ''}\n{proc.stderr or ''}"
+    m = re.search(r"Ran (\d+) test", out)
+    total = int(m.group(1)) if m else 0
+    failed = [s.strip() for s in out.splitlines() if s.strip().startswith(("FAIL:", "ERROR:"))]
+
+    if proc.returncode == 0:
+        lines = [f"✅ unit tests: {total}/{total} OK"]
+    else:
+        lines = [f"❌ unit tests: {max(0, total - len(failed))}/{total} OK, {len(failed)} failed:"]
+        lines += [f"  {x}" for x in failed[:30]]
+        if not failed:
+            lines += [f"  {t}" for t in out.strip().splitlines()[-5:]]
+
     smoke_cmd = ["python3", "-m", "scripts.smoke_check_db", "--db", str(get_db_path())]
     try:
-        smoke_proc = subprocess.run(
-            smoke_cmd,
-            cwd=root_dir,
-            capture_output=True,
-            text=True,
-            timeout=60,
-            check=False,
-            env=env,
+        sp = subprocess.run(
+            smoke_cmd, cwd=root_dir, capture_output=True, text=True, timeout=60, check=False, env=env
         )
-        smoke_out = (smoke_proc.stdout or "").strip()
-        smoke_err = (smoke_proc.stderr or "").strip()
-        smoke_text = smoke_out
-        if smoke_err:
-            smoke_text = f"{smoke_text}\n{smoke_err}".strip()
-        if not smoke_text:
-            smoke_text = f"smoke exit_code={smoke_proc.returncode}"
-        text = f"{text}\n\n--- smoke ---\n{smoke_text}".strip()
+        if sp.returncode == 0:
+            lines.append("✅ db smoke: OK")
+        else:
+            tail = ((sp.stdout or "") + (sp.stderr or "")).strip().splitlines()[-3:]
+            lines.append("❌ db smoke: FAIL")
+            lines += [f"  {t}" for t in tail]
     except Exception as exc:
-        text = f"{text}\n\n--- smoke ---\nfailed to run smoke checks: {exc}".strip()
-    if not text:
-        text = f"exit_code={proc.returncode}"
-    text = "\n".join(f"  {line}" for line in text.splitlines())
-    if len(text) > 3500:
-        text = text[:3500] + "\n...truncated..."
-    return text.replace("```", "'''")
+        lines.append(f"❌ db smoke: failed to run: {exc}")
+
+    return "\n".join(lines).replace("```", "'''")
 
 
 # _dump_menu_keys moved to bot/handlers/dump.py
