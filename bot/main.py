@@ -288,6 +288,24 @@ from .handlers.dump import (
 from .jobs.auto_dump import _configure_auto_dump
 from .jobs.reminders import _configure_learning_reminders
 from .jobs.reports import _configure_fsrs_reports
+from .verb_forms_parsing.parser import (
+    VF_JITTER_KEY,
+    VF_PROXY_KEY,
+    VF_SLEEP_KEY,
+    _normalize_proxy_input,
+    _vf_apply_single,
+    _vf_compare,
+    _vf_fetch_word,
+    _vf_settings_snapshot,
+    _vf_user_agent,
+)
+from .verb_forms_parsing.handlers import (
+    VF_RUNNING_TASKS,
+    VF_STOP_FLAGS,
+    _send_vf_menu,
+    _vf_menu_markup,
+    _vf_run_dry_task,
+)
 from .ui.formatting import (
     _append_hint_lines,
     _article_matches,
@@ -359,11 +377,7 @@ from .common.settings import (
 
 # UI button-text labels moved to bot/labels.py.
 # Owner/lang setting keys + algorithm defaults moved to bot/app_config.py.
-VF_PROXY_KEY = "vf_proxy"
-VF_SLEEP_KEY = "vf_sleep_sec"
-VF_JITTER_KEY = "vf_jitter_pct"
-VF_RUNNING_TASKS = {}
-VF_STOP_FLAGS = {}
+# VF keys + runtime task/stop dicts moved to bot/verb_forms_parsing/
 
 
 # core menu keyboard builders moved to bot/ui/keyboards.py
@@ -2385,333 +2399,17 @@ async def quiz_verb_weak_menu_choice(update: Update, context: ContextTypes.DEFAU
     return QUIZ_VERB_WEAK_MENU
 
 
-def _vf_menu_markup():
-    """Build compact VF menu keyboard."""
-    items = [
-        VF_SET_PROXY_TEXT,
-        VF_TEST_PROXY_TEXT,
-        VF_SET_SLEEP_TEXT,
-        VF_SET_JITTER_TEXT,
-        VF_DRY_RUN_NEW_TEXT,
-        VF_DRY_RUN_ALL_TEXT,
-        VF_SHOW_DIFF_TEXT,
-        VF_APPROVE_TEXT,
-        VF_APPLY_TEXT,
-        VF_VERIFY_TEXT,
-        VF_RETRY_TEXT,
-        VF_STOP_TEXT,
-    ]
-    rows = [items[i:i + 4] for i in range(0, len(items), 4)]
-    if rows and len(rows[-1]) < 4:
-        rows[-1].append(BACK_TEXT)
-    else:
-        rows.append([BACK_TEXT])
-    return ReplyKeyboardMarkup(rows, resize_keyboard=True)
-
-
-def _vf_settings_snapshot():
-    """Return vf parser settings."""
-    db_path = get_db_path()
-    proxy = _safe_text(get_setting(db_path, VF_PROXY_KEY, "")).strip()
-    sleep_sec = _get_int_setting(db_path, VF_SLEEP_KEY, 60)
-    jitter_pct = _get_int_setting(db_path, VF_JITTER_KEY, 20)
-    return proxy, max(1, sleep_sec), max(0, min(80, jitter_pct))
+# _vf_menu_markup / _vf_settings_snapshot moved to bot/verb_forms_parsing/
 
 
 def _safe_text(value):
     return str(value or "")
 
 
-def _mask_proxy(proxy_url):
-    token = _safe_text(proxy_url).strip()
-    if "@" not in token:
-        return token
-    left, right = token.rsplit("@", 1)
-    if "://" in left and ":" in left:
-        scheme, creds = left.split("://", 1)
-        user = creds.split(":", 1)[0]
-        return f"{scheme}://{user}:***@{right}"
-    return f"***@{right}"
+# vf parse/fetch/compare/apply moved to bot/verb_forms_parsing/parser.py
 
 
-def _normalize_proxy_input(raw):
-    """Normalize proxy input to curl-compatible URL."""
-    token = _safe_text(raw).strip()
-    if not token:
-        return ""
-    if "://" in token:
-        return token
-    # Support host:port:user:pass format from proxy providers.
-    parts = token.split(":")
-    if len(parts) >= 4 and parts[1].isdigit():
-        host = parts[0].strip()
-        port = parts[1].strip()
-        user = parts[2].strip()
-        password = ":".join(parts[3:]).strip()
-        if host and port and user and password:
-            return f"socks5://{user}:{password}@{host}:{port}"
-    # Support host:port format (no auth), default to socks5.
-    if len(parts) == 2 and parts[1].isdigit():
-        host = parts[0].strip()
-        port = parts[1].strip()
-        if host and port:
-            return f"socks5://{host}:{port}"
-    return token
-
-
-def _vf_parse_noun(html_text):
-    text = html_text or ""
-    article = ""
-    plural = ""
-    m_article = re.search(r'The article is "((?:der|die|das)\s+[^"]+)"', text, flags=re.IGNORECASE)
-    if m_article:
-        phrase = m_article.group(1).strip()
-        parts = phrase.split()
-        if parts:
-            article = parts[0].lower()
-    m_plural = re.search(r'nominative plural "([^"]+)"', text, flags=re.IGNORECASE)
-    if m_plural:
-        plural = m_plural.group(1).strip()
-    if not article or not plural:
-        body = re.sub(r"<[^>]+>", " ", text)
-        body = html.unescape(body)
-        body = re.sub(r"\s+", " ", body).strip()
-        if not article:
-            m2 = re.search(r'\bThe article is "((?:der|die|das)\s+[^"]+)"', body, flags=re.IGNORECASE)
-            if m2:
-                article = m2.group(1).split()[0].lower()
-        if not plural:
-            m2 = re.search(r'\bnominative plural "([^"]+)"', body, flags=re.IGNORECASE)
-            if m2:
-                plural = m2.group(1).strip()
-    return {"article": article, "plural": plural}
-
-
-def _vf_parse_verb(html_text):
-    text = html_text or ""
-    pr = ""
-    p2 = ""
-    m = re.search(r'<p[^>]+id="stammformen"[^>]*>(.*?)</p>', text, flags=re.IGNORECASE | re.DOTALL)
-    if m:
-        chunk = m.group(1)
-        chunk = re.sub(r"<a[^>]*>.*?</a>", " ", chunk, flags=re.IGNORECASE | re.DOTALL)
-        chunk = re.sub(r"<[^>]+>", "", chunk)
-        chunk = html.unescape(chunk)
-        chunk = re.sub(r"\s+", " ", chunk).strip()
-        parts = [x.strip() for x in chunk.split("·") if x.strip()]
-        if len(parts) >= 2:
-            pr = re.sub(r"[^A-Za-zÄÖÜäöüß -]+", "", parts[1]).strip()
-        if len(parts) >= 3:
-            p2_raw = re.sub(r"[^A-Za-zÄÖÜäöüß -]+", "", parts[2]).strip()
-            p2_tokens = [t for t in p2_raw.split() if t]
-            if p2_tokens and p2_tokens[0].lower() in {"hat", "haben", "ist", "sein"}:
-                p2_tokens = p2_tokens[1:]
-            p2 = " ".join(p2_tokens).strip()
-    return {"prateritum": pr, "partizip2": p2}
-
-
-def _vf_fetch_word(base_form, proxy_url, user_agent, timeout_sec=30):
-    url = f"https://www.verbformen.com/?w={base_form}"
-    cmd = [
-        "curl",
-        "-L",
-        "--compressed",
-        "-A",
-        user_agent,
-        "--max-time",
-        str(int(timeout_sec)),
-        "--fail-with-body",
-    ]
-    if proxy_url:
-        cmd.extend(["-x", proxy_url])
-    cmd.append(url)
-    proc = subprocess.run(cmd, capture_output=True, text=True)
-    if proc.returncode != 0:
-        raise RuntimeError((proc.stderr or proc.stdout or "curl failed").strip()[:300])
-    return proc.stdout
-
-
-def _vf_user_agent():
-    agents = [
-        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
-        "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    ]
-    return random.choice(agents)
-
-
-def _vf_compare(local_entry, remote_data):
-    word_type = (local_entry.get("type") or "").strip().lower()
-    diff = {}
-    if word_type == "nomen":
-        for key in ("article", "plural"):
-            local_v = _normalize_answer(local_entry.get(key, ""))
-            remote_v = _normalize_answer(remote_data.get(key, ""))
-            if remote_v and local_v != remote_v:
-                diff[key] = {"local": local_entry.get(key, ""), "remote": remote_data.get(key, "")}
-    elif word_type == "verb":
-        for key in ("prateritum", "partizip2"):
-            local_v = _normalize_answer(local_entry.get(key, ""))
-            remote_v = _normalize_answer(remote_data.get(key, ""))
-            if remote_v and local_v != remote_v:
-                diff[key] = {"local": local_entry.get(key, ""), "remote": remote_data.get(key, "")}
-    return diff
-
-
-def _vf_apply_single(db_path, row):
-    entry = get_word_by_id(db_path, row.get("word_id"))
-    if not entry:
-        return False
-    remote = row.get("remote_payload") or {}
-    updates = {}
-    if row.get("word_type") == "nomen":
-        for key in ("article", "plural"):
-            value = _safe_text(remote.get(key)).strip()
-            if value:
-                updates[key] = value
-    elif row.get("word_type") == "verb":
-        for key in ("prateritum", "partizip2"):
-            value = _safe_text(remote.get(key)).strip()
-            if value:
-                updates[key] = value
-    if not updates:
-        return False
-    updated = dict(entry)
-    updated.update(updates)
-    return bool(update_word_fields(db_path, entry.get("id"), updated))
-
-
-async def _vf_run_dry_task(bot, chat_id, user_id, candidates, sleep_sec, jitter_pct, proxy, label):
-    """Run VF dry check in background with progress and stop support."""
-    db_path = get_db_path()
-    total = len(candidates)
-    nouns = sum(1 for x in candidates if (x.get("type") or "").strip().lower() == "nomen")
-    verbs = sum(1 for x in candidates if (x.get("type") or "").strip().lower() == "verb")
-    await bot.send_message(
-        chat_id=chat_id,
-        text=f"VF parse started ({label}). total={total}, nomen={nouns}, verb={verbs}",
-    )
-    checked = 0
-    mismatch = 0
-    match = 0
-    not_found = 0
-    errors = 0
-    ban_streak = 0
-    for item in candidates:
-        if VF_STOP_FLAGS.get(int(user_id)):
-            await bot.send_message(
-                chat_id=chat_id,
-                text=(
-                    f"VF parse stopped by user. checked={checked}/{total}, match={match}, "
-                    f"mismatch={mismatch}, not_found={not_found}, fetch_error={errors}"
-                ),
-            )
-            return
-        word_type = item.get("type")
-        base = item.get("infinitive") if word_type == "verb" else item.get("german")
-        base = _safe_text(base).strip()
-        if not base:
-            continue
-        local_payload = {}
-        if word_type == "nomen":
-            local_payload = {"article": item.get("article", ""), "plural": item.get("plural", "")}
-        elif word_type == "verb":
-            local_payload = {"prateritum": item.get("prateritum", ""), "partizip2": item.get("partizip2", "")}
-        try:
-            html = await asyncio.to_thread(_vf_fetch_word, base, proxy, _vf_user_agent(), 30)
-            if "verbformen" not in html.lower():
-                raise RuntimeError("unexpected response")
-            remote = _vf_parse_noun(html) if word_type == "nomen" else _vf_parse_verb(html)
-            if not any(_safe_text(v).strip() for v in remote.values()):
-                status = "not_found"
-                not_found += 1
-                diff = {}
-            else:
-                diff = _vf_compare(item, remote)
-                status = "mismatch" if diff else "match"
-                mismatch += int(bool(diff))
-                match += int(not diff)
-            ban_streak = 0
-            save_vf_check_result(
-                db_path,
-                user_id,
-                item.get("id"),
-                word_type,
-                base,
-                status,
-                retryable=False,
-                local_payload=local_payload,
-                remote_payload=remote,
-                diff_payload=diff,
-                source_hash=item.get("vf_source_hash", ""),
-            )
-            checked += 1
-        except Exception as exc:
-            errors += 1
-            checked += 1
-            ban_streak += 1
-            save_vf_check_result(
-                db_path,
-                user_id,
-                item.get("id"),
-                word_type,
-                base,
-                "fetch_error",
-                retryable=True,
-                local_payload=local_payload,
-                remote_payload={"error": str(exc)},
-                diff_payload={},
-                source_hash=item.get("vf_source_hash", ""),
-            )
-
-        if checked % 5 == 0 or checked == total:
-            progress = int((checked * 100) / total) if total else 100
-            await bot.send_message(
-                chat_id=chat_id,
-                text=(
-                    f"VF progress: {checked}/{total} ({progress}%) | "
-                    f"match={match}, mismatch={mismatch}, not_found={not_found}, fetch_error={errors}"
-                ),
-            )
-
-        if ban_streak >= 10:
-            await bot.send_message(
-                chat_id=chat_id,
-                text=(
-                    "Emergency stop: 10 consecutive fetch errors. "
-                    "Possible ban/rate-limit. Stop parsing now and adjust proxy/sleep."
-                ),
-            )
-            return
-
-        jitter = max(0, int(sleep_sec * jitter_pct / 100))
-        delay = max(1, sleep_sec + random.randint(-jitter, jitter))
-        await asyncio.sleep(delay)
-
-    await bot.send_message(
-        chat_id=chat_id,
-        text=(
-            f"VF parse done. checked={checked}/{total}, match={match}, "
-            f"mismatch={mismatch}, not_found={not_found}, fetch_error={errors}"
-        ),
-    )
-
-
-async def _send_vf_menu(update, prefix_text=None):
-    proxy, sleep_sec, jitter_pct = _vf_settings_snapshot()
-    lines = [
-        "parse_VF:",
-        f"proxy = {_mask_proxy(proxy) or '-'}",
-        f"sleep = {sleep_sec}s",
-        f"jitter = {jitter_pct}%",
-        "",
-        "approve format: approve 12,19,25",
-    ]
-    text = "\n".join(lines)
-    if prefix_text:
-        text = f"{prefix_text}\n\n{text}"
-    await update.message.reply_text(text, reply_markup=_vf_menu_markup())
-    return SETTINGS_MENU
+# _vf_run_dry_task / _send_vf_menu moved to bot/verb_forms_parsing/handlers.py
 
 
 async def settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
