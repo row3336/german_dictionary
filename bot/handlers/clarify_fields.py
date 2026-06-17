@@ -5,8 +5,10 @@ Most cross-feature calls (weak/learning/db_search/synonyms/add prompts) still
 live in main and are imported LOCALLY inside the functions to avoid cycles.
 Quiz prompt senders come from handlers.quiz (already extracted).
 
-NOTE: function names kept as-is for now (_start_quiz_edit/add_edit/...); they
-are renamed to clarify_fields_* in a follow-up commit.
+The UI button is "clarify_fields"; functions/keyboards are named to match
+(clarify_fields_input, _start_clarify_fields, _resume_after_clarify,
+_clarify_fields_markup, _clarify_root_markup). The FSM state stays ADD_EDIT
+(internal, shared with the add-flow).
 """
 
 from telegram import ReplyKeyboardMarkup, Update
@@ -49,15 +51,15 @@ from ..ui.formatting import (
     _format_word_card,
 )
 from ..ui.keyboards import (
-    _edit_fields_markup,
+    _clarify_fields_markup,
     _main_menu_markup,
-    _quiz_edit_root_markup,
+    _clarify_root_markup,
     _quiz_markup,
     _type_choice_markup,
 )
 
 
-def _allowed_edit_fields(source):
+def _allowed_clarify_fields(source):
     """Handle allowed edit fields."""
     if source == "add":
         return {
@@ -125,7 +127,7 @@ def _set_entry_field_value(entry, field, value):
     return _set_entry_field(entry, f"{field}={value}")
 
 
-def _get_quiz_action_entry(context: ContextTypes.DEFAULT_TYPE, prefer_current=False):
+def _get_clarify_target(context: ContextTypes.DEFAULT_TYPE, prefer_current=False):
     """Handle get quiz action entry."""
     current = context.user_data.get("quiz_entry")
     last_answered = context.user_data.get("quiz_last_answered_entry")
@@ -138,9 +140,9 @@ def _get_quiz_action_entry(context: ContextTypes.DEFAULT_TYPE, prefer_current=Fa
     return None, ""
 
 
-async def _start_quiz_edit(update: Update, context: ContextTypes.DEFAULT_TYPE, return_state, prefer_current=False):
+async def _start_clarify_fields(update: Update, context: ContextTypes.DEFAULT_TYPE, return_state, prefer_current=False):
     """Handle start quiz edit."""
-    entry, title = _get_quiz_action_entry(context, prefer_current=prefer_current)
+    entry, title = _get_clarify_target(context, prefer_current=prefer_current)
     if not entry:
         return await _back_to_tests(update, context)
     context.user_data["edit_source"] = "quiz"
@@ -151,12 +153,12 @@ async def _start_quiz_edit(update: Update, context: ContextTypes.DEFAULT_TYPE, r
     await _reply_text_with_retry(
         update.message,
         "Choose edit action:",
-        reply_markup=_quiz_edit_root_markup(update.effective_user.id),
+        reply_markup=_clarify_root_markup(update.effective_user.id),
     )
     return ADD_EDIT
 
 
-async def _show_quiz_prompt_after_edit(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text, state_override=None):
+async def _resume_after_clarify(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text, state_override=None):
     """Handle show quiz prompt after edit."""
     from ..main import (
         _send_article_weak_prompt,
@@ -246,14 +248,14 @@ async def _show_quiz_prompt_after_edit(update: Update, context: ContextTypes.DEF
         await _reply_text_with_retry(
             update.message,
             "Choose edit action:",
-            reply_markup=_quiz_edit_root_markup(update.effective_user.id),
+            reply_markup=_clarify_root_markup(update.effective_user.id),
         )
         return ADD_EDIT
 
     return await _back_to_tests(update, context)
 
 
-async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle add edit."""
     from ..main import (
         _open_synonyms_menu,
@@ -288,18 +290,18 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context.user_data.pop("quiz_edit_entry", None)
                 return await _send_db_search_prompt(update, update.effective_user.id, None)
             if stage == "pick_scope":
-                return await _show_quiz_prompt_after_edit(update, context, "❌ Edit canceled.")
+                return await _resume_after_clarify(update, context, "❌ Edit canceled.")
             if stage == "pick_field":
                 context.user_data["edit_stage"] = "pick_scope"
                 await update.message.reply_text(
                     "Choose edit action:",
-                    reply_markup=_quiz_edit_root_markup(update.effective_user.id),
+                    reply_markup=_clarify_root_markup(update.effective_user.id),
                 )
                 return ADD_EDIT
             context.user_data["edit_stage"] = "pick_field"
             await update.message.reply_text(
                 "Choose field to edit:",
-                reply_markup=_edit_fields_markup(source),
+                reply_markup=_clarify_fields_markup(source),
             )
             return ADD_EDIT
 
@@ -308,7 +310,7 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["edit_stage"] = "pick_field"
         await update.message.reply_text(
             "Choose field to edit:",
-            reply_markup=_edit_fields_markup(source),
+            reply_markup=_clarify_fields_markup(source),
         )
         return ADD_EDIT
 
@@ -318,7 +320,7 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["edit_stage"] = "pick_field"
             await update.message.reply_text(
                 "Choose field to edit:",
-                reply_markup=_edit_fields_markup("quiz"),
+                reply_markup=_clarify_fields_markup("quiz"),
             )
             return ADD_EDIT
         if token == SEND_LEARN_TEXT:
@@ -328,13 +330,13 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
             prefix = "✅ Added to learning." if added else "Already in learning."
             if state == DB_SEARCH_VIEW:
                 return await _send_db_search_prompt(update, update.effective_user.id, prefix)
-            return await _show_quiz_prompt_after_edit(update, context, prefix)
+            return await _resume_after_clarify(update, context, prefix)
         if token == "delete":
             word_id = entry.get("id")
             if not word_id:
                 await update.message.reply_text(
                     "❌ Cannot delete: missing word id.",
-                    reply_markup=_quiz_edit_root_markup(update.effective_user.id),
+                    reply_markup=_clarify_root_markup(update.effective_user.id),
                 )
                 return ADD_EDIT
             removed = delete_word(get_db_path(), word_id)
@@ -368,7 +370,7 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await _back_to_tests(update, context)
         await update.message.reply_text(
             "Use buttons: fields, send_learn, delete, back.",
-            reply_markup=_quiz_edit_root_markup(update.effective_user.id),
+            reply_markup=_clarify_root_markup(update.effective_user.id),
         )
         return ADD_EDIT
 
@@ -377,17 +379,17 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("edit_field", None)
         await update.message.reply_text(
             "Choose field to edit:",
-            reply_markup=_edit_fields_markup(source),
+            reply_markup=_clarify_fields_markup(source),
         )
         return ADD_EDIT
 
     if stage == "pick_field":
         field = text.strip().lower()
-        allowed_fields = _allowed_edit_fields(source)
+        allowed_fields = _allowed_clarify_fields(source)
         if field not in allowed_fields:
             await update.message.reply_text(
                 "Use field buttons.",
-                reply_markup=_edit_fields_markup(source),
+                reply_markup=_clarify_fields_markup(source),
             )
             return ADD_EDIT
         if source == "quiz" and field == SYNONYMS_TEXT:
@@ -413,7 +415,7 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["edit_stage"] = "pick_field"
         await update.message.reply_text(
             "Choose field to edit:",
-            reply_markup=_edit_fields_markup(source),
+            reply_markup=_clarify_fields_markup(source),
         )
         return ADD_EDIT
 
@@ -448,6 +450,6 @@ async def add_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if last_answered and last_answered.get("id") == updated.get("id"):
             context.user_data["quiz_last_answered_entry"] = updated
         if context.user_data.get("edit_return_state") == DB_SEARCH_VIEW:
-            return await _show_quiz_prompt_after_edit(update, context, "✅ Updated.", state_override=DB_SEARCH_VIEW)
-        return await _show_quiz_prompt_after_edit(update, context, "✅ Updated.")
+            return await _resume_after_clarify(update, context, "✅ Updated.", state_override=DB_SEARCH_VIEW)
+        return await _resume_after_clarify(update, context, "✅ Updated.")
     return await _show_ai_preview(update, updated)

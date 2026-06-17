@@ -2,7 +2,7 @@
 FSRS scoring, and input_err correction.
 
 Cross-feature calls that still live in main (_send_entry_to_learning,
-_flag_current_word, _start_quiz_edit) are imported locally inside the handlers
+_flag_current_word, _start_clarify_fields) are imported locally inside the handlers
 to avoid an import cycle; they move here-adjacent as learning/flags/edit are
 extracted in later steps.
 """
@@ -422,7 +422,7 @@ async def _send_article_prompt(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle quiz ru de."""
-    from ..handlers.clarify_fields import _start_quiz_edit
+    from ..handlers.clarify_fields import _start_clarify_fields
     from ..main import _flag_current_word, _send_entry_to_learning
 
     text = update.message.text.strip()
@@ -442,7 +442,7 @@ async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_RU_DE)
     if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
-        return await _start_quiz_edit(update, context, QUIZ_RU_DE)
+        return await _start_clarify_fields(update, context, QUIZ_RU_DE)
 
     entry = context.user_data.get("quiz_entry")
     if not entry:
@@ -471,7 +471,7 @@ async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle quiz de ru."""
-    from ..handlers.clarify_fields import _start_quiz_edit
+    from ..handlers.clarify_fields import _start_clarify_fields
     from ..main import _flag_current_word, _send_entry_to_learning
 
     text = update.message.text.strip()
@@ -491,7 +491,7 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_DE_RU)
     if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
-        return await _start_quiz_edit(update, context, QUIZ_DE_RU)
+        return await _start_clarify_fields(update, context, QUIZ_DE_RU)
 
     entry = context.user_data.get("quiz_entry")
     if not entry:
@@ -520,7 +520,7 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def quiz_pl_sg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle quiz plural to singular."""
-    from ..handlers.clarify_fields import _start_quiz_edit
+    from ..handlers.clarify_fields import _start_clarify_fields
     from ..main import _flag_current_word, _send_entry_to_learning
 
     text = update.message.text.strip()
@@ -540,7 +540,7 @@ async def quiz_pl_sg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_PL_SG)
     if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
-        return await _start_quiz_edit(update, context, QUIZ_PL_SG)
+        return await _start_clarify_fields(update, context, QUIZ_PL_SG)
 
     entry = context.user_data.get("quiz_entry")
     if not entry:
@@ -578,7 +578,7 @@ async def quiz_pl_sg(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def quiz_article(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle quiz article."""
-    from ..handlers.clarify_fields import _start_quiz_edit
+    from ..handlers.clarify_fields import _start_clarify_fields
     from ..main import _flag_current_word
 
     text = update.message.text.strip()
@@ -587,7 +587,7 @@ async def quiz_article(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_ARTICLE)
     if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
-        return await _start_quiz_edit(update, context, QUIZ_ARTICLE)
+        return await _start_clarify_fields(update, context, QUIZ_ARTICLE)
 
     entry = context.user_data.get("quiz_entry")
     if not entry:

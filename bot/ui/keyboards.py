@@ -148,7 +148,7 @@ def _weak_article_markup(user_id):
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 
-def _edit_fields_markup(source):
+def _clarify_fields_markup(source):
     """Handle edit fields markup."""
     if source == "add":
         return ReplyKeyboardMarkup(
@@ -184,7 +184,7 @@ def _type_choice_markup():
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 
-def _quiz_edit_root_markup(user_id):
+def _clarify_root_markup(user_id):
     """Handle quiz edit root markup."""
     return ReplyKeyboardMarkup(
         [[QUIZ_FIELDS_TEXT, SEND_LEARN_TEXT], ["delete", t(_user_interface_lang(user_id), "back")]],

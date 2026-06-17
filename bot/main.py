@@ -286,10 +286,10 @@ from .handlers.dump import (
     dump_menu_choice,
 )
 from .handlers.clarify_fields import (
-    _get_quiz_action_entry,
-    _show_quiz_prompt_after_edit,
-    _start_quiz_edit,
-    add_edit,
+    _get_clarify_target,
+    _resume_after_clarify,
+    _start_clarify_fields,
+    clarify_fields_input,
 )
 from .handlers.quiz import (
     _apply_input_err,
@@ -361,8 +361,8 @@ from .ui.formatting import (
 )
 from .ui.keyboards import (
     _algo_settings_menu_keys,
-    _edit_fields_markup,
-    _quiz_edit_root_markup,
+    _clarify_fields_markup,
+    _clarify_root_markup,
     _quiz_idle_markup,
     _quiz_markup,
     _type_choice_markup,
@@ -744,7 +744,7 @@ def _parse_level_toggle(text):
     return token if token in {"A1", "A2", "B1", "B2", "C1", "C2"} else ""
 
 
-# _edit_fields_markup / _type_choice_markup moved to bot/ui/keyboards.py
+# _clarify_fields_markup / _type_choice_markup moved to bot/ui/keyboards.py
 
 
 def _display_type_label(raw_type):
@@ -788,10 +788,10 @@ def _display_ai_entry(entry):
     return result
 
 
-# _allowed_edit_fields moved to bot/handlers/clarify_fields.py
+# _allowed_clarify_fields moved to bot/handlers/clarify_fields.py
 
 
-# _quiz_edit_root_markup moved to bot/ui/keyboards.py
+# _clarify_root_markup moved to bot/ui/keyboards.py
 
 
 # _dict_lang_tag moved to bot/common/lang.py
@@ -802,7 +802,7 @@ def _syn_auto_text(user_id):
     return f"{SYN_AUTO_TEXT} {_dict_lang_tag(user_id)}"
 
 
-# _set_entry_field / _set_entry_field_value / _get_quiz_action_entry / _start_quiz_edit moved to bot/handlers/clarify_fields.py
+# _set_entry_field / _set_entry_field_value / _get_clarify_target / _start_clarify_fields moved to bot/handlers/clarify_fields.py
 
 
 # _remember_last_answer moved to bot/handlers/quiz.py
@@ -914,7 +914,7 @@ def _apply_input_err_learning(update, context):
     return bool(result)
 
 
-# _show_quiz_prompt_after_edit moved to bot/handlers/clarify_fields.py
+# _resume_after_clarify moved to bot/handlers/clarify_fields.py
 
 
 # _format_word_card moved to bot/ui/formatting.py
@@ -1669,7 +1669,7 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"```text\n{chr(10).join(lines)}\n```", parse_mode="Markdown")
     await update.message.reply_text(
         "Choose edit action:",
-        reply_markup=_quiz_edit_root_markup(user_id),
+        reply_markup=_clarify_root_markup(user_id),
     )
     context.user_data["quiz_entry"] = entry
     context.user_data["quiz_edit_entry"] = entry
@@ -1700,7 +1700,7 @@ async def db_search_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }:
         return await db_search_input(update, context)
     if text in {QUIZ_FIELDS_TEXT, SEND_LEARN_TEXT, "delete"}:
-        return await add_edit(update, context)
+        return await clarify_fields_input(update, context)
     # Any other text is treated as a new search query.
     return await db_search_input(update, context)
 
@@ -2061,7 +2061,7 @@ async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if action == "back":
         return await _send_learning_menu(update, user_id)
     if text == AI_CLARIFY_FIELD and is_owner(user_id):
-        return await _start_quiz_edit(update, context, LEARNING_QUIZ, prefer_current=True)
+        return await _start_clarify_fields(update, context, LEARNING_QUIZ, prefer_current=True)
 
     entry = context.user_data.get("quiz_entry")
     if not entry:
@@ -2928,7 +2928,7 @@ async def add_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(_format_word_card(entry, "AI word card:", user_id=update.effective_user.id))
         await update.message.reply_text(
             "Choose field to edit:",
-            reply_markup=_edit_fields_markup("add"),
+            reply_markup=_clarify_fields_markup("add"),
         )
         return ADD_EDIT
 
@@ -2981,7 +2981,7 @@ async def add_clarify(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(_format_word_card(entry, "AI word card:", user_id=update.effective_user.id))
         await update.message.reply_text(
             "Choose field to edit:",
-            reply_markup=_edit_fields_markup("add"),
+            reply_markup=_clarify_fields_markup("add"),
         )
         return ADD_EDIT
     if text == AI_CLARIFY_AI:
@@ -2999,7 +2999,7 @@ async def add_clarify(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return await _process_ai_word(update, context, word, text)
 
 
-# add_edit moved to bot/handlers/clarify_fields.py
+# clarify_fields_input moved to bot/handlers/clarify_fields.py
 
 async def _return_from_synonyms(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix="✅ Done."):
     """Handle return from synonyms."""
@@ -3172,7 +3172,7 @@ async def synonyms_clear_confirm(update: Update, context: ContextTypes.DEFAULT_T
 
 async def _flag_current_word(update: Update, context: ContextTypes.DEFAULT_TYPE, return_state):
     """Handle flag current word."""
-    entry, _ = _get_quiz_action_entry(context)
+    entry, _ = _get_clarify_target(context)
     if not entry:
         return await _back_to_tests(update, context)
     word_id = entry.get("id")
@@ -3180,21 +3180,21 @@ async def _flag_current_word(update: Update, context: ContextTypes.DEFAULT_TYPE,
         return await _back_to_tests(update, context)
     add_word_flag(get_db_path(), word_id=word_id, user_id=update.effective_user.id, comment="")
     if return_state == QUIZ_RU_DE:
-        return await _show_quiz_prompt_after_edit(update, context, "✅ Flag saved.", state_override=QUIZ_RU_DE)
+        return await _resume_after_clarify(update, context, "✅ Flag saved.", state_override=QUIZ_RU_DE)
     if return_state == QUIZ_DE_RU:
-        return await _show_quiz_prompt_after_edit(update, context, "✅ Flag saved.", state_override=QUIZ_DE_RU)
+        return await _resume_after_clarify(update, context, "✅ Flag saved.", state_override=QUIZ_DE_RU)
     if return_state == QUIZ_PL_SG:
-        return await _show_quiz_prompt_after_edit(update, context, "✅ Flag saved.", state_override=QUIZ_PL_SG)
+        return await _resume_after_clarify(update, context, "✅ Flag saved.", state_override=QUIZ_PL_SG)
     if return_state == QUIZ_ARTICLE:
-        return await _show_quiz_prompt_after_edit(update, context, "✅ Flag saved.", state_override=QUIZ_ARTICLE)
+        return await _resume_after_clarify(update, context, "✅ Flag saved.", state_override=QUIZ_ARTICLE)
     if return_state == QUIZ_ARTICLE_WEAK:
-        return await _show_quiz_prompt_after_edit(update, context, "✅ Flag saved.", state_override=QUIZ_ARTICLE_WEAK)
+        return await _resume_after_clarify(update, context, "✅ Flag saved.", state_override=QUIZ_ARTICLE_WEAK)
     if return_state == QUIZ_PLURAL_WEAK:
-        return await _show_quiz_prompt_after_edit(update, context, "✅ Flag saved.", state_override=QUIZ_PLURAL_WEAK)
+        return await _resume_after_clarify(update, context, "✅ Flag saved.", state_override=QUIZ_PLURAL_WEAK)
     if return_state == QUIZ_PRATERITUM_WEAK:
-        return await _show_quiz_prompt_after_edit(update, context, "✅ Flag saved.", state_override=QUIZ_PRATERITUM_WEAK)
+        return await _resume_after_clarify(update, context, "✅ Flag saved.", state_override=QUIZ_PRATERITUM_WEAK)
     if return_state == QUIZ_PARTIZIP2_WEAK:
-        return await _show_quiz_prompt_after_edit(update, context, "✅ Flag saved.", state_override=QUIZ_PARTIZIP2_WEAK)
+        return await _resume_after_clarify(update, context, "✅ Flag saved.", state_override=QUIZ_PARTIZIP2_WEAK)
     return await _back_to_tests(update, context)
 
 
@@ -3216,7 +3216,7 @@ async def quiz_article_weak(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_ARTICLE_WEAK)
     if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
-        return await _start_quiz_edit(update, context, QUIZ_ARTICLE_WEAK)
+        return await _start_clarify_fields(update, context, QUIZ_ARTICLE_WEAK)
 
     entry = context.user_data.get("quiz_entry")
     if not entry:
@@ -3258,7 +3258,7 @@ async def quiz_plural_weak(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_PLURAL_WEAK)
     if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
-        return await _start_quiz_edit(update, context, QUIZ_PLURAL_WEAK)
+        return await _start_clarify_fields(update, context, QUIZ_PLURAL_WEAK)
 
     entry = context.user_data.get("quiz_entry")
     if not entry:
@@ -3303,7 +3303,7 @@ async def quiz_prateritum_weak(update: Update, context: ContextTypes.DEFAULT_TYP
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_PRATERITUM_WEAK)
     if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
-        return await _start_quiz_edit(update, context, QUIZ_PRATERITUM_WEAK)
+        return await _start_clarify_fields(update, context, QUIZ_PRATERITUM_WEAK)
 
     entry = context.user_data.get("quiz_entry")
     if not entry:
@@ -3348,7 +3348,7 @@ async def quiz_partizip2_weak(update: Update, context: ContextTypes.DEFAULT_TYPE
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_PARTIZIP2_WEAK)
     if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
-        return await _start_quiz_edit(update, context, QUIZ_PARTIZIP2_WEAK)
+        return await _start_clarify_fields(update, context, QUIZ_PARTIZIP2_WEAK)
 
     entry = context.user_data.get("quiz_entry")
     if not entry:
@@ -4227,7 +4227,7 @@ def main():
             ADD_PRECHECK_EDIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_precheck_edit)],
             ADD_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_confirm)],
             ADD_CLARIFY: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_clarify)],
-            ADD_EDIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_edit)],
+            ADD_EDIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, clarify_fields_input)],
             QUIZ_RU_DE: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_ru_de)],
             QUIZ_DE_RU: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_de_ru)],
             QUIZ_PL_SG: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_pl_sg)],
