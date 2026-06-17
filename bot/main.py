@@ -274,6 +274,18 @@ from .common.navigation import (
     _clear_last_answer,
     _reply_text_with_retry,
 )
+from .common.dumps import (
+    _create_dump_file,
+    _create_logs_dump_file,
+    _create_suggestions_dump_file,
+)
+from .handlers.dump import (
+    _auto_dump_keys,
+    _dump_menu_keys,
+    auto_dump_choice,
+    dump_menu_choice,
+)
+from .jobs.auto_dump import _configure_auto_dump
 from .jobs.reminders import _configure_learning_reminders
 from .jobs.reports import _configure_fsrs_reports
 from .ui.formatting import (
@@ -546,22 +558,13 @@ def _run_unit_tests_report():
     return text.replace("```", "'''")
 
 
-def _dump_menu_keys(user_id):
-    """Handle dump menu keys."""
-    lang = _user_interface_lang(user_id)
-    return [
-        [t(lang, "dump_logs"), t(lang, "dump_db")],
-        [t(lang, "auto_dump"), t(lang, "back")],
-    ]
+# _dump_menu_keys moved to bot/handlers/dump.py
 
 
 # _action_key_from_text moved to bot/common/navigation.py
 
 
-def _auto_dump_keys(user_id):
-    """Handle auto dump keys."""
-    lang = _user_interface_lang(user_id)
-    return [[t(lang, "daily"), t(lang, "weekly")], [t(lang, "off"), t(lang, "back")]]
+# _auto_dump_keys moved to bot/handlers/dump.py
 
 
 def _add_keys(user_id):
@@ -3203,89 +3206,7 @@ async def topic_filter_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return SETTINGS_MENU
 
 
-async def dump_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle dump menu choice."""
-    text = update.message.text.strip()
-    user_id = update.effective_user.id
-    action = _action_key_from_text(text, user_id)
-
-    if action == "back":
-        await update.message.reply_text(
-            t(_user_interface_lang(user_id), "settings_title"),
-            reply_markup=ReplyKeyboardMarkup(_settings_menu_keys(user_id), resize_keyboard=True),
-        )
-        return SETTINGS_MENU
-
-    if action == "dump_db":
-        dump_path = _create_dump_file()
-        await update.message.reply_document(
-            document=dump_path.open("rb"),
-            filename=dump_path.name,
-            caption="✅ SQLite dump created.",
-        )
-        return DUMP_MENU
-
-    if action == "dump_logs":
-        logs_path = _create_logs_dump_file()
-        if logs_path is None:
-            await update.message.reply_text(
-                "Log file is empty or not found yet.",
-                reply_markup=ReplyKeyboardMarkup(_dump_menu_keys(user_id), resize_keyboard=True),
-            )
-            return DUMP_MENU
-        await update.message.reply_document(
-            document=logs_path.open("rb"),
-            filename=logs_path.name,
-            caption="✅ Logs dump created.",
-        )
-        return DUMP_MENU
-
-    if action == "auto_dump":
-        mode = get_setting(get_db_path(), AUTO_DUMP_SETTING_KEY, "off")
-        await update.message.reply_text(
-            f"Current auto dump mode: {mode}",
-            reply_markup=ReplyKeyboardMarkup(_auto_dump_keys(user_id), resize_keyboard=True),
-        )
-        return AUTO_DUMP_MENU
-
-    await update.message.reply_text(
-        "Use dump menu buttons.",
-        reply_markup=ReplyKeyboardMarkup(_dump_menu_keys(user_id), resize_keyboard=True),
-    )
-    return DUMP_MENU
-
-
-async def auto_dump_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle auto dump choice."""
-    text = update.message.text.strip()
-    user_id = update.effective_user.id
-    if not is_owner(user_id):
-        return await _back_to_main_menu(update)
-
-    action = _action_key_from_text(text, user_id)
-    if action == "back":
-        await update.message.reply_text(
-            "dump:",
-            reply_markup=ReplyKeyboardMarkup(_dump_menu_keys(user_id), resize_keyboard=True),
-        )
-        return DUMP_MENU
-
-    mode_map = {"daily": "daily", "weekly": "weekly", "off": "off"}
-    if action not in mode_map:
-        await update.message.reply_text(
-            "Use auto dump buttons.",
-            reply_markup=ReplyKeyboardMarkup(_auto_dump_keys(user_id), resize_keyboard=True),
-        )
-        return AUTO_DUMP_MENU
-
-    mode = mode_map[action]
-    set_setting(get_db_path(), AUTO_DUMP_SETTING_KEY, mode)
-    _configure_auto_dump(context.application, mode)
-    await update.message.reply_text(
-        f"✅ Auto dump mode set: {mode}",
-        reply_markup=ReplyKeyboardMarkup(_dump_menu_keys(user_id), resize_keyboard=True),
-    )
-    return DUMP_MENU
+# dump_menu_choice / auto_dump_choice moved to bot/handlers/dump.py
 
 async def add_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle add input."""
@@ -5315,43 +5236,7 @@ def _update_srs_for_entry(user_id, entry, mode, ok):
     _log_transaction(user_id, f"quiz:{mode}", snapshot)
 
 
-def _create_dump_file():
-    """Handle create dump file."""
-    db_path = get_db_path()
-    dump_dir = get_dump_dir()
-    dump_dir.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    dump_path = dump_dir / f"words-{stamp}.db"
-    shutil.copy2(db_path, dump_path)
-    return dump_path
-
-
-def _create_logs_dump_file():
-    """Handle create logs dump file."""
-    log_path = get_log_path()
-    if not log_path.exists() or log_path.stat().st_size == 0:
-        return None
-
-    dump_dir = get_dump_dir()
-    dump_dir.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    out_path = dump_dir / f"bot-logs-{stamp}.txt"
-    shutil.copy2(log_path, out_path)
-    return out_path
-
-
-def _create_suggestions_dump_file():
-    """Handle create suggestions dump file."""
-    src = get_suggestions_path()
-    if not src.exists() or src.stat().st_size == 0:
-        return None
-
-    dump_dir = get_dump_dir()
-    dump_dir.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    out_path = dump_dir / f"suggested-words-{stamp}.txt"
-    shutil.copy2(src, out_path)
-    return out_path
+# dump-file creation helpers moved to bot/common/dumps.py
 
 
 def _append_suggested_words(user, words):
@@ -5419,53 +5304,7 @@ def _cleanup_old_dump_logs(days=14):
             continue
 
 
-async def _auto_dump_job(context: ContextTypes.DEFAULT_TYPE):
-    """Handle auto dump job."""
-    try:
-        dump_path = _create_dump_file()
-    except Exception:
-        return
-
-    owner_id = get_owner_id()
-    if owner_id:
-        try:
-            await context.bot.send_document(
-                chat_id=owner_id,
-                document=dump_path.open("rb"),
-                filename=dump_path.name,
-                caption=f"✅ Auto dump created: {dump_path.name}",
-            )
-        except Exception:
-            logging.exception("Auto dump job failed")
-    cleanup_transaction_logs(get_db_path(), days=7)
-
-
-# retention/report formatters moved to bot/jobs/reports.py
-
-
-def _configure_auto_dump(app: Application, mode: str):
-    """Handle configure auto dump."""
-    job_queue = app.job_queue
-    if job_queue is None:
-        return
-
-    for job in job_queue.get_jobs_by_name(AUTO_DUMP_JOB_NAME):
-        job.schedule_removal()
-
-    mode = (mode or "off").lower()
-    if mode == "daily":
-        job_queue.run_daily(
-            _auto_dump_job,
-            time=time(hour=0, minute=0, tzinfo=timezone.utc),
-            name=AUTO_DUMP_JOB_NAME,
-        )
-    elif mode == "weekly":
-        job_queue.run_daily(
-            _auto_dump_job,
-            time=time(hour=0, minute=0, tzinfo=timezone.utc),
-            days=(0,),
-            name=AUTO_DUMP_JOB_NAME,
-        )
+# auto-dump job + _configure_auto_dump moved to bot/jobs/auto_dump.py
 
 
 # learning reminder + FSRS report/peak jobs moved to bot/jobs/reminders.py and bot/jobs/reports.py
