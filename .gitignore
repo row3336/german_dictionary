@@ -1,4 +1,12 @@
 .env
 .venv/
+venv/
 __pycache__/
 *.pyc
+
+# Local data — contains secrets (e.g. vf_proxy credentials in app_settings).
+# The SQLite DB and its dump backups must NEVER be committed.
+data/
+*.db
+*.sqlite
+*.sqlite3
