@@ -190,3 +190,13 @@ def _clarify_root_markup(user_id):
         [[QUIZ_FIELDS_TEXT, SEND_LEARN_TEXT], ["delete", t(_user_interface_lang(user_id), "back")]],
         resize_keyboard=True,
     )
+
+
+def _add_keys(user_id):
+    """Handle add keys."""
+    return [[t(_user_interface_lang(user_id), "back")]]
+
+
+def _add_input_markup(user_id):
+    """Handle add input markup."""
+    return ReplyKeyboardMarkup([[t(_user_interface_lang(user_id), "back")]], resize_keyboard=True)

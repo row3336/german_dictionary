@@ -388,6 +388,8 @@ from .ui.formatting import (
     _weak_status,
 )
 from .ui.keyboards import (
+    _add_input_markup,
+    _add_keys,
     _algo_settings_menu_keys,
     _clarify_fields_markup,
     _clarify_root_markup,
@@ -570,9 +572,7 @@ def _run_unit_tests_report():
 # _auto_dump_keys moved to bot/handlers/dump.py
 
 
-def _add_keys(user_id):
-    """Handle add keys."""
-    return [[t(_user_interface_lang(user_id), "back")]]
+# _add_keys / _add_input_markup moved to bot/ui/keyboards.py
 
 
 def _stop_keys(user_id):
@@ -583,11 +583,6 @@ def _stop_keys(user_id):
 def _clarify_keys(user_id):
     """Handle clarify keys."""
     return AI_KEYS
-
-
-def _add_input_markup(user_id):
-    """Handle add input markup."""
-    return ReplyKeyboardMarkup([[t(_user_interface_lang(user_id), "back")]], resize_keyboard=True)
 
 
 # db_search markups + _topic_sort_key + _format_topic_words_line moved to bot/handlers/db_search.py
