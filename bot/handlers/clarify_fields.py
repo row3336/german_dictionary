@@ -265,11 +265,8 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
         _send_plural_weak_prompt,
         _send_prateritum_weak_prompt,
     )
+    from ..handlers.add_words import _show_ai_preview, _stop_queue
     from ..handlers.learning import _send_entry_to_learning
-    from ..main import (
-        _show_ai_preview,
-        _stop_queue,
-    )
 
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "stop":
