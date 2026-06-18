@@ -257,10 +257,10 @@ async def _resume_after_clarify(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle add edit."""
+    from ..handlers.db_search import _send_db_search_prompt
     from ..main import (
         _open_synonyms_menu,
         _send_article_weak_prompt,
-        _send_db_search_prompt,
         _send_entry_to_learning,
         _send_partizip2_weak_prompt,
         _send_plural_weak_prompt,
