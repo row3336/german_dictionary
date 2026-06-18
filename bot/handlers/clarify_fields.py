@@ -166,7 +166,7 @@ async def _resume_after_clarify(update: Update, context: ContextTypes.DEFAULT_TY
         _send_plural_weak_prompt,
         _send_prateritum_weak_prompt,
     )
-    from ..main import _send_learning_prompt
+    from ..handlers.learning import _send_learning_prompt
 
     state = state_override or context.user_data.get("edit_return_state")
     if state != DB_SEARCH_VIEW:
@@ -265,8 +265,8 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
         _send_plural_weak_prompt,
         _send_prateritum_weak_prompt,
     )
+    from ..handlers.learning import _send_entry_to_learning
     from ..main import (
-        _send_entry_to_learning,
         _show_ai_preview,
         _stop_queue,
     )

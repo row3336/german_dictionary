@@ -423,7 +423,8 @@ async def _send_article_prompt(update: Update, context: ContextTypes.DEFAULT_TYP
 async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle quiz ru de."""
     from ..handlers.clarify_fields import _start_clarify_fields
-    from ..main import _flag_current_word, _send_entry_to_learning
+    from ..handlers.learning import _send_entry_to_learning
+    from ..main import _flag_current_word
 
     text = update.message.text.strip()
     action = _action_key_from_text(text, update.effective_user.id)
@@ -472,7 +473,8 @@ async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle quiz de ru."""
     from ..handlers.clarify_fields import _start_clarify_fields
-    from ..main import _flag_current_word, _send_entry_to_learning
+    from ..handlers.learning import _send_entry_to_learning
+    from ..main import _flag_current_word
 
     text = update.message.text.strip()
     action = _action_key_from_text(text, update.effective_user.id)
@@ -521,7 +523,8 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def quiz_pl_sg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle quiz plural to singular."""
     from ..handlers.clarify_fields import _start_clarify_fields
-    from ..main import _flag_current_word, _send_entry_to_learning
+    from ..handlers.learning import _send_entry_to_learning
+    from ..main import _flag_current_word
 
     text = update.message.text.strip()
     action = _action_key_from_text(text, update.effective_user.id)
