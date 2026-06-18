@@ -160,13 +160,13 @@ async def _start_clarify_fields(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def _resume_after_clarify(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text, state_override=None):
     """Handle show quiz prompt after edit."""
-    from ..main import (
+    from ..handlers.weak import (
         _send_article_weak_prompt,
-        _send_learning_prompt,
         _send_partizip2_weak_prompt,
         _send_plural_weak_prompt,
         _send_prateritum_weak_prompt,
     )
+    from ..main import _send_learning_prompt
 
     state = state_override or context.user_data.get("edit_return_state")
     if state != DB_SEARCH_VIEW:
@@ -259,12 +259,14 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
     """Handle add edit."""
     from ..handlers.db_search import _send_db_search_prompt
     from ..handlers.synonyms import _open_synonyms_menu
-    from ..main import (
+    from ..handlers.weak import (
         _send_article_weak_prompt,
-        _send_entry_to_learning,
         _send_partizip2_weak_prompt,
         _send_plural_weak_prompt,
         _send_prateritum_weak_prompt,
+    )
+    from ..main import (
+        _send_entry_to_learning,
         _show_ai_preview,
         _stop_queue,
     )

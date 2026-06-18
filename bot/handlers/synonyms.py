@@ -110,7 +110,7 @@ async def _return_from_synonyms(update: Update, context: ContextTypes.DEFAULT_TY
         _send_pl_sg_prompt,
         _send_ru_de_prompt,
     )
-    from ..main import (
+    from ..handlers.weak import (
         _send_article_weak_prompt,
         _send_partizip2_weak_prompt,
         _send_plural_weak_prompt,
