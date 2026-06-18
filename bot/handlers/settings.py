@@ -4,6 +4,7 @@ and the topic-filter editor. The Settings root router (settings_menu_choice,
 verbformen-heavy) is added in a follow-up step.
 """
 
+import asyncio
 import os
 import re
 import subprocess
@@ -78,6 +79,52 @@ from ..ui.keyboards import (
     _ru_de_menu_keys,
     _settings_menu_keys,
     _tests_menu_keys,
+)
+
+# Extra imports for the verbformen-heavy Settings root router (settings_menu_choice).
+from ..app_config import BACK_TEXT, DUMP_MENU
+from ..common.dumps import _create_suggestions_dump_file
+from ..handlers.dump import _dump_menu_keys
+from ..labels import (
+    VF_APPLY_TEXT,
+    VF_DRY_RUN_ALL_TEXT,
+    VF_DRY_RUN_NEW_TEXT,
+    VF_RETRY_TEXT,
+    VF_SET_JITTER_TEXT,
+    VF_SET_PROXY_TEXT,
+    VF_SET_SLEEP_TEXT,
+    VF_SHOW_DIFF_TEXT,
+    VF_STOP_TEXT,
+    VF_TEST_PROXY_TEXT,
+    VF_VERIFY_TEXT,
+)
+from ..storage import (
+    approve_vf_checks,
+    get_word_by_id,
+    list_approved_vf_checks,
+    list_latest_vf_mismatches,
+    list_latest_vf_retryable,
+    list_vf_candidates,
+    mark_vf_check_applied,
+)
+from ..text_utils import split_text_chunks as _split_text_chunks
+from ..verb_forms_parsing.handlers import (
+    VF_RUNNING_TASKS,
+    VF_STOP_FLAGS,
+    _send_vf_menu,
+    _vf_menu_markup,
+    _vf_run_dry_task,
+)
+from ..verb_forms_parsing.parser import (
+    VF_JITTER_KEY,
+    VF_PROXY_KEY,
+    VF_SLEEP_KEY,
+    _normalize_proxy_input,
+    _vf_apply_single,
+    _vf_compare,
+    _vf_fetch_word,
+    _vf_settings_snapshot,
+    _vf_user_agent,
 )
 
 
@@ -540,6 +587,208 @@ async def topic_filter_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         f"✅ Topic filter set to: {value}",
+        reply_markup=ReplyKeyboardMarkup(_settings_menu_keys(user_id), resize_keyboard=True),
+    )
+    return SETTINGS_MENU
+
+
+async def settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle settings menu choice."""
+    text = update.message.text.strip()
+    user_id = update.effective_user.id
+    action = _action_key_from_text(text, user_id)
+
+    if context.user_data.get("vf_waiting") and action != "back":
+        wait = context.user_data.get("vf_waiting")
+        context.user_data.pop("vf_waiting", None)
+        if wait == "proxy":
+            proxy_value = _normalize_proxy_input(text.strip())
+            set_setting(get_db_path(), VF_PROXY_KEY, proxy_value)
+            return await _send_vf_menu(update, "✅ proxy saved")
+        if wait == "sleep":
+            try:
+                value = max(1, int(text.strip()))
+            except ValueError:
+                return await _send_vf_menu(update, "❌ sleep must be integer seconds")
+            set_setting(get_db_path(), VF_SLEEP_KEY, str(value))
+            return await _send_vf_menu(update, "✅ sleep saved")
+        if wait == "jitter":
+            try:
+                value = int(text.strip())
+            except ValueError:
+                return await _send_vf_menu(update, "❌ jitter must be integer percent")
+            value = max(0, min(80, value))
+            set_setting(get_db_path(), VF_JITTER_KEY, str(value))
+            return await _send_vf_menu(update, "✅ jitter saved")
+
+    if context.user_data.get("vf_menu") and (text == BACK_TEXT or action == "back"):
+        context.user_data.pop("vf_menu", None)
+        context.user_data.pop("vf_waiting", None)
+        await update.message.reply_text(
+            t(_user_interface_lang(user_id), "settings_title"),
+            reply_markup=ReplyKeyboardMarkup(_settings_menu_keys(user_id), resize_keyboard=True),
+        )
+        return SETTINGS_MENU
+
+    if action == "back":
+        context.user_data.pop("vf_waiting", None)
+        context.user_data.pop("vf_menu", None)
+        return await _back_to_main_menu(update)
+
+    if action == "interface_lang":
+        return await _ask_interface_language(update)
+
+    if action == "dict_lang":
+        return await _ask_dictionary_language(update, user_id)
+
+    if action == "algo_settings":
+        return await _send_algo_settings_menu(update, user_id)
+
+    if action == "dump":
+        await update.message.reply_text(
+            "dump:",
+            reply_markup=ReplyKeyboardMarkup(_dump_menu_keys(user_id), resize_keyboard=True),
+        )
+        return DUMP_MENU
+
+    if action == "review_flags":
+        context.user_data["vf_menu"] = True
+        return await _send_vf_menu(update)
+
+    if context.user_data.get("vf_menu"):
+        db_path = get_db_path()
+        proxy, sleep_sec, jitter_pct = _vf_settings_snapshot()
+
+        if text == VF_SET_PROXY_TEXT:
+            context.user_data["vf_waiting"] = "proxy"
+            await update.message.reply_text("Send proxy url:", reply_markup=ReplyKeyboardRemove())
+            return SETTINGS_MENU
+        if text == VF_SET_SLEEP_TEXT:
+            context.user_data["vf_waiting"] = "sleep"
+            await update.message.reply_text("Send sleep in seconds:", reply_markup=ReplyKeyboardRemove())
+            return SETTINGS_MENU
+        if text == VF_SET_JITTER_TEXT:
+            context.user_data["vf_waiting"] = "jitter"
+            await update.message.reply_text("Send jitter percent (0-80):", reply_markup=ReplyKeyboardRemove())
+            return SETTINGS_MENU
+
+        if text == VF_TEST_PROXY_TEXT:
+            if not proxy:
+                return await _send_vf_menu(update, "❌ proxy is required")
+            try:
+                _vf_fetch_word("Haus", proxy, _vf_user_agent(), timeout_sec=20)
+                return await _send_vf_menu(update, "✅ proxy ok")
+            except Exception as exc:
+                return await _send_vf_menu(update, f"❌ proxy failed: {exc}")
+
+        if text in {VF_DRY_RUN_NEW_TEXT, VF_DRY_RUN_ALL_TEXT, VF_RETRY_TEXT}:
+            if not proxy:
+                return await _send_vf_menu(update, "❌ proxy is required")
+            running = VF_RUNNING_TASKS.get(int(user_id))
+            if running and not running.done():
+                return await _send_vf_menu(update, "Parser is already running. Use stop_parse.")
+            if text == VF_RETRY_TEXT:
+                retry_rows = list_latest_vf_retryable(db_path, user_id, limit=500)
+                ids = {row.get("word_id") for row in retry_rows}
+                candidates = [w for w in list_vf_candidates(db_path, user_id, only_unchecked=False, limit=0) if w.get("id") in ids]
+            else:
+                candidates = list_vf_candidates(
+                    db_path,
+                    user_id,
+                    only_unchecked=(text == VF_DRY_RUN_NEW_TEXT),
+                    limit=0,
+                )
+            if not candidates:
+                return await _send_vf_menu(update, "No candidates.")
+            VF_STOP_FLAGS[int(user_id)] = False
+            label = "retry_failed" if text == VF_RETRY_TEXT else ("dry_run_new" if text == VF_DRY_RUN_NEW_TEXT else "dry_run_all")
+            task = asyncio.create_task(
+                _vf_run_dry_task(
+                    context.bot,
+                    update.effective_chat.id,
+                    int(user_id),
+                    candidates,
+                    sleep_sec,
+                    jitter_pct,
+                    proxy,
+                    label,
+                )
+            )
+            VF_RUNNING_TASKS[int(user_id)] = task
+            return await _send_vf_menu(update, f"Started {label}. Running in background.")
+
+        if text == VF_STOP_TEXT:
+            running = VF_RUNNING_TASKS.get(int(user_id))
+            if not running or running.done():
+                return await _send_vf_menu(update, "No active parser task.")
+            VF_STOP_FLAGS[int(user_id)] = True
+            return await _send_vf_menu(update, "Stop requested. Waiting current request to finish...")
+
+        if text == VF_SHOW_DIFF_TEXT:
+            rows = list_latest_vf_mismatches(db_path, user_id, limit=300)
+            if not rows:
+                return await _send_vf_menu(update, "No mismatches.")
+            lines = ["mismatches (use: approve id1,id2):"]
+            for row in rows:
+                diff = row.get("diff_payload") or {}
+                fields = ",".join(sorted(diff.keys())) or "-"
+                lines.append(f"{row['id']}: {row.get('base_form','')} [{row.get('word_type','')}] -> {fields}")
+            chunks = _split_text_chunks("\n".join(lines))
+            for idx, chunk in enumerate(chunks):
+                markup = _vf_menu_markup() if idx == len(chunks) - 1 else None
+                await update.message.reply_text(f"```text\n{chunk}\n```", parse_mode="Markdown", reply_markup=markup)
+            return SETTINGS_MENU
+
+        if text.startswith("approve "):
+            raw = text.split(" ", 1)[1]
+            ids = [x.strip() for x in raw.replace(";", ",").split(",") if x.strip()]
+            changed = approve_vf_checks(db_path, user_id, ids)
+            return await _send_vf_menu(update, f"approved: {changed}")
+
+        if text == VF_APPLY_TEXT:
+            rows = list_approved_vf_checks(db_path, user_id, only_not_applied=True)
+            if not rows:
+                return await _send_vf_menu(update, "No approved rows.")
+            applied = 0
+            for row in rows:
+                if _vf_apply_single(db_path, row):
+                    applied += 1
+                mark_vf_check_applied(db_path, row.get("id"))
+            return await _send_vf_menu(update, f"applied: {applied}/{len(rows)}")
+
+        if text == VF_VERIFY_TEXT:
+            rows = list_approved_vf_checks(db_path, user_id, only_not_applied=False)
+            if not rows:
+                return await _send_vf_menu(update, "No approved history.")
+            ok = 0
+            bad = 0
+            for row in rows:
+                entry = get_word_by_id(db_path, row.get("word_id"))
+                if not entry:
+                    continue
+                diff = _vf_compare(entry, row.get("remote_payload") or {})
+                if diff:
+                    bad += 1
+                else:
+                    ok += 1
+            return await _send_vf_menu(update, f"verify: ok={ok}, still_diff={bad}")
+
+        return await _send_vf_menu(update, "Use parse_VF buttons.")
+
+    if action == "suggested_words":
+        suggestions_path = _create_suggestions_dump_file()
+        if suggestions_path is None:
+            await update.message.reply_text("No suggested words file yet.")
+            return SETTINGS_MENU
+        await update.message.reply_document(
+            document=suggestions_path.open("rb"),
+            filename=suggestions_path.name,
+            caption="✅ Suggested words dump created.",
+        )
+        return SETTINGS_MENU
+
+    await update.message.reply_text(
+        "Use settings buttons.",
         reply_markup=ReplyKeyboardMarkup(_settings_menu_keys(user_id), resize_keyboard=True),
     )
     return SETTINGS_MENU
