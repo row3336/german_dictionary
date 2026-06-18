@@ -1,4 +1,3 @@
-
 import logging
 import os
 from logging.handlers import TimedRotatingFileHandler
@@ -35,16 +34,24 @@ from .app_config import (
     DRILL_SETTINGS_MENU,
     DUMP_MENU,
     FSRS_REPORT_HOUR_KEY,
+    FSRS_REPORT_UTC_HOUR_DEFAULT,
     FSRS_WEEKLY_REPORT_WEEK_KEY,
+    LEARNING_DAILY_QTY_DEFAULT,
     LEARNING_DAILY_QTY_KEY,
+    LEARNING_INTERVALS_DEFAULT,
     LEARNING_INTERVALS_KEY,
     LEARNING_MENU,
     LEARNING_QUIZ,
+    LEARNING_READY_QUORUM_DEFAULT,
     LEARNING_READY_QUORUM_KEY,
+    LEARNING_REMINDER_COOLDOWN_DEFAULT,
     LEARNING_REMINDER_COOLDOWN_KEY,
+    LEARNING_REMINDER_INTERVAL_DEFAULT,
     LEARNING_REMINDER_INTERVAL_KEY,
     LEARNING_SETTINGS_MENU,
     MENU,
+    OWNER_DICT_LANG_KEY,
+    OWNER_INTERFACE_LANG_KEY,
     QUIZ_ARTICLE,
     QUIZ_ARTICLE_WEAK,
     QUIZ_DE_RU,
@@ -67,7 +74,9 @@ from .app_config import (
     TESTS_MENU,
     TOPIC_FILTER_EDIT,
     TOPIC_FILTER_KEY,
+    WEAK_DRILL_GAP_DEFAULT,
     WEAK_DRILL_GAP_KEY,
+    WEAK_DRILL_REPEATS_DEFAULT,
     WEAK_DRILL_REPEATS_KEY,
     get_db_path,
     get_dump_dir,
@@ -83,18 +92,6 @@ from .storage import (
     list_transaction_logs,
     restore_user_word_state,
     set_setting,
-)
-from .app_config import (
-    FSRS_REPORT_UTC_HOUR_DEFAULT,
-    LEARNING_DAILY_QTY_DEFAULT,
-    LEARNING_INTERVALS_DEFAULT,
-    LEARNING_READY_QUORUM_DEFAULT,
-    LEARNING_REMINDER_COOLDOWN_DEFAULT,
-    LEARNING_REMINDER_INTERVAL_DEFAULT,
-    OWNER_DICT_LANG_KEY,
-    OWNER_INTERFACE_LANG_KEY,
-    WEAK_DRILL_GAP_DEFAULT,
-    WEAK_DRILL_REPEATS_DEFAULT,
 )
 from .common.navigation import _back_to_tests
 from .handlers.dump import (
@@ -164,33 +161,11 @@ from .jobs.reminders import _configure_learning_reminders
 from .jobs.reports import _configure_fsrs_reports
 
 
-# UI button-text labels moved to bot/labels.py.
-# Owner/lang setting keys + algorithm defaults moved to bot/app_config.py.
-# VF keys + runtime task/stop dicts moved to bot/verb_forms_parsing/
-
-
-# core menu keyboard builders moved to bot/ui/keyboards.py
-# language/mode helpers moved to bot/common/lang.py
-
-
-# settings getters moved to bot/common/settings.py
-
-
-# _build_learning_topic_mix_queue / _pick_learning_due_entry moved to bot/handlers/learning.py
-
-
-# topic-filter + fsrs-report-hour helpers moved to bot/common/settings.py
-
-
-# settings sub-menus / language select / topic_filter_edit / unit-tests report moved to bot/handlers/settings.py
-# menu routers (start, menu_choice, tests_menu_choice, quiz_ru_de_menu_choice) + _load_info_text moved to bot/handlers/menu.py
 def _is_owner_only(user_id):
     """Handle is owner only."""
     return is_owner(user_id)
 
 
-# settings sub-menus / language select / topic_filter_edit / unit-tests report moved to bot/handlers/settings.py
-# menu routers (start, menu_choice, tests_menu_choice, quiz_ru_de_menu_choice) + _load_info_text moved to bot/handlers/menu.py
 async def undo_steps(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /undo [N] rollback by transaction log."""
     user_id = update.effective_user.id
@@ -221,10 +196,6 @@ async def undo_steps(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return MENU
 
 
-# _send_db_search_prompt moved to bot/handlers/db_search.py
-
-
-# menu routers (start, menu_choice, tests_menu_choice, quiz_ru_de_menu_choice) + _load_info_text moved to bot/handlers/menu.py
 async def _flag_current_word(update: Update, context: ContextTypes.DEFAULT_TYPE, return_state):
     """Handle flag current word."""
     entry, _ = _get_clarify_target(context)
@@ -253,16 +224,6 @@ async def _flag_current_word(update: Update, context: ContextTypes.DEFAULT_TYPE,
     return await _back_to_tests(update, context)
 
 
-# quiz handlers (quiz_ru_de/de_ru/pl_sg/article) moved to bot/handlers/quiz.py
-
-
-# weak-mode feedback formatters moved to bot/ui/formatting.py
-
-
-# quiz_article_weak / quiz_plural_weak / quiz_prateritum_weak / quiz_partizip2_weak moved to bot/handlers/weak.py
-
-
-# add-word + AI recognition pipeline moved to bot/handlers/add_words.py
 def _configure_logging():
     """Handle configure logging."""
     log_path = get_log_path()
@@ -307,12 +268,6 @@ def _cleanup_old_dump_logs(days=14):
                 path.unlink(missing_ok=True)
         except OSError:
             continue
-
-
-# auto-dump job + _configure_auto_dump moved to bot/jobs/auto_dump.py
-
-
-# learning reminder + FSRS report/peak jobs moved to bot/jobs/reminders.py and bot/jobs/reports.py
 
 
 def _prepare_storage():
