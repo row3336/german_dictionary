@@ -209,6 +209,7 @@ from .text_utils import (
     normalize_lookup_text as _normalize_lookup_text,
     normalize_russian_singular as _normalize_russian_singular,
     russian_variants as _russian_variants,
+    split_text_chunks as _split_text_chunks,
     try_parse_json as _try_parse_json,
     type_label as _type_label,
 )
@@ -353,6 +354,7 @@ from .ui.formatting import (
     _format_pl_sg_question,
     _format_ru_question,
     _format_ru_question_no_q,
+    _format_topic_learning_line,
     _format_word_card,
     _is_pl_sg_eligible,
     _nomen_with_edge_emoji,
@@ -685,40 +687,8 @@ def _format_topic_words_line(entry):
     return f"{base} [{entry_type}]"
 
 
-def _format_topic_learning_line(entry):
-    """Handle format learning line grouped by topic."""
-    entry_type = str(entry.get("type", "")).strip().lower()
-    topic = str(entry.get("topic", "")).strip() or "-"
-    if entry_type == "verb":
-        base = str(entry.get("infinitive", "")).strip()
-    else:
-        base = str(entry.get("german", "")).strip()
-    if entry_type == "nomen":
-        article = str(entry.get("article", "")).strip()
-        base = f"{article} {base}".strip() if article else base
-    return f"[{topic}] - [{base}]"
-
-
-def _split_text_chunks(text, max_size=3500):
-    """Handle split text chunks."""
-    text = str(text or "").strip()
-    if not text:
-        return []
-    chunks = []
-    current = []
-    current_len = 0
-    for line in text.splitlines():
-        add = len(line) + 1
-        if current and current_len + add > max_size:
-            chunks.append("\n".join(current).strip())
-            current = [line]
-            current_len = add
-        else:
-            current.append(line)
-            current_len += add
-    if current:
-        chunks.append("\n".join(current).strip())
-    return [c for c in chunks if c]
+# _format_topic_learning_line moved to bot/ui/formatting.py
+# _split_text_chunks moved to bot/text_utils.py (split_text_chunks)
 
 
 def _load_info_text(lang="en"):

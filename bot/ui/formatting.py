@@ -359,3 +359,17 @@ def _format_feedback_partizip2_weak(entry, ok):
         lines.extend(["", f"_{_md_escape(p2)}_"])
     _append_hint_lines(lines, entry, ok)
     return "\n".join(lines)
+
+
+def _format_topic_learning_line(entry):
+    """Handle format learning line grouped by topic."""
+    entry_type = str(entry.get("type", "")).strip().lower()
+    topic = str(entry.get("topic", "")).strip() or "-"
+    if entry_type == "verb":
+        base = str(entry.get("infinitive", "")).strip()
+    else:
+        base = str(entry.get("german", "")).strip()
+    if entry_type == "nomen":
+        article = str(entry.get("article", "")).strip()
+        base = f"{article} {base}".strip() if article else base
+    return f"[{topic}] - [{base}]"
