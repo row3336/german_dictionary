@@ -2267,26 +2267,34 @@ def learning_add_words(db_path, user_id, words, batch_id, first_delay_seconds):
 
 
 def learning_add_word_by_id(db_path, user_id, word_id, batch_id, first_delay_seconds):
-    """Handle learning add word by id."""
+    """Add/restart a word in learning as a fresh item (preview from step 0).
+
+    Manual "send to learning" must always (re)enqueue the word as new — even if it
+    previously completed/skipped learning or is already active — so it goes through
+    the preview/learning cycle again. Returns 1 (the upsert always touches a row).
+    """
     init_db(db_path)
     due_iso = _utc_now_iso()
-    added = 0
     with _connect(db_path) as conn:
-        cur = conn.execute(
+        conn.execute(
             """
             INSERT INTO learning_items (user_id, word_id, batch_id, step_index, preview_done, next_due, status)
             VALUES (?, ?, ?, 0, 0, ?, 'active')
-            ON CONFLICT(user_id, word_id) DO NOTHING
+            ON CONFLICT(user_id, word_id) DO UPDATE SET
+                batch_id = excluded.batch_id,
+                step_index = 0,
+                preview_done = 0,
+                next_due = excluded.next_due,
+                status = 'active',
+                updated_at = CURRENT_TIMESTAMP
             """,
             (int(user_id), _safe_text(word_id), _safe_text(batch_id), due_iso),
         )
-        added = int(cur.rowcount > 0)
-        if added:
-            conn.execute(
-                "UPDATE learning_batches SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                (_safe_text(batch_id),),
-            )
-    return added
+        conn.execute(
+            "UPDATE learning_batches SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (_safe_text(batch_id),),
+        )
+    return 1
 
 
 def learning_preview_entry(db_path, user_id):

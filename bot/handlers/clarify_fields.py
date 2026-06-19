@@ -326,7 +326,7 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
             added = _send_entry_to_learning(update, context, entry_key="quiz_edit_entry")
             context.user_data["edit_stage"] = "pick_scope"
             state = context.user_data.get("edit_return_state")
-            prefix = "✅ Added to learning." if added else "Already in learning."
+            prefix = "✅ Added to learning." if added else "Nothing to send."
             if state == DB_SEARCH_VIEW:
                 return await _send_db_search_prompt(update, update.effective_user.id, prefix)
             return await _resume_after_clarify(update, context, prefix)

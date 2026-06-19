@@ -438,7 +438,7 @@ async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await _repeat_current_ru_de(update, context, prefix)
     if text == SEND_LEARN_TEXT:
         added = _send_entry_to_learning(update, context, entry_key="quiz_entry")
-        prefix = "✅ Added to learning." if added else "Already in learning."
+        prefix = "✅ Added to learning." if added else "Nothing to send."
         return await _repeat_current_ru_de(update, context, prefix)
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_RU_DE)
@@ -488,7 +488,7 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await _repeat_current_de_ru(update, context, prefix)
     if text == SEND_LEARN_TEXT:
         added = _send_entry_to_learning(update, context, entry_key="quiz_entry")
-        prefix = "✅ Added to learning." if added else "Already in learning."
+        prefix = "✅ Added to learning." if added else "Nothing to send."
         return await _repeat_current_de_ru(update, context, prefix)
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_DE_RU)
@@ -538,7 +538,7 @@ async def quiz_pl_sg(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await _send_pl_sg_prompt(update, context, prefix)
     if text == SEND_LEARN_TEXT:
         added = _send_entry_to_learning(update, context, entry_key="quiz_entry")
-        prefix = "✅ Added to learning." if added else "Already in learning."
+        prefix = "✅ Added to learning." if added else "Nothing to send."
         return await _send_pl_sg_prompt(update, context, prefix)
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_PL_SG)
