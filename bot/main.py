@@ -257,17 +257,18 @@ def _configure_logging():
 
 
 def _cleanup_old_dump_logs(days=14):
-    """Handle cleanup old dump logs."""
+    """Delete log dumps and DB backups older than `days` from the backups dir."""
     cutoff = datetime.now(timezone.utc).timestamp() - (days * 24 * 60 * 60)
     dump_dir = get_dump_dir()
     if not dump_dir.exists():
         return
-    for path in dump_dir.glob("bot-logs-*.txt"):
-        try:
-            if path.stat().st_mtime < cutoff:
-                path.unlink(missing_ok=True)
-        except OSError:
-            continue
+    for pattern in ("bot-logs-*.txt", "words-*.db"):
+        for path in dump_dir.glob(pattern):
+            try:
+                if path.stat().st_mtime < cutoff:
+                    path.unlink(missing_ok=True)
+            except OSError:
+                continue
 
 
 def _prepare_storage():

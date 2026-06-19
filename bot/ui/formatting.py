@@ -306,9 +306,7 @@ def _format_feedback_de_ru(entry, ok, dict_lang, user_id=None):
     """Handle format feedback de ru."""
     status = _status_text(ok)
     lines = [f"{status} >>>     *{_md_escape(_low_word(_entry_translation(entry, dict_lang)))}*"]
-    card = _format_word_card(entry, title="Word card:", user_id=user_id)
-    if card:
-        lines.extend(["", f"```text\n{card}\n```"])
+    _append_hint_lines(lines, entry, ok)
     return "\n".join(lines)
 
 
