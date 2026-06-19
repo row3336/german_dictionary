@@ -17,6 +17,7 @@ from ..app_config import (
 from ..common.lang import _mode_de_l1, _mode_l1_de
 from ..common.settings import _fsrs_report_hour_utc
 from ..storage import (
+    count_learning_done_in_week,
     fsrs_due_forecast,
     get_daily_first_touch_retention,
     get_setting,
@@ -32,7 +33,7 @@ def _format_retention_daily_text(retention):
     correct = int(retention.get("correct") or 0)
     rate = float(retention.get("rate") or 0.0)
     if total <= 0:
-        return f"Retention rate ({day}, first touch): no data."
+        return f"#daily\nRetention rate ({day}, first touch): no data."
     if rate < 70.0:
         zone = "<70%: overload"
     elif 80.0 <= rate <= 90.0:
@@ -42,21 +43,23 @@ def _format_retention_daily_text(retention):
     else:
         zone = "outside optimal range"
     return (
+        f"#daily\n"
         f"Retention rate ({day}, first touch): {rate:.1f}%\n"
         f"Correct: {correct}/{total}\n"
         f"{zone}"
     )
 
 
-def _format_retention_weekly_text(retention):
+def _format_retention_weekly_text(retention, learning_done=0):
     """Handle weekly first-touch retention text."""
     ws = retention.get("week_start", "")
     we = retention.get("week_end", "")
     total = int(retention.get("total") or 0)
     correct = int(retention.get("correct") or 0)
     rate = float(retention.get("rate") or 0.0)
+    learning_line = f"Learning completed: {learning_done}"
     if total <= 0:
-        return f"#weekly\nRetention rate ({ws}..{we}, first touch): no data."
+        return f"#weekly\nRetention rate ({ws}..{we}, first touch): no data.\n{learning_line}"
     if rate < 70.0:
         zone = "<70%: overload"
     elif 80.0 <= rate <= 90.0:
@@ -69,7 +72,8 @@ def _format_retention_weekly_text(retention):
         f"#weekly\n"
         f"Retention rate ({ws}..{we}, first touch): {rate:.1f}%\n"
         f"Correct: {correct}/{total}\n"
-        f"{zone}"
+        f"{zone}\n"
+        f"{learning_line}"
     )
 
 
@@ -143,9 +147,10 @@ async def _fsrs_daily_report_job(context: ContextTypes.DEFAULT_TYPE):
                     week_start=prev_ws_iso,
                     modes=(_mode_l1_de(owner_id), _mode_de_l1(owner_id)),
                 )
+                learning_done = count_learning_done_in_week(db_path, owner_id, week_start=prev_ws_iso)
                 await context.bot.send_message(
                     chat_id=owner_id,
-                    text=f"```text\n{_format_retention_weekly_text(weekly)}\n```",
+                    text=f"```text\n{_format_retention_weekly_text(weekly, learning_done)}\n```",
                     parse_mode="Markdown",
                 )
                 set_setting(db_path, FSRS_WEEKLY_REPORT_WEEK_KEY, prev_ws_iso)

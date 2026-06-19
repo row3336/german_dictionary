@@ -1250,6 +1250,30 @@ def get_weekly_first_touch_retention(db_path, user_id, week_start=None, modes=No
     return {"week_start": ws_iso, "week_end": we_iso, "total": total, "correct": correct, "rate": rate}
 
 
+def count_learning_done_in_week(db_path, user_id, week_start=None):
+    """Count distinct words that finished learning (completed/skipped) in a week [Mon..Mon)."""
+    init_db(db_path)
+    if week_start:
+        ws = date.fromisoformat(str(week_start))
+    else:
+        today = date.today()
+        ws = today - timedelta(days=today.weekday())
+    we = ws + timedelta(days=7)
+    with _connect(db_path) as conn:
+        cnt = conn.execute(
+            """
+            SELECT COUNT(DISTINCT li.word_id) AS cnt
+            FROM learning_items li
+            WHERE li.user_id = ?
+              AND li.status IN ('completed', 'skipped')
+              AND date(li.updated_at) >= date(?)
+              AND date(li.updated_at) < date(?)
+            """,
+            (int(user_id), ws.isoformat(), we.isoformat()),
+        ).fetchone()["cnt"]
+    return int(cnt or 0)
+
+
 def snapshot_user_word_state(db_path, user_id, word_id, modes=None):
     """Handle snapshot user word state for rollback."""
     init_db(db_path)
