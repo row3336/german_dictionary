@@ -41,7 +41,7 @@ from ..labels import (
     TEST_PRATERITUM_WEAK_TEXT,
     TEST_VERB_WEAK_TEXT,
 )
-from ..storage import get_setting, get_statistics_snapshot, list_topics
+from ..storage import get_setting, get_statistics_snapshot, list_topics, select_due
 from ..text_utils import split_text_chunks as _split_text_chunks
 from ..ui.keyboards import (
     _add_input_markup,
@@ -132,7 +132,17 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if action == "stat":
         stats = get_statistics_snapshot(get_db_path(), user_id=user_id, mode=_mode_l1_de(user_id))
         word_types = stats.get("word_types") or {}
+        db_path = get_db_path()
+        fsrs_ru_de_due = len(
+            select_due(db_path, user_id=user_id, mode=_mode_l1_de(user_id), exclude_correct_today=True)
+        )
+        fsrs_de_ru_due = len(
+            select_due(db_path, user_id=user_id, mode=_mode_de_l1(user_id), exclude_correct_today=True)
+        )
         lines = [
+            f"fsrs_ru_de_due = {fsrs_ru_de_due}",
+            f"fsrs_de_ru_due = {fsrs_de_ru_due}",
+            "",
             f"today complete fsrs Ru > De = {stats['today_complete_fsrs_ru_de']}",
             f"today complete fsrs De > Ru = {stats['today_complete_fsrs_de_ru']}",
             f"today complete pl > sing = {stats.get('today_complete_pl_sg', 0)}",
