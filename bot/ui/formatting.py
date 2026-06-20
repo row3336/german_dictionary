@@ -185,6 +185,16 @@ def _format_de_ru_question(entry):
         german = _low_word(entry.get("german", ""))
         lines.append(_md_escape(german))
     lines.append(">>    ❓")
+    # Always show image/example with the De>Ru question (memorization aid).
+    image = str(entry.get("image", "") or "").strip()
+    example = str(entry.get("example", "") or "").strip()
+    if image:
+        lines.append("")
+        lines.append(_md_escape(image))
+    if example:
+        if not image:
+            lines.append("")
+        lines.append(_md_escape(example))
     return "\n".join(lines)
 
 
@@ -305,9 +315,8 @@ def _format_learning_preview_prompt(entry, dict_lang):
 def _format_feedback_de_ru(entry, ok, dict_lang, user_id=None):
     """Handle format feedback de ru."""
     status = _status_text(ok)
-    lines = [f"{status} >>>     *{_md_escape(_low_word(_entry_translation(entry, dict_lang)))}*"]
-    _append_hint_lines(lines, entry, ok)
-    return "\n".join(lines)
+    # image/example are shown with the question now (_format_de_ru_question), not here.
+    return f"{status} >>>     *{_md_escape(_low_word(_entry_translation(entry, dict_lang)))}*"
 
 
 def _format_feedback_article(entry, ok, dict_lang):

@@ -220,13 +220,24 @@ async def synonyms_add_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def synonyms_remove_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle synonyms remove input."""
     text = update.message.text.strip()
-    if _action_key_from_text(text, update.effective_user.id) == "back":
-        return SYN_MENU
     anchor_id = context.user_data.get("syn_anchor_id")
     anchor = get_word_by_id(get_db_path(), anchor_id)
+    if _action_key_from_text(text, update.effective_user.id) == "back":
+        group = get_synonym_group(get_db_path(), anchor_id)
+        await update.message.reply_text(
+            _format_syn_group(anchor or {}, group, _user_dict_lang(update.effective_user.id)),
+            reply_markup=_syn_menu_markup(update.effective_user.id),
+        )
+        return SYN_MENU
     group = get_synonym_group(get_db_path(), anchor_id)
-    if not anchor or not group:
+    if not anchor:
         return await _return_from_synonyms(update, context, None)
+    if not group:
+        await update.message.reply_text(
+            _format_syn_group(anchor, group, _user_dict_lang(update.effective_user.id)) + "\n\nNo synonyms to remove.",
+            reply_markup=_syn_menu_markup(update.effective_user.id),
+        )
+        return SYN_MENU
     target = None
     if text.isdigit():
         idx = int(text)
