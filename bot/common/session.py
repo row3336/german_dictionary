@@ -191,6 +191,31 @@ def _maybe_take_retry_entry(context, mode):
     return entry
 
 
+def _force_take_retry_entry(context, mode):
+    """Take the next retry entry ignoring the gap.
+
+    Used to drain pending retries when the FSRS due queue is already empty: the
+    remaining ses_rtr_it retries must finish (even one word back-to-back) before
+    the session reports "no due words".
+    """
+    queue = _retry_queue(context, mode)
+    counts = _retry_counts(context, mode)
+    while queue:
+        entry, _new_since, took = maybe_take_retry_entry(
+            queue,
+            counts,
+            0,
+            0,
+            lambda word_id: get_word_by_id(get_db_path(), word_id),
+        )
+        if entry:
+            context.user_data["quiz_is_retry"] = True
+            _set_retry_since_last(context, mode, 0)
+            return entry
+        # a missing word was popped — keep draining
+    return None
+
+
 def _register_retry_result(context, mode, word_id, ok, was_retry):
     """Handle register retry result."""
     queue = _retry_queue(context, mode)

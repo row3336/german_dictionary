@@ -26,6 +26,7 @@ from ..app_config import (
 from ..common.lang import _mode_de_l1, _mode_l1_de, _mode_pl_sg, _user_dict_lang
 from ..common.navigation import _action_key_from_text, _back_to_tests, _reply_text_with_retry
 from ..common.session import (
+    _force_take_retry_entry,
     _mark_session_word,
     _maybe_take_retry_entry,
     _pick_due_entry,
@@ -276,6 +277,8 @@ async def _send_ru_de_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
         context.user_data["quiz_is_retry"] = False
         entry = _pick_due_entry(context, update.effective_user.id, mode)
     if not entry:
+        entry = _force_take_retry_entry(context, mode)
+    if not entry:
         count = _session_count(context, mode)
         if prefix_text:
             await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
@@ -308,6 +311,8 @@ async def _send_de_ru_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
     if not entry:
         context.user_data["quiz_is_retry"] = False
         entry = _pick_due_entry(context, update.effective_user.id, mode)
+    if not entry:
+        entry = _force_take_retry_entry(context, mode)
     if not entry:
         count = _session_count(context, mode)
         if prefix_text:
