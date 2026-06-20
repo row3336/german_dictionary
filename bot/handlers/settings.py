@@ -199,7 +199,8 @@ async def _send_learning_settings_menu(update: Update, user_id):
 
 def _run_unit_tests_report():
     """Run the unit test suite + DB smoke check; return a compact summary."""
-    root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    # Project root = three levels up from bot/handlers/settings.py (tests/ + scripts/ live there).
+    root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     env = dict(os.environ)
     env["PYTHONWARNINGS"] = "ignore::ResourceWarning"
 
