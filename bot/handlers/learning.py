@@ -323,7 +323,7 @@ async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TY
         update.message,
         prompt_text,
         reply_markup=ReplyKeyboardMarkup(
-            [[INPUT_ERR_TEXT, I_DONT_KNOW_TEXT], [LEARNING_SKIP_TEXT, AI_CLARIFY_FIELD, t(_user_interface_lang(user_id), "back")]],
+            [[I_DONT_KNOW_TEXT, INPUT_ERR_TEXT], [LEARNING_SKIP_TEXT, AI_CLARIFY_FIELD, t(_user_interface_lang(user_id), "back")]],
             resize_keyboard=True,
         ),
         parse_mode="Markdown",
