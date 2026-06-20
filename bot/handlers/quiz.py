@@ -438,8 +438,12 @@ async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await _repeat_current_ru_de(update, context, prefix)
     if text == SEND_LEARN_TEXT:
         added = _send_entry_to_learning(update, context, entry_key="quiz_entry")
+        if added:
+            # Word is now in active learning (excluded from FSRS due) — drop it from the
+            # retry queue and move on to the NEXT word, not the one just sent.
+            _remove_from_retry(context, _mode_l1_de(update.effective_user.id), (context.user_data.get("quiz_entry") or {}).get("id"))
         prefix = "✅ Added to learning." if added else "Nothing to send."
-        return await _repeat_current_ru_de(update, context, prefix)
+        return await _send_ru_de_prompt(update, context, prefix)
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_RU_DE)
     if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
@@ -488,8 +492,10 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await _repeat_current_de_ru(update, context, prefix)
     if text == SEND_LEARN_TEXT:
         added = _send_entry_to_learning(update, context, entry_key="quiz_entry")
+        if added:
+            _remove_from_retry(context, _mode_de_l1(update.effective_user.id), (context.user_data.get("quiz_entry") or {}).get("id"))
         prefix = "✅ Added to learning." if added else "Nothing to send."
-        return await _repeat_current_de_ru(update, context, prefix)
+        return await _send_de_ru_prompt(update, context, prefix)
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_DE_RU)
     if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
@@ -538,6 +544,8 @@ async def quiz_pl_sg(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await _send_pl_sg_prompt(update, context, prefix)
     if text == SEND_LEARN_TEXT:
         added = _send_entry_to_learning(update, context, entry_key="quiz_entry")
+        if added:
+            _remove_from_retry(context, _mode_pl_sg(update.effective_user.id), (context.user_data.get("quiz_entry") or {}).get("id"))
         prefix = "✅ Added to learning." if added else "Nothing to send."
         return await _send_pl_sg_prompt(update, context, prefix)
     if text == FLAG_TEXT:
