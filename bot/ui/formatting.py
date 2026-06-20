@@ -5,6 +5,7 @@ Leaf module: depends only on text_utils/storage/app_config (no handler back-refs
 
 from ..app_config import get_db_path
 from ..storage import get_word_study_status
+from ..text_utils import cap_plural as _cap_plural
 from ..text_utils import cap_word as _cap_word
 from ..text_utils import low_word as _low_word
 from ..text_utils import md_escape as _md_escape
@@ -160,7 +161,7 @@ def _format_de_ru_question(entry):
         german = _cap_word(entry.get("german", ""))
         answer = f"{article} {german}".strip() if article else german
         lines.append(_md_escape(answer))
-        plural = _cap_word(entry.get("plural", ""))
+        plural = _cap_plural(entry.get("plural", ""))
         if plural:
             lines.append(f"_  pl. die {_md_escape(plural)}_")
     elif word_type == "verb":
@@ -214,7 +215,7 @@ def _is_pl_sg_eligible(entry):
 
 def _format_pl_sg_question(entry):
     """Handle format plural->singular question."""
-    plural = _cap_word(entry.get("plural", ""))
+    plural = _cap_plural(entry.get("plural", ""))
     return f">>    die {_md_escape(plural)} -> singular?"
 
 
@@ -248,7 +249,7 @@ def _format_feedback_ru_de(entry, ok):
     lines = [headline]
 
     if word_type == "nomen":
-        plural = _cap_word(entry.get("plural", ""))
+        plural = _cap_plural(entry.get("plural", ""))
         if plural:
             lines.append("")
             lines.append(f"_pl. die {_md_escape(plural)}_")
@@ -286,7 +287,7 @@ def _format_learning_preview_prompt(entry, dict_lang):
     if word_type == "nomen":
         answer = _nomen_with_edge_emoji(entry.get("article", ""), entry.get("german", ""))
         lines.append(f"*{_md_escape(answer)}*")
-        plural = _cap_word(entry.get("plural", ""))
+        plural = _cap_plural(entry.get("plural", ""))
         if plural:
             lines.append(f"_pl. die {_md_escape(plural)}_")
     elif word_type == "verb":
@@ -322,7 +323,7 @@ def _format_feedback_de_ru(entry, ok, dict_lang, user_id=None):
 def _format_feedback_article(entry, ok, dict_lang):
     """Handle format feedback article."""
     status = _status_text(ok)
-    plural = _cap_word(entry.get("plural", ""))
+    plural = _cap_plural(entry.get("plural", ""))
     headline = f"{status} >>>     {_md_escape(_nomen_with_edge_emoji(entry.get('article', ''), entry.get('german', '')))}"
     lines = [headline.strip()]
     if plural:
@@ -335,7 +336,7 @@ def _format_feedback_article(entry, ok, dict_lang):
 def _format_feedback_plural_weak(entry, ok):
     """Handle format feedback plural weak."""
     wrapped = _nomen_with_edge_emoji(entry.get("article", ""), entry.get("german", ""))
-    plural = _cap_word(entry.get("plural", ""))
+    plural = _cap_plural(entry.get("plural", ""))
     headline = f"{_weak_status(ok)} >>>     {_md_escape(wrapped)}"
     lines = [headline]
     if plural:

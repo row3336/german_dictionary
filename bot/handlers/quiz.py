@@ -49,6 +49,7 @@ from ..storage import (
 )
 from ..text_utils import normalize_answer as _normalize_answer
 from ..text_utils import russian_variants as _russian_variants
+from ..text_utils import split_plural_forms
 from ..ui.formatting import (
     _article_matches,
     _entry_translation,
@@ -153,6 +154,18 @@ def _normalize_plural_value(value):
     return token
 
 
+def _plural_form_set(stored):
+    """Normalized set of accepted plural forms (a noun may have several)."""
+    forms = {_normalize_plural_value(p) for p in split_plural_forms(stored)}
+    forms = {f for f in forms if f}
+    return forms or {_normalize_plural_value(stored)}
+
+
+def _plural_matches(answer, stored):
+    """True if the normalized answer equals any of the stored plural forms."""
+    return _normalize_plural_value(answer) in _plural_form_set(stored)
+
+
 def _synonym_entries(entry):
     """Handle synonym entries."""
     wid = entry.get("id")
@@ -181,12 +194,12 @@ def _check_ru_de_strict(entry, answer_text):
                 continue
             article_ok = _article_matches(article_in, cand.get("article", ""))
             german_ok = german_in == _normalize_answer(cand.get("german", ""))
-            plural_ok = plural_in == _normalize_plural_value(cand.get("plural", ""))
+            plural_ok = plural_in in _plural_form_set(cand.get("plural", ""))
             if article_ok and german_ok and plural_ok:
                 return True, {"article": True, "plural": True}
         return False, {
             "article": _article_matches(article_in, entry.get("article", "")),
-            "plural": plural_in == _normalize_plural_value(entry.get("plural", "")),
+            "plural": plural_in in _plural_form_set(entry.get("plural", "")),
         }
 
     if entry_type == "verb":

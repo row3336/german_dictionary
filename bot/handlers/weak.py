@@ -35,7 +35,7 @@ from ..common.session import (
 )
 from ..common.settings import _topic_filter_for_query
 from ..common.txlog import _capture_transaction_snapshot, _log_transaction
-from ..handlers.quiz import _normalize_plural_value, _stop_with_summary
+from ..handlers.quiz import _plural_matches, _stop_with_summary
 from ..i18n import t
 from ..labels import QUIZ_RU_DE_TEXT, TEST_PARTIZIP2_WEAK_TEXT, TEST_PRATERITUM_WEAK_TEXT
 from ..storage import (
@@ -203,7 +203,7 @@ async def quiz_plural_weak(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == I_DONT_KNOW_TEXT:
         ok = False
     else:
-        ok = _normalize_plural_value(text) == _normalize_plural_value(entry.get("plural", ""))
+        ok = _plural_matches(text, entry.get("plural", ""))
     if not context.user_data.get("quiz_is_weak_drill"):
         state = get_form_state(get_db_path(), update.effective_user.id, entry.get("id"), "plural")
         snapshot = _capture_transaction_snapshot(update.effective_user.id, entry.get("id"), ["weak_plural"])

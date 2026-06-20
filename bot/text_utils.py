@@ -50,6 +50,24 @@ def low_word(word):
     return str(word or "").strip().lower()
 
 
+def split_plural_forms(plural):
+    """Split a stored plural field into individual forms (comma/slash separated).
+
+    A noun can have several plural forms (e.g. 'Pizzas, Pizzen'); each must be
+    matchable and displayable on its own.
+    """
+    raw = str(plural or "")
+    return [p.strip() for p in re.split(r"[,/]", raw) if p.strip()]
+
+
+def cap_plural(plural):
+    """Capitalize every plural form (German plurals are nouns)."""
+    forms = split_plural_forms(plural)
+    if not forms:
+        return cap_word(plural)
+    return ", ".join(cap_word(f) for f in forms)
+
+
 def split_text_chunks(text, max_size=3500):
     """Split text into <=max_size chunks on line boundaries."""
     text = str(text or "").strip()
