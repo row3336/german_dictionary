@@ -138,6 +138,13 @@ def _parse_add_line_spec(raw_line):
     raw = str(raw_line or "").strip()
     if not raw:
         return None
+    # Tolerate re-fed precheck/Edit output: drop leading "N." numbering and the
+    # trailing "(from ...)" spell-correction note, so an already-formatted line
+    # like "1. von [Praeposition] (from von)" parses back to "von [Praeposition]".
+    raw = re.sub(r"^\s*\d+[.)]\s+", "", raw)
+    raw = re.sub(r"\s*\(from\b[^)]*\)\s*$", "", raw).strip()
+    if not raw:
+        return None
     m = re.match(r"^(.*?)\s*\[([a-zA-Z_]+)\]\s*$", raw)
     forced_type = ""
     body = raw
@@ -178,6 +185,11 @@ def _parse_add_line_spec(raw_line):
             "german": base or first,
             "plural": parts[1] if len(parts) > 1 else "",
         }
+        return item
+    # Explicit type already recognized (adjektiv/adverb/praeposition/pronomen/
+    # konjunktion/partikel) — keep it; don't let auto-article/auto-phrase override.
+    if forced_type in ALLOWED_AI_TYPES:
+        item["lookup_word"] = " ".join(body.split())
         return item
     # Article-led inputs must stay nouns, never auto-phrases.
     article_auto, base_auto = _split_leading_article(parts[0])
@@ -367,10 +379,12 @@ async def _precheck_words(update: Update, context: ContextTypes.DEFAULT_TYPE, wo
             raw = str(raw_item)
             lookup_word = raw
             forced_type = ""
-        if forced_type in {"nomen", "verb", "phrase"} and lookup_word:
+        if forced_type in ALLOWED_AI_TYPES and lookup_word:
+            # Type already recognized (explicit [type] tag) — keep it, skip AI, and
+            # use the bare word as "original" so no spurious "(from ...)" is shown.
             items.append(
                 {
-                    "original": raw,
+                    "original": lookup_word,
                     "word": lookup_word,
                     "type": forced_type,
                     "forced_fields": dict(raw_item.get("forced_fields") or {}) if isinstance(raw_item, dict) else {},
