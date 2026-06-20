@@ -141,7 +141,7 @@ async def quiz_article_weak(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == INPUT_ERR_TEXT:
         applied = _apply_input_err_weak(update, context, "article")
         prefix = "✅ Fixed previous answer." if applied else "Nothing to fix."
-        return await _send_article_weak_prompt(update, context, prefix)
+        return await _send_article_weak_prompt(update, context, prefix, force_entry=context.user_data.get("quiz_entry"))
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_ARTICLE_WEAK)
     if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
@@ -190,7 +190,7 @@ async def quiz_plural_weak(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == INPUT_ERR_TEXT:
         applied = _apply_input_err_weak(update, context, "plural")
         prefix = "✅ Fixed previous answer." if applied else "Nothing to fix."
-        return await _send_plural_weak_prompt(update, context, prefix)
+        return await _send_plural_weak_prompt(update, context, prefix, force_entry=context.user_data.get("quiz_entry"))
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_PLURAL_WEAK)
     if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
@@ -241,7 +241,7 @@ async def quiz_prateritum_weak(update: Update, context: ContextTypes.DEFAULT_TYP
     if text == INPUT_ERR_TEXT:
         applied = _apply_input_err_weak(update, context, "prateritum")
         prefix = "✅ Fixed previous answer." if applied else "Nothing to fix."
-        return await _send_prateritum_weak_prompt(update, context, prefix)
+        return await _send_prateritum_weak_prompt(update, context, prefix, force_entry=context.user_data.get("quiz_entry"))
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_PRATERITUM_WEAK)
     if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
@@ -292,7 +292,7 @@ async def quiz_partizip2_weak(update: Update, context: ContextTypes.DEFAULT_TYPE
     if text == INPUT_ERR_TEXT:
         applied = _apply_input_err_weak(update, context, "partizip2")
         prefix = "✅ Fixed previous answer." if applied else "Nothing to fix."
-        return await _send_partizip2_weak_prompt(update, context, prefix)
+        return await _send_partizip2_weak_prompt(update, context, prefix, force_entry=context.user_data.get("quiz_entry"))
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_PARTIZIP2_WEAK)
     if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
@@ -384,9 +384,9 @@ def _pick_weak_or_drill_entry(context, user_id, weak_field, word_type=None):
     return entry
 
 
-async def _send_article_weak_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
+async def _send_article_weak_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text, force_entry=None):
     """Handle send article weak prompt."""
-    entry = _pick_weak_or_drill_entry(context, update.effective_user.id, "article", word_type="nomen")
+    entry = force_entry or _pick_weak_or_drill_entry(context, update.effective_user.id, "article", word_type="nomen")
     if not entry:
         if prefix_text:
             await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
@@ -411,9 +411,9 @@ async def _send_article_weak_prompt(update: Update, context: ContextTypes.DEFAUL
     return QUIZ_ARTICLE_WEAK
 
 
-async def _send_plural_weak_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
+async def _send_plural_weak_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text, force_entry=None):
     """Handle send plural weak prompt."""
-    entry = _pick_weak_or_drill_entry(context, update.effective_user.id, "plural", word_type="nomen")
+    entry = force_entry or _pick_weak_or_drill_entry(context, update.effective_user.id, "plural", word_type="nomen")
     if not entry:
         if prefix_text:
             await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
@@ -439,9 +439,9 @@ async def _send_plural_weak_prompt(update: Update, context: ContextTypes.DEFAULT
     return QUIZ_PLURAL_WEAK
 
 
-async def _send_prateritum_weak_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
+async def _send_prateritum_weak_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text, force_entry=None):
     """Handle send prateritum weak prompt."""
-    entry = _pick_weak_or_drill_entry(context, update.effective_user.id, "prateritum", word_type="verb")
+    entry = force_entry or _pick_weak_or_drill_entry(context, update.effective_user.id, "prateritum", word_type="verb")
     if not entry:
         if prefix_text:
             await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
@@ -466,9 +466,9 @@ async def _send_prateritum_weak_prompt(update: Update, context: ContextTypes.DEF
     return QUIZ_PRATERITUM_WEAK
 
 
-async def _send_partizip2_weak_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
+async def _send_partizip2_weak_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text, force_entry=None):
     """Handle send partizip2 weak prompt."""
-    entry = _pick_weak_or_drill_entry(context, update.effective_user.id, "partizip2", word_type="verb")
+    entry = force_entry or _pick_weak_or_drill_entry(context, update.effective_user.id, "partizip2", word_type="verb")
     if not entry:
         if prefix_text:
             await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
