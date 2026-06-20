@@ -49,7 +49,7 @@ def _action_key_from_text(text, user_id):
         ("db_search_plural_match", "db_search_plural_match"),
         ("db_search_topic_words", "db_search_topic_words"),
         ("db_search_topics_lists", "db_search_topics_lists"),
-        ("db_search_verbs_lists", "db_search_verbs_lists"),
+        ("db_search_type_lists", "db_search_type_lists"),
         ("db_search_topics_lern", "db_search_topics_lern"),
         ("db_search_weak_words", "db_search_weak_words"),
         ("settings", "settings"),

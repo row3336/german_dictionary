@@ -64,7 +64,7 @@ def _db_search_words_lists_markup(user_id):
     """Handle words lists submenu markup."""
     lang = _user_interface_lang(user_id)
     return ReplyKeyboardMarkup(
-        [[t(lang, "db_search_topics_lists"), t(lang, "db_search_verbs_lists"), t(lang, "back")]],
+        [[t(lang, "db_search_topics_lists"), t(lang, "db_search_type_lists"), t(lang, "back")]],
         resize_keyboard=True,
     )
 
@@ -101,6 +101,31 @@ def _db_search_topic_markup(user_id):
     else:
         rows.append([back])
     return ReplyKeyboardMarkup(rows, resize_keyboard=True), topics
+
+
+def _db_search_type_markup(user_id):
+    """Type selector markup: every word type present in the DB (4 per row) + back."""
+    lang = _user_interface_lang(user_id)
+    counts = {}
+    for row in list_all_words(get_db_path()):
+        tp = (row.get("type") or "").strip().lower()
+        if tp:
+            counts[tp] = counts.get(tp, 0) + 1
+    types = sorted(counts, key=lambda tp: (-counts[tp], tp))
+    rows = []
+    row = []
+    for tp in types:
+        row.append(tp)
+        if len(row) == 4:
+            rows.append(row)
+            row = []
+    back = t(lang, "back")
+    if row:
+        row.append(back)
+        rows.append(row)
+    else:
+        rows.append([back])
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True), types
 
 
 def _format_topic_words_line(entry):
@@ -314,8 +339,9 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     action = _action_key_from_text(text, user_id)
     in_words_lists = bool(context.user_data.get("db_search_words_lists_menu"))
-    if context.user_data.get("db_search_topic_pick") and action == "back":
+    if (context.user_data.get("db_search_topic_pick") or context.user_data.get("db_search_type_pick")) and action == "back":
         context.user_data.pop("db_search_topic_pick", None)
+        context.user_data.pop("db_search_type_pick", None)
         if in_words_lists:
             await update.message.reply_text("words_lists:", reply_markup=_db_search_words_lists_markup(user_id))
             return DB_SEARCH
@@ -339,6 +365,28 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"No words in topic {text}.", reply_markup=markup)
             return DB_SEARCH
         lines = [f"topic {text}: {len(entries)} words", ""]
+        lines.extend(_format_topic_words_line(entry) for entry in entries)
+        chunks = _split_text_chunks("\n".join(lines))
+        for idx, chunk in enumerate(chunks):
+            reply_markup = markup if idx == len(chunks) - 1 else None
+            await update.message.reply_text(
+                f"```text\n{chunk}\n```",
+                reply_markup=reply_markup,
+                parse_mode="Markdown",
+            )
+        return DB_SEARCH
+    if context.user_data.get("db_search_type_pick"):
+        markup, types = _db_search_type_markup(user_id)
+        chosen = text.strip().lower()
+        if chosen not in types:
+            await update.message.reply_text("Choose type:", reply_markup=markup)
+            return DB_SEARCH
+        context.user_data.pop("db_search_weak_ids", None)
+        entries = [x for x in list_all_words(get_db_path()) if (x.get("type") or "").strip().lower() == chosen]
+        if not entries:
+            await update.message.reply_text(f"No {chosen} words.", reply_markup=markup)
+            return DB_SEARCH
+        lines = [f"{chosen}: {len(entries)} words", ""]
         lines.extend(_format_topic_words_line(entry) for entry in entries)
         chunks = _split_text_chunks("\n".join(lines))
         for idx, chunk in enumerate(chunks):
@@ -458,28 +506,18 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["db_search_topic_pick"] = True
         await update.message.reply_text("Choose topic:", reply_markup=markup)
         return DB_SEARCH
-    if action == "db_search_verbs_lists":
+    if action == "db_search_type_lists":
         context.user_data.pop("db_search_weak_ids", None)
         context.user_data["db_search_words_lists_menu"] = True
-        entries = [x for x in list_all_words(get_db_path()) if (x.get("type") or "").strip().lower() == "verb"]
-        if not entries:
-            await update.message.reply_text("No verbs found.", reply_markup=_db_search_words_lists_markup(user_id))
+        markup, types = _db_search_type_markup(user_id)
+        if not types:
+            await update.message.reply_text("No words found in DB.", reply_markup=_db_search_words_lists_markup(user_id))
             return DB_SEARCH
-        lines = [f"verbs: {len(entries)}", ""]
-        for entry in entries:
-            inf = _safe_text(entry.get("infinitive", "")).strip()
-            if inf:
-                lines.append(inf)
-        chunks = _split_text_chunks("\n".join(lines))
-        for idx, chunk in enumerate(chunks):
-            markup = _db_search_words_lists_markup(user_id) if idx == len(chunks) - 1 else None
-            await update.message.reply_text(
-                f"```text\n{chunk}\n```",
-                reply_markup=markup,
-                parse_mode="Markdown",
-            )
+        context.user_data["db_search_type_pick"] = True
+        await update.message.reply_text("Choose type:", reply_markup=markup)
         return DB_SEARCH
     context.user_data.pop("db_search_topic_pick", None)
+    context.user_data.pop("db_search_type_pick", None)
     context.user_data.pop("db_search_words_lists_menu", None)
     context.user_data.pop("db_search_weak_ids", None)
     entry = _select_db_search_primary(text)
@@ -520,6 +558,7 @@ async def db_search_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if action in {"back", "stop"}:
         context.user_data.pop("db_search_words_lists_menu", None)
         context.user_data.pop("db_search_topic_pick", None)
+        context.user_data.pop("db_search_type_pick", None)
         context.user_data.pop("db_search_weak_ids", None)
         return await _send_db_search_prompt(update, user_id, None)
     if action in {
@@ -528,7 +567,7 @@ async def db_search_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "db_search_weak_words",
         "db_search_topic_words",
         "db_search_topics_lists",
-        "db_search_verbs_lists",
+        "db_search_type_lists",
         "db_search_topics_lern",
     }:
         return await db_search_input(update, context)
