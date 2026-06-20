@@ -3,7 +3,7 @@ clear / flag), its input + confirm handlers, and the return-to-caller dispatch
 that resumes whichever quiz/weak/db-search flow opened the menu.
 """
 
-from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
+from telegram import ReplyKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from ..app_config import (
@@ -158,13 +158,16 @@ async def synonyms_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not anchor_entry:
         return await _back_to_tests(update, context)
     if text == SYN_ADD_TEXT:
-        await update.message.reply_text("Send German word or id to add:", reply_markup=ReplyKeyboardRemove())
+        await update.message.reply_text(
+            "Send German word or id to add:",
+            reply_markup=ReplyKeyboardMarkup([[BACK_TEXT]], resize_keyboard=True),
+        )
         return SYN_ADD_INPUT
     if text == SYN_REMOVE_TEXT:
         group = get_synonym_group(get_db_path(), anchor_id)
         await update.message.reply_text(
             _format_syn_group(anchor_entry, group, _user_dict_lang(update.effective_user.id)) + "\n\nSend number, word, or id to remove.",
-            reply_markup=ReplyKeyboardRemove(),
+            reply_markup=ReplyKeyboardMarkup([[BACK_TEXT]], resize_keyboard=True),
         )
         return SYN_REMOVE_INPUT
     if text == _syn_auto_text(update.effective_user.id):

@@ -149,7 +149,11 @@ async def _start_clarify_fields(update: Update, context: ContextTypes.DEFAULT_TY
     context.user_data["quiz_edit_entry"] = entry
     context.user_data["edit_stage"] = "pick_scope"
     context.user_data["edit_return_state"] = return_state
-    await _reply_text_with_retry(update.message, _format_word_card(entry, title, user_id=update.effective_user.id))
+    await _reply_text_with_retry(
+        update.message,
+        f"```text\n{_format_word_card(entry, title, user_id=update.effective_user.id)}\n```",
+        parse_mode="Markdown",
+    )
     await _reply_text_with_retry(
         update.message,
         "Choose edit action:",
