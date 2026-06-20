@@ -25,12 +25,12 @@ from ..app_config import (
 from ..common.lang import _user_dict_lang, _user_interface_lang
 from ..common.navigation import _action_key_from_text, _reply_text_with_retry
 from ..common.session import (
+    _enqueue_weak_drill,
     _mark_session_word,
     _maybe_take_weak_drill_entry,
     _reset_session,
     _reset_weak_drill_state,
     _set_weak_drill_since_last,
-    _track_weak_drill_show,
     _weak_drill_since_last,
 )
 from ..common.settings import _topic_filter_for_query
@@ -151,26 +151,30 @@ async def quiz_article_weak(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not entry:
         return await _send_article_weak_prompt(update, context, None)
 
-    state = get_form_state(get_db_path(), update.effective_user.id, entry.get("id"), "article")
-    snapshot = _capture_transaction_snapshot(update.effective_user.id, entry.get("id"), ["weak_article"])
     ok = _article_matches(text, entry.get("article", ""))
-    update_form_stats(get_db_path(), update.effective_user.id, entry.get("id"), {"article": ok})
-    if not state["active"] and state["review_stage"] > 0:
-        stage_snapshot = update_weak_review_state(get_db_path(), update.effective_user.id, entry.get("id"), "article", ok)
-    else:
-        stage_snapshot = get_form_review_stage(get_db_path(), update.effective_user.id, entry.get("id"), "article")
-    log_quiz_event(
-        get_db_path(),
-        user_id=update.effective_user.id,
-        word_id=entry.get("id"),
-        mode="weak_article",
-        is_correct=ok,
-        review_stage_snapshot=stage_snapshot,
-    )
-    _remember_last_weak_answer(context, entry, "article", ok)
-    context.user_data["quiz_last_answered_entry"] = entry
-    _mark_session_word(context, "weak_article", entry.get("id"))
-    _log_transaction(update.effective_user.id, "quiz:weak_article", snapshot)
+    # Drill repeats are in-session practice only — they don't move weak stats/streaks.
+    if not context.user_data.get("quiz_is_weak_drill"):
+        state = get_form_state(get_db_path(), update.effective_user.id, entry.get("id"), "article")
+        snapshot = _capture_transaction_snapshot(update.effective_user.id, entry.get("id"), ["weak_article"])
+        update_form_stats(get_db_path(), update.effective_user.id, entry.get("id"), {"article": ok})
+        if not state["active"] and state["review_stage"] > 0:
+            stage_snapshot = update_weak_review_state(get_db_path(), update.effective_user.id, entry.get("id"), "article", ok)
+        else:
+            stage_snapshot = get_form_review_stage(get_db_path(), update.effective_user.id, entry.get("id"), "article")
+        log_quiz_event(
+            get_db_path(),
+            user_id=update.effective_user.id,
+            word_id=entry.get("id"),
+            mode="weak_article",
+            is_correct=ok,
+            review_stage_snapshot=stage_snapshot,
+        )
+        _remember_last_weak_answer(context, entry, "article", ok)
+        context.user_data["quiz_last_answered_entry"] = entry
+        _mark_session_word(context, "weak_article", entry.get("id"))
+        _log_transaction(update.effective_user.id, "quiz:weak_article", snapshot)
+        if not ok:
+            _enqueue_weak_drill(context, "weak_article", entry.get("id"))
     feedback = _format_feedback_article(entry, ok, _user_dict_lang(update.effective_user.id))
     return await _send_article_weak_prompt(update, context, feedback)
 
@@ -196,29 +200,32 @@ async def quiz_plural_weak(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not entry:
         return await _send_plural_weak_prompt(update, context, None)
 
-    state = get_form_state(get_db_path(), update.effective_user.id, entry.get("id"), "plural")
-    snapshot = _capture_transaction_snapshot(update.effective_user.id, entry.get("id"), ["weak_plural"])
     if text == I_DONT_KNOW_TEXT:
         ok = False
     else:
         ok = _normalize_plural_value(text) == _normalize_plural_value(entry.get("plural", ""))
-    update_form_stats(get_db_path(), update.effective_user.id, entry.get("id"), {"plural": ok})
-    if not state["active"] and state["review_stage"] > 0:
-        stage_snapshot = update_weak_review_state(get_db_path(), update.effective_user.id, entry.get("id"), "plural", ok)
-    else:
-        stage_snapshot = get_form_review_stage(get_db_path(), update.effective_user.id, entry.get("id"), "plural")
-    log_quiz_event(
-        get_db_path(),
-        user_id=update.effective_user.id,
-        word_id=entry.get("id"),
-        mode="weak_plural",
-        is_correct=ok,
-        review_stage_snapshot=stage_snapshot,
-    )
-    _remember_last_weak_answer(context, entry, "plural", ok)
-    context.user_data["quiz_last_answered_entry"] = entry
-    _mark_session_word(context, "weak_plural", entry.get("id"))
-    _log_transaction(update.effective_user.id, "quiz:weak_plural", snapshot)
+    if not context.user_data.get("quiz_is_weak_drill"):
+        state = get_form_state(get_db_path(), update.effective_user.id, entry.get("id"), "plural")
+        snapshot = _capture_transaction_snapshot(update.effective_user.id, entry.get("id"), ["weak_plural"])
+        update_form_stats(get_db_path(), update.effective_user.id, entry.get("id"), {"plural": ok})
+        if not state["active"] and state["review_stage"] > 0:
+            stage_snapshot = update_weak_review_state(get_db_path(), update.effective_user.id, entry.get("id"), "plural", ok)
+        else:
+            stage_snapshot = get_form_review_stage(get_db_path(), update.effective_user.id, entry.get("id"), "plural")
+        log_quiz_event(
+            get_db_path(),
+            user_id=update.effective_user.id,
+            word_id=entry.get("id"),
+            mode="weak_plural",
+            is_correct=ok,
+            review_stage_snapshot=stage_snapshot,
+        )
+        _remember_last_weak_answer(context, entry, "plural", ok)
+        context.user_data["quiz_last_answered_entry"] = entry
+        _mark_session_word(context, "weak_plural", entry.get("id"))
+        _log_transaction(update.effective_user.id, "quiz:weak_plural", snapshot)
+        if not ok:
+            _enqueue_weak_drill(context, "weak_plural", entry.get("id"))
     feedback = _format_feedback_plural_weak(entry, ok)
     return await _send_plural_weak_prompt(update, context, feedback)
 
@@ -244,29 +251,32 @@ async def quiz_prateritum_weak(update: Update, context: ContextTypes.DEFAULT_TYP
     if not entry:
         return await _send_prateritum_weak_prompt(update, context, None)
 
-    state = get_form_state(get_db_path(), update.effective_user.id, entry.get("id"), "prateritum")
-    snapshot = _capture_transaction_snapshot(update.effective_user.id, entry.get("id"), ["weak_prateritum"])
     if text == I_DONT_KNOW_TEXT:
         ok = False
     else:
         ok = _normalize_answer(text) == _normalize_answer(entry.get("prateritum", ""))
-    update_form_stats(get_db_path(), update.effective_user.id, entry.get("id"), {"prateritum": ok})
-    if not state["active"] and state["review_stage"] > 0:
-        stage_snapshot = update_weak_review_state(get_db_path(), update.effective_user.id, entry.get("id"), "prateritum", ok)
-    else:
-        stage_snapshot = get_form_review_stage(get_db_path(), update.effective_user.id, entry.get("id"), "prateritum")
-    log_quiz_event(
-        get_db_path(),
-        user_id=update.effective_user.id,
-        word_id=entry.get("id"),
-        mode="weak_prateritum",
-        is_correct=ok,
-        review_stage_snapshot=stage_snapshot,
-    )
-    _remember_last_weak_answer(context, entry, "prateritum", ok)
-    context.user_data["quiz_last_answered_entry"] = entry
-    _mark_session_word(context, "weak_prateritum", entry.get("id"))
-    _log_transaction(update.effective_user.id, "quiz:weak_prateritum", snapshot)
+    if not context.user_data.get("quiz_is_weak_drill"):
+        state = get_form_state(get_db_path(), update.effective_user.id, entry.get("id"), "prateritum")
+        snapshot = _capture_transaction_snapshot(update.effective_user.id, entry.get("id"), ["weak_prateritum"])
+        update_form_stats(get_db_path(), update.effective_user.id, entry.get("id"), {"prateritum": ok})
+        if not state["active"] and state["review_stage"] > 0:
+            stage_snapshot = update_weak_review_state(get_db_path(), update.effective_user.id, entry.get("id"), "prateritum", ok)
+        else:
+            stage_snapshot = get_form_review_stage(get_db_path(), update.effective_user.id, entry.get("id"), "prateritum")
+        log_quiz_event(
+            get_db_path(),
+            user_id=update.effective_user.id,
+            word_id=entry.get("id"),
+            mode="weak_prateritum",
+            is_correct=ok,
+            review_stage_snapshot=stage_snapshot,
+        )
+        _remember_last_weak_answer(context, entry, "prateritum", ok)
+        context.user_data["quiz_last_answered_entry"] = entry
+        _mark_session_word(context, "weak_prateritum", entry.get("id"))
+        _log_transaction(update.effective_user.id, "quiz:weak_prateritum", snapshot)
+        if not ok:
+            _enqueue_weak_drill(context, "weak_prateritum", entry.get("id"))
     feedback = _format_feedback_prateritum_weak(entry, ok)
     return await _send_prateritum_weak_prompt(update, context, feedback)
 
@@ -292,29 +302,32 @@ async def quiz_partizip2_weak(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not entry:
         return await _send_partizip2_weak_prompt(update, context, None)
 
-    state = get_form_state(get_db_path(), update.effective_user.id, entry.get("id"), "partizip2")
-    snapshot = _capture_transaction_snapshot(update.effective_user.id, entry.get("id"), ["weak_partizip2"])
     if text == I_DONT_KNOW_TEXT:
         ok = False
     else:
         ok = _normalize_answer(text) == _expected_partizip2(entry)
-    update_form_stats(get_db_path(), update.effective_user.id, entry.get("id"), {"partizip2": ok})
-    if not state["active"] and state["review_stage"] > 0:
-        stage_snapshot = update_weak_review_state(get_db_path(), update.effective_user.id, entry.get("id"), "partizip2", ok)
-    else:
-        stage_snapshot = get_form_review_stage(get_db_path(), update.effective_user.id, entry.get("id"), "partizip2")
-    log_quiz_event(
-        get_db_path(),
-        user_id=update.effective_user.id,
-        word_id=entry.get("id"),
-        mode="weak_partizip2",
-        is_correct=ok,
-        review_stage_snapshot=stage_snapshot,
-    )
-    _remember_last_weak_answer(context, entry, "partizip2", ok)
-    context.user_data["quiz_last_answered_entry"] = entry
-    _mark_session_word(context, "weak_partizip2", entry.get("id"))
-    _log_transaction(update.effective_user.id, "quiz:weak_partizip2", snapshot)
+    if not context.user_data.get("quiz_is_weak_drill"):
+        state = get_form_state(get_db_path(), update.effective_user.id, entry.get("id"), "partizip2")
+        snapshot = _capture_transaction_snapshot(update.effective_user.id, entry.get("id"), ["weak_partizip2"])
+        update_form_stats(get_db_path(), update.effective_user.id, entry.get("id"), {"partizip2": ok})
+        if not state["active"] and state["review_stage"] > 0:
+            stage_snapshot = update_weak_review_state(get_db_path(), update.effective_user.id, entry.get("id"), "partizip2", ok)
+        else:
+            stage_snapshot = get_form_review_stage(get_db_path(), update.effective_user.id, entry.get("id"), "partizip2")
+        log_quiz_event(
+            get_db_path(),
+            user_id=update.effective_user.id,
+            word_id=entry.get("id"),
+            mode="weak_partizip2",
+            is_correct=ok,
+            review_stage_snapshot=stage_snapshot,
+        )
+        _remember_last_weak_answer(context, entry, "partizip2", ok)
+        context.user_data["quiz_last_answered_entry"] = entry
+        _mark_session_word(context, "weak_partizip2", entry.get("id"))
+        _log_transaction(update.effective_user.id, "quiz:weak_partizip2", snapshot)
+        if not ok:
+            _enqueue_weak_drill(context, "weak_partizip2", entry.get("id"))
     feedback = _format_feedback_partizip2_weak(entry, ok)
     return await _send_partizip2_weak_prompt(update, context, feedback)
 
@@ -333,40 +346,41 @@ def _pick_weak_entry(context, user_id, weak_field, word_type=None):
         return None
     active = [w for w in due if w.get("is_active")]
     pool_src = active if active else due
-    last_ids = context.user_data.setdefault("last_quiz_ids", {})
-    mode = f"weak_{weak_field}"
-    last_id = last_ids.get(mode)
+    # Read-only: avoid repeating the last shown word; the final pick is recorded
+    # by _pick_weak_or_drill_entry (so it reflects drill overrides too).
+    last_id = context.user_data.get("last_quiz_ids", {}).get(f"weak_{weak_field}")
     pool = [w for w in pool_src if w.get("id") != last_id] if len(pool_src) > 1 else pool_src
     if not pool:
         pool = pool_src
-    entry = random.choice(pool)
-    last_ids[mode] = entry.get("id")
-    return entry
+    return random.choice(pool)
 
 
 def _pick_weak_or_drill_entry(context, user_id, weak_field, word_type=None):
-    """Handle pick weak or drill entry."""
+    """Pick the next weak word: a fresh due word, or a drill repeat — never two in a row."""
     mode = f"weak_{weak_field}"
-    entry = _pick_weak_entry(context, user_id, weak_field, word_type=word_type)
-    is_drill = False
+    last_ids = context.user_data.setdefault("last_quiz_ids", {})
+    last_id = last_ids.get(mode)
+    fresh = _pick_weak_entry(context, user_id, weak_field, word_type=word_type)
 
-    drill = _maybe_take_weak_drill_entry(context, mode, force=False)
+    drill = _maybe_take_weak_drill_entry(context, mode, avoid_id=last_id, force=False)
     if drill:
-        entry = drill
-        is_drill = True
-    elif not entry:
-        drill = _maybe_take_weak_drill_entry(context, mode, force=True)
-        if drill:
-            entry = drill
-            is_drill = True
+        entry, is_drill = drill, True
+    elif fresh:
+        entry, is_drill = fresh, False
+    else:
+        # No fresh due word left — fall back to a drill (still avoid consecutive if possible).
+        drill = _maybe_take_weak_drill_entry(context, mode, avoid_id=last_id, force=True)
+        if not drill:
+            drill = _maybe_take_weak_drill_entry(context, mode, avoid_id=None, force=True)
+        entry, is_drill = (drill, True) if drill else (None, False)
 
     if not entry:
         return None
 
-    _track_weak_drill_show(context, mode, entry.get("id"))
+    last_ids[mode] = entry.get("id")
+    context.user_data["quiz_is_weak_drill"] = is_drill
     if not is_drill:
         _set_weak_drill_since_last(context, mode, _weak_drill_since_last(context, mode) + 1)
-        context.user_data["quiz_is_weak_drill"] = False
     return entry
 
 

@@ -258,40 +258,47 @@ def _reset_weak_drill_state(context, mode=None):
     context.user_data.pop("quiz_is_weak_drill", None)
 
 
-def _maybe_take_weak_drill_entry(context, mode, force=False):
-    """Handle maybe take weak drill entry."""
+def _maybe_take_weak_drill_entry(context, mode, avoid_id=None, force=False):
+    """Take the next due drill word for `mode`, never returning `avoid_id` (no two in a row).
+
+    Drill words are queued only after wrong answers (see `_enqueue_weak_drill`). Each serve
+    decrements the word's remaining-drills budget; the word leaves the queue when spent.
+    Respects `gap` (drill only after `gap` normal shows) unless `force`.
+    """
     queue = _weak_drill_queue(context, mode)
     if not queue:
         return None
-    gap = _weak_drill_gap(get_db_path())
-    if not force and _weak_drill_since_last(context, mode) < gap:
+    if not force and _weak_drill_since_last(context, mode) < _weak_drill_gap(get_db_path()):
         return None
     counts = _weak_drill_counts(context, mode)
-    while queue:
-        word_id = queue.pop(0)
-        entry = get_word_by_id(get_db_path(), word_id)
-        if not entry:
-            counts.pop(word_id, None)
-            continue
-        _set_weak_drill_since_last(context, mode, 0)
-        context.user_data["quiz_is_weak_drill"] = True
-        return entry
-    return None
+    pos = next((i for i, wid in enumerate(queue) if avoid_id is None or wid != avoid_id), None)
+    if pos is None:
+        return None
+    word_id = queue.pop(pos)
+    entry = get_word_by_id(get_db_path(), word_id)
+    if not entry:
+        counts.pop(word_id, None)
+        return _maybe_take_weak_drill_entry(context, mode, avoid_id=avoid_id, force=True)
+    remaining = int(counts.get(word_id, 1)) - 1
+    if remaining > 0:
+        counts[word_id] = remaining
+        queue.append(word_id)
+    else:
+        counts.pop(word_id, None)
+    _set_weak_drill_since_last(context, mode, 0)
+    context.user_data["quiz_is_weak_drill"] = True
+    return entry
 
 
-def _track_weak_drill_show(context, mode, word_id):
-    """Handle track weak drill show."""
+def _enqueue_weak_drill(context, mode, word_id):
+    """Queue a word for in-session drilling after a WRONG answer (budget = repeats setting)."""
     if not word_id:
+        return
+    repeats = _weak_drill_repeats(get_db_path())
+    if repeats <= 0:
         return
     queue = _weak_drill_queue(context, mode)
     counts = _weak_drill_counts(context, mode)
-    repeats = _weak_drill_repeats(get_db_path())
-    shown = int(counts.get(word_id, 0)) + 1
-    if shown >= repeats:
-        counts.pop(word_id, None)
-        while word_id in queue:
-            queue.remove(word_id)
-        return
-    counts[word_id] = shown
+    counts[word_id] = int(repeats)
     if word_id not in queue:
         queue.append(word_id)
