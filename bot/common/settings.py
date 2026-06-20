@@ -140,13 +140,11 @@ def _parse_topic_filter(raw):
     if not raw:
         return []
     normalized = raw.strip().lower()
-    if normalized in {"all", "0", "*"}:
+    if normalized in {"all", "*"}:
         return []
     tokens = []
     for chunk in raw.replace(",", "+").split("+"):
         token = chunk.strip()
-        if token == "0":
-            continue
         if token:
             tokens.append(token)
     return tokens
