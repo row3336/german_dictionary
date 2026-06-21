@@ -288,7 +288,13 @@ def _ai_prompt(word, clarification):
         "For verb return: type, infinitive, prateritum, partizip2, russian. "
         "For adjektiv return: type, german, komparativ, superlativ, russian. "
         "For all other allowed types return: type, german, russian. "
-        "Use Russian translations in singular only. No extra text."
+        "Use Russian translations in singular only. No extra text. "
+        "German noun plurals are irregular: recall the exact plural form, "
+        "do not guess by mechanically adding -e/-s. Examples:\n"
+        '{"type":"nomen","article":"das","german":"Wort","plural":"Wörter","russian":"слово"}\n'
+        '{"type":"nomen","article":"der","german":"Bus","plural":"Busse","russian":"автобус"}\n'
+        '{"type":"nomen","article":"die","german":"Stadt","plural":"Städte","russian":"город"}\n'
+        '{"type":"verb","infinitive":"gehen","prateritum":"ging","partizip2":"gegangen","russian":"идти"}'
         f"\nWord: {word}{extra}"
     )
 
