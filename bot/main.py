@@ -93,7 +93,9 @@ from .storage import (
     restore_user_word_state,
     set_setting,
 )
+from .common.lang import _user_interface_lang
 from .common.navigation import _back_to_tests
+from .i18n import t
 from .handlers.dump import (
     auto_dump_choice,
     dump_menu_choice,
@@ -161,9 +163,29 @@ from .jobs.reminders import _configure_learning_reminders
 from .jobs.reports import _configure_fsrs_reports
 
 
+logger = logging.getLogger(__name__)
+
+
 def _is_owner_only(user_id):
     """Handle is owner only."""
     return is_owner(user_id)
+
+
+async def _on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
+    """Log unhandled errors and nudge the user to retry the last action.
+
+    Single best-effort notification only — we deliberately never auto-resend the
+    answer/prompt, because a send that reached Telegram but lost its HTTP ack would
+    then arrive twice (duplicate-answer risk documented in docs/todo.md).
+    """
+    logger.error("Unhandled error while processing update", exc_info=context.error)
+    if not isinstance(update, Update) or update.effective_chat is None:
+        return
+    lang = _user_interface_lang(update.effective_user.id) if update.effective_user else "en"
+    try:
+        await context.bot.send_message(update.effective_chat.id, t(lang, "delivery_failed"))
+    except Exception:  # best-effort nudge: never let it escape the error handler
+        logger.warning("Failed to deliver the error nudge", exc_info=True)
 
 
 async def undo_steps(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -312,7 +334,20 @@ def main():
 
     _prepare_storage()
 
-    app = Application.builder().token(token).build()
+    # Timeouts/pool tuned for a flaky VPS↔Telegram route: PTB defaults (connect/read
+    # 5s, pool size 1, pool_timeout 1s) are too tight and cause ConnectTimeout/pool
+    # exhaustion → lost/delayed quiz sends (diagnosed in docs/todo.md).
+    app = (
+        Application.builder()
+        .token(token)
+        .connect_timeout(20)
+        .read_timeout(20)
+        .write_timeout(20)
+        .pool_timeout(10)
+        .connection_pool_size(8)
+        .build()
+    )
+    app.add_error_handler(_on_error)
 
     mode = get_setting(get_db_path(), AUTO_DUMP_SETTING_KEY, "off")
     _configure_auto_dump(app, mode)

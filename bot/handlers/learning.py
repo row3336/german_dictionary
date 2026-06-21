@@ -245,14 +245,16 @@ async def _learning_add_words(update: Update, context: ContextTypes.DEFAULT_TYPE
     active_count = learning_active_count(db_path, user_id=user_id, batch_id=batch_id)
     need = max(0, daily_qty - active_count)
     if need <= 0:
-        await update.message.reply_text(
+        await _reply_text_with_retry(
+            update.message,
             f"Learning batch is full: {active_count}/{daily_qty}.",
             reply_markup=ReplyKeyboardMarkup(_learning_menu_keys(user_id), resize_keyboard=True),
         )
         return LEARNING_MENU
     picked = learning_pick_new_words(db_path, user_id=user_id, limit=need, topics=_topic_filter_for_query())
     if not picked:
-        await update.message.reply_text(
+        await _reply_text_with_retry(
+            update.message,
             "No new words available for learning.",
             reply_markup=ReplyKeyboardMarkup(_learning_menu_keys(user_id), resize_keyboard=True),
         )

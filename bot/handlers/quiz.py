@@ -242,7 +242,7 @@ def _check_ru_de_strict(entry, answer_text):
 async def _stop_with_summary(update: Update, context: ContextTypes.DEFAULT_TYPE, mode):
     """Handle stop with summary."""
     count = _session_count(context, mode)
-    await update.message.reply_text(f"session words = {count}")
+    await _reply_text_with_retry(update.message, f"session words = {count}")
     return await _back_to_tests(update, context)
 
 
