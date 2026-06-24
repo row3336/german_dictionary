@@ -17,3 +17,8 @@ data/
 
 # Internal working docs — local only, not versioned (design notes, todo, logs).
 docs/
+
+# Local scratch / temp notes — never versioned.
+temp.txt
+*.tmp
+*.scratch
