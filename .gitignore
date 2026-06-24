@@ -10,3 +10,10 @@ data/
 *.db
 *.sqlite
 *.sqlite3
+
+# Claude Code personal permissions (local, do not commit)
+.claude/settings.local.json
+.claude/settings.json
+
+# Internal working docs — local only, not versioned (design notes, todo, logs).
+docs/
