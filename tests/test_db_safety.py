@@ -7,6 +7,8 @@ from pathlib import Path
 from bot.common.db_safety import (
     SCHEMA_VERSION,
     apply_migrations_safely,
+    backup_database,
+    dry_run_migration,
     get_user_version,
     log_db_event,
     run_healthcheck,
@@ -105,6 +107,44 @@ class ApplyMigrationsSafelyTest(unittest.TestCase):
         self.assertFalse(report2["migrated"])
         self.assertIsNone(report2["backup"])
         self.assertTrue(report2["healthcheck"]["ok"])
+
+
+class BackupPreservesVersionTest(unittest.TestCase):
+    def test_user_version_survives_backup(self):
+        # dry-run correctness depends on the copy keeping the source's version marker
+        d = tempfile.mkdtemp()
+        src = os.path.join(d, "words.db")
+        init_db(src)
+        set_user_version(src, 3)
+        dst = os.path.join(d, "copy.db")
+        backup_database(src, dst)
+        self.assertEqual(get_user_version(dst), 3)
+
+
+class DryRunTest(unittest.TestCase):
+    def test_dry_run_reports_ok_without_touching_live(self):
+        d = tempfile.mkdtemp()
+        db = os.path.join(d, "words.db")
+        init_db(db)            # live at v0
+        _add_words(db, 9)
+
+        report = dry_run_migration(db)
+        self.assertTrue(report["dry_run"])
+        self.assertTrue(report["ok"])
+        self.assertTrue(report["migrated"])           # the copy would migrate v0 -> vN
+        self.assertEqual(report["source_counts"]["words"], 9)
+        self.assertEqual(report["counts_after"]["words"], 9)
+
+        # live DB is untouched: version unchanged, data intact, no backups written next to it
+        self.assertEqual(get_user_version(db), 0)
+        self.assertEqual(run_healthcheck(db)["counts"]["words"], 9)
+        self.assertFalse(os.path.exists(os.path.join(d, "backups")))
+
+    def test_dry_run_missing_source(self):
+        d = tempfile.mkdtemp()
+        report = dry_run_migration(os.path.join(d, "nope.db"))
+        self.assertFalse(report["ok"])
+        self.assertIn("error", report)
 
 
 if __name__ == "__main__":

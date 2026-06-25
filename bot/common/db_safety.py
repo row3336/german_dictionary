@@ -11,7 +11,9 @@ build still opens a newer DB. Bump SCHEMA_VERSION whenever init_db's schema grow
 """
 
 import json
+import shutil
 import sqlite3
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -230,3 +232,28 @@ def apply_migrations_safely(db_path, dump_dir):
         log_db_event(db_path, "healthcheck_fail", ok=False, detail=health)
 
     return report
+
+
+def dry_run_migration(db_path):
+    """Run the migration on a throwaway COPY of the live DB — never touches live.
+
+    The copy is a consistent snapshot (backup API, incl. the user_version header),
+    so the migration runs against the REAL data and catches data-specific issues
+    that synthetic tests miss. Returns a report (same shape as
+    apply_migrations_safely) + `source_counts` + `ok`. Temp files are cleaned up.
+    Apply for real only if `ok` is True (docs/multiuser.md §0.2 п.4).
+    """
+    src = Path(db_path)
+    if not src.exists():
+        return {"ok": False, "dry_run": True, "error": "source DB does not exist"}
+    tmpdir = tempfile.mkdtemp(prefix="vocab-dryrun-")
+    try:
+        copy = Path(tmpdir) / "words.db"
+        backup_database(src, copy)  # consistent copy of live data (preserves user_version)
+        report = apply_migrations_safely(str(copy), str(Path(tmpdir) / "backups"))
+        report["dry_run"] = True
+        report["source_counts"] = table_counts(db_path)
+        report["ok"] = bool(report["healthcheck"]["ok"])
+        return report
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)

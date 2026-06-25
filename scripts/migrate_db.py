@@ -6,18 +6,20 @@ Uses bot.common.db_safety.apply_migrations_safely():
 - runs a healthcheck (integrity_check + foreign_key_check + row counts),
 - records the migration in the db_events timeline.
 
-Usage on the server:
-    python3 -m scripts.migrate_db --db ./data/words.db [--dump-dir ./data/backups]
+Recommended on the server — dry-run FIRST, then apply:
+    python3 -m scripts.migrate_db --db ./data/words.db --dry-run   # rehearse on a copy
+    python3 -m scripts.migrate_db --db ./data/words.db             # apply for real
 
-Safe to run multiple times. The pre-migration backup + reported counts let you
-confirm nothing was lost, and roll back from the snapshot if needed.
+Safe to run multiple times. --dry-run rehearses the migration on a throwaway copy
+of the real data (never touches live); the real run snapshots before changing the
+schema, so you can roll back from the pre-migration backup if needed.
 """
 
 import argparse
 import sys
 from pathlib import Path
 
-from bot.common.db_safety import apply_migrations_safely
+from bot.common.db_safety import apply_migrations_safely, dry_run_migration
 
 
 def main():
@@ -28,7 +30,31 @@ def main():
         default=None,
         help="Where to write the pre-migration backup (default: <db dir>/backups)",
     )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Rehearse the migration on a copy of the real data; do not touch live.",
+    )
     args = parser.parse_args()
+
+    if args.dry_run:
+        print(f"DB: {args.db}  (DRY RUN — live DB is not modified)")
+        report = dry_run_migration(args.db)
+        if report.get("error"):
+            print(f"ERROR: {report['error']}")
+            return 1
+        print(f"version: v{report['from_version']} -> v{report['to_version']} "
+              f"(would_migrate={report['migrated']}, fresh={report['fresh']})")
+        print(f"source counts: {report['source_counts']}")
+        print(f"after-migration counts (on copy): {report['counts_after']}")
+        health = report["healthcheck"]
+        print(f"healthcheck: ok={health['ok']} integrity={health['integrity']} "
+              f"fk_violations={health['fk_violations']}")
+        if not report["ok"]:
+            print("DRY RUN FAILED — do NOT apply; investigate the migration.")
+            return 1
+        print("DRY RUN OK — safe to apply for real (re-run without --dry-run).")
+        return 0
 
     dump_dir = args.dump_dir or str(Path(args.db).resolve().parent / "backups")
     print(f"DB: {args.db}")
