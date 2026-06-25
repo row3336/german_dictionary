@@ -13,7 +13,16 @@ import unittest
 import warnings
 from datetime import date, timedelta
 
-from bot.storage import add_word, fsrs_due_forecast, init_db, list_weak_words, select_due
+from bot.storage import (
+    add_word,
+    fsrs_due_forecast,
+    init_db,
+    learning_active_count,
+    learning_due_entries,
+    learning_get_or_create_batch,
+    list_weak_words,
+    select_due,
+)
 
 warnings.filterwarnings("ignore", category=ResourceWarning)
 
@@ -62,6 +71,15 @@ def _weak_article(conn, user_id, word_id, errors=3):
     conn.execute(
         "INSERT INTO form_stats (user_id, word_id, article_errors) VALUES (?, ?, ?)",
         (user_id, word_id, errors),
+    )
+
+
+def _learning_item(conn, user_id, word_id, batch_id, due_iso="2000-01-01 00:00:00"):
+    # an active, preview-done item due in the past → appears in learning_due_entries
+    conn.execute(
+        "INSERT INTO learning_items (user_id, word_id, batch_id, step_index, preview_done, next_due, status) "
+        "VALUES (?, ?, ?, 0, 1, ?, 'active')",
+        (user_id, word_id, batch_id, due_iso),
     )
 
 
@@ -125,6 +143,37 @@ class WeakWordsIsolationTest(unittest.TestCase):
             _weak_article(conn, U2, e2["id"], errors=3)
         self.assertEqual([x["german"] for x in list_weak_words(self.db, U1, "article")], ["Tisch"])
         self.assertEqual([x["german"] for x in list_weak_words(self.db, U2, "article")], ["Lampe"])
+
+
+class LearningIsolationTest(unittest.TestCase):
+    """P1.3 — learning sessions (learning_items): each user sees only their own."""
+
+    def setUp(self):
+        self.db = _mk_db()
+        self.addCleanup(lambda: os.unlink(self.db))
+        init_db(self.db)
+
+    def test_learning_due_entries_per_user(self):
+        e = _add_noun(self.db, "Buch", "книга")
+        b1 = learning_get_or_create_batch(self.db, U1, 10)
+        with sqlite3.connect(self.db) as conn:
+            _learning_item(conn, U1, e["id"], b1)  # active+due for U1 only
+        self.assertEqual(len(learning_due_entries(self.db, U1)), 1)
+        self.assertEqual(len(learning_due_entries(self.db, U2)), 0)
+
+    def test_active_count_per_user(self):
+        e1 = _add_noun(self.db, "Buch", "книга")
+        e2 = _add_noun(self.db, "Stuhl", "стул")
+        b1 = learning_get_or_create_batch(self.db, U1, 10)
+        b2 = learning_get_or_create_batch(self.db, U2, 10)
+        with sqlite3.connect(self.db) as conn:
+            _learning_item(conn, U1, e1["id"], b1)
+            _learning_item(conn, U2, e2["id"], b2)
+        self.assertEqual(learning_active_count(self.db, U1), 1)
+        self.assertEqual(learning_active_count(self.db, U2), 1)
+        # and the due lists don't bleed across users
+        self.assertEqual([x["german"] for x in learning_due_entries(self.db, U1)], ["Buch"])
+        self.assertEqual([x["german"] for x in learning_due_entries(self.db, U2)], ["Stuhl"])
 
 
 if __name__ == "__main__":
