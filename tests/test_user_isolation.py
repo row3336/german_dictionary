@@ -13,7 +13,7 @@ import unittest
 import warnings
 from datetime import date, timedelta
 
-from bot.storage import add_word, fsrs_due_forecast, init_db, select_due
+from bot.storage import add_word, fsrs_due_forecast, init_db, list_weak_words, select_due
 
 warnings.filterwarnings("ignore", category=ResourceWarning)
 
@@ -57,6 +57,14 @@ def _progress(conn, user_id, word_id, mode, due, interval=1, reps=1, ease=2.5):
     )
 
 
+def _weak_article(conn, user_id, word_id, errors=3):
+    # enough article errors to make the word "weak" for this user (other cols default 0)
+    conn.execute(
+        "INSERT INTO form_stats (user_id, word_id, article_errors) VALUES (?, ?, ?)",
+        (user_id, word_id, errors),
+    )
+
+
 class SrCoreIsolationTest(unittest.TestCase):
     """P1.1 — spaced-repetition core: select_due + fsrs_due_forecast."""
 
@@ -92,6 +100,31 @@ class SrCoreIsolationTest(unittest.TestCase):
                 _event(conn, U1, e["id"], "ru_de", 0, f"{self.today} 08:0{i}:00")
         self.assertEqual(fsrs_due_forecast(self.db, U1, "ru_de")["total"], 2)
         self.assertEqual(fsrs_due_forecast(self.db, U2, "ru_de")["total"], 0)
+
+
+class WeakWordsIsolationTest(unittest.TestCase):
+    """P1.2 — weak words (form_stats), incl. the db_search weak list: per-user."""
+
+    def setUp(self):
+        self.db = _mk_db()
+        self.addCleanup(lambda: os.unlink(self.db))
+        init_db(self.db)
+
+    def test_weak_list_is_per_user(self):
+        e = _add_noun(self.db, "Tisch", "стол")
+        with sqlite3.connect(self.db) as conn:
+            _weak_article(conn, U1, e["id"], errors=3)  # weak for U1 only
+        self.assertEqual(len(list_weak_words(self.db, U1, "article")), 1)
+        self.assertEqual(len(list_weak_words(self.db, U2, "article")), 0)
+
+    def test_each_user_sees_only_own_weak(self):
+        e1 = _add_noun(self.db, "Tisch", "стол")
+        e2 = _add_noun(self.db, "Lampe", "лампа")
+        with sqlite3.connect(self.db) as conn:
+            _weak_article(conn, U1, e1["id"], errors=3)
+            _weak_article(conn, U2, e2["id"], errors=3)
+        self.assertEqual([x["german"] for x in list_weak_words(self.db, U1, "article")], ["Tisch"])
+        self.assertEqual([x["german"] for x in list_weak_words(self.db, U2, "article")], ["Lampe"])
 
 
 if __name__ == "__main__":
