@@ -14,7 +14,9 @@ import warnings
 from datetime import date, timedelta
 
 from bot.storage import (
+    add_transaction_log,
     add_word,
+    delete_transaction_logs,
     fsrs_due_forecast,
     get_daily_first_touch_retention,
     get_statistics_snapshot,
@@ -22,6 +24,7 @@ from bot.storage import (
     learning_active_count,
     learning_due_entries,
     learning_get_or_create_batch,
+    list_transaction_logs,
     list_weak_words,
     select_due,
 )
@@ -207,6 +210,30 @@ class StatsIsolationTest(unittest.TestCase):
         # but per-user activity is isolated
         self.assertGreaterEqual(s1["today_complete"], 1)
         self.assertEqual(s2["today_complete"], 0)
+
+
+class TransactionLogIsolationTest(unittest.TestCase):
+    """P1.5 — transaction_log / undo: list + delete are per-user."""
+
+    def setUp(self):
+        self.db = _mk_db()
+        self.addCleanup(lambda: os.unlink(self.db))
+        init_db(self.db)
+
+    def test_list_is_per_user(self):
+        add_transaction_log(self.db, U1, "quiz:ru_de", {"snapshot": {"x": 1}})
+        self.assertEqual(len(list_transaction_logs(self.db, U1)), 1)
+        self.assertEqual(len(list_transaction_logs(self.db, U2)), 0)
+
+    def test_delete_cannot_touch_other_users_log(self):
+        add_transaction_log(self.db, U1, "quiz:ru_de", {"a": 1})
+        log_id = list_transaction_logs(self.db, U1)[0]["id"]
+        # U2's /undo tries to delete U1's log by id → must NOT delete it
+        delete_transaction_logs(self.db, U2, [log_id])
+        self.assertEqual(len(list_transaction_logs(self.db, U1)), 1)
+        # owner of the log can delete it
+        delete_transaction_logs(self.db, U1, [log_id])
+        self.assertEqual(len(list_transaction_logs(self.db, U1)), 0)
 
 
 if __name__ == "__main__":
