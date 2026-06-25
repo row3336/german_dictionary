@@ -60,7 +60,7 @@ class LearningLogicTests(unittest.TestCase):
         batch_id = learning_get_or_create_batch(db_path, user_id=1, daily_qty=20)
         added = learning_add_words(db_path, user_id=1, words=[w1, w2], batch_id=batch_id, first_delay_seconds=30)
         self.assertEqual(added, 2)
-        # Only w2 is released to SM2.
+        # Only w2 is released to FSRS.
         with sqlite3.connect(db_path) as conn:
             conn.execute(
                 "UPDATE learning_items SET status = 'completed' WHERE user_id = ? AND word_id = ?",

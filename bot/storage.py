@@ -485,6 +485,11 @@ def _ensure_schema(conn):
         conn.execute("ALTER TABLE words ADD COLUMN komparativ TEXT NOT NULL DEFAULT ''")
     if "superlativ" not in word_cols:
         conn.execute("ALTER TABLE words ADD COLUMN superlativ TEXT NOT NULL DEFAULT ''")
+    if "updated_at" not in word_cols:
+        # SQLite forbids a non-constant default on ADD COLUMN, so add with '' then
+        # backfill existing rows to their created_at (unedited == created time).
+        conn.execute("ALTER TABLE words ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''")
+        conn.execute("UPDATE words SET updated_at = created_at WHERE updated_at = ''")
     conn.execute("UPDATE words SET topic = '1' WHERE trim(coalesce(topic, '')) = ''")
     _repair_word_fk_tables(conn)
     _ensure_indexes(conn)
@@ -537,6 +542,25 @@ def _ensure_schema(conn):
         conn.execute("ALTER TABLE learning_items ADD COLUMN preview_done INTEGER NOT NULL DEFAULT 0")
     if learning_cols and "updated_at" not in learning_cols:
         conn.execute("ALTER TABLE learning_items ADD COLUMN updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP")
+
+    # Migrate legacy SM2-named settings keys to FSRS names, preserving values.
+    for _old_key, _new_key in (
+        ("sm2_report_utc_hour", "fsrs_report_utc_hour"),
+        ("sm2_report_date", "fsrs_report_date"),
+        ("sm2_peak_notify_date", "fsrs_peak_notify_date"),
+        ("sm2_weekly_report_week", "fsrs_weekly_report_week"),
+        ("sm2_peak_hour_today", "fsrs_peak_hour_today"),
+    ):
+        old_row = conn.execute("SELECT value FROM app_settings WHERE key = ?", (_old_key,)).fetchone()
+        if old_row is None:
+            continue
+        new_row = conn.execute("SELECT 1 FROM app_settings WHERE key = ?", (_new_key,)).fetchone()
+        if new_row is None:
+            conn.execute(
+                "INSERT INTO app_settings (key, value) VALUES (?, ?)",
+                (_new_key, old_row["value"]),
+            )
+        conn.execute("DELETE FROM app_settings WHERE key = ?", (_old_key,))
 
 
 def _normalize_text(text):
@@ -748,7 +772,7 @@ def get_statistics_snapshot(db_path, user_id, mode):
         streak_2 = int(streak_row["s2"] or 0) if streak_row else 0
         streak_1 = int(streak_row["s1"] or 0) if streak_row else 0
         streak_3p = streak_3 + streak_4 + streak_5p
-        wrong_sm2 = int(
+        wrong_fsrs = int(
             conn.execute(
                 """
                 WITH last_events AS (
@@ -950,14 +974,14 @@ def get_statistics_snapshot(db_path, user_id, mode):
             ).fetchone()
             return int((row["cnt"] if row else 0) or 0)
 
-        today_complete_sm2_ru_de = _today_mode_count("ru_de")
-        today_complete_sm2_de_ru = _today_mode_count("de_ru")
+        today_complete_fsrs_ru_de = _today_mode_count("ru_de")
+        today_complete_fsrs_de_ru = _today_mode_count("de_ru")
         today_complete_pl_sg = _today_mode_prefix_count("pl_sg_")
         today_complete_weak_article = _today_mode_count("weak_article")
         today_complete_weak_plural = _today_mode_count("weak_plural")
         today_complete_weak_partizip2 = _today_mode_count("weak_partizip2")
         today_complete_weak_prateritum = _today_mode_count("weak_prateritum")
-        today_complete = today_complete_sm2_ru_de + today_complete_sm2_de_ru
+        today_complete = today_complete_fsrs_ru_de + today_complete_fsrs_de_ru
 
         retention_row = conn.execute(
             """
@@ -1086,7 +1110,7 @@ def get_statistics_snapshot(db_path, user_id, mode):
         "streak_3p": streak_3p,
         "streak_2": streak_2,
         "streak_1": streak_1,
-        "wrong_sm2": wrong_sm2,
+        "wrong_fsrs": wrong_fsrs,
         "weak_article": weak_article,
         "weak_article_stage1": weak_article_stage1,
         "weak_article_stage2": weak_article_stage2,
@@ -1104,8 +1128,8 @@ def get_statistics_snapshot(db_path, user_id, mode):
         "weak_prateritum_stage2": weak_prateritum_stage2,
         "weak_prateritum_stage3": weak_prateritum_stage3,
         "today_complete": today_complete,
-        "today_complete_sm2_ru_de": today_complete_sm2_ru_de,
-        "today_complete_sm2_de_ru": today_complete_sm2_de_ru,
+        "today_complete_fsrs_ru_de": today_complete_fsrs_ru_de,
+        "today_complete_fsrs_de_ru": today_complete_fsrs_de_ru,
         "today_complete_pl_sg": today_complete_pl_sg,
         "today_complete_weak_article": today_complete_weak_article,
         "today_complete_weak_plural": today_complete_weak_plural,
@@ -1224,6 +1248,30 @@ def get_weekly_first_touch_retention(db_path, user_id, week_start=None, modes=No
     correct = int(row["correct"] or 0) if row else 0
     rate = round((correct / total) * 100, 1) if total > 0 else 0.0
     return {"week_start": ws_iso, "week_end": we_iso, "total": total, "correct": correct, "rate": rate}
+
+
+def count_learning_done_in_week(db_path, user_id, week_start=None):
+    """Count distinct words that finished learning (completed/skipped) in a week [Mon..Mon)."""
+    init_db(db_path)
+    if week_start:
+        ws = date.fromisoformat(str(week_start))
+    else:
+        today = date.today()
+        ws = today - timedelta(days=today.weekday())
+    we = ws + timedelta(days=7)
+    with _connect(db_path) as conn:
+        cnt = conn.execute(
+            """
+            SELECT COUNT(DISTINCT li.word_id) AS cnt
+            FROM learning_items li
+            WHERE li.user_id = ?
+              AND li.status IN ('completed', 'skipped')
+              AND date(li.updated_at) >= date(?)
+              AND date(li.updated_at) < date(?)
+            """,
+            (int(user_id), ws.isoformat(), we.isoformat()),
+        ).fetchone()["cnt"]
+    return int(cnt or 0)
 
 
 def snapshot_user_word_state(db_path, user_id, word_id, modes=None):
@@ -1855,8 +1903,8 @@ def add_word(db_path, entry):
             """
             INSERT INTO words (
                 id, type, article, german, plural, infinitive, prateritum, partizip2, komparativ, superlativ,
-                russian, ukrainian, english, image, example, topic
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                russian, ukrainian, english, image, example, topic, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             """,
             (
                 entry["id"],
@@ -2006,8 +2054,8 @@ def select_due(
     return result
 
 
-def update_sm2(srs, quality, today=None, interval_divisor=1.0):
-    """Handle FSRS-like update in existing SM2 storage format."""
+def update_fsrs(srs, quality, today=None, interval_divisor=1.0):
+    """Handle FSRS-like update in existing FSRS storage format."""
     if today is None:
         today = date.today()
 
@@ -2024,7 +2072,7 @@ def update_sm2(srs, quality, today=None, interval_divisor=1.0):
     ease = max(MIN_EASE, min(MAX_EASE, ease))
 
     if quality < 3:
-        # Softer than classic SM2 reset: step back one stage and shorten interval.
+        # Softer than classic FSRS reset: step back one stage and shorten interval.
         repetitions = max(0, repetitions - 1)
         ease = max(MIN_EASE, ease - 0.25)
         interval = max(1, int(round(interval * 0.4)))
@@ -2072,7 +2120,7 @@ def update_progress(db_path, user_id, word_id, mode, quality, interval_divisor=1
             if row
             else default_srs()
         )
-        updated = update_sm2(srs, quality, interval_divisor=interval_divisor)
+        updated = update_fsrs(srs, quality, interval_divisor=interval_divisor)
 
         conn.execute(
             """
@@ -2243,26 +2291,34 @@ def learning_add_words(db_path, user_id, words, batch_id, first_delay_seconds):
 
 
 def learning_add_word_by_id(db_path, user_id, word_id, batch_id, first_delay_seconds):
-    """Handle learning add word by id."""
+    """Add/restart a word in learning as a fresh item (preview from step 0).
+
+    Manual "send to learning" must always (re)enqueue the word as new — even if it
+    previously completed/skipped learning or is already active — so it goes through
+    the preview/learning cycle again. Returns 1 (the upsert always touches a row).
+    """
     init_db(db_path)
     due_iso = _utc_now_iso()
-    added = 0
     with _connect(db_path) as conn:
-        cur = conn.execute(
+        conn.execute(
             """
             INSERT INTO learning_items (user_id, word_id, batch_id, step_index, preview_done, next_due, status)
             VALUES (?, ?, ?, 0, 0, ?, 'active')
-            ON CONFLICT(user_id, word_id) DO NOTHING
+            ON CONFLICT(user_id, word_id) DO UPDATE SET
+                batch_id = excluded.batch_id,
+                step_index = 0,
+                preview_done = 0,
+                next_due = excluded.next_due,
+                status = 'active',
+                updated_at = CURRENT_TIMESTAMP
             """,
             (int(user_id), _safe_text(word_id), _safe_text(batch_id), due_iso),
         )
-        added = int(cur.rowcount > 0)
-        if added:
-            conn.execute(
-                "UPDATE learning_batches SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                (_safe_text(batch_id),),
-            )
-    return added
+        conn.execute(
+            "UPDATE learning_batches SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (_safe_text(batch_id),),
+        )
+    return 1
 
 
 def learning_preview_entry(db_path, user_id):
@@ -2754,8 +2810,8 @@ def learning_active_batches(db_path):
     return [dict(row) for row in rows]
 
 
-def sm2_due_forecast(db_path, user_id, mode):
-    """Handle sm2 due forecast."""
+def fsrs_due_forecast(db_path, user_id, mode):
+    """Handle fsrs due forecast."""
     init_db(db_path)
     today = date.today().isoformat()
     with _connect(db_path) as conn:
@@ -2913,7 +2969,8 @@ def update_word_translations(db_path, word_id, ukrainian=None, english=None):
             """
             UPDATE words
             SET ukrainian = COALESCE(?, ukrainian),
-                english = COALESCE(?, english)
+                english = COALESCE(?, english),
+                updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
             (
@@ -2961,7 +3018,7 @@ def update_word_fields(db_path, word_id, fields):
 
     parts = [f"{key} = ?" for key in values]
     params = list(values.values()) + [_safe_text(word_id)]
-    query = f"UPDATE words SET {', '.join(parts)} WHERE id = ?"
+    query = f"UPDATE words SET {', '.join(parts)}, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
 
     with _connect(db_path) as conn:
         conn.execute(query, tuple(params))
@@ -3616,8 +3673,8 @@ def list_learning_queue_words(db_path, user_id, topics=None):
     return [_row_to_entry(row) for row in rows]
 
 
-def list_sm2_weak_words(db_path, user_id, mode, min_wrong_streak=4):
-    """Handle list sm2 weak words."""
+def list_fsrs_weak_words(db_path, user_id, mode, min_wrong_streak=4):
+    """Handle list fsrs weak words."""
     init_db(db_path)
     with _connect(db_path) as conn:
         rows = conn.execute(
