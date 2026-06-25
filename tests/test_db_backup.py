@@ -3,12 +3,8 @@ import sqlite3
 import tempfile
 import unittest
 
-from bot.storage import (
-    _connect,
-    backup_database,
-    backup_db_before_migrate,
-    init_db,
-)
+from bot.common.db_safety import backup_database, backup_db_before_migrate
+from bot.storage import _connect, init_db
 
 
 class DbBackupTest(unittest.TestCase):
