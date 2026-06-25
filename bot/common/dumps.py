@@ -1,13 +1,14 @@
 """Dump-file creation helpers (DB / logs / suggestions copies into the dump dir).
 
-Leaf module: depends only on app_config paths + stdlib. Shared by the dump
-handler and the auto-dump job.
+Depends on app_config paths + storage (WAL-safe DB backup) + stdlib. Shared by
+the dump handler and the auto-dump job.
 """
 
 import shutil
 from datetime import datetime, timezone
 
 from ..app_config import get_db_path, get_dump_dir, get_log_path, get_suggestions_path
+from ..storage import backup_database
 
 
 def _create_dump_file():
@@ -17,7 +18,9 @@ def _create_dump_file():
     dump_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     dump_path = dump_dir / f"words-{stamp}.db"
-    shutil.copy2(db_path, dump_path)
+    # WAL-safe: consistent snapshot via backup API, not a raw file copy (which
+    # could miss transactions still in the -wal sidecar). See storage.backup_database.
+    backup_database(db_path, dump_path)
     return dump_path
 
 
