@@ -24,10 +24,13 @@ from bot.storage import (
     learning_active_count,
     learning_due_entries,
     learning_get_or_create_batch,
+    get_user_languages,
     list_transaction_logs,
     list_weak_words,
     reset_periodicity,
     select_due,
+    set_user_dict_lang,
+    set_user_interface_lang,
 )
 
 warnings.filterwarnings("ignore", category=ResourceWarning)
@@ -264,6 +267,56 @@ class ResetPeriodicityIsolationTest(unittest.TestCase):
         reset_periodicity(self.db, U1)
         self.assertEqual(self._progress_count(U1), 0)  # caller's schedule cleared
         self.assertEqual(self._progress_count(U2), 1)  # everyone else untouched
+
+
+class LanguageIsolationTest(unittest.TestCase):
+    """P2.3 — interface/dict language is per-user (stored in the users table)."""
+
+    def setUp(self):
+        self.db = _mk_db()
+        self.addCleanup(lambda: os.unlink(self.db))
+        init_db(self.db)
+
+    def test_interface_lang_per_user(self):
+        set_user_interface_lang(self.db, U1, "ru")
+        set_user_interface_lang(self.db, U2, "uk")
+        self.assertEqual(get_user_languages(self.db, U1)[0], "ru")
+        self.assertEqual(get_user_languages(self.db, U2)[0], "uk")
+
+    def test_dict_lang_per_user(self):
+        set_user_dict_lang(self.db, U1, "ru")
+        set_user_dict_lang(self.db, U2, "uk")
+        self.assertEqual(get_user_languages(self.db, U1)[1], "ru")
+        self.assertEqual(get_user_languages(self.db, U2)[1], "uk")
+
+    def test_unset_user_has_no_language(self):
+        self.assertEqual(get_user_languages(self.db, U1), ("", ""))
+
+
+class LanguageReaderTest(unittest.TestCase):
+    """P2.3 — common.lang reader returns per-user value, falls back to global default."""
+
+    def setUp(self):
+        self.db = _mk_db()
+        init_db(self.db)
+        self._old_db_path = os.environ.get("DB_PATH")
+        os.environ["DB_PATH"] = self.db
+
+        def _restore():
+            if self._old_db_path is None:
+                os.environ.pop("DB_PATH", None)
+            else:
+                os.environ["DB_PATH"] = self._old_db_path
+            os.unlink(self.db)
+
+        self.addCleanup(_restore)
+
+    def test_reader_per_user_and_fallback(self):
+        from bot.common.lang import _user_interface_lang
+
+        set_user_interface_lang(self.db, U1, "uk")
+        self.assertEqual(_user_interface_lang(U1), "uk")  # this user's own choice
+        self.assertEqual(_user_interface_lang(U2), "en")  # unset → global default ("en")
 
 
 if __name__ == "__main__":

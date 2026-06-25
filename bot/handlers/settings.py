@@ -26,8 +26,6 @@ from ..app_config import (
     LEARNING_SETTINGS_MENU,
     LEARNING_WARMUP_INTERVALS,
     MENU,
-    OWNER_DICT_LANG_KEY,
-    OWNER_INTERFACE_LANG_KEY,
     QUIZ_RU_DE_MENU,
     SELECT_DICT_LANG,
     SELECT_UI_LANG,
@@ -69,6 +67,8 @@ from ..storage import (
     list_topics,
     reset_periodicity,
     set_setting,
+    set_user_dict_lang,
+    set_user_interface_lang,
 )
 from ..ui.keyboards import (
     _add_keys,
@@ -277,7 +277,7 @@ async def select_ui_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return SELECT_UI_LANG
 
-    set_setting(get_db_path(), OWNER_INTERFACE_LANG_KEY, interface_lang)
+    set_user_interface_lang(get_db_path(), user_id, interface_lang)
     return await _ask_dictionary_language(update, user_id)
 
 
@@ -293,7 +293,7 @@ async def select_dict_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not dict_lang:
         return await _ask_dictionary_language(update, user_id)
 
-    set_setting(get_db_path(), OWNER_DICT_LANG_KEY, dict_lang)
+    set_user_dict_lang(get_db_path(), user_id, dict_lang)
     await update.message.reply_text(
         t(lang, "main_menu"),
         reply_markup=_main_menu_markup(user_id),

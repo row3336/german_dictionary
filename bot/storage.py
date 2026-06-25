@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
+from .app_config import CEFR_LEVELS
 from .text_utils import cap_word
 
 DEFAULT_EASE = 2.5
