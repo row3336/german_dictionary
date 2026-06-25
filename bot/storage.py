@@ -39,12 +39,22 @@ def default_srs(today=None):
 
 @contextmanager
 def _connect(db_path):
-    """Handle connect."""
+    """Open a SQLite connection with concurrency-friendly pragmas.
+
+    WAL + busy_timeout let multiple users read/write without "database is locked"
+    under the single-process bot: writers no longer block readers, and write
+    contention waits (up to busy_timeout) instead of failing immediately.
+    synchronous=NORMAL is the safe+faster setting under WAL. journal_mode=WAL is
+    persisted in the DB header (set once, harmless to re-assert each connect).
+    """
     path = Path(db_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     try:
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA busy_timeout = 5000")
+        conn.execute("PRAGMA synchronous = NORMAL")
         conn.execute("PRAGMA foreign_keys = ON")
         yield conn
         conn.commit()
