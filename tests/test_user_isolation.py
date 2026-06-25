@@ -26,6 +26,7 @@ from bot.storage import (
     learning_get_or_create_batch,
     list_transaction_logs,
     list_weak_words,
+    reset_periodicity,
     select_due,
 )
 
@@ -234,6 +235,35 @@ class TransactionLogIsolationTest(unittest.TestCase):
         # owner of the log can delete it
         delete_transaction_logs(self.db, U1, [log_id])
         self.assertEqual(len(list_transaction_logs(self.db, U1)), 0)
+
+
+class ResetPeriodicityIsolationTest(unittest.TestCase):
+    """P1.6 — a user's "reset periodicity" must wipe ONLY their own progress.
+
+    Regression guard for the one audit finding: reset_periodicity used to
+    `DELETE FROM progress` globally (would erase every user's schedule).
+    """
+
+    def setUp(self):
+        self.db = _mk_db()
+        self.addCleanup(lambda: os.unlink(self.db))
+        init_db(self.db)
+        self.today = date.today().isoformat()
+
+    def _progress_count(self, user_id):
+        with sqlite3.connect(self.db) as conn:
+            return conn.execute(
+                "SELECT COUNT(*) FROM progress WHERE user_id = ?", (user_id,)
+            ).fetchone()[0]
+
+    def test_reset_only_affects_caller(self):
+        e = _add_noun(self.db, "Tor", "ворота")
+        with sqlite3.connect(self.db) as conn:
+            _progress(conn, U1, e["id"], "ru_de", self.today)
+            _progress(conn, U2, e["id"], "ru_de", self.today)
+        reset_periodicity(self.db, U1)
+        self.assertEqual(self._progress_count(U1), 0)  # caller's schedule cleared
+        self.assertEqual(self._progress_count(U2), 1)  # everyone else untouched
 
 
 if __name__ == "__main__":

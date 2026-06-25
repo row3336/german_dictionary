@@ -1767,11 +1767,14 @@ def get_setting(db_path, key, default=None):
     return row["value"]
 
 
-def reset_periodicity(db_path):
-    """Handle reset periodicity."""
+def reset_periodicity(db_path, user_id):
+    """Reset the SR schedule for ONE user — deletes only their progress rows.
+
+    Multiuser-safe: scoped by user_id so a reset never wipes other users' progress.
+    """
     init_db(db_path)
     with _connect(db_path) as conn:
-        conn.execute("DELETE FROM progress")
+        conn.execute("DELETE FROM progress WHERE user_id = ?", (int(user_id),))
 
 
 def add_banned_word(db_path, raw_word):

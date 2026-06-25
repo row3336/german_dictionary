@@ -517,7 +517,7 @@ async def algo_settings_confirm(update: Update, context: ContextTypes.DEFAULT_TY
     text = update.message.text.strip().lower()
     user_id = update.effective_user.id
     if text == "yes":
-        reset_periodicity(get_db_path())
+        reset_periodicity(get_db_path(), user_id)
         await update.message.reply_text("✅ Periodicity reset.")
         return await _send_algo_settings_menu(update, user_id)
 
