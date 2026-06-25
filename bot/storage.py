@@ -1774,6 +1774,56 @@ def get_setting(db_path, key, default=None):
     return row["value"]
 
 
+def set_user_setting(db_path, user_id, key, value):
+    """Upsert a per-user setting (user_settings table)."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO user_settings (user_id, key, value) VALUES (?, ?, ?)
+            ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value
+            """,
+            (int(user_id), _safe_text(key), _safe_text(value)),
+        )
+
+
+def get_user_setting(db_path, user_id, key, default=None):
+    """This user's setting value, or `default` if they have none set.
+
+    Per-user override layer over global defaults: the caller passes the global
+    default; an unset key simply falls back to it. Strictly user-scoped — never
+    sees another user's value.
+    """
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT value FROM user_settings WHERE user_id = ? AND key = ?",
+            (int(user_id), _safe_text(key)),
+        ).fetchone()
+    if not row:
+        return default
+    return row["value"]
+
+
+def reset_user_settings(db_path, user_id, keys=None):
+    """Reset some (keys given) or ALL of a user's settings to defaults.
+
+    Deletes only that user's rows → the getter then falls back to the global
+    default. Strictly user-scoped (never touches another user / the owner).
+    """
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        if keys:
+            clean = [_safe_text(k) for k in keys]
+            placeholders = ",".join("?" for _ in clean)
+            conn.execute(
+                f"DELETE FROM user_settings WHERE user_id = ? AND key IN ({placeholders})",
+                (int(user_id), *clean),
+            )
+        else:
+            conn.execute("DELETE FROM user_settings WHERE user_id = ?", (int(user_id),))
+
+
 def reset_periodicity(db_path, user_id):
     """Reset the SR schedule for ONE user — deletes only their progress rows.
 
