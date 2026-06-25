@@ -18,8 +18,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 # Current schema level. 1 = single-user baseline (state at v1.0-single-user).
-# Multiuser phases bump this: P2 (+user_settings) -> 2, P4 (+user_word_media) -> 3, ...
-SCHEMA_VERSION = 1
+# 2 = P2 (+ user_settings). Next: P4 (+ user_word_media) -> 3, ...
+SCHEMA_VERSION = 2
 
 # Tables whose row counts we snapshot before/after a migration (must not shrink).
 _COUNT_TABLES = (

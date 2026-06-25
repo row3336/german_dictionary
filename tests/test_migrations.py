@@ -11,7 +11,13 @@ import sqlite3
 import tempfile
 import unittest
 
-from bot.common.db_safety import run_healthcheck
+from bot.common.db_safety import (
+    SCHEMA_VERSION,
+    apply_migrations_safely,
+    get_user_version,
+    run_healthcheck,
+    set_user_version,
+)
 from bot.storage import init_db
 
 
@@ -157,6 +163,33 @@ class MigrationFromOldSchemaTest(unittest.TestCase):
         self.assertEqual(row[4], row[5])       # updated_at backfilled to created_at
 
         self.assertTrue(run_healthcheck(db)["ok"])
+
+
+class V1ToV2MigrationTest(unittest.TestCase):
+    """P2.1 — adding user_settings is a safe additive v1 -> v2 migration."""
+
+    def test_v1_to_v2_adds_user_settings(self):
+        d = tempfile.mkdtemp()
+        db = os.path.join(d, "words.db")
+        init_db(db)
+        # simulate a real v1 DB: user_settings absent, version marker at 1
+        conn = sqlite3.connect(db)
+        conn.execute("DROP TABLE user_settings")
+        conn.commit()
+        conn.close()
+        set_user_version(db, 1)
+        self.assertNotIn("user_settings", _schema(db))
+
+        report = apply_migrations_safely(db, os.path.join(d, "backups"))
+
+        self.assertTrue(report["migrated"])
+        self.assertEqual(report["from_version"], 1)
+        self.assertEqual(report["to_version"], SCHEMA_VERSION)
+        self.assertGreaterEqual(SCHEMA_VERSION, 2)
+        self.assertIn("user_settings", _schema(db))
+        self.assertEqual({"user_id", "key", "value"}, _schema(db)["user_settings"])
+        self.assertTrue(report["healthcheck"]["ok"])
+        self.assertEqual(get_user_version(db), SCHEMA_VERSION)
 
 
 if __name__ == "__main__":

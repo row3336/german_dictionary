@@ -281,6 +281,13 @@ def init_db(db_path):
                 value TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS user_settings (
+                user_id INTEGER NOT NULL,
+                key TEXT NOT NULL,
+                value TEXT NOT NULL,
+                PRIMARY KEY (user_id, key)
+            );
+
             CREATE TABLE IF NOT EXISTS user_levels (
                 user_id INTEGER NOT NULL,
                 level TEXT NOT NULL,
