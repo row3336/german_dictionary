@@ -1,0 +1,98 @@
+"""Cross-user data isolation contract (docs/multiuser.md P1, §5.1).
+
+The #1 silent multiuser risk: a per-user query that forgets `WHERE user_id = ?`
+would mix one user's progress/stats/learning with another's. These tests seed
+TWO users sharing the SAME word_ids (one shared dictionary) and assert each
+user's reads return only their own rows. Grows per sub-step (P1.1..P1.5).
+"""
+
+import os
+import sqlite3
+import tempfile
+import unittest
+import warnings
+from datetime import date, timedelta
+
+from bot.storage import add_word, fsrs_due_forecast, init_db, select_due
+
+warnings.filterwarnings("ignore", category=ResourceWarning)
+
+U1, U2 = 101, 202
+
+
+def _mk_db():
+    tmp = tempfile.NamedTemporaryFile(delete=False)
+    tmp.close()
+    return tmp.name
+
+
+def _add_noun(db_path, german, russian, topic="1"):
+    return add_word(
+        db_path,
+        {
+            "id": "unique",
+            "type": "nomen",
+            "article": "der",
+            "german": german,
+            "russian": russian,
+            "ukrainian": "",
+            "english": "",
+            "topic": topic,
+        },
+    )
+
+
+def _event(conn, user_id, word_id, mode, is_correct, created_at):
+    conn.execute(
+        "INSERT INTO quiz_events (user_id, word_id, mode, is_correct, created_at) VALUES (?, ?, ?, ?, ?)",
+        (user_id, word_id, mode, is_correct, created_at),
+    )
+
+
+def _progress(conn, user_id, word_id, mode, due, interval=1, reps=1, ease=2.5):
+    conn.execute(
+        "INSERT INTO progress (user_id, word_id, mode, interval, repetitions, ease, due) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (user_id, word_id, mode, interval, reps, ease, due),
+    )
+
+
+class SrCoreIsolationTest(unittest.TestCase):
+    """P1.1 — spaced-repetition core: select_due + fsrs_due_forecast."""
+
+    def setUp(self):
+        self.db = _mk_db()
+        self.addCleanup(lambda: os.unlink(self.db))
+        init_db(self.db)
+        self.today = date.today().isoformat()
+
+    def test_select_due_is_per_user(self):
+        # shared word, introduced only for U1 → U2 must see nothing
+        e = _add_noun(self.db, "Schal", "шарф")
+        with sqlite3.connect(self.db) as conn:
+            _event(conn, U1, e["id"], "ru_de", 0, f"{self.today} 08:00:00")
+        self.assertEqual(len(select_due(self.db, user_id=U1, mode="ru_de")), 1)
+        self.assertEqual(len(select_due(self.db, user_id=U2, mode="ru_de")), 0)
+
+    def test_other_users_progress_does_not_leak(self):
+        # both introduced; U2 scheduled far out → only U1 is due, U2 is not
+        e = _add_noun(self.db, "Schal", "шарф")
+        future = (date.today() + timedelta(days=999)).isoformat()
+        with sqlite3.connect(self.db) as conn:
+            _event(conn, U1, e["id"], "ru_de", 0, f"{self.today} 08:00:00")
+            _event(conn, U2, e["id"], "ru_de", 0, f"{self.today} 08:00:00")
+            _progress(conn, U2, e["id"], "ru_de", future)
+        self.assertEqual(len(select_due(self.db, user_id=U1, mode="ru_de")), 1)
+        self.assertEqual(len(select_due(self.db, user_id=U2, mode="ru_de")), 0)
+
+    def test_forecast_counts_only_own(self):
+        for i in range(2):
+            e = _add_noun(self.db, f"Wort{i}", f"слово{i}")
+            with sqlite3.connect(self.db) as conn:
+                _event(conn, U1, e["id"], "ru_de", 0, f"{self.today} 08:0{i}:00")
+        self.assertEqual(fsrs_due_forecast(self.db, U1, "ru_de")["total"], 2)
+        self.assertEqual(fsrs_due_forecast(self.db, U2, "ru_de")["total"], 0)
+
+
+if __name__ == "__main__":
+    unittest.main()
