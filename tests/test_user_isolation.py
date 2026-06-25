@@ -16,6 +16,8 @@ from datetime import date, timedelta
 from bot.storage import (
     add_word,
     fsrs_due_forecast,
+    get_daily_first_touch_retention,
+    get_statistics_snapshot,
     init_db,
     learning_active_count,
     learning_due_entries,
@@ -174,6 +176,37 @@ class LearningIsolationTest(unittest.TestCase):
         # and the due lists don't bleed across users
         self.assertEqual([x["german"] for x in learning_due_entries(self.db, U1)], ["Buch"])
         self.assertEqual([x["german"] for x in learning_due_entries(self.db, U2)], ["Stuhl"])
+
+
+class StatsIsolationTest(unittest.TestCase):
+    """P1.4 — quiz_events / statistics / retention: per-user (dictionary size shared)."""
+
+    def setUp(self):
+        self.db = _mk_db()
+        self.addCleanup(lambda: os.unlink(self.db))
+        init_db(self.db)
+        self.today = date.today().isoformat()
+
+    def test_retention_is_per_user(self):
+        e = _add_noun(self.db, "Hund", "собака")
+        with sqlite3.connect(self.db) as conn:
+            _event(conn, U1, e["id"], "ru_de", 1, f"{self.today} 08:00:00")  # U1 answered correctly
+        r1 = get_daily_first_touch_retention(self.db, U1, modes=["ru_de"])
+        r2 = get_daily_first_touch_retention(self.db, U2, modes=["ru_de"])
+        self.assertEqual((r1["total"], r1["correct"]), (1, 1))
+        self.assertEqual(r2["total"], 0)
+
+    def test_snapshot_activity_per_user_dict_shared(self):
+        e = _add_noun(self.db, "Hund", "собака")
+        with sqlite3.connect(self.db) as conn:
+            _event(conn, U1, e["id"], "ru_de", 1, f"{self.today} 09:00:00")
+        s1 = get_statistics_snapshot(self.db, U1, "ru_de")
+        s2 = get_statistics_snapshot(self.db, U2, "ru_de")
+        # dictionary size is global (shared) — same for everyone
+        self.assertEqual(s1["total_words"], s2["total_words"])
+        # but per-user activity is isolated
+        self.assertGreaterEqual(s1["today_complete"], 1)
+        self.assertEqual(s2["today_complete"], 0)
 
 
 if __name__ == "__main__":
