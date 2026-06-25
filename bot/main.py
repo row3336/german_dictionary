@@ -88,11 +88,11 @@ from .storage import (
     cleanup_transaction_logs,
     delete_transaction_logs,
     get_setting,
-    init_db,
     list_transaction_logs,
     restore_user_word_state,
     set_setting,
 )
+from .common.db_safety import apply_migrations_safely
 from .common.lang import _user_interface_lang
 from .common.navigation import _back_to_tests
 from .i18n import t
@@ -296,7 +296,15 @@ def _cleanup_old_dump_logs(days=14):
 def _prepare_storage():
     """Handle prepare storage."""
     db_path = get_db_path()
-    init_db(db_path)
+    # Safe migration: backup-before-change → apply schema → healthcheck → log timeline.
+    report = apply_migrations_safely(db_path, get_dump_dir())
+    if report.get("migrated"):
+        logger.info(
+            "DB schema migrated v%s→v%s (backup=%s)",
+            report["from_version"], report["to_version"], report["backup"],
+        )
+    if not report["healthcheck"]["ok"]:
+        logger.error("DB healthcheck FAILED after init: %s", report["healthcheck"])
     if not get_setting(db_path, OWNER_INTERFACE_LANG_KEY):
         set_setting(db_path, OWNER_INTERFACE_LANG_KEY, "en")
     if not get_setting(db_path, OWNER_DICT_LANG_KEY):

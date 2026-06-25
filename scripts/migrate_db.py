@@ -1,80 +1,65 @@
-"""Apply all pending DB migrations to a words.db (idempotent).
+"""Apply all pending DB migrations to a words.db — SAFELY (idempotent).
 
-Runs bot.storage.init_db(), which creates/updates the schema and migrates data:
-- renames legacy SM2 settings keys to FSRS (preserving values),
-- adds words.updated_at (backfilled to created_at for existing rows),
-- plus any other schema/column migrations.
+Uses bot.common.db_safety.apply_migrations_safely():
+- snapshots the DB BEFORE any schema change (rollback point),
+- runs bot.storage.init_db() (creates/updates schema, migrates data),
+- runs a healthcheck (integrity_check + foreign_key_check + row counts),
+- records the migration in the db_events timeline.
 
 Usage on the server:
-    python3 -m scripts.migrate_db --db ./data/words.db
+    python3 -m scripts.migrate_db --db ./data/words.db [--dump-dir ./data/backups]
 
-Safe to run multiple times. Make a backup first; the script also reports
-row counts before/after so you can confirm nothing was lost.
+Safe to run multiple times. The pre-migration backup + reported counts let you
+confirm nothing was lost, and roll back from the snapshot if needed.
 """
 
 import argparse
-import sqlite3
 import sys
+from pathlib import Path
 
-from bot.storage import init_db
-
-
-def _counts(db_path):
-    try:
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
-        try:
-            out = {}
-            for table in ("words", "progress", "quiz_events", "app_settings", "learning_items"):
-                try:
-                    out[table] = conn.execute(f"SELECT COUNT(*) AS c FROM {table}").fetchone()["c"]
-                except sqlite3.Error:
-                    out[table] = "-"
-            return out
-        finally:
-            conn.close()
-    except sqlite3.Error as exc:
-        return {"error": str(exc)}
-
-
-def _settings_keys(db_path, like):
-    try:
-        conn = sqlite3.connect(db_path)
-        try:
-            rows = conn.execute(
-                "SELECT key FROM app_settings WHERE key LIKE ? ORDER BY key", (like,)
-            ).fetchall()
-            return [r[0] for r in rows]
-        finally:
-            conn.close()
-    except sqlite3.Error:
-        return []
+from bot.common.db_safety import apply_migrations_safely
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Apply DB migrations (idempotent).")
+    parser = argparse.ArgumentParser(description="Apply DB migrations safely (idempotent).")
     parser.add_argument("--db", required=True, help="Path to words.db")
+    parser.add_argument(
+        "--dump-dir",
+        default=None,
+        help="Where to write the pre-migration backup (default: <db dir>/backups)",
+    )
     args = parser.parse_args()
 
+    dump_dir = args.dump_dir or str(Path(args.db).resolve().parent / "backups")
     print(f"DB: {args.db}")
-    before = _counts(args.db)
-    print(f"before: {before}")
-    print(f"  sm2_* keys before: {_settings_keys(args.db, 'sm2_%')}")
+    print(f"backup dir: {dump_dir}")
 
-    init_db(args.db)
-    print("migrations applied (init_db).")
+    report = apply_migrations_safely(args.db, dump_dir)
 
-    after = _counts(args.db)
-    print(f"after:  {after}")
-    print(f"  sm2_* keys after:  {_settings_keys(args.db, 'sm2_%')} (expect [])")
-    print(f"  fsrs_* keys after: {_settings_keys(args.db, 'fsrs_%')}")
+    print(f"version: v{report['from_version']} -> v{report['to_version']} "
+          f"(migrated={report['migrated']}, fresh={report['fresh']})")
+    if report["backup"]:
+        print(f"pre-migration backup: {report['backup']}")
+    if report["counts_before"] is not None:
+        print(f"counts before: {report['counts_before']}")
+    print(f"counts after:  {report['counts_after']}")
 
-    if isinstance(before, dict) and isinstance(after, dict) and "error" not in before:
+    health = report["healthcheck"]
+    print(f"healthcheck: ok={health['ok']} integrity={health['integrity']} "
+          f"fk_violations={health['fk_violations']}")
+
+    if not health["ok"]:
+        print("ERROR: healthcheck FAILED — investigate; restore from the pre-migration backup if needed.")
+        return 1
+
+    # Guard: core tables must not shrink across a migration.
+    before, after = report["counts_before"], report["counts_after"]
+    if before:
         for table in ("words", "progress", "quiz_events"):
-            if before.get(table) != after.get(table):
+            if table in before and before.get(table) != after.get(table):
                 print(f"WARNING: {table} count changed {before.get(table)} -> {after.get(table)}")
                 return 1
-    print("OK: core row counts unchanged.")
+    print("OK: schema applied, healthcheck passed, core counts unchanged.")
     return 0
 
 
