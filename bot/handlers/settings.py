@@ -65,6 +65,7 @@ from ..storage import (
     _parse_learning_intervals,
     list_topics,
     reset_periodicity,
+    reset_user_settings,
     set_setting,
     set_user_dict_lang,
     set_user_interface_lang,
@@ -365,6 +366,12 @@ async def algo_settings_menu_choice(update: Update, context: ContextTypes.DEFAUL
             reply_markup=ReplyKeyboardRemove(),
         )
         return ALGO_SETTINGS_CONFIRM
+
+    if text == t(lang, "reset_defaults"):
+        # clear this user's algo overrides → getters fall back to defaults (per-user only)
+        reset_user_settings(get_db_path(), user_id, keys=[SESSION_RETRY_GAP_KEY, SESSION_RETRY_IT_KEY])
+        await update.message.reply_text("✅ Algo settings reset to default.")
+        return await _send_algo_settings_menu(update, user_id)
 
     await update.message.reply_text(
         "Use algo settings buttons.",

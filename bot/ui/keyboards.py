@@ -88,7 +88,7 @@ def _algo_settings_menu_keys(user_id):
     return [
         [t(lang, "topic_filter"), t(lang, "ses_rtr_gap"), t(lang, "ses_rtr_it")],
         [t(lang, "drill_sett"), t(lang, "learning_sett"), t(lang, "unit_tests")],
-        [t(lang, "reset_periodicity")],
+        [t(lang, "reset_periodicity"), t(lang, "reset_defaults")],
         [t(lang, "back")],
     ]
 

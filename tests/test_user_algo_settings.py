@@ -21,7 +21,7 @@ from bot.common.settings import (
     _topic_filter_for_query,
     _topic_filter_value,
 )
-from bot.storage import init_db, set_setting, set_user_setting
+from bot.storage import init_db, reset_user_settings, set_setting, set_user_setting
 
 U1, U2 = 101, 202
 
@@ -59,6 +59,16 @@ class AlgoSettingsPerUserTest(unittest.TestCase):
         set_user_setting(self.db, U1, SESSION_RETRY_GAP_KEY, "9")
         self.assertEqual(_session_retry_gap(self.db, U1), 9)  # own override wins
         self.assertEqual(_session_retry_gap(self.db, U2), 5)  # U2 still on global
+
+    def test_reset_defaults_clears_only_callers_algo(self):
+        # P2.4c — "reset to default" deletes this user's algo overrides only
+        set_user_setting(self.db, U1, SESSION_RETRY_GAP_KEY, "9")
+        set_user_setting(self.db, U1, SESSION_RETRY_IT_KEY, "8")
+        set_user_setting(self.db, U2, SESSION_RETRY_GAP_KEY, "4")
+        reset_user_settings(self.db, U1, keys=[SESSION_RETRY_GAP_KEY, SESSION_RETRY_IT_KEY])
+        self.assertEqual(_session_retry_gap(self.db, U1), RETRY_GAP_QUESTIONS)       # back to default
+        self.assertEqual(_session_retry_iterations(self.db, U1), RETRY_MAX_REPEATS)
+        self.assertEqual(_session_retry_gap(self.db, U2), 4)                         # U2 untouched
 
 
 class TopicFilterPerUserTest(unittest.TestCase):
