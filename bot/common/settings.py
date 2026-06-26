@@ -26,7 +26,7 @@ from ..app_config import (
     WEAK_DRILL_REPEATS_KEY,
     get_db_path,
 )
-from ..storage import _parse_learning_intervals, get_setting, set_setting
+from ..storage import _parse_learning_intervals, get_setting, get_user_setting, set_setting
 from ..text_utils import md_escape as _md_escape
 
 
@@ -40,16 +40,30 @@ def _get_int_setting(db_path, key, default):
     return value
 
 
-def _session_retry_gap(db_path):
-    """Handle session retry gap."""
-    value = _get_int_setting(db_path, SESSION_RETRY_GAP_KEY, RETRY_GAP_QUESTIONS)
-    return max(1, value)
+def _get_int_user_setting(db_path, user_id, key, default):
+    """Per-user int setting: this user's value → global app_settings → `default`.
+
+    Mirrors the per-user language fallback: a user's own override wins; otherwise
+    the legacy global value (owner's setting) acts as the default; otherwise the
+    constant default. Strictly user-scoped — never another user's value.
+    """
+    raw = get_user_setting(db_path, user_id, key, None)
+    if raw is None:
+        raw = get_setting(db_path, key, None)
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return int(default)
 
 
-def _session_retry_iterations(db_path):
-    """Handle session retry iterations."""
-    value = _get_int_setting(db_path, SESSION_RETRY_IT_KEY, RETRY_MAX_REPEATS)
-    return max(1, value)
+def _session_retry_gap(db_path, user_id):
+    """Per-user retry gap (questions between repeats)."""
+    return max(1, _get_int_user_setting(db_path, user_id, SESSION_RETRY_GAP_KEY, RETRY_GAP_QUESTIONS))
+
+
+def _session_retry_iterations(db_path, user_id):
+    """Per-user retry iterations (max repeats of a missed word)."""
+    return max(1, _get_int_user_setting(db_path, user_id, SESSION_RETRY_IT_KEY, RETRY_MAX_REPEATS))
 
 
 def _weak_drill_gap(db_path):

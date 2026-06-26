@@ -168,13 +168,13 @@ def _set_retry_since_last(context, mode, value):
     counters[mode] = int(value)
 
 
-def _maybe_take_retry_entry(context, mode):
+def _maybe_take_retry_entry(context, mode, user_id):
     """Handle maybe take retry entry."""
     queue = _retry_queue(context, mode)
     if not queue:
         return None
     counts = _retry_counts(context, mode)
-    gap = _session_retry_gap(get_db_path())
+    gap = _session_retry_gap(get_db_path(), user_id)
     since_last = _retry_since_last(context, mode)
     entry, new_since, took = maybe_take_retry_entry(
         queue,
@@ -216,11 +216,11 @@ def _force_take_retry_entry(context, mode):
     return None
 
 
-def _register_retry_result(context, mode, word_id, ok, was_retry):
+def _register_retry_result(context, mode, word_id, ok, was_retry, user_id):
     """Handle register retry result."""
     queue = _retry_queue(context, mode)
     counts = _retry_counts(context, mode)
-    max_repeats = _session_retry_iterations(get_db_path())
+    max_repeats = _session_retry_iterations(get_db_path(), user_id)
     register_retry_result(queue, counts, word_id, ok, was_retry, max_repeats)
     if not was_retry and not ok:
         _set_retry_since_last(context, mode, 0)

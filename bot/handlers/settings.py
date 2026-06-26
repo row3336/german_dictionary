@@ -69,6 +69,7 @@ from ..storage import (
     set_setting,
     set_user_dict_lang,
     set_user_interface_lang,
+    set_user_setting,
 )
 from ..ui.keyboards import (
     _add_keys,
@@ -131,8 +132,8 @@ from ..verb_forms_parsing.parser import (
 async def _send_algo_settings_menu(update: Update, user_id):
     """Handle send algo settings menu."""
     lang = _user_interface_lang(user_id)
-    gap = _session_retry_gap(get_db_path())
-    iterations = _session_retry_iterations(get_db_path())
+    gap = _session_retry_gap(get_db_path(), user_id)
+    iterations = _session_retry_iterations(get_db_path(), user_id)
     weak_drill_gap = _weak_drill_gap(get_db_path())
     weak_drill_repeats = _weak_drill_repeats(get_db_path())
     topics = list_topics(get_db_path())
@@ -502,7 +503,11 @@ async def algo_settings_edit(update: Update, context: ContextTypes.DEFAULT_TYPE)
         elif value < 1:
             await update.message.reply_text("Value must be >= 1.")
             return ALGO_SETTINGS_EDIT
-        set_setting(get_db_path(), key, str(value))
+        # algo settings (session retry) are per-user; drill/learning stay global defaults
+        if key in (SESSION_RETRY_GAP_KEY, SESSION_RETRY_IT_KEY):
+            set_user_setting(get_db_path(), user_id, key, str(value))
+        else:
+            set_setting(get_db_path(), key, str(value))
     context.user_data.pop("algo_setting_edit", None)
     context.user_data.pop("algo_edit_return", None)
     if return_to == "drill":

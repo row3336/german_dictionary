@@ -285,7 +285,7 @@ async def _repeat_current_de_ru(update: Update, context: ContextTypes.DEFAULT_TY
 async def _send_ru_de_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
     """Handle send ru de prompt."""
     mode = _mode_l1_de(update.effective_user.id)
-    entry = _maybe_take_retry_entry(context, mode)
+    entry = _maybe_take_retry_entry(context, mode, update.effective_user.id)
     if not entry:
         context.user_data["quiz_is_retry"] = False
         entry = _pick_due_entry(context, update.effective_user.id, mode)
@@ -320,7 +320,7 @@ async def _send_ru_de_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
 async def _send_de_ru_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
     """Handle send de ru prompt."""
     mode = _mode_de_l1(update.effective_user.id)
-    entry = _maybe_take_retry_entry(context, mode)
+    entry = _maybe_take_retry_entry(context, mode, update.effective_user.id)
     if not entry:
         context.user_data["quiz_is_retry"] = False
         entry = _pick_due_entry(context, update.effective_user.id, mode)
@@ -355,7 +355,7 @@ async def _send_de_ru_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
 async def _send_pl_sg_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
     """Handle send pl sg prompt."""
     mode = _mode_pl_sg(update.effective_user.id)
-    entry = _maybe_take_retry_entry(context, mode)
+    entry = _maybe_take_retry_entry(context, mode, update.effective_user.id)
     if not entry:
         context.user_data["quiz_is_retry"] = False
         attempts = 0
@@ -408,7 +408,7 @@ async def _send_pl_sg_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
 async def _send_article_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
     """Handle send article prompt."""
     mode = MODE_ARTICLE
-    entry = _maybe_take_retry_entry(context, mode)
+    entry = _maybe_take_retry_entry(context, mode, update.effective_user.id)
     if not entry:
         context.user_data["quiz_is_retry"] = False
         entry = _pick_due_entry(context, update.effective_user.id, mode, word_type="nomen")
@@ -484,7 +484,7 @@ async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
             update_form_stats(get_db_path(), update.effective_user.id, entry.get("id"), form_checks)
         _mark_session_word(context, mode, entry.get("id"))
     context.user_data["quiz_last_answered_entry"] = entry
-    _register_retry_result(context, mode, entry.get("id"), ok, is_retry)
+    _register_retry_result(context, mode, entry.get("id"), ok, is_retry, update.effective_user.id)
     if not is_retry and ok:
         _set_retry_since_last(context, mode, _retry_since_last(context, mode) + 1)
 
@@ -536,7 +536,7 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _update_srs_for_entry(update.effective_user.id, entry, mode, ok)
         _mark_session_word(context, mode, entry.get("id"))
     context.user_data["quiz_last_answered_entry"] = entry
-    _register_retry_result(context, mode, entry.get("id"), ok, is_retry)
+    _register_retry_result(context, mode, entry.get("id"), ok, is_retry, update.effective_user.id)
     if not is_retry and ok:
         _set_retry_since_last(context, mode, _retry_since_last(context, mode) + 1)
 
@@ -598,7 +598,7 @@ async def quiz_pl_sg(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _update_srs_for_entry(update.effective_user.id, entry, mode, ok)
         _mark_session_word(context, mode, entry.get("id"))
     context.user_data["quiz_last_answered_entry"] = entry
-    _register_retry_result(context, mode, entry.get("id"), ok, is_retry)
+    _register_retry_result(context, mode, entry.get("id"), ok, is_retry, update.effective_user.id)
     if not is_retry and ok:
         _set_retry_since_last(context, mode, _retry_since_last(context, mode) + 1)
     feedback = _format_feedback_pl_sg(entry, ok)
@@ -633,7 +633,7 @@ async def quiz_article(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _update_srs_for_entry(update.effective_user.id, entry, mode, ok)
         _mark_session_word(context, mode, entry.get("id"))
     context.user_data["quiz_last_answered_entry"] = entry
-    _register_retry_result(context, mode, entry.get("id"), ok, is_retry)
+    _register_retry_result(context, mode, entry.get("id"), ok, is_retry, update.effective_user.id)
     if not is_retry:
         _set_retry_since_last(context, mode, _retry_since_last(context, mode) + 1)
 
