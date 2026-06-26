@@ -96,7 +96,7 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if action == "add_word":
         await update.message.reply_text(
-            f"Send a word or a list (one per line), or upload a .txt file.\n\n{_topic_filter_banner()}",
+            f"Send a word or a list (one per line), or upload a .txt file.\n\n{_topic_filter_banner(user_id)}",
             reply_markup=_add_input_markup(user_id),
             parse_mode="Markdown",
         )
@@ -214,7 +214,7 @@ async def tests_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await _back_to_main_menu(update)
     if action == "quiz_l1_de":
         await update.message.reply_text(
-            f"{QUIZ_RU_DE_TEXT}:\n\n{_topic_filter_banner()}",
+            f"{QUIZ_RU_DE_TEXT}:\n\n{_topic_filter_banner(user_id)}",
             reply_markup=ReplyKeyboardMarkup(_ru_de_menu_keys(user_id), resize_keyboard=True),
             parse_mode="Markdown",
         )
@@ -226,7 +226,7 @@ async def tests_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await _send_de_ru_prompt(
             update,
             context,
-            f"{QUIZ_DE_RU_TEXT}:\n\n{_topic_filter_banner()}",
+            f"{QUIZ_DE_RU_TEXT}:\n\n{_topic_filter_banner(user_id)}",
         )
     if action == "quiz_pl_sg":
         _reset_retry_state(context)
@@ -235,12 +235,12 @@ async def tests_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await _send_pl_sg_prompt(
             update,
             context,
-            f"{QUIZ_PL_SG_TEXT}:\n\n{_topic_filter_banner()}",
+            f"{QUIZ_PL_SG_TEXT}:\n\n{_topic_filter_banner(user_id)}",
         )
     if action == "learning":
         return await _send_learning_menu(update, user_id)
     if action == "topic_filter":
-        current = _topic_filter_value()
+        current = _topic_filter_value(user_id)
         topics = list_topics(get_db_path())
         topics_line = ", ".join(topics) if topics else "-"
         await update.message.reply_text(
@@ -269,7 +269,7 @@ async def quiz_ru_de_menu_choice(update: Update, context: ContextTypes.DEFAULT_T
         )
         return TESTS_MENU
     if action == "topic_filter":
-        current = _topic_filter_value()
+        current = _topic_filter_value(user_id)
         topics = list_topics(get_db_path())
         topics_line = ", ".join(topics) if topics else "-"
         await update.message.reply_text(

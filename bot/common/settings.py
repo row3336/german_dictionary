@@ -143,10 +143,12 @@ def _fsrs_report_hour_utc(db_path):
     return min(23, max(0, value))
 
 
-def _topic_filter_value():
-    """Handle topic filter value."""
-    raw = str(get_setting(get_db_path(), TOPIC_FILTER_KEY, "1") or "").strip()
-    return raw or "1"
+def _topic_filter_value(user_id):
+    """This user's topic filter: per-user override → global app_settings → '1'."""
+    raw = get_user_setting(get_db_path(), user_id, TOPIC_FILTER_KEY, None)
+    if raw is None:
+        raw = get_setting(get_db_path(), TOPIC_FILTER_KEY, "1")
+    return str(raw or "").strip() or "1"
 
 
 def _parse_topic_filter(raw):
@@ -164,31 +166,31 @@ def _parse_topic_filter(raw):
     return tokens
 
 
-def _topic_filter_for_query():
+def _topic_filter_for_query(user_id):
     """Handle topic filter for query."""
-    raw = _topic_filter_value()
+    raw = _topic_filter_value(user_id)
     topics = _parse_topic_filter(raw)
     return topics or None
 
 
-def _topic_filter_label():
+def _topic_filter_label(user_id):
     """Handle topic filter label."""
-    raw = _topic_filter_value()
+    raw = _topic_filter_value(user_id)
     topics = _parse_topic_filter(raw)
     if not topics:
         return "all"
     return "+".join(topics)
 
 
-def _topic_filter_banner():
+def _topic_filter_banner(user_id):
     """Handle topic filter banner."""
-    label = _topic_filter_label()
+    label = _topic_filter_label(user_id)
     return f"Topic filter:\n\n🟥 *{_md_escape(label)}* 🟥"
 
 
-def _current_topic_value():
+def _current_topic_value(user_id):
     """Handle current topic value."""
-    raw = _topic_filter_value()
+    raw = _topic_filter_value(user_id)
     topics = _parse_topic_filter(raw)
     if not topics:
         return "1"

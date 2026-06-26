@@ -50,7 +50,6 @@ from ..common.settings import (
     _learning_reminder_interval,
     _session_retry_gap,
     _session_retry_iterations,
-    _topic_filter_banner,
     _topic_filter_value,
     _weak_drill_gap,
     _weak_drill_repeats,
@@ -145,7 +144,7 @@ async def _send_algo_settings_menu(update: Update, user_id):
             f"{t(lang, 'ses_rtr_it')} = {iterations}",
             f"{t(lang, 'weak_drill_gap')} = {weak_drill_gap}",
             f"{t(lang, 'weak_drill_repeats')} = {weak_drill_repeats}",
-            f"{t(lang, 'topic_filter')} = {_topic_filter_value()}",
+            f"{t(lang, 'topic_filter')} = {_topic_filter_value(user_id)}",
             f"weak.active = err>={WEAK_ACTIVE_MIN_ERRORS} or wrong_streak>={WEAK_ACTIVE_MIN_STREAK_WRONG}",
             f"weak.to_review = {WEAK_ACTIVE_CLEAR_STREAK} correct in row",
             f"weak.review_days = {WEAK_REVIEW_DAYS_STAGE1}/{WEAK_REVIEW_DAYS_STAGE2}/{WEAK_REVIEW_DAYS_STAGE3}",
@@ -340,7 +339,7 @@ async def algo_settings_menu_choice(update: Update, context: ContextTypes.DEFAUL
         return ALGO_SETTINGS_EDIT
 
     if text == t(lang, "topic_filter"):
-        current = _topic_filter_value()
+        current = _topic_filter_value(user_id)
         topics = list_topics(get_db_path())
         topics_line = ", ".join(topics) if topics else "-"
         await update.message.reply_text(
@@ -565,7 +564,7 @@ async def topic_filter_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Send a non-empty topic or 'all'.")
         return TOPIC_FILTER_EDIT
 
-    set_setting(get_db_path(), TOPIC_FILTER_KEY, value)
+    set_user_setting(get_db_path(), user_id, TOPIC_FILTER_KEY, value)
     return_to = context.user_data.pop("topic_return", "")
     if return_to == "add_queue":
         pending = context.user_data.pop("pending_add_queue", [])

@@ -339,7 +339,7 @@ def _pick_weak_entry(context, user_id, weak_field, word_type=None):
         user_id=user_id,
         weak_field=weak_field,
         word_type=word_type,
-        topics=_topic_filter_for_query(),
+        topics=_topic_filter_for_query(user_id),
         limit=300,
     )
     if not due:

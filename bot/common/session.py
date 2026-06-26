@@ -81,7 +81,7 @@ def _pick_due_entry(context, user_id, mode, word_type=None):
             user_id=user_id,
             mode=mode,
             word_type=word_type,
-            topics=_topic_filter_for_query(),
+            topics=_topic_filter_for_query(user_id),
             exclude_correct_today=is_fsrs_mode,
         )
 

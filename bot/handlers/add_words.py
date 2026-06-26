@@ -344,9 +344,9 @@ def _parse_precheck_entry(entry):
     return {"type": entry_type, "word": value}
 
 
-def _format_precheck_list(items):
+def _format_precheck_list(items, topic):
     """Handle format precheck list."""
-    lines = [f"Precheck list (topic: {_current_topic_value()}):"]
+    lines = [f"Precheck list (topic: {topic}):"]
     active = [x for x in items if x.get("word")]
     for idx, item in enumerate(active, start=1):
         word = item.get("word", "")
@@ -435,12 +435,11 @@ def _validate_ai_entry(entry):
     return bool(entry.get("german")) and bool(entry.get("russian"))
 
 
-def _normalize_ai_entry(entry):
+def _normalize_ai_entry(entry, topic):
     """Handle normalize ai entry."""
     entry = dict(entry)
     entry_type = _type_label(entry.get("type", ""))
     entry["type"] = entry_type
-    topic = _current_topic_value()
 
     if entry_type == "verb":
         return {
@@ -658,7 +657,7 @@ async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, w
         )
         return ADD_CLARIFY
 
-    entry = _normalize_ai_entry(entry)
+    entry = _normalize_ai_entry(entry, _current_topic_value(update.effective_user.id))
     if forced_type in {"nomen", "verb", "phrase"}:
         entry["type"] = forced_type
     for key, value in forced_fields.items():
@@ -830,7 +829,7 @@ async def add_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["precheck_items"] = items
     await _reply_text_with_retry(
         update.message,
-        f"```text\n{_format_precheck_list(items)}\n```",
+        f"```text\n{_format_precheck_list(items, _current_topic_value(update.effective_user.id))}\n```",
         reply_markup=ReplyKeyboardMarkup(PRECHECK_KEYS, resize_keyboard=True),
         parse_mode="Markdown",
     )
@@ -989,7 +988,7 @@ async def add_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["precheck_items"] = items
     await _reply_text_with_retry(
         update.message,
-        f"```text\n{_format_precheck_list(items)}\n```",
+        f"```text\n{_format_precheck_list(items, _current_topic_value(update.effective_user.id))}\n```",
         reply_markup=ReplyKeyboardMarkup(PRECHECK_KEYS, resize_keyboard=True),
         parse_mode="Markdown",
     )

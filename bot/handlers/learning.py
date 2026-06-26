@@ -201,7 +201,7 @@ async def _send_learning_menu(update: Update, user_id):
         [
             f"{LEARNING_TEXT}:",
             "",
-            _topic_filter_banner(),
+            _topic_filter_banner(user_id),
             "",
             f"{t(_user_interface_lang(user_id), 'learning_daily_qty')} = {_learning_daily_qty(get_db_path())}",
             f"{t(_user_interface_lang(user_id), 'learning_intervals')} = {_learning_intervals_text(get_db_path())}",
@@ -251,7 +251,7 @@ async def _learning_add_words(update: Update, context: ContextTypes.DEFAULT_TYPE
             reply_markup=ReplyKeyboardMarkup(_learning_menu_keys(user_id), resize_keyboard=True),
         )
         return LEARNING_MENU
-    picked = learning_pick_new_words(db_path, user_id=user_id, limit=need, topics=_topic_filter_for_query())
+    picked = learning_pick_new_words(db_path, user_id=user_id, limit=need, topics=_topic_filter_for_query(user_id))
     if not picked:
         await _reply_text_with_retry(
             update.message,
