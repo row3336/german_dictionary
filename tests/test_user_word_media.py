@@ -57,43 +57,59 @@ class UserWordMediaTest(unittest.TestCase):
         self.assertEqual(media["image"], "my-img")
         self.assertEqual(media["example"], "my example")  # earlier value kept
 
-    def test_overlay_substitutes_only_personal_nonempty(self):
+    def test_guest_sees_blank_until_set_no_owner_fallback(self):
+        # A guest never sees the owner's shared image/example; blank until they set their own.
         entry = {"id": self.wid, "image": "shared-img", "example": "shared example"}
-        # no personal -> unchanged
-        self.assertEqual(apply_user_word_media(self.db, U1, entry)["example"], "shared example")
+        out = apply_user_word_media(self.db, U1, entry)
+        self.assertEqual(out["example"], "")  # NOT "shared example"
+        self.assertEqual(out["image"], "")
+        self.assertEqual(entry["example"], "shared example")  # input not mutated
         set_user_word_media(self.db, U1, self.wid, example="personal ex")
         out = apply_user_word_media(self.db, U1, entry)
-        self.assertEqual(out["example"], "personal ex")   # personal wins
-        self.assertEqual(out["image"], "shared-img")        # image untouched (personal empty)
-        self.assertEqual(entry["example"], "shared example")  # input not mutated
+        self.assertEqual(out["example"], "personal ex")  # their own value
+        self.assertEqual(out["image"], "")               # image still unset -> blank
 
-    def test_isolated_per_user_and_shared_unchanged(self):
+    def test_isolated_per_user_no_leak(self):
         set_user_word_media(self.db, U1, self.wid, example="u1 only")
         entry = {"id": self.wid, "image": "shared-img", "example": "shared example"}
         self.assertEqual(apply_user_word_media(self.db, U1, entry)["example"], "u1 only")
-        self.assertEqual(apply_user_word_media(self.db, U2, entry)["example"], "shared example")
-        # owner/None user sees shared
+        self.assertEqual(apply_user_word_media(self.db, U2, entry)["example"], "")  # blank, not u1's
+        # user_id=None is a non-personalized context (e.g. owner-less) -> shared as-is
         self.assertEqual(apply_user_word_media(self.db, None, entry)["example"], "shared example")
 
-    def test_word_card_shows_personal_for_guest_only(self):
-        # P4.2: the rendered card shows the user's personal example/image; others see shared.
-        import os
+    def test_owner_sees_shared(self):
+        os.environ["OWNER_ID"] = "5000"
+        self.addCleanup(lambda: os.environ.pop("OWNER_ID", None))
+        entry = {"id": self.wid, "image": "shared-img", "example": "shared example"}
+        out = apply_user_word_media(self.db, 5000, entry)  # owner
+        self.assertEqual(out["example"], "shared example")
+        self.assertEqual(out["image"], "shared-img")
 
+    def test_word_card_guest_blank_owner_shared(self):
         from bot.ui.formatting import _format_word_card
 
         os.environ["DB_PATH"] = self.db  # _format_word_card resolves the DB via get_db_path()
+        os.environ["OWNER_ID"] = "5000"
         self.addCleanup(lambda: os.environ.pop("DB_PATH", None))
-        set_user_word_media(self.db, U1, self.wid, example="mnemonic ex", image="my-img")
+        self.addCleanup(lambda: os.environ.pop("OWNER_ID", None))
         entry = {
             "id": self.wid, "type": "nomen", "german": "Haus",
             "image": "shared-img", "example": "shared example",
         }
-        card_u1 = _format_word_card(entry, user_id=U1)
-        self.assertIn("example: mnemonic ex", card_u1)
-        self.assertIn("image: my-img", card_u1)
-        card_u2 = _format_word_card(entry, user_id=U2)
-        self.assertIn("example: shared example", card_u2)
-        self.assertIn("image: shared-img", card_u2)
+        # guest with no personal -> blank ("-" in the card), never the owner's text
+        card_guest = _format_word_card(entry, user_id=U1)
+        self.assertIn("example: -", card_guest)
+        self.assertIn("image: -", card_guest)
+        self.assertNotIn("shared example", card_guest)
+        # guest who set their own -> sees their own
+        set_user_word_media(self.db, U1, self.wid, example="mnemonic ex", image="my-img")
+        card_guest2 = _format_word_card(entry, user_id=U1)
+        self.assertIn("example: mnemonic ex", card_guest2)
+        self.assertIn("image: my-img", card_guest2)
+        # owner -> shared
+        card_owner = _format_word_card(entry, user_id=5000)
+        self.assertIn("example: shared example", card_owner)
+        self.assertIn("image: shared-img", card_owner)
 
 
 if __name__ == "__main__":

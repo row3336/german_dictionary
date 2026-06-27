@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-from .app_config import CEFR_LEVELS
+from .app_config import CEFR_LEVELS, is_owner
 from .text_utils import cap_word
 
 DEFAULT_EASE = 2.5
@@ -1697,8 +1697,9 @@ def list_pending_users(db_path):
     ]
 
 
-# --- Personal example/image (P4): a guest's per-word override, owner edits stay
-# in the shared `words`. Read is COALESCE(NULLIF(personal,''), shared). ---
+# --- Personal example/image (P4): a guest's per-word value, owner edits stay in
+# the shared `words`. A guest sees ONLY their personal image/example (blank when
+# unset) — never the owner's shared values. The owner sees the shared word. ---
 
 def get_user_word_media(db_path, user_id, word_id):
     """This user's personal image/example for a word; {} if none set."""
@@ -1738,22 +1739,20 @@ def set_user_word_media(db_path, user_id, word_id, image=None, example=None):
 
 
 def apply_user_word_media(db_path, user_id, entry):
-    """Overlay this user's personal image/example onto a word entry.
+    """Apply the per-user view of image/example to a word entry.
 
-    Returns a copy with personal values substituted where they are non-empty
-    (COALESCE(NULLIF(personal,''), shared)); the input entry is left unchanged.
-    The owner has no personal rows, so they always see the shared word.
+    The owner sees the shared word as-is. A guest sees ONLY their personal
+    image/example (blank when unset) — the owner's shared image/example are never
+    shown to a guest. The input entry is left unchanged.
     """
     if not user_id or not entry or not entry.get("id"):
         return entry
-    media = get_user_word_media(db_path, user_id, entry.get("id"))
-    if not media:
+    if is_owner(user_id):
         return entry
+    media = get_user_word_media(db_path, user_id, entry.get("id"))
     out = dict(entry)
-    for field in ("image", "example"):
-        value = media.get(field, "")
-        if value:
-            out[field] = value
+    out["image"] = media.get("image", "")
+    out["example"] = media.get("example", "")
     return out
 
 
