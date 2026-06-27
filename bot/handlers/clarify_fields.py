@@ -40,7 +40,7 @@ from ..handlers.quiz import (
     _send_ru_de_prompt,
 )
 from ..i18n import t
-from ..labels import QUIZ_FIELDS_TEXT, SEND_LEARN_TEXT, SYNONYMS_TEXT
+from ..labels import SYNONYMS_TEXT
 from ..storage import delete_word, update_word_fields
 from ..text_utils import type_label as _type_label
 from ..ui.formatting import (
@@ -260,7 +260,7 @@ async def _resume_after_clarify(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle add edit."""
+    """Обработка ввода при уточнении/правке полей карточки слова."""
     from ..handlers.db_search import _send_db_search_prompt
     from ..handlers.synonyms import _open_synonyms_menu
     from ..handlers.weak import (
@@ -319,14 +319,15 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
 
     if source == "quiz" and stage == "pick_scope":
         token = text.strip().lower()
-        if token == QUIZ_FIELDS_TEXT:
+        action = _action_key_from_text(text.strip(), update.effective_user.id)
+        if action == "clarify_fields":
             context.user_data["edit_stage"] = "pick_field"
             await update.message.reply_text(
                 "Choose field to edit:",
                 reply_markup=_clarify_fields_markup("quiz"),
             )
             return ADD_EDIT
-        if token == SEND_LEARN_TEXT:
+        if action == "send_learn":
             added = _send_entry_to_learning(update, context, entry_key="quiz_edit_entry")
             context.user_data["edit_stage"] = "pick_scope"
             state = context.user_data.get("edit_return_state")

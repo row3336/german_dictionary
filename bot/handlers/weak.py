@@ -37,7 +37,7 @@ from ..common.settings import _topic_filter_for_query
 from ..common.txlog import _capture_transaction_snapshot, _log_transaction
 from ..handlers.quiz import _plural_matches, _stop_with_summary
 from ..i18n import t
-from ..labels import QUIZ_RU_DE_TEXT, TEST_PARTIZIP2_WEAK_TEXT, TEST_PRATERITUM_WEAK_TEXT
+from ..labels import QUIZ_RU_DE_TEXT
 from ..storage import (
     apply_weak_input_err,
     get_form_review_stage,
@@ -105,27 +105,29 @@ def _apply_input_err_weak(update, context, field):
 
 
 async def quiz_verb_weak_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle quiz verb weak menu choice."""
+    """Выбор в подменю weak-режимов глагола (Prateritum / Partizip2)."""
     text = update.message.text.strip()
-    if _action_key_from_text(text, update.effective_user.id) == "back":
+    action = _action_key_from_text(text, update.effective_user.id)
+    lang = _user_interface_lang(update.effective_user.id)
+    if action == "back":
         await _reply_text_with_retry(
             update.message,
             f"{QUIZ_RU_DE_TEXT}:",
             reply_markup=ReplyKeyboardMarkup(_ru_de_menu_keys(update.effective_user.id), resize_keyboard=True),
         )
         return QUIZ_RU_DE_MENU
-    if text == TEST_PRATERITUM_WEAK_TEXT:
+    if action == "weak_prateritum":
         _reset_weak_drill_state(context, "weak_prateritum")
         _reset_session(context, "weak_prateritum")
         return await _send_prateritum_weak_prompt(update, context, None)
-    if text == TEST_PARTIZIP2_WEAK_TEXT:
+    if action == "weak_partizip2":
         _reset_weak_drill_state(context, "weak_partizip2")
         _reset_session(context, "weak_partizip2")
         return await _send_partizip2_weak_prompt(update, context, None)
         await _reply_text_with_retry(
             update.message,
             "Use verb weak mode buttons.",
-            reply_markup=ReplyKeyboardMarkup([[TEST_PRATERITUM_WEAK_TEXT, TEST_PARTIZIP2_WEAK_TEXT], [t(_user_interface_lang(update.effective_user.id), "back")]], resize_keyboard=True),
+            reply_markup=ReplyKeyboardMarkup([[t(lang, "weak_prateritum_mode"), t(lang, "weak_partizip2_mode")], [t(lang, "back")]], resize_keyboard=True),
         )
     return QUIZ_VERB_WEAK_MENU
 
@@ -440,15 +442,16 @@ async def _send_plural_weak_prompt(update: Update, context: ContextTypes.DEFAULT
 
 
 async def _send_prateritum_weak_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text, force_entry=None):
-    """Handle send prateritum weak prompt."""
+    """Показать вопрос weak-режима Prateritum (или вернуть в подменю, если слов нет)."""
     entry = force_entry or _pick_weak_or_drill_entry(context, update.effective_user.id, "prateritum", word_type="verb")
     if not entry:
         if prefix_text:
             await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
+        lang = _user_interface_lang(update.effective_user.id)
         await _reply_text_with_retry(
             update.message,
             "No weak prateritum words.",
-            reply_markup=ReplyKeyboardMarkup([[TEST_PRATERITUM_WEAK_TEXT, TEST_PARTIZIP2_WEAK_TEXT], [t(_user_interface_lang(update.effective_user.id), "back")]], resize_keyboard=True),
+            reply_markup=ReplyKeyboardMarkup([[t(lang, "weak_prateritum_mode"), t(lang, "weak_partizip2_mode")], [t(lang, "back")]], resize_keyboard=True),
         )
         return QUIZ_VERB_WEAK_MENU
     context.user_data["quiz_entry"] = entry
@@ -467,15 +470,16 @@ async def _send_prateritum_weak_prompt(update: Update, context: ContextTypes.DEF
 
 
 async def _send_partizip2_weak_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text, force_entry=None):
-    """Handle send partizip2 weak prompt."""
+    """Показать вопрос weak-режима Partizip2 (или вернуть в подменю, если слов нет)."""
     entry = force_entry or _pick_weak_or_drill_entry(context, update.effective_user.id, "partizip2", word_type="verb")
     if not entry:
         if prefix_text:
             await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
+        lang = _user_interface_lang(update.effective_user.id)
         await _reply_text_with_retry(
             update.message,
             "No weak partizip2 words.",
-            reply_markup=ReplyKeyboardMarkup([[TEST_PRATERITUM_WEAK_TEXT, TEST_PARTIZIP2_WEAK_TEXT], [t(_user_interface_lang(update.effective_user.id), "back")]], resize_keyboard=True),
+            reply_markup=ReplyKeyboardMarkup([[t(lang, "weak_prateritum_mode"), t(lang, "weak_partizip2_mode")], [t(lang, "back")]], resize_keyboard=True),
         )
         return QUIZ_VERB_WEAK_MENU
     context.user_data["quiz_entry"] = entry

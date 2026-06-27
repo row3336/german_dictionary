@@ -15,21 +15,12 @@ from ..app_config import (
 )
 from ..common.lang import _user_interface_lang
 from ..i18n import t
-from ..labels import QUIZ_FIELDS_TEXT, SEND_LEARN_TEXT, SYNONYMS_TEXT
 from ..labels import (
-    LEARNING_ADD_TEXT,
-    LEARNING_MIX_MODE_TEXT,
-    LEARNING_RESET_TEXT,
-    LEARNING_START_TEXT,
-    LEARNING_TEXT,
     PARSE_VF_TEXT,
     QUIZ_DE_RU_TEXT,
     QUIZ_PL_SG_TEXT,
     QUIZ_RU_DE_TEXT,
-    STANDARD_FSRS_TEXT,
-    TEST_ARTICLE_WEAK_TEXT,
-    TEST_PLURAL_WEAK_TEXT,
-    TEST_VERB_WEAK_TEXT,
+    SYNONYMS_TEXT,
 )
 
 
@@ -48,27 +39,30 @@ def _main_menu_markup(user_id):
 
 
 def _tests_menu_keys(user_id):
-    """Handle tests menu keys."""
+    """Клавиатура меню тестов (кнопка «Изучение» локализована, режимы квиза — нейтральны)."""
+    lang = _user_interface_lang(user_id)
     return [
-        [LEARNING_TEXT, QUIZ_RU_DE_TEXT, QUIZ_DE_RU_TEXT, QUIZ_PL_SG_TEXT],
-        [t(_user_interface_lang(user_id), "topic_filter"), t(_user_interface_lang(user_id), "back")],
+        [t(lang, "learning"), QUIZ_RU_DE_TEXT, QUIZ_DE_RU_TEXT, QUIZ_PL_SG_TEXT],
+        [t(lang, "topic_filter"), t(lang, "back")],
     ]
 
 
 def _ru_de_menu_keys(user_id):
-    """Handle ru de menu keys."""
+    """Клавиатура Lang>De: основной FSRS + weak-режимы (подписи локализованы)."""
+    lang = _user_interface_lang(user_id)
     return [
-        [STANDARD_FSRS_TEXT, TEST_ARTICLE_WEAK_TEXT],
-        [TEST_PLURAL_WEAK_TEXT, TEST_VERB_WEAK_TEXT],
-        [t(_user_interface_lang(user_id), "back")],
+        [t(lang, "standard_fsrs"), t(lang, "weak_article_mode")],
+        [t(lang, "weak_plural_mode"), t(lang, "weak_verb_mode")],
+        [t(lang, "back")],
     ]
 
 
 def _learning_menu_keys(user_id):
-    """Handle learning menu keys."""
+    """Клавиатура меню изучения (все подписи локализованы)."""
+    lang = _user_interface_lang(user_id)
     return [
-        [LEARNING_START_TEXT, LEARNING_MIX_MODE_TEXT, LEARNING_ADD_TEXT, LEARNING_RESET_TEXT],
-        [t(_user_interface_lang(user_id), "back")],
+        [t(lang, "learning_start"), t(lang, "learning_mix_mode"), t(lang, "add_for_learning"), t(lang, "learning_reset")],
+        [t(lang, "back")],
     ]
 
 
@@ -112,13 +106,13 @@ def _learning_settings_menu_keys(user_id):
 
 
 def _quiz_markup(user_id, article=False, allow_idk=True):
-    """Handle quiz markup."""
+    """Клавиатура под вопросом квиза (варианты ответа + служебные кнопки)."""
     lang = _user_interface_lang(user_id)
     rows = []
     if article:
         rows.append(["der", "die", "das"])
     elif allow_idk:
-        rows.append([SEND_LEARN_TEXT, I_DONT_KNOW_TEXT, INPUT_ERR_TEXT])
+        rows.append([t(lang, "send_learn"), I_DONT_KNOW_TEXT, INPUT_ERR_TEXT])
     if is_owner(user_id):
         rows.append([AI_CLARIFY_FIELD, t(lang, "stop")])
     else:
@@ -127,9 +121,9 @@ def _quiz_markup(user_id, article=False, allow_idk=True):
 
 
 def _quiz_idle_markup(user_id):
-    """Handle quiz idle markup."""
+    """Клавиатура в простое квиза (между вопросами)."""
     lang = _user_interface_lang(user_id)
-    rows = [[SEND_LEARN_TEXT, INPUT_ERR_TEXT]]
+    rows = [[t(lang, "send_learn"), INPUT_ERR_TEXT]]
     if is_owner(user_id):
         rows.append([AI_CLARIFY_FIELD, t(lang, "back")])
     else:
@@ -185,9 +179,10 @@ def _type_choice_markup():
 
 
 def _clarify_root_markup(user_id):
-    """Handle quiz edit root markup."""
+    """Корневая клавиатура правки карточки (уточнить поля / отправить учить / удалить)."""
+    lang = _user_interface_lang(user_id)
     return ReplyKeyboardMarkup(
-        [[QUIZ_FIELDS_TEXT, SEND_LEARN_TEXT], ["delete", t(_user_interface_lang(user_id), "back")]],
+        [[t(lang, "clarify_fields"), t(lang, "send_learn")], ["delete", t(lang, "back")]],
         resize_keyboard=True,
     )
 

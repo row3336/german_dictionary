@@ -28,8 +28,10 @@ VF_STOP_TEXT = "stop_parse"
 SYN_CONFIRM_TEXT = "Confirm"
 SYN_CANCEL_TEXT = "Cancel"
 QUIZ_FIELDS_TEXT = "clarify_fields"
-QUIZ_RU_DE_TEXT = "Ru > De"
-QUIZ_DE_RU_TEXT = "De > Ru"
+# Языко-нейтральные подписи режимов квиза: одинаковы на всех языках интерфейса
+# (показ дикт-языка обобщён до «Lang», чтобы не хардкодить Ru при Uk/En-словаре).
+QUIZ_RU_DE_TEXT = "Lang > De"
+QUIZ_DE_RU_TEXT = "De > Lang"
 QUIZ_PL_SG_TEXT = "pl > sg"
 LEARNING_TEXT = "Learning"
 LEARNING_START_TEXT = "learning session"

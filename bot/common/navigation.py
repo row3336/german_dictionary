@@ -19,24 +19,16 @@ from ..common.session import (
 )
 from ..i18n import t
 from ..labels import (
-    LEARNING_ADD_TEXT,
-    LEARNING_MIX_MODE_TEXT,
-    LEARNING_NEXT_TEXT,
-    LEARNING_RESET_TEXT,
-    LEARNING_SKIP_TEXT,
-    LEARNING_START_TEXT,
-    LEARNING_TEXT,
     PARSE_VF_TEXT,
     QUIZ_DE_RU_TEXT,
     QUIZ_PL_SG_TEXT,
     QUIZ_RU_DE_TEXT,
-    SEND_LEARN_TEXT,
 )
 from ..ui.keyboards import _main_menu_markup, _tests_menu_keys
 
 
 def _action_key_from_text(text, user_id):
-    """Handle action key from text."""
+    """Сопоставить текст нажатой кнопки с действием (учитывая язык интерфейса юзера)."""
     lang = _user_interface_lang(user_id)
     keys = [
         ("start", "start"),
@@ -70,6 +62,22 @@ def _action_key_from_text(text, user_id):
         ("learning_reminder_interval", "learning_reminder_interval"),
         ("learning_reminder_cooldown", "learning_reminder_cooldown"),
         ("learning_ready_quorum", "learning_ready_quorum"),
+        # Локализованные кнопки учёбы (P2.5): ключ i18n → действие.
+        ("learning", "learning"),
+        ("learning_start", "learning_start"),
+        ("add_for_learning", "learning_add"),
+        ("learning_skip", "learning_skip"),
+        ("learning_next", "learning_next"),
+        ("learning_reset", "learning_reset"),
+        ("learning_mix_mode", "learning_mix_mode"),
+        ("send_learn", "send_learn"),
+        ("clarify_fields", "clarify_fields"),
+        ("standard_fsrs", "standard_fsrs"),
+        ("weak_article_mode", "weak_article"),
+        ("weak_plural_mode", "weak_plural"),
+        ("weak_verb_mode", "weak_verb"),
+        ("weak_prateritum_mode", "weak_prateritum"),
+        ("weak_partizip2_mode", "weak_partizip2"),
         ("auto_dump", "auto_dump"),
         ("daily", "daily"),
         ("weekly", "weekly"),
@@ -81,17 +89,11 @@ def _action_key_from_text(text, user_id):
     for key, action in keys:
         mapping[t(lang, key)] = action
         mapping[t("en", key)] = action
+    # Языко-нейтральные подписи квиза (одинаковы на всех языках).
     mapping[QUIZ_RU_DE_TEXT] = "quiz_l1_de"
     mapping[QUIZ_DE_RU_TEXT] = "quiz_de_l1"
     mapping[QUIZ_PL_SG_TEXT] = "quiz_pl_sg"
-    mapping[LEARNING_TEXT] = "learning"
-    mapping[LEARNING_START_TEXT] = "learning_start"
-    mapping[LEARNING_ADD_TEXT] = "learning_add"
-    mapping[LEARNING_SKIP_TEXT] = "learning_skip"
-    mapping[LEARNING_NEXT_TEXT] = "learning_next"
-    mapping[LEARNING_RESET_TEXT] = "learning_reset"
-    mapping[LEARNING_MIX_MODE_TEXT] = "learning_mix_mode"
-    mapping[SEND_LEARN_TEXT] = "send_learn"
+    # Кнопки учёбы/weak-режимов локализованы и маршрутизируются через список keys выше.
     mapping["flags!"] = "review_flags"
     mapping[PARSE_VF_TEXT] = "review_flags"
     mapping["Back"] = "back"

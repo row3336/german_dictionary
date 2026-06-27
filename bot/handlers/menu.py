@@ -34,12 +34,6 @@ from ..labels import (
     QUIZ_DE_RU_TEXT,
     QUIZ_PL_SG_TEXT,
     QUIZ_RU_DE_TEXT,
-    STANDARD_FSRS_TEXT,
-    TEST_ARTICLE_WEAK_TEXT,
-    TEST_PARTIZIP2_WEAK_TEXT,
-    TEST_PLURAL_WEAK_TEXT,
-    TEST_PRATERITUM_WEAK_TEXT,
-    TEST_VERB_WEAK_TEXT,
 )
 from ..storage import get_setting, get_statistics_snapshot, list_topics, select_due
 from ..text_utils import split_text_chunks as _split_text_chunks
@@ -258,7 +252,7 @@ async def tests_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def quiz_ru_de_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle quiz ru de menu choice."""
+    """Выбор в меню Lang>De: основной FSRS, weak-режимы или фильтр тем."""
     text = update.message.text.strip()
     user_id = update.effective_user.id
     action = _action_key_from_text(text, user_id)
@@ -278,23 +272,24 @@ async def quiz_ru_de_menu_choice(update: Update, context: ContextTypes.DEFAULT_T
         )
         context.user_data["topic_return"] = "ru_de_menu"
         return TOPIC_FILTER_EDIT
-    if text == STANDARD_FSRS_TEXT:
+    if action == "standard_fsrs":
         _reset_retry_state(context)
         _clear_last_answer(context)
         _reset_session(context, _mode_l1_de(user_id))
         return await _send_ru_de_prompt(update, context, None)
-    if text == TEST_ARTICLE_WEAK_TEXT:
+    if action == "weak_article":
         _reset_weak_drill_state(context, "weak_article")
         _reset_session(context, "weak_article")
         return await _send_article_weak_prompt(update, context, None)
-    if text == TEST_PLURAL_WEAK_TEXT:
+    if action == "weak_plural":
         _reset_weak_drill_state(context, "weak_plural")
         _reset_session(context, "weak_plural")
         return await _send_plural_weak_prompt(update, context, None)
-    if text == TEST_VERB_WEAK_TEXT:
+    if action == "weak_verb":
+        lang = _user_interface_lang(user_id)
         await update.message.reply_text(
             "Choose verb weak mode:",
-            reply_markup=ReplyKeyboardMarkup([[TEST_PRATERITUM_WEAK_TEXT, TEST_PARTIZIP2_WEAK_TEXT], [t(_user_interface_lang(user_id), "back")]], resize_keyboard=True),
+            reply_markup=ReplyKeyboardMarkup([[t(lang, "weak_prateritum_mode"), t(lang, "weak_partizip2_mode")], [t(lang, "back")]], resize_keyboard=True),
         )
         return QUIZ_VERB_WEAK_MENU
     await update.message.reply_text(

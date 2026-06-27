@@ -12,7 +12,6 @@ from ..common.navigation import _action_key_from_text
 from ..common.settings import _learning_daily_qty, _learning_schedule_seconds
 from ..handlers.clarify_fields import clarify_fields_input
 from ..i18n import t
-from ..labels import QUIZ_FIELDS_TEXT, SEND_LEARN_TEXT
 from ..storage import (
     _safe_text,
     get_synonym_group_id,
@@ -70,9 +69,9 @@ def _db_search_words_lists_markup(user_id):
 
 
 def _db_search_weak_markup(user_id):
-    """Handle db search weak markup."""
+    """Клавиатура списка слабых слов: «отправить учить» + назад."""
     lang = _user_interface_lang(user_id)
-    return ReplyKeyboardMarkup([[SEND_LEARN_TEXT, t(lang, "back")]], resize_keyboard=True)
+    return ReplyKeyboardMarkup([[t(lang, "send_learn"), t(lang, "back")]], resize_keyboard=True)
 
 
 def _topic_sort_key(token):
@@ -334,7 +333,7 @@ async def _send_db_search_prompt(update: Update, user_id, prefix_text=None):
 
 
 async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle db search input."""
+    """Обработка ввода/кнопок в поиске по БД (запросы и под-режимы поиска)."""
     text = update.message.text.strip()
     user_id = update.effective_user.id
     action = _action_key_from_text(text, user_id)
@@ -414,7 +413,7 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown",
             )
         return DB_SEARCH
-    if text == SEND_LEARN_TEXT and context.user_data.get("db_search_weak_ids"):
+    if action == "send_learn" and context.user_data.get("db_search_weak_ids"):
         ids = list(dict.fromkeys(context.user_data.get("db_search_weak_ids") or []))
         db_path = get_db_path()
         batch_id = learning_get_or_create_batch(db_path, user_id=user_id, daily_qty=_learning_daily_qty(db_path, user_id))
@@ -551,7 +550,7 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def db_search_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle db search view."""
+    """Обработка кнопок в режиме просмотра результатов поиска по БД."""
     text = update.message.text.strip()
     user_id = update.effective_user.id
     action = _action_key_from_text(text, user_id)
@@ -571,7 +570,7 @@ async def db_search_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "db_search_topics_lern",
     }:
         return await db_search_input(update, context)
-    if text in {QUIZ_FIELDS_TEXT, SEND_LEARN_TEXT, "delete"}:
+    if action in {"clarify_fields", "send_learn"} or text == "delete":
         return await clarify_fields_input(update, context)
     # Any other text is treated as a new search query.
     return await db_search_input(update, context)

@@ -37,7 +37,6 @@ from ..common.session import (
     _set_retry_since_last,
 )
 from ..common.txlog import _capture_transaction_snapshot, _log_transaction
-from ..labels import SEND_LEARN_TEXT
 from ..storage import QUIZ_ARTICLE as MODE_ARTICLE
 from ..storage import QUIZ_RU_DE as MODE_RU_DE
 from ..storage import (
@@ -439,7 +438,7 @@ async def _send_article_prompt(update: Update, context: ContextTypes.DEFAULT_TYP
 # --- answer handlers ---
 
 async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle quiz ru de."""
+    """Обработка ответа в квизе Lang>De (FSRS)."""
     from ..handlers.clarify_fields import _start_clarify_fields
     from ..handlers.learning import _send_entry_to_learning
     from ..main import _flag_current_word
@@ -454,7 +453,7 @@ async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
         applied = _apply_input_err(update, context, _mode_l1_de(update.effective_user.id))
         prefix = "✅ Fixed previous answer." if applied else "Nothing to fix."
         return await _repeat_current_ru_de(update, context, prefix)
-    if text == SEND_LEARN_TEXT:
+    if action == "send_learn":
         added = _send_entry_to_learning(update, context, entry_key="quiz_entry")
         if added:
             # Word is now in active learning (excluded from FSRS due) — drop it from the
@@ -493,7 +492,7 @@ async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle quiz de ru."""
+    """Обработка ответа в квизе De>Lang."""
     from ..handlers.clarify_fields import _start_clarify_fields
     from ..handlers.learning import _send_entry_to_learning
     from ..main import _flag_current_word
@@ -508,7 +507,7 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
         applied = _apply_input_err(update, context, _mode_de_l1(update.effective_user.id))
         prefix = "✅ Fixed previous answer." if applied else "Nothing to fix."
         return await _repeat_current_de_ru(update, context, prefix)
-    if text == SEND_LEARN_TEXT:
+    if action == "send_learn":
         added = _send_entry_to_learning(update, context, entry_key="quiz_entry")
         if added:
             _remove_from_retry(context, _mode_de_l1(update.effective_user.id), (context.user_data.get("quiz_entry") or {}).get("id"))
@@ -545,7 +544,7 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def quiz_pl_sg(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle quiz plural to singular."""
+    """Обработка ответа в квизе «множественное → единственное» (pl>sg)."""
     from ..handlers.clarify_fields import _start_clarify_fields
     from ..handlers.learning import _send_entry_to_learning
     from ..main import _flag_current_word
@@ -560,7 +559,7 @@ async def quiz_pl_sg(update: Update, context: ContextTypes.DEFAULT_TYPE):
         applied = _apply_input_err(update, context, _mode_pl_sg(update.effective_user.id))
         prefix = "✅ Fixed previous answer." if applied else "Nothing to fix."
         return await _send_pl_sg_prompt(update, context, prefix)
-    if text == SEND_LEARN_TEXT:
+    if action == "send_learn":
         added = _send_entry_to_learning(update, context, entry_key="quiz_entry")
         if added:
             _remove_from_retry(context, _mode_pl_sg(update.effective_user.id), (context.user_data.get("quiz_entry") or {}).get("id"))

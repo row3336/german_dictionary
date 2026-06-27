@@ -34,7 +34,6 @@ from ..common.settings import (
 from ..common.txlog import _capture_transaction_snapshot, _log_transaction
 from ..handlers.quiz import _check_ru_de_strict
 from ..i18n import t
-from ..labels import LEARNING_MIX_MODE_TEXT, LEARNING_NEXT_TEXT, LEARNING_SKIP_TEXT, LEARNING_TEXT
 from ..storage import (
     learning_active_count,
     learning_add_word_by_id,
@@ -186,7 +185,7 @@ def _apply_input_err_learning(update, context):
 
 
 async def _send_learning_menu(update: Update, user_id):
-    """Handle send learning menu."""
+    """Показать меню изучения со сводкой текущей сессии."""
     stats = learning_status_snapshot(
         get_db_path(),
         user_id=user_id,
@@ -199,13 +198,13 @@ async def _send_learning_menu(update: Update, user_id):
         active_preview.append(f"... +{len(active_lines) - 30} more")
     msg = "\n".join(
         [
-            f"{LEARNING_TEXT}:",
+            f"{t(_user_interface_lang(user_id), 'learning')}:",
             "",
             _topic_filter_banner(user_id),
             "",
             f"{t(_user_interface_lang(user_id), 'learning_daily_qty')} = {_learning_daily_qty(get_db_path(), user_id)}",
             f"{t(_user_interface_lang(user_id), 'learning_intervals')} = {_learning_intervals_text(get_db_path(), user_id)}",
-            f"{LEARNING_MIX_MODE_TEXT} = {'ON' if _learning_mix_mode_enabled(user_id) else 'OFF'}",
+            f"{t(_user_interface_lang(user_id), 'learning_mix_mode')} = {'ON' if _learning_mix_mode_enabled(user_id) else 'OFF'}",
             f"active = {stats.get('active_count', 0)}",
             f"preview_pending = {stats.get('preview_pending', 0)}",
             f"due_now = {stats.get('due_count', 0)} / need {stats.get('ready_needed', 0)}",
@@ -276,7 +275,7 @@ async def _learning_add_words(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text, force_entry=None):
-    """Handle send learning prompt."""
+    """Показать очередной вопрос/превью в сессии изучения."""
     user_id = update.effective_user.id
     preview_entry = learning_preview_entry(get_db_path(), user_id=user_id)
     if preview_entry:
@@ -289,7 +288,7 @@ async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TY
             update.message,
             prompt_text,
             reply_markup=ReplyKeyboardMarkup(
-                [[LEARNING_NEXT_TEXT, LEARNING_SKIP_TEXT], [AI_CLARIFY_FIELD, t(_user_interface_lang(user_id), "back")]],
+                [[t(_user_interface_lang(user_id), "learning_next"), t(_user_interface_lang(user_id), "learning_skip")], [AI_CLARIFY_FIELD, t(_user_interface_lang(user_id), "back")]],
                 resize_keyboard=True,
             ),
             parse_mode="Markdown",
@@ -325,7 +324,7 @@ async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TY
         update.message,
         prompt_text,
         reply_markup=ReplyKeyboardMarkup(
-            [[I_DONT_KNOW_TEXT, INPUT_ERR_TEXT], [LEARNING_SKIP_TEXT, AI_CLARIFY_FIELD, t(_user_interface_lang(user_id), "back")]],
+            [[I_DONT_KNOW_TEXT, INPUT_ERR_TEXT], [t(_user_interface_lang(user_id), "learning_skip"), AI_CLARIFY_FIELD, t(_user_interface_lang(user_id), "back")]],
             resize_keyboard=True,
         ),
         parse_mode="Markdown",
@@ -334,7 +333,7 @@ async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def learning_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle learning menu choice."""
+    """Выбор в меню изучения (старт/микс/добавить/сброс/назад)."""
     text = update.message.text.strip()
     user_id = update.effective_user.id
     action = _action_key_from_text(text, user_id)
@@ -351,7 +350,7 @@ async def learning_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
         enabled = _learning_mix_mode_enabled(user_id)
         _set_learning_mix_mode(user_id, not enabled)
         context.user_data.pop("learning_mix_queue", None)
-        await _reply_text_with_retry(update.message, f"{LEARNING_MIX_MODE_TEXT} = {'ON' if not enabled else 'OFF'}")
+        await _reply_text_with_retry(update.message, f"{t(_user_interface_lang(user_id), 'learning_mix_mode')} = {'ON' if not enabled else 'OFF'}")
         return await _send_learning_menu(update, user_id)
     if action == "learning_reset":
         learning_reset_session(get_db_path(), user_id=user_id)
@@ -374,7 +373,7 @@ async def learning_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle learning quiz."""
+    """Обработка ответа/действия в сессии изучения (превью и обычный режим)."""
     from ..handlers.clarify_fields import _start_clarify_fields
 
     text = update.message.text.strip()
@@ -391,12 +390,12 @@ async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     is_preview = bool(context.user_data.get("learning_preview_mode"))
     if is_preview:
-        if action == "learning_skip" or text == LEARNING_SKIP_TEXT:
+        if action == "learning_skip":
             snapshot = _capture_transaction_snapshot(user_id, entry.get("id"), ["learning"])
             learning_skip_word(get_db_path(), user_id=user_id, word_id=entry.get("id"))
             _log_transaction(user_id, "learning:skip", snapshot)
             return await _send_learning_prompt(update, context, "Skipped for learning.")
-        if action == "learning_next" or text == LEARNING_NEXT_TEXT:
+        if action == "learning_next":
             snapshot = _capture_transaction_snapshot(user_id, entry.get("id"), ["learning"])
             learning_mark_preview_next(
                 get_db_path(),
@@ -409,7 +408,7 @@ async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _reply_text_with_retry(
             update.message,
             "Use next/skip/back.",
-            reply_markup=ReplyKeyboardMarkup([[LEARNING_NEXT_TEXT, LEARNING_SKIP_TEXT], [t(_user_interface_lang(user_id), "back")]], resize_keyboard=True),
+            reply_markup=ReplyKeyboardMarkup([[t(_user_interface_lang(user_id), "learning_next"), t(_user_interface_lang(user_id), "learning_skip")], [t(_user_interface_lang(user_id), "back")]], resize_keyboard=True),
         )
         return LEARNING_QUIZ
 
@@ -419,7 +418,7 @@ async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("learning_mix_queue", None)
         return await _send_learning_prompt(update, context, prefix, force_entry=context.user_data.get("quiz_entry"))
 
-    if action == "learning_skip" or text == LEARNING_SKIP_TEXT:
+    if action == "learning_skip":
         snapshot = _capture_transaction_snapshot(user_id, entry.get("id"), ["learning"])
         learning_skip_word(get_db_path(), user_id=user_id, word_id=entry.get("id"))
         _log_transaction(user_id, "learning:skip", snapshot)
