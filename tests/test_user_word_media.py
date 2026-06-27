@@ -75,6 +75,26 @@ class UserWordMediaTest(unittest.TestCase):
         # owner/None user sees shared
         self.assertEqual(apply_user_word_media(self.db, None, entry)["example"], "shared example")
 
+    def test_word_card_shows_personal_for_guest_only(self):
+        # P4.2: the rendered card shows the user's personal example/image; others see shared.
+        import os
+
+        from bot.ui.formatting import _format_word_card
+
+        os.environ["DB_PATH"] = self.db  # _format_word_card resolves the DB via get_db_path()
+        self.addCleanup(lambda: os.environ.pop("DB_PATH", None))
+        set_user_word_media(self.db, U1, self.wid, example="mnemonic ex", image="my-img")
+        entry = {
+            "id": self.wid, "type": "nomen", "german": "Haus",
+            "image": "shared-img", "example": "shared example",
+        }
+        card_u1 = _format_word_card(entry, user_id=U1)
+        self.assertIn("example: mnemonic ex", card_u1)
+        self.assertIn("image: my-img", card_u1)
+        card_u2 = _format_word_card(entry, user_id=U2)
+        self.assertIn("example: shared example", card_u2)
+        self.assertIn("image: shared-img", card_u2)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -40,6 +40,7 @@ from ..common.txlog import _capture_transaction_snapshot, _log_transaction
 from ..storage import QUIZ_ARTICLE as MODE_ARTICLE
 from ..storage import QUIZ_RU_DE as MODE_RU_DE
 from ..storage import (
+    apply_user_word_media,
     get_synonym_group,
     log_quiz_event,
     set_progress,
@@ -302,6 +303,7 @@ async def _send_ru_de_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
         )
         return QUIZ_RU_DE
 
+    entry = apply_user_word_media(get_db_path(), update.effective_user.id, entry)  # personal media (P4)
     context.user_data["quiz_entry"] = entry
     prompt_text = _format_ru_question(entry, _user_dict_lang(update.effective_user.id))
     if prefix_text:
@@ -337,6 +339,7 @@ async def _send_de_ru_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
         )
         return QUIZ_DE_RU
 
+    entry = apply_user_word_media(get_db_path(), update.effective_user.id, entry)  # personal media (P4)
     context.user_data["quiz_entry"] = entry
     prompt_text = _format_de_ru_question(entry)
     if prefix_text:
@@ -390,6 +393,7 @@ async def _send_pl_sg_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
         )
         return QUIZ_PL_SG
 
+    entry = apply_user_word_media(get_db_path(), update.effective_user.id, entry)  # personal media (P4)
     context.user_data["quiz_entry"] = entry
     prompt_text = _format_pl_sg_question(entry)
     if prefix_text:
@@ -421,6 +425,7 @@ async def _send_article_prompt(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         return TESTS_MENU
 
+    entry = apply_user_word_media(get_db_path(), update.effective_user.id, entry)  # personal media (P4)
     context.user_data["quiz_entry"] = entry
     prompt_text = _format_article_question(entry)
     if prefix_text:

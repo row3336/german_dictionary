@@ -35,6 +35,7 @@ from ..common.txlog import _capture_transaction_snapshot, _log_transaction
 from ..handlers.quiz import _check_ru_de_strict
 from ..i18n import t
 from ..storage import (
+    apply_user_word_media,
     learning_active_count,
     learning_add_word_by_id,
     learning_add_words,
@@ -279,6 +280,7 @@ async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TY
     user_id = update.effective_user.id
     preview_entry = learning_preview_entry(get_db_path(), user_id=user_id)
     if preview_entry:
+        preview_entry = apply_user_word_media(get_db_path(), user_id, preview_entry)  # personal media (P4)
         context.user_data["quiz_entry"] = preview_entry
         context.user_data["learning_preview_mode"] = True
         prompt_text = _format_learning_preview_prompt(preview_entry, _user_dict_lang(user_id))
@@ -314,6 +316,7 @@ async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TY
             ),
         )
         return LEARNING_QUIZ
+    entry = apply_user_word_media(get_db_path(), user_id, entry)  # personal media (P4)
     context.user_data["quiz_entry"] = entry
     context.user_data["learning_preview_mode"] = False
     context.user_data["last_learning_prompt_word_id"] = entry.get("id")

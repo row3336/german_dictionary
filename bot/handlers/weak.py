@@ -39,6 +39,7 @@ from ..handlers.quiz import _plural_matches, _stop_with_summary
 from ..i18n import t
 from ..labels import QUIZ_RU_DE_TEXT
 from ..storage import (
+    apply_user_word_media,
     apply_weak_input_err,
     get_form_review_stage,
     get_form_state,
@@ -398,6 +399,7 @@ async def _send_article_weak_prompt(update: Update, context: ContextTypes.DEFAUL
             reply_markup=ReplyKeyboardMarkup(_ru_de_menu_keys(update.effective_user.id), resize_keyboard=True),
         )
         return QUIZ_RU_DE_MENU
+    entry = apply_user_word_media(get_db_path(), update.effective_user.id, entry)  # personal media (P4)
     context.user_data["quiz_entry"] = entry
     text = f">>    {_normalize_russian_singular(_entry_translation(entry, _user_dict_lang(update.effective_user.id)))} -> ____ {_cap_word(entry.get('german', ''))}?"
     text = _md_escape(text)
@@ -425,6 +427,7 @@ async def _send_plural_weak_prompt(update: Update, context: ContextTypes.DEFAULT
             reply_markup=ReplyKeyboardMarkup(_ru_de_menu_keys(update.effective_user.id), resize_keyboard=True),
         )
         return QUIZ_RU_DE_MENU
+    entry = apply_user_word_media(get_db_path(), update.effective_user.id, entry)  # personal media (P4)
     context.user_data["quiz_entry"] = entry
     article = (entry.get("article", "") or "").strip()
     text = f">>    {article} {_cap_word(entry.get('german', ''))} -> plural?"
@@ -454,6 +457,7 @@ async def _send_prateritum_weak_prompt(update: Update, context: ContextTypes.DEF
             reply_markup=ReplyKeyboardMarkup([[t(lang, "weak_prateritum_mode"), t(lang, "weak_partizip2_mode")], [t(lang, "back")]], resize_keyboard=True),
         )
         return QUIZ_VERB_WEAK_MENU
+    entry = apply_user_word_media(get_db_path(), update.effective_user.id, entry)  # personal media (P4)
     context.user_data["quiz_entry"] = entry
     text = f">>    {_low_word(entry.get('infinitive', ''))} -> Prateritum?"
     text = _md_escape(text)
@@ -482,6 +486,7 @@ async def _send_partizip2_weak_prompt(update: Update, context: ContextTypes.DEFA
             reply_markup=ReplyKeyboardMarkup([[t(lang, "weak_prateritum_mode"), t(lang, "weak_partizip2_mode")], [t(lang, "back")]], resize_keyboard=True),
         )
         return QUIZ_VERB_WEAK_MENU
+    entry = apply_user_word_media(get_db_path(), update.effective_user.id, entry)  # personal media (P4)
     context.user_data["quiz_entry"] = entry
     text = f">>    {_low_word(entry.get('infinitive', ''))} -> Partizip2?"
     text = _md_escape(text)

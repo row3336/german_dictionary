@@ -4,7 +4,7 @@ Leaf module: depends only on text_utils/storage/app_config (no handler back-refs
 """
 
 from ..app_config import get_db_path
-from ..storage import get_word_study_status
+from ..storage import apply_user_word_media, get_word_study_status
 from ..text_utils import cap_plural as _cap_plural
 from ..text_utils import cap_word as _cap_word
 from ..text_utils import low_word as _low_word
@@ -114,6 +114,8 @@ def _format_word_card(entry, title="Word card:", user_id=None):
     status_line = ""
     if user_id is not None and entry.get("id"):
         status_line = get_word_study_status(get_db_path(), user_id, entry.get("id"))
+        # Show this user's personal image/example override if any (P4); owner sees shared.
+        entry = apply_user_word_media(get_db_path(), user_id, entry)
     lines = [
         title,
         f"id: {entry.get('id', '')}",
