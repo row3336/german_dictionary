@@ -6,7 +6,7 @@ clarify_fields entry, and the DB_SEARCH / DB_SEARCH_VIEW state handlers.
 from telegram import ReplyKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
-from ..app_config import DB_SEARCH, DB_SEARCH_VIEW, MENU, get_db_path
+from ..app_config import DB_SEARCH, DB_SEARCH_VIEW, MENU, get_db_path, is_owner
 from ..common.lang import _mode_l1_de, _user_dict_lang, _user_interface_lang
 from ..common.navigation import _action_key_from_text
 from ..common.settings import _learning_daily_qty, _learning_schedule_seconds
@@ -570,7 +570,11 @@ async def db_search_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "db_search_topics_lern",
     }:
         return await db_search_input(update, context)
-    if action in {"clarify_fields", "send_learn"} or text == "delete":
+    # «отправить учить» доступно гостю (личное обучение); правка/удаление общего
+    # слова (clarify_fields/delete) — только владельцу (P3.2, до личных media в P4).
+    if action == "send_learn":
+        return await clarify_fields_input(update, context)
+    if (action == "clarify_fields" or text == "delete") and is_owner(user_id):
         return await clarify_fields_input(update, context)
     # Any other text is treated as a new search query.
     return await db_search_input(update, context)

@@ -38,6 +38,7 @@ from ..app_config import (
     WEAK_DRILL_GAP_KEY,
     WEAK_DRILL_REPEATS_KEY,
     get_db_path,
+    is_owner,
 )
 from ..common.lang import _user_interface_lang
 from ..common.navigation import _action_key_from_text, _back_to_main_menu
@@ -306,7 +307,7 @@ async def select_dict_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def algo_settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle algo settings menu choice."""
+    """Роутер меню настроек алгоритма (гостю доступно; unit_tests — owner-only, P3.2)."""
     text = update.message.text.strip()
     user_id = update.effective_user.id
     lang = _user_interface_lang(user_id)
@@ -354,6 +355,8 @@ async def algo_settings_menu_choice(update: Update, context: ContextTypes.DEFAUL
         return TOPIC_FILTER_EDIT
 
     if text == t(lang, "unit_tests"):
+        if not is_owner(user_id):  # owner-only (P3.2): прогон тестов в боте
+            return ALGO_SETTINGS_MENU
         report = _run_unit_tests_report()
         await update.message.reply_text(
             f"```text\n{report}\n```",
@@ -620,7 +623,7 @@ async def topic_filter_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle settings menu choice."""
+    """Роутер меню настроек: языки/algo (гостю ок), parse_VF/dump/suggested — owner-only (P3.2)."""
     text = update.message.text.strip()
     user_id = update.effective_user.id
     action = _action_key_from_text(text, user_id)
@@ -670,6 +673,12 @@ async def settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
 
     if action == "algo_settings":
         return await _send_algo_settings_menu(update, user_id)
+
+    # parse_VF и dump — owner-only (P3.2). Двойная защита: кнопки скрыты у гостя
+    # в _settings_menu_keys, плюс закрываем сами действия от прямого текста.
+    if action in {"dump", "review_flags"} and not is_owner(user_id):
+        await update.message.reply_text(t(_user_interface_lang(user_id), "unknown_menu"))
+        return SETTINGS_MENU
 
     if action == "dump":
         await update.message.reply_text(
@@ -803,6 +812,8 @@ async def settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
         return await _send_vf_menu(update, "Use parse_VF buttons.")
 
     if action == "suggested_words":
+        if not is_owner(user_id):  # owner-only (P3.2)
+            return SETTINGS_MENU
         suggestions_path = _create_suggestions_dump_file()
         if suggestions_path is None:
             await update.message.reply_text("No suggested words file yet.")

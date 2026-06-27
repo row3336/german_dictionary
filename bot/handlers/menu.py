@@ -118,7 +118,7 @@ async def _guest_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle menu choice."""
+    """Роутер главного меню. Доступ — владелец или одобренный гость; add_word — owner-only."""
     text = update.message.text.strip()
     user_id = update.effective_user.id
     action = _action_key_from_text(text, user_id)
@@ -132,6 +132,10 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await _guest_start(update, context)
 
     if action == "add_word":
+        # Добавление слов — owner-only (P3.2): гость в общий словарь не пишет.
+        if not _is_owner_only(user_id):
+            await update.message.reply_text(t(_user_interface_lang(user_id), "unknown_menu"))
+            return MENU
         await update.message.reply_text(
             f"Send a word or a list (one per line), or upload a .txt file.\n\n{_topic_filter_banner(user_id)}",
             reply_markup=_add_input_markup(user_id),

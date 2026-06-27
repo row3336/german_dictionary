@@ -25,10 +25,13 @@ from ..labels import (
 
 
 def _main_menu_keys(user_id):
-    """Handle main menu keys."""
+    """Главное меню. Кнопка «Добавить слово» — только владельцу (P3.2)."""
     lang = _user_interface_lang(user_id)
+    first_row = [t(lang, "tests"), t(lang, "db_search")]
+    if is_owner(user_id):
+        first_row.insert(0, t(lang, "add_word"))
     return [
-        [t(lang, "add_word"), t(lang, "tests"), t(lang, "db_search")],
+        first_row,
         [t(lang, "settings"), t(lang, "stat")],
     ]
 
@@ -67,21 +70,25 @@ def _learning_menu_keys(user_id):
 
 
 def _settings_menu_keys(user_id):
-    """Handle settings menu keys."""
+    """Меню настроек. parse_VF и dump — только владельцу (P3.2)."""
     lang = _user_interface_lang(user_id)
-    return [
-        [PARSE_VF_TEXT, t(lang, "algo_settings")],
-        [t(lang, "interface_lang_btn"), t(lang, "dict_lang_btn")],
-        [t(lang, "dump"), t(lang, "back")],
-    ]
+    owner = is_owner(user_id)
+    rows = [[PARSE_VF_TEXT, t(lang, "algo_settings")] if owner else [t(lang, "algo_settings")]]
+    rows.append([t(lang, "interface_lang_btn"), t(lang, "dict_lang_btn")])
+    rows.append([t(lang, "dump"), t(lang, "back")] if owner else [t(lang, "back")])
+    return rows
 
 
 def _algo_settings_menu_keys(user_id):
-    """Handle algo settings menu keys."""
+    """Меню настроек алгоритма. «unit_tests» — только владельцу (P3.2)."""
     lang = _user_interface_lang(user_id)
+    # «unit_tests» — owner-only (P3.2): прогон тестов в боте.
+    study_row = [t(lang, "drill_sett"), t(lang, "learning_sett")]
+    if is_owner(user_id):
+        study_row.append(t(lang, "unit_tests"))
     return [
         [t(lang, "topic_filter"), t(lang, "ses_rtr_gap"), t(lang, "ses_rtr_it")],
-        [t(lang, "drill_sett"), t(lang, "learning_sett"), t(lang, "unit_tests")],
+        study_row,
         [t(lang, "reset_periodicity"), t(lang, "reset_defaults")],
         [t(lang, "back")],
     ]
@@ -179,12 +186,15 @@ def _type_choice_markup():
 
 
 def _clarify_root_markup(user_id):
-    """Корневая клавиатура правки карточки (уточнить поля / отправить учить / удалить)."""
+    """Корневая клавиатура карточки. Правка/удаление общего слова — только владельцу
+    (P3.2); гость видит лишь «отправить учить» (своё личное обучение)."""
     lang = _user_interface_lang(user_id)
-    return ReplyKeyboardMarkup(
-        [[t(lang, "clarify_fields"), t(lang, "send_learn")], ["delete", t(lang, "back")]],
-        resize_keyboard=True,
-    )
+    if is_owner(user_id):
+        return ReplyKeyboardMarkup(
+            [[t(lang, "clarify_fields"), t(lang, "send_learn")], ["delete", t(lang, "back")]],
+            resize_keyboard=True,
+        )
+    return ReplyKeyboardMarkup([[t(lang, "send_learn")], [t(lang, "back")]], resize_keyboard=True)
 
 
 def _add_keys(user_id):
