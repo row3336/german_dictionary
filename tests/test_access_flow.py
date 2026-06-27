@@ -8,7 +8,9 @@ import os
 import tempfile
 import unittest
 
+from bot.app_config import CEFR_LEVELS
 from bot.storage import (
+    get_user_levels,
     get_user_status,
     init_db,
     list_pending_users,
@@ -36,6 +38,12 @@ class AccessFlowTest(unittest.TestCase):
         status = register_or_update_user(self.db, U1, "alice", "Alice")
         self.assertEqual(status, "pending")
         self.assertEqual(get_user_status(self.db, U1), "pending")
+
+    def test_registration_creates_default_levels(self):
+        # P3.3: a freshly registered guest gets all CEFR levels by default,
+        # so quizzes/learning aren't empty for them out of the box.
+        register_or_update_user(self.db, U1, "alice", "Alice")
+        self.assertEqual(get_user_levels(self.db, U1), list(CEFR_LEVELS))
 
     def test_repeat_start_keeps_pending(self):
         register_or_update_user(self.db, U1, "alice", "Alice")
