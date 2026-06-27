@@ -174,7 +174,7 @@ async def quiz_article_weak(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _mark_session_word(context, "weak_article", entry.get("id"))
         _log_transaction(update.effective_user.id, "quiz:weak_article", snapshot)
         if not ok:
-            _enqueue_weak_drill(context, "weak_article", entry.get("id"))
+            _enqueue_weak_drill(context, "weak_article", entry.get("id"), update.effective_user.id)
     feedback = _format_feedback_article(entry, ok, _user_dict_lang(update.effective_user.id))
     return await _send_article_weak_prompt(update, context, feedback)
 
@@ -225,7 +225,7 @@ async def quiz_plural_weak(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _mark_session_word(context, "weak_plural", entry.get("id"))
         _log_transaction(update.effective_user.id, "quiz:weak_plural", snapshot)
         if not ok:
-            _enqueue_weak_drill(context, "weak_plural", entry.get("id"))
+            _enqueue_weak_drill(context, "weak_plural", entry.get("id"), update.effective_user.id)
     feedback = _format_feedback_plural_weak(entry, ok)
     return await _send_plural_weak_prompt(update, context, feedback)
 
@@ -276,7 +276,7 @@ async def quiz_prateritum_weak(update: Update, context: ContextTypes.DEFAULT_TYP
         _mark_session_word(context, "weak_prateritum", entry.get("id"))
         _log_transaction(update.effective_user.id, "quiz:weak_prateritum", snapshot)
         if not ok:
-            _enqueue_weak_drill(context, "weak_prateritum", entry.get("id"))
+            _enqueue_weak_drill(context, "weak_prateritum", entry.get("id"), update.effective_user.id)
     feedback = _format_feedback_prateritum_weak(entry, ok)
     return await _send_prateritum_weak_prompt(update, context, feedback)
 
@@ -327,7 +327,7 @@ async def quiz_partizip2_weak(update: Update, context: ContextTypes.DEFAULT_TYPE
         _mark_session_word(context, "weak_partizip2", entry.get("id"))
         _log_transaction(update.effective_user.id, "quiz:weak_partizip2", snapshot)
         if not ok:
-            _enqueue_weak_drill(context, "weak_partizip2", entry.get("id"))
+            _enqueue_weak_drill(context, "weak_partizip2", entry.get("id"), update.effective_user.id)
     feedback = _format_feedback_partizip2_weak(entry, ok)
     return await _send_partizip2_weak_prompt(update, context, feedback)
 
@@ -362,16 +362,16 @@ def _pick_weak_or_drill_entry(context, user_id, weak_field, word_type=None):
     last_id = last_ids.get(mode)
     fresh = _pick_weak_entry(context, user_id, weak_field, word_type=word_type)
 
-    drill = _maybe_take_weak_drill_entry(context, mode, avoid_id=last_id, force=False)
+    drill = _maybe_take_weak_drill_entry(context, mode, user_id, avoid_id=last_id, force=False)
     if drill:
         entry, is_drill = drill, True
     elif fresh:
         entry, is_drill = fresh, False
     else:
         # No fresh due word left — fall back to a drill (still avoid consecutive if possible).
-        drill = _maybe_take_weak_drill_entry(context, mode, avoid_id=last_id, force=True)
+        drill = _maybe_take_weak_drill_entry(context, mode, user_id, avoid_id=last_id, force=True)
         if not drill:
-            drill = _maybe_take_weak_drill_entry(context, mode, avoid_id=None, force=True)
+            drill = _maybe_take_weak_drill_entry(context, mode, user_id, avoid_id=None, force=True)
         entry, is_drill = (drill, True) if drill else (None, False)
 
     if not entry:

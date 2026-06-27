@@ -283,7 +283,7 @@ def _reset_weak_drill_state(context, mode=None):
     context.user_data.pop("quiz_is_weak_drill", None)
 
 
-def _maybe_take_weak_drill_entry(context, mode, avoid_id=None, force=False):
+def _maybe_take_weak_drill_entry(context, mode, user_id, avoid_id=None, force=False):
     """Take the next due drill word for `mode`, never returning `avoid_id` (no two in a row).
 
     Drill words are queued only after wrong answers (see `_enqueue_weak_drill`). Each serve
@@ -293,7 +293,7 @@ def _maybe_take_weak_drill_entry(context, mode, avoid_id=None, force=False):
     queue = _weak_drill_queue(context, mode)
     if not queue:
         return None
-    if not force and _weak_drill_since_last(context, mode) < _weak_drill_gap(get_db_path()):
+    if not force and _weak_drill_since_last(context, mode) < _weak_drill_gap(get_db_path(), user_id):
         return None
     counts = _weak_drill_counts(context, mode)
     pos = next((i for i, wid in enumerate(queue) if avoid_id is None or wid != avoid_id), None)
@@ -303,7 +303,7 @@ def _maybe_take_weak_drill_entry(context, mode, avoid_id=None, force=False):
     entry = get_word_by_id(get_db_path(), word_id)
     if not entry:
         counts.pop(word_id, None)
-        return _maybe_take_weak_drill_entry(context, mode, avoid_id=avoid_id, force=True)
+        return _maybe_take_weak_drill_entry(context, mode, user_id, avoid_id=avoid_id, force=True)
     remaining = int(counts.get(word_id, 1)) - 1
     if remaining > 0:
         counts[word_id] = remaining
@@ -315,11 +315,11 @@ def _maybe_take_weak_drill_entry(context, mode, avoid_id=None, force=False):
     return entry
 
 
-def _enqueue_weak_drill(context, mode, word_id):
-    """Queue a word for in-session drilling after a WRONG answer (budget = repeats setting)."""
+def _enqueue_weak_drill(context, mode, word_id, user_id):
+    """Поставить слово в очередь дрилла после НЕВЕРНОГО ответа (бюджет = настройка repeats)."""
     if not word_id:
         return
-    repeats = _weak_drill_repeats(get_db_path())
+    repeats = _weak_drill_repeats(get_db_path(), user_id)
     if repeats <= 0:
         return
     queue = _weak_drill_queue(context, mode)

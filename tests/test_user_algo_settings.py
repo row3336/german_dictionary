@@ -9,17 +9,39 @@ import tempfile
 import unittest
 
 from bot.app_config import (
+    LEARNING_DAILY_QTY_DEFAULT,
+    LEARNING_DAILY_QTY_KEY,
+    LEARNING_INTERVALS_KEY,
+    LEARNING_READY_QUORUM_DEFAULT,
+    LEARNING_READY_QUORUM_KEY,
+    LEARNING_REMINDER_COOLDOWN_DEFAULT,
+    LEARNING_REMINDER_COOLDOWN_KEY,
+    LEARNING_REMINDER_INTERVAL_DEFAULT,
+    LEARNING_REMINDER_INTERVAL_KEY,
+    LEARNING_WARMUP_INTERVALS,
     RETRY_GAP_QUESTIONS,
     RETRY_MAX_REPEATS,
     SESSION_RETRY_GAP_KEY,
     SESSION_RETRY_IT_KEY,
     TOPIC_FILTER_KEY,
+    WEAK_DRILL_GAP_DEFAULT,
+    WEAK_DRILL_GAP_KEY,
+    WEAK_DRILL_REPEATS_DEFAULT,
+    WEAK_DRILL_REPEATS_KEY,
 )
 from bot.common.settings import (
+    _learning_daily_qty,
+    _learning_intervals_seconds,
+    _learning_ready_quorum,
+    _learning_reminder_cooldown,
+    _learning_reminder_interval,
+    _learning_schedule_seconds,
     _session_retry_gap,
     _session_retry_iterations,
     _topic_filter_for_query,
     _topic_filter_value,
+    _weak_drill_gap,
+    _weak_drill_repeats,
 )
 from bot.storage import init_db, reset_user_settings, set_setting, set_user_setting
 
@@ -112,6 +134,68 @@ class TopicFilterPerUserTest(unittest.TestCase):
         set_user_setting(self.db, U1, TOPIC_FILTER_KEY, "7")
         self.assertEqual(_topic_filter_value(U1), "7")  # own override wins
         self.assertEqual(_topic_filter_value(U2), "3")  # U2 still global
+
+
+class DrillLearningPerUserTest(unittest.TestCase):
+    """P2.4d — drill + learning params are per-user (override → global → default)."""
+
+    def setUp(self):
+        self.db = _mk()
+        self.addCleanup(lambda: os.unlink(self.db))
+        init_db(self.db)
+
+    def test_defaults_when_unset(self):
+        self.assertEqual(_weak_drill_gap(self.db, U1), WEAK_DRILL_GAP_DEFAULT)
+        self.assertEqual(_weak_drill_repeats(self.db, U1), WEAK_DRILL_REPEATS_DEFAULT)
+        self.assertEqual(_learning_daily_qty(self.db, U1), LEARNING_DAILY_QTY_DEFAULT)
+        self.assertEqual(_learning_ready_quorum(self.db, U1), LEARNING_READY_QUORUM_DEFAULT)
+        self.assertEqual(_learning_reminder_interval(self.db, U1), LEARNING_REMINDER_INTERVAL_DEFAULT)
+        self.assertEqual(_learning_reminder_cooldown(self.db, U1), LEARNING_REMINDER_COOLDOWN_DEFAULT)
+
+    def test_drill_override_isolated(self):
+        set_user_setting(self.db, U1, WEAK_DRILL_GAP_KEY, "9")
+        set_user_setting(self.db, U1, WEAK_DRILL_REPEATS_KEY, "6")
+        self.assertEqual(_weak_drill_gap(self.db, U1), 9)
+        self.assertEqual(_weak_drill_repeats(self.db, U1), 6)
+        self.assertEqual(_weak_drill_gap(self.db, U2), WEAK_DRILL_GAP_DEFAULT)  # U2 untouched
+        self.assertEqual(_weak_drill_repeats(self.db, U2), WEAK_DRILL_REPEATS_DEFAULT)
+
+    def test_learning_override_isolated(self):
+        set_user_setting(self.db, U1, LEARNING_DAILY_QTY_KEY, "25")
+        set_user_setting(self.db, U1, LEARNING_READY_QUORUM_KEY, "50")
+        self.assertEqual(_learning_daily_qty(self.db, U1), 25)
+        self.assertEqual(_learning_ready_quorum(self.db, U1), 50)
+        self.assertEqual(_learning_daily_qty(self.db, U2), LEARNING_DAILY_QTY_DEFAULT)
+        self.assertEqual(_learning_ready_quorum(self.db, U2), LEARNING_READY_QUORUM_DEFAULT)
+
+    def test_learning_intervals_per_user(self):
+        set_user_setting(self.db, U1, LEARNING_INTERVALS_KEY, "30,120,600")
+        self.assertEqual(_learning_intervals_seconds(self.db, U1), [30, 120, 600])
+        # schedule = warmup prefix + this user's intervals
+        self.assertEqual(
+            _learning_schedule_seconds(self.db, U1),
+            list(LEARNING_WARMUP_INTERVALS) + [30, 120, 600],
+        )
+        # U2 stays on its own (default) intervals, not U1's
+        self.assertNotEqual(_learning_intervals_seconds(self.db, U2), [30, 120, 600])
+
+    def test_global_fallback_then_own_override(self):
+        set_setting(self.db, WEAK_DRILL_GAP_KEY, "8")  # legacy/global default
+        self.assertEqual(_weak_drill_gap(self.db, U1), 8)
+        self.assertEqual(_weak_drill_gap(self.db, U2), 8)
+        set_user_setting(self.db, U1, WEAK_DRILL_GAP_KEY, "3")
+        self.assertEqual(_weak_drill_gap(self.db, U1), 3)  # own override wins
+        self.assertEqual(_weak_drill_gap(self.db, U2), 8)  # U2 still on global
+
+    def test_reset_clears_study_keys_only_for_caller(self):
+        keys = [WEAK_DRILL_GAP_KEY, LEARNING_DAILY_QTY_KEY, LEARNING_INTERVALS_KEY]
+        for k, v in [(WEAK_DRILL_GAP_KEY, "9"), (LEARNING_DAILY_QTY_KEY, "30"), (LEARNING_INTERVALS_KEY, "30,60")]:
+            set_user_setting(self.db, U1, k, v)
+        set_user_setting(self.db, U2, WEAK_DRILL_GAP_KEY, "4")
+        reset_user_settings(self.db, U1, keys=keys)
+        self.assertEqual(_weak_drill_gap(self.db, U1), WEAK_DRILL_GAP_DEFAULT)
+        self.assertEqual(_learning_daily_qty(self.db, U1), LEARNING_DAILY_QTY_DEFAULT)
+        self.assertEqual(_weak_drill_gap(self.db, U2), 4)  # U2 untouched
 
 
 if __name__ == "__main__":

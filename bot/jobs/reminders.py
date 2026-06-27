@@ -56,9 +56,12 @@ async def _learning_reminder_job(context: ContextTypes.DEFAULT_TYPE):
     db_path = get_db_path()
     now = datetime.now(timezone.utc)
     now_iso = now.strftime("%Y-%m-%dT%H:%M:%SZ")
-    reminder_interval = _learning_reminder_interval(db_path)
-    reminder_cooldown = _learning_reminder_cooldown(db_path)
-    quorum_pct = _learning_ready_quorum(db_path)
+    # Тайминги напоминаний теперь per-user (P2.4d), но фоновый джоб пока читает
+    # owner/глобал (owner override → глобал → дефолт). Per-user применим в P5.
+    owner_id = get_owner_id()
+    reminder_interval = _learning_reminder_interval(db_path, owner_id)
+    reminder_cooldown = _learning_reminder_cooldown(db_path, owner_id)
+    quorum_pct = _learning_ready_quorum(db_path, owner_id)
 
     for batch in learning_active_batches(db_path):
         user_id = int(batch.get("user_id") or 0)

@@ -417,7 +417,7 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == SEND_LEARN_TEXT and context.user_data.get("db_search_weak_ids"):
         ids = list(dict.fromkeys(context.user_data.get("db_search_weak_ids") or []))
         db_path = get_db_path()
-        batch_id = learning_get_or_create_batch(db_path, user_id=user_id, daily_qty=_learning_daily_qty(db_path))
+        batch_id = learning_get_or_create_batch(db_path, user_id=user_id, daily_qty=_learning_daily_qty(db_path, user_id))
         added = 0
         for wid in ids:
             added += int(
@@ -426,7 +426,7 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     user_id=user_id,
                     word_id=wid,
                     batch_id=batch_id,
-                    first_delay_seconds=_learning_schedule_seconds(db_path)[0],
+                    first_delay_seconds=_learning_schedule_seconds(db_path, user_id)[0],
                 )
             )
         context.user_data.pop("db_search_weak_ids", None)

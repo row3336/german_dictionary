@@ -134,8 +134,8 @@ async def _send_algo_settings_menu(update: Update, user_id):
     lang = _user_interface_lang(user_id)
     gap = _session_retry_gap(get_db_path(), user_id)
     iterations = _session_retry_iterations(get_db_path(), user_id)
-    weak_drill_gap = _weak_drill_gap(get_db_path())
-    weak_drill_repeats = _weak_drill_repeats(get_db_path())
+    weak_drill_gap = _weak_drill_gap(get_db_path(), user_id)
+    weak_drill_repeats = _weak_drill_repeats(get_db_path(), user_id)
     topics = list_topics(get_db_path())
     topics_line = ", ".join(topics) if topics else "-"
     msg = "\n".join(
@@ -165,8 +165,8 @@ async def _send_drill_settings_menu(update: Update, user_id):
     msg = "\n".join(
         [
             f"{t(lang, 'drill_sett')}:",
-            f"{t(lang, 'weak_drill_gap')} = {_weak_drill_gap(get_db_path())}",
-            f"{t(lang, 'weak_drill_repeats')} = {_weak_drill_repeats(get_db_path())}",
+            f"{t(lang, 'weak_drill_gap')} = {_weak_drill_gap(get_db_path(), user_id)}",
+            f"{t(lang, 'weak_drill_repeats')} = {_weak_drill_repeats(get_db_path(), user_id)}",
         ]
     )
     await update.message.reply_text(
@@ -182,12 +182,12 @@ async def _send_learning_settings_menu(update: Update, user_id):
     msg = "\n".join(
         [
             f"{t(lang, 'learning_sett')}:",
-            f"{t(lang, 'learning_daily_qty')} = {_learning_daily_qty(get_db_path())}",
-            f"{t(lang, 'learning_intervals')} = {_learning_intervals_text(get_db_path())}",
+            f"{t(lang, 'learning_daily_qty')} = {_learning_daily_qty(get_db_path(), user_id)}",
+            f"{t(lang, 'learning_intervals')} = {_learning_intervals_text(get_db_path(), user_id)}",
             f"learning_warmup = {','.join(str(v) for v in LEARNING_WARMUP_INTERVALS)}",
-            f"{t(lang, 'learning_ready_quorum')} = {_learning_ready_quorum(get_db_path())}",
-            f"{t(lang, 'learning_reminder_interval')} = {_learning_reminder_interval(get_db_path())}",
-            f"{t(lang, 'learning_reminder_cooldown')} = {_learning_reminder_cooldown(get_db_path())}",
+            f"{t(lang, 'learning_ready_quorum')} = {_learning_ready_quorum(get_db_path(), user_id)}",
+            f"{t(lang, 'learning_reminder_interval')} = {_learning_reminder_interval(get_db_path(), user_id)}",
+            f"{t(lang, 'learning_reminder_cooldown')} = {_learning_reminder_cooldown(get_db_path(), user_id)}",
             "learning.on_wrong = reset_step_0",
         ]
     )
@@ -368,8 +368,22 @@ async def algo_settings_menu_choice(update: Update, context: ContextTypes.DEFAUL
         return ALGO_SETTINGS_CONFIRM
 
     if text == t(lang, "reset_defaults"):
-        # clear this user's algo overrides → getters fall back to defaults (per-user only)
-        reset_user_settings(get_db_path(), user_id, keys=[SESSION_RETRY_GAP_KEY, SESSION_RETRY_IT_KEY])
+        # сбросить персональные настройки учёбы этого юзера → геттеры падают на дефолты (P2.4d)
+        reset_user_settings(
+            get_db_path(),
+            user_id,
+            keys=[
+                SESSION_RETRY_GAP_KEY,
+                SESSION_RETRY_IT_KEY,
+                WEAK_DRILL_GAP_KEY,
+                WEAK_DRILL_REPEATS_KEY,
+                LEARNING_DAILY_QTY_KEY,
+                LEARNING_INTERVALS_KEY,
+                LEARNING_REMINDER_INTERVAL_KEY,
+                LEARNING_REMINDER_COOLDOWN_KEY,
+                LEARNING_READY_QUORUM_KEY,
+            ],
+        )
         await update.message.reply_text("✅ Algo settings reset to default.")
         return await _send_algo_settings_menu(update, user_id)
 
@@ -495,7 +509,8 @@ async def algo_settings_edit(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if not values:
             await update.message.reply_text("Enter comma-separated seconds, for example: 30,120,600")
             return ALGO_SETTINGS_EDIT
-        set_setting(get_db_path(), key, ",".join(str(v) for v in values))
+        # все настройки учёбы (algo/drill/learning) теперь per-user (P2.4d)
+        set_user_setting(get_db_path(), user_id, key, ",".join(str(v) for v in values))
     else:
         try:
             value = int(text)
@@ -509,11 +524,8 @@ async def algo_settings_edit(update: Update, context: ContextTypes.DEFAULT_TYPE)
         elif value < 1:
             await update.message.reply_text("Value must be >= 1.")
             return ALGO_SETTINGS_EDIT
-        # algo settings (session retry) are per-user; drill/learning stay global defaults
-        if key in (SESSION_RETRY_GAP_KEY, SESSION_RETRY_IT_KEY):
-            set_user_setting(get_db_path(), user_id, key, str(value))
-        else:
-            set_setting(get_db_path(), key, str(value))
+        # все настройки учёбы (algo/drill/learning) теперь per-user (P2.4d)
+        set_user_setting(get_db_path(), user_id, key, str(value))
     context.user_data.pop("algo_setting_edit", None)
     context.user_data.pop("algo_edit_return", None)
     if return_to == "drill":

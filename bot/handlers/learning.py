@@ -145,13 +145,13 @@ def _send_entry_to_learning(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         return False
     db_path = get_db_path()
     user_id = update.effective_user.id
-    batch_id = learning_get_or_create_batch(db_path, user_id=user_id, daily_qty=_learning_daily_qty(db_path))
+    batch_id = learning_get_or_create_batch(db_path, user_id=user_id, daily_qty=_learning_daily_qty(db_path, user_id))
     added = learning_add_word_by_id(
         db_path,
         user_id=user_id,
         word_id=entry.get("id"),
         batch_id=batch_id,
-        first_delay_seconds=_learning_schedule_seconds(db_path)[0],
+        first_delay_seconds=_learning_schedule_seconds(db_path, user_id)[0],
     )
     return bool(added)
 
@@ -171,7 +171,7 @@ def _apply_input_err_learning(update, context):
         user_id=update.effective_user.id,
         word_id=last_id,
         prev_step_index=last_prev_step,
-        intervals_seconds=_learning_schedule_seconds(get_db_path()),
+        intervals_seconds=_learning_schedule_seconds(get_db_path(), update.effective_user.id),
     )
     log_quiz_event(
         get_db_path(),
@@ -190,7 +190,7 @@ async def _send_learning_menu(update: Update, user_id):
     stats = learning_status_snapshot(
         get_db_path(),
         user_id=user_id,
-        quorum_pct=_learning_ready_quorum(get_db_path()),
+        quorum_pct=_learning_ready_quorum(get_db_path(), user_id),
     )
     active_entries = list_learning_active_words(get_db_path(), user_id=user_id)
     active_lines = [_format_topic_learning_line(item) for item in active_entries]
@@ -203,8 +203,8 @@ async def _send_learning_menu(update: Update, user_id):
             "",
             _topic_filter_banner(user_id),
             "",
-            f"{t(_user_interface_lang(user_id), 'learning_daily_qty')} = {_learning_daily_qty(get_db_path())}",
-            f"{t(_user_interface_lang(user_id), 'learning_intervals')} = {_learning_intervals_text(get_db_path())}",
+            f"{t(_user_interface_lang(user_id), 'learning_daily_qty')} = {_learning_daily_qty(get_db_path(), user_id)}",
+            f"{t(_user_interface_lang(user_id), 'learning_intervals')} = {_learning_intervals_text(get_db_path(), user_id)}",
             f"{LEARNING_MIX_MODE_TEXT} = {'ON' if _learning_mix_mode_enabled(user_id) else 'OFF'}",
             f"active = {stats.get('active_count', 0)}",
             f"preview_pending = {stats.get('preview_pending', 0)}",
@@ -240,7 +240,7 @@ async def _learning_add_words(update: Update, context: ContextTypes.DEFAULT_TYPE
     """Handle learning add words."""
     user_id = update.effective_user.id
     db_path = get_db_path()
-    daily_qty = _learning_daily_qty(db_path)
+    daily_qty = _learning_daily_qty(db_path, user_id)
     batch_id = learning_get_or_create_batch(db_path, user_id=user_id, daily_qty=daily_qty)
     active_count = learning_active_count(db_path, user_id=user_id, batch_id=batch_id)
     need = max(0, daily_qty - active_count)
@@ -259,7 +259,7 @@ async def _learning_add_words(update: Update, context: ContextTypes.DEFAULT_TYPE
             reply_markup=ReplyKeyboardMarkup(_learning_menu_keys(user_id), resize_keyboard=True),
         )
         return LEARNING_MENU
-    first_delay = _learning_schedule_seconds(db_path)[0]
+    first_delay = _learning_schedule_seconds(db_path, user_id)[0]
     added = learning_add_words(
         db_path,
         user_id=user_id,
@@ -308,7 +308,7 @@ async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TY
             await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
         await _reply_text_with_retry(
             update.message,
-            f"No due learning words right now.\nnext_due = {_format_eta_from_iso(learning_status_snapshot(get_db_path(), user_id, _learning_ready_quorum(get_db_path())).get('next_due'))}",
+            f"No due learning words right now.\nnext_due = {_format_eta_from_iso(learning_status_snapshot(get_db_path(), user_id, _learning_ready_quorum(get_db_path(), user_id)).get('next_due'))}",
             reply_markup=ReplyKeyboardMarkup(
                 [[t(_user_interface_lang(user_id), "back")]],
                 resize_keyboard=True,
@@ -402,7 +402,7 @@ async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 get_db_path(),
                 user_id=user_id,
                 word_id=entry.get("id"),
-                first_interval_seconds=_learning_schedule_seconds(get_db_path())[0],
+                first_interval_seconds=_learning_schedule_seconds(get_db_path(), user_id)[0],
             )
             _log_transaction(user_id, "learning:preview_next", snapshot)
             return await _send_learning_prompt(update, context, "Saved. Next preview word.")
@@ -446,7 +446,7 @@ async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id=user_id,
         word_id=entry.get("id"),
         ok=ok,
-        intervals_seconds=_learning_schedule_seconds(get_db_path()),
+        intervals_seconds=_learning_schedule_seconds(get_db_path(), user_id),
     )
     _log_transaction(user_id, "learning:answer", snapshot)
     feedback = _format_feedback_ru_de(entry, ok)
