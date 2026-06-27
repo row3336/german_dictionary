@@ -30,6 +30,7 @@ from ..app_config import (
     QUIZ_PRATERITUM_WEAK,
     QUIZ_RU_DE,
     get_db_path,
+    is_owner,
 )
 from ..common.lang import _user_dict_lang, _user_interface_lang
 from ..common.navigation import _action_key_from_text, _back_to_tests, _reply_text_with_retry
@@ -41,7 +42,7 @@ from ..handlers.quiz import (
 )
 from ..i18n import t
 from ..labels import SYNONYMS_TEXT
-from ..storage import delete_word, update_word_fields
+from ..storage import delete_word, set_user_word_media, update_word_fields
 from ..text_utils import type_label as _type_label
 from ..ui.formatting import (
     _format_article_question,
@@ -59,8 +60,11 @@ from ..ui.keyboards import (
 )
 
 
-def _allowed_clarify_fields(source):
-    """Handle allowed edit fields."""
+def _allowed_clarify_fields(source, user_id=None):
+    """Editable fields for this source. A guest (non-owner) editing a quiz/db_search
+    card may only touch image/example (their personal version, P4)."""
+    if source == "quiz" and user_id is not None and not is_owner(user_id):
+        return {"image", "example"}
     if source == "add":
         return {
             "ru", "ukr", "en", "de", "article", "plural", "type",
@@ -304,7 +308,7 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
             context.user_data["edit_stage"] = "pick_field"
             await update.message.reply_text(
                 "Choose field to edit:",
-                reply_markup=_clarify_fields_markup(source),
+                reply_markup=_clarify_fields_markup(source, update.effective_user.id),
             )
             return ADD_EDIT
 
@@ -313,7 +317,7 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
         context.user_data["edit_stage"] = "pick_field"
         await update.message.reply_text(
             "Choose field to edit:",
-            reply_markup=_clarify_fields_markup(source),
+            reply_markup=_clarify_fields_markup(source, update.effective_user.id),
         )
         return ADD_EDIT
 
@@ -324,7 +328,7 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
             context.user_data["edit_stage"] = "pick_field"
             await update.message.reply_text(
                 "Choose field to edit:",
-                reply_markup=_clarify_fields_markup("quiz"),
+                reply_markup=_clarify_fields_markup("quiz", update.effective_user.id),
             )
             return ADD_EDIT
         if action == "send_learn":
@@ -383,17 +387,17 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
         context.user_data.pop("edit_field", None)
         await update.message.reply_text(
             "Choose field to edit:",
-            reply_markup=_clarify_fields_markup(source),
+            reply_markup=_clarify_fields_markup(source, update.effective_user.id),
         )
         return ADD_EDIT
 
     if stage == "pick_field":
         field = text.strip().lower()
-        allowed_fields = _allowed_clarify_fields(source)
+        allowed_fields = _allowed_clarify_fields(source, update.effective_user.id)
         if field not in allowed_fields:
             await update.message.reply_text(
                 "Use field buttons.",
-                reply_markup=_clarify_fields_markup(source),
+                reply_markup=_clarify_fields_markup(source, update.effective_user.id),
             )
             return ADD_EDIT
         if source == "quiz" and field == SYNONYMS_TEXT:
@@ -419,7 +423,7 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
         context.user_data["edit_stage"] = "pick_field"
         await update.message.reply_text(
             "Choose field to edit:",
-            reply_markup=_clarify_fields_markup(source),
+            reply_markup=_clarify_fields_markup(source, update.effective_user.id),
         )
         return ADD_EDIT
 
@@ -446,7 +450,20 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
     context.user_data["edit_stage"] = "pick_scope" if source == "quiz" else "pick_field"
     context.user_data.pop("edit_field", None)
     if source == "quiz":
-        update_word_fields(get_db_path(), updated.get("id"), updated)
+        user_id = update.effective_user.id
+        if is_owner(user_id):
+            # Owner edits the shared word directly.
+            update_word_fields(get_db_path(), updated.get("id"), updated)
+        else:
+            # Guest: persist only the edited image/example to their personal version
+            # (P4); the shared `words` row is never touched.
+            set_user_word_media(
+                get_db_path(),
+                user_id,
+                updated.get("id"),
+                image=updated.get("image") if field == "image" else None,
+                example=updated.get("example") if field == "example" else None,
+            )
         current_quiz_entry = context.user_data.get("quiz_entry")
         if current_quiz_entry and current_quiz_entry.get("id") == updated.get("id"):
             context.user_data["quiz_entry"] = updated

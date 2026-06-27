@@ -570,11 +570,11 @@ async def db_search_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "db_search_topics_lern",
     }:
         return await db_search_input(update, context)
-    # "send to learning" is available to a guest (personal learning); editing/deleting
-    # a shared word (clarify_fields/delete) is owner-only (P3.2, until personal media in P4).
-    if action == "send_learn":
+    # "send to learning" and editing example/image (personal version, P4) are open to a
+    # guest; deleting a shared word stays owner-only.
+    if action in {"send_learn", "clarify_fields"}:
         return await clarify_fields_input(update, context)
-    if (action == "clarify_fields" or text == "delete") and is_owner(user_id):
+    if text == "delete" and is_owner(user_id):
         return await clarify_fields_input(update, context)
     # Any other text is treated as a new search query.
     return await db_search_input(update, context)

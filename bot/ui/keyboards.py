@@ -149,8 +149,11 @@ def _weak_article_markup(user_id):
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 
-def _clarify_fields_markup(source):
-    """Handle edit fields markup."""
+def _clarify_fields_markup(source, user_id=None):
+    """Field-picker keyboard. A guest (non-owner) edits only image/example —
+    their personal version (P4); the owner gets the full field grid."""
+    if source == "quiz" and user_id is not None and not is_owner(user_id):
+        return ReplyKeyboardMarkup([["image", "example", BACK_TEXT]], resize_keyboard=True)
     if source == "add":
         return ReplyKeyboardMarkup(
             [
@@ -194,7 +197,11 @@ def _clarify_root_markup(user_id):
             [[t(lang, "clarify_fields"), t(lang, "send_learn")], ["delete", t(lang, "back")]],
             resize_keyboard=True,
         )
-    return ReplyKeyboardMarkup([[t(lang, "send_learn")], [t(lang, "back")]], resize_keyboard=True)
+    # Guest: edit example/image (personal version, P4) + send to learning; no delete.
+    return ReplyKeyboardMarkup(
+        [[t(lang, "clarify_fields"), t(lang, "send_learn")], [t(lang, "back")]],
+        resize_keyboard=True,
+    )
 
 
 def _add_keys(user_id):

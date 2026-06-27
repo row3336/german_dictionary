@@ -83,14 +83,26 @@ class OwnerGatingTest(unittest.TestCase):
         self.assertTrue(any("unit" in x for x in owner))
         self.assertFalse(any("unit" in x for x in guest))
 
-    def test_clarify_root_guest_view_only(self):
+    def test_clarify_root_guest_can_edit_media_but_not_delete(self):
+        # P4.3: a guest gets clarify (to edit their personal example/image) and
+        # send_learn, but never delete (deleting a shared word stays owner-only).
         owner = _flat(K._clarify_root_markup(OWNER).rows)
         guest = _flat(K._clarify_root_markup(GUEST).rows)
         self.assertIn("delete", owner)
         self.assertNotIn("delete", guest)
-        # send_learn (personal learning) is available to a guest, field editing is not
         self.assertTrue(any("учить" in x or "вчити" in x or "send_learn" in x for x in guest))
-        self.assertFalse(any("уточн" in x or "уточни" in x or "clarify" in x for x in guest))
+        self.assertTrue(any("уточн" in x or "уточни" in x or "clarify" in x for x in guest))
+
+    def test_clarify_fields_markup_guest_restricted_to_media(self):
+        # P4.3: in the field picker a guest may only choose image/example; the owner
+        # gets the full grid (translations, article, type, etc.).
+        guest = _flat(K._clarify_fields_markup("quiz", GUEST).rows)
+        self.assertEqual(set(guest), {"image", "example", "back"})
+        for f in ("ru", "article", "type", "plural", "prateritum"):
+            self.assertNotIn(f, guest)
+        owner = _flat(K._clarify_fields_markup("quiz", OWNER).rows)
+        self.assertIn("article", owner)
+        self.assertIn("type", owner)
 
 
 if __name__ == "__main__":
