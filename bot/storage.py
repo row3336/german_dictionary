@@ -1665,6 +1665,28 @@ def get_user_info(db_path, user_id):
     }
 
 
+def list_pending_users(db_path):
+    """Список юзеров со статусом 'pending' (ожидают одобрения владельца)."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT user_id, username, first_name, created_at
+            FROM users WHERE status = 'pending'
+            ORDER BY created_at
+            """,
+        ).fetchall()
+    return [
+        {
+            "user_id": _safe_int(row["user_id"]),
+            "username": row["username"] or "",
+            "first_name": row["first_name"] or "",
+            "created_at": row["created_at"] or "",
+        }
+        for row in rows
+    ]
+
+
 def _normalize_interface_lang(value):
     """Handle normalize interface lang."""
     token = _safe_text(value).strip().lower()

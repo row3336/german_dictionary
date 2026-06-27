@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import (
     Application,
+    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     ConversationHandler,
@@ -18,6 +19,8 @@ from telegram.ext import (
 )
 
 from .app_config import (
+    ACCESS_MESSAGE,
+    ACCESS_REJECTED,
     ADD_CLARIFY,
     ADD_CONFIRM,
     ADD_EDIT,
@@ -141,6 +144,11 @@ from .handlers.settings import (
     settings_menu_choice,
     topic_filter_edit,
 )
+from .handlers.access import (
+    access_decision_callback,
+    access_message_input,
+    access_rejected_choice,
+)
 from .handlers.menu import (
     menu_choice,
     quiz_ru_de_menu_choice,
@@ -158,6 +166,7 @@ from .handlers.quiz import (
     quiz_pl_sg,
     quiz_ru_de,
 )
+from .jobs.access_reminders import _configure_access_reminders
 from .jobs.auto_dump import _configure_auto_dump
 from .jobs.reminders import _configure_learning_reminders
 from .jobs.reports import _configure_fsrs_reports
@@ -361,6 +370,7 @@ def main():
     _configure_auto_dump(app, mode)
     _configure_learning_reminders(app)
     _configure_fsrs_reports(app)
+    _configure_access_reminders(app)
     conv = ConversationHandler(
         entry_points=[
             CommandHandler("start", start),
@@ -371,6 +381,8 @@ def main():
             MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, menu_choice)],
             SELECT_UI_LANG: [MessageHandler(filters.TEXT & ~filters.COMMAND, select_ui_lang)],
             SELECT_DICT_LANG: [MessageHandler(filters.TEXT & ~filters.COMMAND, select_dict_lang)],
+            ACCESS_REJECTED: [MessageHandler(filters.TEXT & ~filters.COMMAND, access_rejected_choice)],
+            ACCESS_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, access_message_input)],
             TESTS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, tests_menu_choice)],
             DB_SEARCH: [MessageHandler(filters.TEXT & ~filters.COMMAND, db_search_input)],
             DB_SEARCH_VIEW: [MessageHandler(filters.TEXT & ~filters.COMMAND, db_search_view)],
@@ -414,6 +426,8 @@ def main():
     )
 
     app.add_handler(conv)
+    # Глобальный обработчик inline-решений владельца по заявкам на доступ (P3.1).
+    app.add_handler(CallbackQueryHandler(access_decision_callback, pattern=r"^access:"))
     app.run_polling()
 
 

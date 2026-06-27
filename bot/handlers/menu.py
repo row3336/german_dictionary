@@ -24,10 +24,11 @@ from ..common.lang import _mode_de_l1, _mode_l1_de, _mode_pl_sg, _user_interface
 from ..common.navigation import _action_key_from_text, _back_to_main_menu, _clear_last_answer
 from ..common.session import _reset_retry_state, _reset_session, _reset_weak_drill_state
 from ..common.settings import _topic_filter_banner, _topic_filter_value
+from ..handlers.access import access_allowed, show_rejected_screen
 from ..handlers.db_search import _send_db_search_prompt
 from ..handlers.learning import _send_learning_menu
 from ..handlers.quiz import _send_de_ru_prompt, _send_pl_sg_prompt, _send_ru_de_prompt
-from ..handlers.settings import _ask_interface_language
+from ..handlers.settings import _ask_dictionary_language, _ask_interface_language
 from ..handlers.weak import _send_article_weak_prompt, _send_plural_weak_prompt
 from ..i18n import normalize_interface_lang, t
 from ..labels import (
@@ -35,7 +36,15 @@ from ..labels import (
     QUIZ_PL_SG_TEXT,
     QUIZ_RU_DE_TEXT,
 )
-from ..storage import get_setting, get_statistics_snapshot, list_topics, select_due
+from ..storage import (
+    get_setting,
+    get_statistics_snapshot,
+    get_user_languages,
+    get_user_status,
+    list_topics,
+    register_or_update_user,
+    select_due,
+)
 from ..text_utils import split_text_chunks as _split_text_chunks
 from ..ui.keyboards import (
     _add_input_markup,
@@ -61,18 +70,51 @@ def _load_info_text(lang="en"):
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle start."""
+    """Точка входа /start: владелец — свой онбординг, гость — поток одобрения (P3.1)."""
     user = update.effective_user
     user_id = user.id
     if not _is_owner_only(user_id):
-        await update.message.reply_text("❌ Owner-only bot.")
-        return ConversationHandler.END
+        return await _guest_start(update, context)
     ui_lang = get_setting(get_db_path(), OWNER_INTERFACE_LANG_KEY, "")
     dict_lang = get_setting(get_db_path(), OWNER_DICT_LANG_KEY, "")
     if not ui_lang or not dict_lang:
         return await _ask_interface_language(update)
     await update.message.reply_text(t(_user_interface_lang(user_id), "main_menu"), reply_markup=_main_menu_markup(user_id))
     return MENU
+
+
+async def _guest_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Маршрутизация гостя по статусу одобрения.
+
+    Поток: Старт → выбор языка интерфейса → заявка владельцу и «ожидайте» →
+    (одобрен) выбор языка словаря → меню / (отклонён) экран «написать разработчику».
+    """
+    user = update.effective_user
+    user_id = user.id
+    db = get_db_path()
+    status = get_user_status(db, user_id)
+    if status is None:
+        # Новый гость: регистрируем как pending и сразу просим выбрать язык интерфейса
+        # (заявку владельцу отправим, когда язык выбран — чтобы писать гостю на его языке).
+        register_or_update_user(db, user_id, user.username or "", user.first_name or "")
+        return await _ask_interface_language(update)
+    if status == "approved":
+        ui, dl = get_user_languages(db, user_id)
+        if not ui:
+            return await _ask_interface_language(update)
+        if not dl:
+            return await _ask_dictionary_language(update, user_id)
+        await update.message.reply_text(t(ui, "main_menu"), reply_markup=_main_menu_markup(user_id))
+        return MENU
+    if status == "rejected":
+        return await show_rejected_screen(update, user_id)
+    # pending: язык уже выбран → просто напоминаем ждать (владельца не спамим);
+    # если язык ещё не выбран (прервался на выборе) — снова просим выбрать.
+    ui, _ = get_user_languages(db, user_id)
+    if not ui:
+        return await _ask_interface_language(update)
+    await update.message.reply_text(t(ui, "access_pending"))
+    return ConversationHandler.END
 
 
 async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -84,9 +126,10 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if action == "start":
         return await start(update, context)
 
-    if not _is_owner_only(user_id):
-        await update.message.reply_text("❌ Owner-only bot.")
-        return ConversationHandler.END
+    # Доступ к меню: владелец или одобренный гость. Точечный owner-гейтинг
+    # конкретных пунктов (add/AI/parse_VF/dump/...) — задача P3.2.
+    if not access_allowed(user_id):
+        return await _guest_start(update, context)
 
     if action == "add_word":
         await update.message.reply_text(

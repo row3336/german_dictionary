@@ -38,7 +38,6 @@ from ..app_config import (
     WEAK_DRILL_GAP_KEY,
     WEAK_DRILL_REPEATS_KEY,
     get_db_path,
-    is_owner as _is_owner_only,
 )
 from ..common.lang import _user_interface_lang
 from ..common.navigation import _action_key_from_text, _back_to_main_menu
@@ -54,6 +53,7 @@ from ..common.settings import (
     _weak_drill_gap,
     _weak_drill_repeats,
 )
+from ..handlers.access import access_allowed, notify_owner_access_request
 from ..i18n import dict_choices, interface_choices, parse_dict_choice, parse_interface_choice, t
 from ..storage import (
     WEAK_ACTIVE_CLEAR_STREAK,
@@ -63,6 +63,7 @@ from ..storage import (
     WEAK_REVIEW_DAYS_STAGE2,
     WEAK_REVIEW_DAYS_STAGE3,
     _parse_learning_intervals,
+    get_user_status,
     list_topics,
     reset_periodicity,
     reset_user_settings,
@@ -264,11 +265,8 @@ async def _ask_dictionary_language(update: Update, user_id):
 
 
 async def select_ui_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle select ui lang."""
+    """Выбор языка интерфейса. Для pending-гостя — триггерит заявку владельцу (P3.1)."""
     user_id = update.effective_user.id
-    if not _is_owner_only(user_id):
-        await update.message.reply_text("❌ Owner-only bot.")
-        return ConversationHandler.END
 
     interface_lang = parse_interface_choice(update.message.text.strip())
     if not interface_lang:
@@ -279,14 +277,19 @@ async def select_ui_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return SELECT_UI_LANG
 
     set_user_interface_lang(get_db_path(), user_id, interface_lang)
-    return await _ask_dictionary_language(update, user_id)
+    # Владелец и одобренный гость продолжают онбординг (язык словаря).
+    if access_allowed(user_id):
+        return await _ask_dictionary_language(update, user_id)
+    # Pending-гость только что выбрал язык → отправляем заявку владельцу и просим ждать.
+    await notify_owner_access_request(context, user_id)
+    await update.message.reply_text(t(_user_interface_lang(user_id), "access_pending"))
+    return ConversationHandler.END
 
 
 async def select_dict_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle select dict lang."""
+    """Выбор языка словаря (владелец или одобренный гость) → главное меню."""
     user_id = update.effective_user.id
-    if not _is_owner_only(user_id):
-        await update.message.reply_text("❌ Owner-only bot.")
+    if not access_allowed(user_id):
         return ConversationHandler.END
 
     lang = _user_interface_lang(user_id)
