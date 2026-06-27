@@ -1666,7 +1666,7 @@ def get_user_info(db_path, user_id):
 
 
 def list_pending_users(db_path):
-    """Список юзеров со статусом 'pending' (ожидают одобрения владельца)."""
+    """Users with status 'pending' (awaiting the owner's approval)."""
     init_db(db_path)
     with _connect(db_path) as conn:
         rows = conn.execute(

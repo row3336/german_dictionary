@@ -70,7 +70,7 @@ def _load_info_text(lang="en"):
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Точка входа /start: владелец — свой онбординг, гость — поток одобрения (P3.1)."""
+    """/start entry: owner gets their onboarding, a guest goes through the approval flow (P3.1)."""
     user = update.effective_user
     user_id = user.id
     if not _is_owner_only(user_id):
@@ -84,18 +84,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def _guest_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Маршрутизация гостя по статусу одобрения.
+    """Route a guest by their approval status.
 
-    Поток: Старт → выбор языка интерфейса → заявка владельцу и «ожидайте» →
-    (одобрен) выбор языка словаря → меню / (отклонён) экран «написать разработчику».
+    Flow: Start -> pick interface language -> owner request and "please wait" ->
+    (approved) pick dictionary language -> menu / (rejected) "message the developer" screen.
     """
     user = update.effective_user
     user_id = user.id
     db = get_db_path()
     status = get_user_status(db, user_id)
     if status is None:
-        # Новый гость: регистрируем как pending и сразу просим выбрать язык интерфейса
-        # (заявку владельцу отправим, когда язык выбран — чтобы писать гостю на его языке).
+        # New guest: register as pending and immediately ask for the interface language
+        # (the owner request is sent once a language is chosen, so we message the guest in it).
         register_or_update_user(db, user_id, user.username or "", user.first_name or "")
         return await _ask_interface_language(update)
     if status == "approved":
@@ -108,8 +108,8 @@ async def _guest_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return MENU
     if status == "rejected":
         return await show_rejected_screen(update, user_id)
-    # pending: язык уже выбран → просто напоминаем ждать (владельца не спамим);
-    # если язык ещё не выбран (прервался на выборе) — снова просим выбрать.
+    # pending: language already chosen -> just remind them to wait (don't spam the owner);
+    # if the language isn't chosen yet (interrupted mid-pick) -> ask again.
     ui, _ = get_user_languages(db, user_id)
     if not ui:
         return await _ask_interface_language(update)
@@ -118,7 +118,7 @@ async def _guest_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Роутер главного меню. Доступ — владелец или одобренный гость; add_word — owner-only."""
+    """Main-menu router. Access: owner or approved guest; add_word is owner-only."""
     text = update.message.text.strip()
     user_id = update.effective_user.id
     action = _action_key_from_text(text, user_id)
@@ -126,13 +126,13 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if action == "start":
         return await start(update, context)
 
-    # Доступ к меню: владелец или одобренный гость. Точечный owner-гейтинг
-    # конкретных пунктов (add/AI/parse_VF/dump/...) — задача P3.2.
+    # Menu access: owner or approved guest. Per-item owner gating
+    # (add/AI/parse_VF/dump/...) is handled in P3.2.
     if not access_allowed(user_id):
         return await _guest_start(update, context)
 
     if action == "add_word":
-        # Добавление слов — owner-only (P3.2): гость в общий словарь не пишет.
+        # Adding words is owner-only (P3.2): a guest never writes to the shared dictionary.
         if not _is_owner_only(user_id):
             await update.message.reply_text(t(_user_interface_lang(user_id), "unknown_menu"))
             return MENU
@@ -299,7 +299,7 @@ async def tests_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def quiz_ru_de_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Выбор в меню Lang>De: основной FSRS, weak-режимы или фильтр тем."""
+    """Choice in the Lang>De menu: standard FSRS, weak modes, or topic filter."""
     text = update.message.text.strip()
     user_id = update.effective_user.id
     action = _action_key_from_text(text, user_id)

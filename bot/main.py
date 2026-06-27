@@ -426,7 +426,7 @@ def main():
     )
 
     app.add_handler(conv)
-    # Глобальный обработчик inline-решений владельца по заявкам на доступ (P3.1).
+    # Global handler for the owner's inline decisions on access requests (P3.1).
     app.add_handler(CallbackQueryHandler(access_decision_callback, pattern=r"^access:"))
     app.run_polling()
 

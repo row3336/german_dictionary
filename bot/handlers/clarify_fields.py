@@ -260,7 +260,7 @@ async def _resume_after_clarify(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка ввода при уточнении/правке полей карточки слова."""
+    """Handle input when clarifying/editing the fields of a word card."""
     from ..handlers.db_search import _send_db_search_prompt
     from ..handlers.synonyms import _open_synonyms_menu
     from ..handlers.weak import (

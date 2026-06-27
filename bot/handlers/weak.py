@@ -105,7 +105,7 @@ def _apply_input_err_weak(update, context, field):
 
 
 async def quiz_verb_weak_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Выбор в подменю weak-режимов глагола (Prateritum / Partizip2)."""
+    """Choice in the verb weak-mode submenu (Prateritum / Partizip2)."""
     text = update.message.text.strip()
     action = _action_key_from_text(text, update.effective_user.id)
     lang = _user_interface_lang(update.effective_user.id)
@@ -442,7 +442,7 @@ async def _send_plural_weak_prompt(update: Update, context: ContextTypes.DEFAULT
 
 
 async def _send_prateritum_weak_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text, force_entry=None):
-    """Показать вопрос weak-режима Prateritum (или вернуть в подменю, если слов нет)."""
+    """Show the Prateritum weak-mode question (or return to submenu if no words)."""
     entry = force_entry or _pick_weak_or_drill_entry(context, update.effective_user.id, "prateritum", word_type="verb")
     if not entry:
         if prefix_text:
@@ -470,7 +470,7 @@ async def _send_prateritum_weak_prompt(update: Update, context: ContextTypes.DEF
 
 
 async def _send_partizip2_weak_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text, force_entry=None):
-    """Показать вопрос weak-режима Partizip2 (или вернуть в подменю, если слов нет)."""
+    """Show the Partizip2 weak-mode question (or return to submenu if no words)."""
     entry = force_entry or _pick_weak_or_drill_entry(context, update.effective_user.id, "partizip2", word_type="verb")
     if not entry:
         if prefix_text:

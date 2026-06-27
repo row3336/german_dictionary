@@ -185,7 +185,7 @@ def _apply_input_err_learning(update, context):
 
 
 async def _send_learning_menu(update: Update, user_id):
-    """Показать меню изучения со сводкой текущей сессии."""
+    """Show the learning menu with a summary of the current session."""
     stats = learning_status_snapshot(
         get_db_path(),
         user_id=user_id,
@@ -275,7 +275,7 @@ async def _learning_add_words(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text, force_entry=None):
-    """Показать очередной вопрос/превью в сессии изучения."""
+    """Show the next question/preview in the learning session."""
     user_id = update.effective_user.id
     preview_entry = learning_preview_entry(get_db_path(), user_id=user_id)
     if preview_entry:
@@ -333,7 +333,7 @@ async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def learning_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Выбор в меню изучения (старт/микс/добавить/сброс/назад)."""
+    """Choice in the learning menu (start/mix/add/reset/back)."""
     text = update.message.text.strip()
     user_id = update.effective_user.id
     action = _action_key_from_text(text, user_id)
@@ -373,7 +373,7 @@ async def learning_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка ответа/действия в сессии изучения (превью и обычный режим)."""
+    """Handle an answer/action in the learning session (preview and normal mode)."""
     from ..handlers.clarify_fields import _start_clarify_fields
 
     text = update.message.text.strip()

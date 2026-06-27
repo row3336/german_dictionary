@@ -54,13 +54,14 @@ LEARNING_READY_QUORUM_DEFAULT = 70
 LEARNING_MIX_MODE_DEFAULT = "0"
 LEARNING_REMINDER_JOB_NAME = "learning_reminder_job"
 FSRS_AFTERNOON_REMINDER_JOB_NAME = "fsrs_afternoon_reminder_job"
-# Напоминания владельцу о pending-заявках на доступ (P3.1).
+# Owner reminders about pending access requests (P3.1).
 ACCESS_REMINDER_JOB_NAME = "access_pending_reminder_job"
-ACCESS_REMINDER_INTERVAL_SECONDS = 2 * 60 * 60  # раз в 2 часа
-# Хэштеги: открытая заявка ищется по REQUEST, обработанная — по DONE (выпадает из поиска открытых).
+ACCESS_REMINDER_INTERVAL_SECONDS = 2 * 60 * 60  # every 2 hours
+# Hashtags: an open request is searchable by REQUEST, a handled one by DONE
+# (so it drops out of the open-requests search).
 ACCESS_REQUEST_HASHTAG = "#user_confirmation_request"
 ACCESS_DONE_HASHTAG = "#user_confirmation_done"
-# Префикс callback_data inline-кнопок одобрения: "access:approve:<uid>" / "access:reject:<uid>".
+# callback_data prefix of approval inline buttons: "access:approve:<uid>" / "access:reject:<uid>".
 ACCESS_CALLBACK_PREFIX = "access"
 FSRS_REPORT_UTC_HOUR_DEFAULT = 3
 FSRS_REPORT_JOB_NAME = "fsrs_daily_report_job"

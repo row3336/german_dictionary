@@ -1,7 +1,7 @@
-"""P3.1 — поток одобрения доступа (storage-уровень, без telegram).
+"""P3.1 — guest access-approval flow (storage level, no telegram).
 
-Проверяем регистрацию гостя как 'pending', переходы статуса approved/rejected,
-изоляцию по юзерам и список pending-заявок для напоминаний владельцу.
+Covers registering a guest as 'pending', approved/rejected status transitions,
+per-user isolation, and the pending-request list used for owner reminders.
 """
 
 import os
@@ -32,14 +32,14 @@ class AccessFlowTest(unittest.TestCase):
         init_db(self.db)
 
     def test_new_user_registers_pending(self):
-        self.assertIsNone(get_user_status(self.db, U1))  # незнакомый юзер
+        self.assertIsNone(get_user_status(self.db, U1))  # unknown user
         status = register_or_update_user(self.db, U1, "alice", "Alice")
         self.assertEqual(status, "pending")
         self.assertEqual(get_user_status(self.db, U1), "pending")
 
     def test_repeat_start_keeps_pending(self):
         register_or_update_user(self.db, U1, "alice", "Alice")
-        # повторный /start не сбрасывает статус и возвращает текущий
+        # a repeat /start doesn't reset the status and returns the current one
         again = register_or_update_user(self.db, U1, "alice2", "Alice")
         self.assertEqual(again, "pending")
 
@@ -58,7 +58,7 @@ class AccessFlowTest(unittest.TestCase):
     def test_list_pending_only_pending(self):
         register_or_update_user(self.db, U1, "alice", "Alice")
         register_or_update_user(self.db, U2, "bob", "Bob")
-        set_user_status(self.db, U2, "approved")  # больше не pending
+        set_user_status(self.db, U2, "approved")  # no longer pending
         pending = list_pending_users(self.db)
         ids = [u["user_id"] for u in pending]
         self.assertIn(U1, ids)
@@ -70,7 +70,7 @@ class AccessFlowTest(unittest.TestCase):
         register_or_update_user(self.db, U1, "alice", "Alice")
         register_or_update_user(self.db, U2, "bob", "Bob")
         set_user_status(self.db, U1, "approved")
-        # решение по U1 не трогает U2
+        # a decision on U1 doesn't affect U2
         self.assertEqual(get_user_status(self.db, U2), "pending")
 
 

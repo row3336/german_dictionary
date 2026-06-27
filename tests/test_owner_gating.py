@@ -1,8 +1,8 @@
-"""P3.2 — owner-гейтинг пунктов меню (клавиатуры).
+"""P3.2 — owner-gating of menu items (keyboards).
 
-Проверяем, что owner-only кнопки (add_word, parse_VF, dump, unit_tests, правка/
-удаление карточки) скрыты у гостя и показаны владельцу. telegram заглушается,
-чтобы тест шёл в окружении без установленного PTB.
+Checks that owner-only buttons (add_word, parse_VF, dump, unit_tests, card
+edit/delete) are hidden from a guest and shown to the owner. telegram is stubbed
+so the test runs in an environment without PTB installed.
 """
 
 import os
@@ -11,7 +11,7 @@ import tempfile
 import types
 import unittest
 
-# Заглушки telegram до импорта клавиатур (PTB в тест-окружении не установлен).
+# Stub telegram before importing keyboards (PTB isn't installed in the test env).
 if "telegram" not in sys.modules:
     tg = types.ModuleType("telegram")
 
@@ -74,7 +74,7 @@ class OwnerGatingTest(unittest.TestCase):
         self.assertNotIn("parse_VF", guest)
         self.assertTrue(any("dump" in x for x in owner))
         self.assertFalse(any("dump" in x for x in guest))
-        # algo-настройки гостю доступны
+        # algo settings are available to a guest
         self.assertTrue(any("algo" in x.lower() or "алгоритм" in x.lower() for x in guest))
 
     def test_algo_menu_unit_tests_owner_only(self):
@@ -88,7 +88,7 @@ class OwnerGatingTest(unittest.TestCase):
         guest = _flat(K._clarify_root_markup(GUEST).rows)
         self.assertIn("delete", owner)
         self.assertNotIn("delete", guest)
-        # send_learn (личное обучение) гостю доступно, правка полей — нет
+        # send_learn (personal learning) is available to a guest, field editing is not
         self.assertTrue(any("учить" in x or "вчити" in x or "send_learn" in x for x in guest))
         self.assertFalse(any("уточн" in x or "уточни" in x or "clarify" in x for x in guest))
 

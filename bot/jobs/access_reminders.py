@@ -1,9 +1,9 @@
-"""Фоновое напоминание владельцу о необработанных заявках на доступ (P3.1).
+"""Background reminder to the owner about unhandled access requests (P3.1).
 
-Раз в 2 часа (ACCESS_REMINDER_INTERVAL_SECONDS), если есть юзеры в статусе
-'pending', шлёт владельцу дайджест-перечень. Дайджест НЕ содержит живого хэштега
-#user_confirmation_request (тег упоминается текстом без «#»), чтобы поиск по
-открытому хэштегу возвращал только сами заявки-сообщения, а не напоминания.
+Every 2 hours (ACCESS_REMINDER_INTERVAL_SECONDS), if any users are 'pending',
+sends the owner a digest list. The digest does NOT contain a live
+#user_confirmation_request hashtag (the tag is mentioned in text without the "#")
+so searching the open hashtag returns only the request messages, not reminders.
 """
 
 import logging
@@ -25,14 +25,14 @@ logger = logging.getLogger(__name__)
 
 
 def _user_tag(user):
-    """Подпись юзера для дайджеста: @username, либо имя, либо id."""
+    """Digest label for a user: @username, else first name, else id."""
     if user.get("username"):
         return "@" + user["username"]
     return user.get("first_name") or str(user.get("user_id") or "?")
 
 
 async def _access_pending_reminder_job(context: ContextTypes.DEFAULT_TYPE):
-    """Напомнить владельцу о pending-заявках на доступ (дайджест)."""
+    """Remind the owner about pending access requests (digest)."""
     owner_id = get_owner_id()
     if not owner_id:
         return
@@ -44,16 +44,16 @@ async def _access_pending_reminder_job(context: ContextTypes.DEFAULT_TYPE):
     for user in pending:
         lines.append(f"• {_user_tag(user)} (id {user['user_id']})")
     lines.append("")
-    # Тег без «#», чтобы дайджест не попадал в поиск по открытому хэштегу заявок.
+    # Tag without the "#" so the digest never matches the open-requests hashtag search.
     lines.append(f"{t(lang, 'access_reminder_hint')} {ACCESS_REQUEST_HASHTAG.lstrip('#')}")
     try:
         await context.bot.send_message(chat_id=owner_id, text="\n".join(lines))
     except Exception:
-        logger.warning("Не удалось отправить напоминание о заявках на доступ", exc_info=True)
+        logger.warning("Failed to send the access-requests reminder", exc_info=True)
 
 
 def _configure_access_reminders(app: Application):
-    """Запланировать повторяющийся джоб напоминаний о заявках на доступ."""
+    """Schedule the repeating access-requests reminder job."""
     job_queue = app.job_queue
     if job_queue is None:
         return

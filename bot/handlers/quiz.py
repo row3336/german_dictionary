@@ -438,7 +438,7 @@ async def _send_article_prompt(update: Update, context: ContextTypes.DEFAULT_TYP
 # --- answer handlers ---
 
 async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка ответа в квизе Lang>De (FSRS)."""
+    """Handle an answer in the Lang>De quiz (FSRS)."""
     from ..handlers.clarify_fields import _start_clarify_fields
     from ..handlers.learning import _send_entry_to_learning
     from ..main import _flag_current_word
@@ -492,7 +492,7 @@ async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка ответа в квизе De>Lang."""
+    """Handle an answer in the De>Lang quiz."""
     from ..handlers.clarify_fields import _start_clarify_fields
     from ..handlers.learning import _send_entry_to_learning
     from ..main import _flag_current_word
@@ -544,7 +544,7 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def quiz_pl_sg(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка ответа в квизе «множественное → единственное» (pl>sg)."""
+    """Handle an answer in the plural -> singular quiz (pl>sg)."""
     from ..handlers.clarify_fields import _start_clarify_fields
     from ..handlers.learning import _send_entry_to_learning
     from ..main import _flag_current_word

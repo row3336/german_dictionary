@@ -67,25 +67,25 @@ def _session_retry_iterations(db_path, user_id):
 
 
 def _weak_drill_gap(db_path, user_id):
-    """Per-user: интервал weak-дрилла (обычных weak-показов между повторами дрилла)."""
+    """Per-user: weak-drill gap (regular weak shows between drill repeats)."""
     value = _get_int_user_setting(db_path, user_id, WEAK_DRILL_GAP_KEY, WEAK_DRILL_GAP_DEFAULT)
     return max(1, value)
 
 
 def _weak_drill_repeats(db_path, user_id):
-    """Per-user: число повторов weak-дрилла (сколько раз слово показать за сессию)."""
+    """Per-user: weak-drill repeats (how many times to show the word per session)."""
     value = _get_int_user_setting(db_path, user_id, WEAK_DRILL_REPEATS_KEY, WEAK_DRILL_REPEATS_DEFAULT)
     return max(1, value)
 
 
 def _learning_daily_qty(db_path, user_id):
-    """Per-user: дневная норма learning."""
+    """Per-user: daily learning quota."""
     value = _get_int_user_setting(db_path, user_id, LEARNING_DAILY_QTY_KEY, LEARNING_DAILY_QTY_DEFAULT)
     return max(1, value)
 
 
 def _learning_intervals_seconds(db_path, user_id):
-    """Per-user интервалы learning: значение юзера → глобал app_settings → дефолт."""
+    """Per-user learning intervals: user value -> global app_settings -> default."""
     raw = get_user_setting(db_path, user_id, LEARNING_INTERVALS_KEY, None)
     if raw is None:
         raw = get_setting(db_path, LEARNING_INTERVALS_KEY, LEARNING_INTERVALS_DEFAULT)
@@ -96,29 +96,29 @@ def _learning_intervals_seconds(db_path, user_id):
 
 
 def _learning_intervals_text(db_path, user_id):
-    """Per-user интервалы learning текстом."""
+    """Per-user learning intervals as text."""
     return ",".join(str(v) for v in _learning_intervals_seconds(db_path, user_id))
 
 
 def _learning_schedule_seconds(db_path, user_id):
-    """Per-user расписание learning с прогревочными повторами."""
+    """Per-user learning schedule with warm-up repeats."""
     return list(LEARNING_WARMUP_INTERVALS) + _learning_intervals_seconds(db_path, user_id)
 
 
 def _learning_reminder_interval(db_path, user_id):
-    """Per-user интервал напоминаний learning."""
+    """Per-user learning reminder interval."""
     value = _get_int_user_setting(db_path, user_id, LEARNING_REMINDER_INTERVAL_KEY, LEARNING_REMINDER_INTERVAL_DEFAULT)
     return max(10, value)
 
 
 def _learning_reminder_cooldown(db_path, user_id):
-    """Per-user кулдаун напоминаний learning."""
+    """Per-user learning reminder cooldown."""
     value = _get_int_user_setting(db_path, user_id, LEARNING_REMINDER_COOLDOWN_KEY, LEARNING_REMINDER_COOLDOWN_DEFAULT)
     return max(60, value)
 
 
 def _learning_ready_quorum(db_path, user_id):
-    """Per-user кворум готовности learning."""
+    """Per-user learning ready-quorum."""
     value = _get_int_user_setting(db_path, user_id, LEARNING_READY_QUORUM_KEY, LEARNING_READY_QUORUM_DEFAULT)
     return min(100, max(1, value))
 

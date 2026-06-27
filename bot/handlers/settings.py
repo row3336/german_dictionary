@@ -266,7 +266,7 @@ async def _ask_dictionary_language(update: Update, user_id):
 
 
 async def select_ui_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Выбор языка интерфейса. Для pending-гостя — триггерит заявку владельцу (P3.1)."""
+    """Interface language choice. For a pending guest it triggers the owner request (P3.1)."""
     user_id = update.effective_user.id
 
     interface_lang = parse_interface_choice(update.message.text.strip())
@@ -278,17 +278,17 @@ async def select_ui_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return SELECT_UI_LANG
 
     set_user_interface_lang(get_db_path(), user_id, interface_lang)
-    # Владелец и одобренный гость продолжают онбординг (язык словаря).
+    # Owner and approved guest continue onboarding (dictionary language).
     if access_allowed(user_id):
         return await _ask_dictionary_language(update, user_id)
-    # Pending-гость только что выбрал язык → отправляем заявку владельцу и просим ждать.
+    # A pending guest just chose a language -> send the owner request and ask them to wait.
     await notify_owner_access_request(context, user_id)
     await update.message.reply_text(t(_user_interface_lang(user_id), "access_pending"))
     return ConversationHandler.END
 
 
 async def select_dict_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Выбор языка словаря (владелец или одобренный гость) → главное меню."""
+    """Dictionary language choice (owner or approved guest) -> main menu."""
     user_id = update.effective_user.id
     if not access_allowed(user_id):
         return ConversationHandler.END
@@ -307,7 +307,7 @@ async def select_dict_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def algo_settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Роутер меню настроек алгоритма (гостю доступно; unit_tests — owner-only, P3.2)."""
+    """Algo settings menu router (available to guests; unit_tests is owner-only, P3.2)."""
     text = update.message.text.strip()
     user_id = update.effective_user.id
     lang = _user_interface_lang(user_id)
@@ -355,7 +355,7 @@ async def algo_settings_menu_choice(update: Update, context: ContextTypes.DEFAUL
         return TOPIC_FILTER_EDIT
 
     if text == t(lang, "unit_tests"):
-        if not is_owner(user_id):  # owner-only (P3.2): прогон тестов в боте
+        if not is_owner(user_id):  # owner-only (P3.2): in-bot test run
             return ALGO_SETTINGS_MENU
         report = _run_unit_tests_report()
         await update.message.reply_text(
@@ -374,7 +374,7 @@ async def algo_settings_menu_choice(update: Update, context: ContextTypes.DEFAUL
         return ALGO_SETTINGS_CONFIRM
 
     if text == t(lang, "reset_defaults"):
-        # сбросить персональные настройки учёбы этого юзера → геттеры падают на дефолты (P2.4d)
+        # clear this user's personal study settings -> getters fall back to defaults (P2.4d)
         reset_user_settings(
             get_db_path(),
             user_id,
@@ -515,7 +515,7 @@ async def algo_settings_edit(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if not values:
             await update.message.reply_text("Enter comma-separated seconds, for example: 30,120,600")
             return ALGO_SETTINGS_EDIT
-        # все настройки учёбы (algo/drill/learning) теперь per-user (P2.4d)
+        # all study settings (algo/drill/learning) are now per-user (P2.4d)
         set_user_setting(get_db_path(), user_id, key, ",".join(str(v) for v in values))
     else:
         try:
@@ -530,7 +530,7 @@ async def algo_settings_edit(update: Update, context: ContextTypes.DEFAULT_TYPE)
         elif value < 1:
             await update.message.reply_text("Value must be >= 1.")
             return ALGO_SETTINGS_EDIT
-        # все настройки учёбы (algo/drill/learning) теперь per-user (P2.4d)
+        # all study settings (algo/drill/learning) are now per-user (P2.4d)
         set_user_setting(get_db_path(), user_id, key, str(value))
     context.user_data.pop("algo_setting_edit", None)
     context.user_data.pop("algo_edit_return", None)
@@ -623,7 +623,7 @@ async def topic_filter_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Роутер меню настроек: языки/algo (гостю ок), parse_VF/dump/suggested — owner-only (P3.2)."""
+    """Settings menu router: languages/algo (guest ok), parse_VF/dump/suggested are owner-only (P3.2)."""
     text = update.message.text.strip()
     user_id = update.effective_user.id
     action = _action_key_from_text(text, user_id)
@@ -674,8 +674,8 @@ async def settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
     if action == "algo_settings":
         return await _send_algo_settings_menu(update, user_id)
 
-    # parse_VF и dump — owner-only (P3.2). Двойная защита: кнопки скрыты у гостя
-    # в _settings_menu_keys, плюс закрываем сами действия от прямого текста.
+    # parse_VF and dump are owner-only (P3.2). Defense in depth: the buttons are hidden
+    # from guests in _settings_menu_keys, plus we close the actions against raw text.
     if action in {"dump", "review_flags"} and not is_owner(user_id):
         await update.message.reply_text(t(_user_interface_lang(user_id), "unknown_menu"))
         return SETTINGS_MENU

@@ -241,7 +241,7 @@ def dry_run_migration(db_path):
     so the migration runs against the REAL data and catches data-specific issues
     that synthetic tests miss. Returns a report (same shape as
     apply_migrations_safely) + `source_counts` + `ok`. Temp files are cleaned up.
-    Apply for real only if `ok` is True (docs/multiuser.md §0.2 п.4).
+    Apply for real only if `ok` is True (docs/multiuser.md §0.2 item 4).
     """
     src = Path(db_path)
     if not src.exists():

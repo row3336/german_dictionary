@@ -36,7 +36,7 @@ def _auto_dump_keys(user_id):
 
 
 async def dump_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Меню дампов (owner-only, P3.2). Сюда гость попасть не должен — на всякий случай гейт."""
+    """Dump menu (owner-only, P3.2). A guest shouldn't reach it — guard just in case."""
     text = update.message.text.strip()
     user_id = update.effective_user.id
     action = _action_key_from_text(text, user_id)

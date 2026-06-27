@@ -1,15 +1,15 @@
-"""Поток одобрения доступа (P3.1): заявка владельцу + inline-решение + отказной экран.
+"""Guest access-approval flow (P3.1): owner request + inline decision + reject screen.
 
-Новая подсистема — первый и единственный в боте сценарий с inline-кнопками и
-CallbackQueryHandler. Гость регистрируется как 'pending'; владелец получает
-сообщение с хэштегом #user_confirmation_request и кнопками ✅/❌. Пока заявка не
-обработана — фоновый джоб (jobs/access_reminders.py) шлёт владельцу напоминания.
-Решение владельца редактирует исходное сообщение: снимает кнопки и меняет хэштег
-на #user_confirmation_done, чтобы поиск по открытому хэштегу показывал только
-необработанные заявки.
+New subsystem — the bot's first and only inline-button / CallbackQueryHandler
+scenario. A guest is registered as 'pending'; the owner receives a message tagged
+#user_confirmation_request with ✅/❌ buttons. Until a request is handled, a
+background job (jobs/access_reminders.py) reminds the owner. The owner's decision
+edits the original message: removes the buttons and swaps the hashtag to
+#user_confirmation_done, so searching the open hashtag only surfaces unhandled
+requests.
 
-Лист-модуль: импортирует только app_config/lang/i18n/storage — без settings/menu,
-чтобы те могли импортировать его без циклов.
+Leaf module: imports only app_config/lang/i18n/storage — never settings/menu, so
+those can import it without cycles.
 """
 
 import logging
@@ -36,17 +36,17 @@ logger = logging.getLogger(__name__)
 
 
 def access_allowed(user_id):
-    """Пускать ли юзера в бот: владелец или одобренный гость (approved)."""
+    """Whether the user may use the bot: owner or an approved guest."""
     return is_owner(user_id) or get_user_status(get_db_path(), user_id) == "approved"
 
 
 def _owner_lang():
-    """Язык интерфейса владельца — для owner-facing сообщений потока доступа."""
+    """Owner's interface language — for owner-facing messages of the access flow."""
     return _user_interface_lang(get_owner_id())
 
 
 def _user_tag(info):
-    """Человекочитаемая подпись юзера: @username, либо имя, либо id."""
+    """Human-readable user label: @username, else first name, else id."""
     if not info:
         return "?"
     if info.get("username"):
@@ -55,17 +55,17 @@ def _user_tag(info):
 
 
 def _start_keyboard():
-    """Reply-клавиатура с единственной кнопкой «Старт» (ре-вход в conversation)."""
+    """Reply keyboard with a single Start button (re-enter the conversation)."""
     return ReplyKeyboardMarkup([[START_TEXT]], resize_keyboard=True)
 
 
 def _matches(text, user_id, key):
-    """Совпадает ли текст кнопки с ключом key в языке юзера или в EN."""
+    """Whether the button text matches key in the user's language or in EN."""
     return text in {t(_user_interface_lang(user_id), key), t("en", key)}
 
 
 async def notify_owner_access_request(context: ContextTypes.DEFAULT_TYPE, user_id):
-    """Отправить владельцу заявку гостя на доступ (хэштег + inline ✅/❌)."""
+    """Send the owner a guest access request (hashtag + inline ✅/❌)."""
     owner_id = get_owner_id()
     if not owner_id:
         return
@@ -88,32 +88,32 @@ async def notify_owner_access_request(context: ContextTypes.DEFAULT_TYPE, user_i
     try:
         await context.bot.send_message(chat_id=owner_id, text=text, reply_markup=keyboard)
     except Exception:
-        logger.warning("Не удалось отправить владельцу заявку на доступ", exc_info=True)
+        logger.warning("Failed to send the access request to the owner", exc_info=True)
 
 
 async def _finalize_owner_message(query, outcome_text):
-    """Заменить текст заявки на исход + сменить хэштег на DONE и убрать кнопки."""
+    """Replace the request text with the outcome, swap hashtag to DONE, drop buttons."""
     try:
         await query.edit_message_text(f"{outcome_text}\n\n{ACCESS_DONE_HASHTAG}", reply_markup=None)
     except Exception:
-        # Если правка текста не удалась — хотя бы снять inline-кнопки.
+        # If editing the text fails, at least strip the inline buttons.
         try:
             await query.edit_message_reply_markup(reply_markup=None)
         except Exception:
-            logger.warning("Не удалось обновить сообщение-заявку", exc_info=True)
+            logger.warning("Failed to update the request message", exc_info=True)
 
 
 async def _notify_guest(context: ContextTypes.DEFAULT_TYPE, user_id, key):
-    """Сообщить гостю исход (на его языке) + показать кнопку «Старт» для ре-входа."""
+    """Tell the guest the outcome (in their language) + show a Start button to re-enter."""
     lang = _user_interface_lang(user_id)
     try:
         await context.bot.send_message(chat_id=user_id, text=t(lang, key), reply_markup=_start_keyboard())
     except Exception:
-        logger.warning("Не удалось уведомить гостя об исходе доступа", exc_info=True)
+        logger.warning("Failed to notify the guest about the access decision", exc_info=True)
 
 
 async def access_decision_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка inline-решения владельца (✅ разрешить / ❌ отклонить)."""
+    """Handle the owner's inline decision (✅ approve / ❌ reject)."""
     query = update.callback_query
     await query.answer()
     if not is_owner(query.from_user.id):
@@ -127,7 +127,7 @@ async def access_decision_callback(update: Update, context: ContextTypes.DEFAULT
     tag = _user_tag(get_user_info(get_db_path(), uid))
     status = get_user_status(get_db_path(), uid)
     if status != "pending":
-        # Устаревшая/повторная кнопка: заявка уже обработана — просто снимаем кнопки.
+        # Stale/duplicate button: the request is already handled — just drop the buttons.
         await _finalize_owner_message(query, f"{t(lang, 'access_already_handled')} ({status}) {tag}")
         return
     if action == "approve":
@@ -141,7 +141,7 @@ async def access_decision_callback(update: Update, context: ContextTypes.DEFAULT
 
 
 async def show_rejected_screen(update: Update, user_id):
-    """Экран отказа: «написать разработчику» / «отмена» (состояние ACCESS_REJECTED)."""
+    """Reject screen: "message the developer" / "cancel" (state ACCESS_REJECTED)."""
     lang = _user_interface_lang(user_id)
     await update.message.reply_text(
         t(lang, "access_rejected"),
@@ -154,13 +154,13 @@ async def show_rejected_screen(update: Update, user_id):
 
 
 async def _back_to_start(update: Update):
-    """Выкинуть гостя обратно на кнопку «Старт» (завершить conversation)."""
+    """Drop the guest back to the Start button (end the conversation)."""
     await update.message.reply_text(START_TEXT, reply_markup=_start_keyboard())
     return ConversationHandler.END
 
 
 async def access_rejected_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Выбор на экране отказа: написать разработчику или отмена."""
+    """Reject-screen choice: message the developer, or cancel."""
     text = update.message.text.strip()
     user_id = update.effective_user.id
     if _matches(text, user_id, "access_contact_dev"):
@@ -176,7 +176,7 @@ async def access_rejected_choice(update: Update, context: ContextTypes.DEFAULT_T
 
 
 async def access_message_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Ввод сообщения разработчику: релей владельцу, затем назад на экран отказа."""
+    """Developer-message input: relay to the owner, then back to the reject screen."""
     text = update.message.text.strip()
     user_id = update.effective_user.id
     if _matches(text, user_id, "access_cancel"):
@@ -190,6 +190,6 @@ async def access_message_input(update: Update, context: ContextTypes.DEFAULT_TYP
                 text=f"{t(_owner_lang(), 'access_msg_from_user')} {_user_tag(info)} (id {user_id}):\n\n{text}",
             )
         except Exception:
-            logger.warning("Не удалось переслать владельцу сообщение от гостя", exc_info=True)
+            logger.warning("Failed to relay the guest message to the owner", exc_info=True)
     await update.message.reply_text(t(_user_interface_lang(user_id), "access_msg_sent"))
     return await show_rejected_screen(update, user_id)

@@ -69,7 +69,7 @@ def _db_search_words_lists_markup(user_id):
 
 
 def _db_search_weak_markup(user_id):
-    """Клавиатура списка слабых слов: «отправить учить» + назад."""
+    """Weak-words list keyboard: "send to learning" + back."""
     lang = _user_interface_lang(user_id)
     return ReplyKeyboardMarkup([[t(lang, "send_learn"), t(lang, "back")]], resize_keyboard=True)
 
@@ -333,7 +333,7 @@ async def _send_db_search_prompt(update: Update, user_id, prefix_text=None):
 
 
 async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка ввода/кнопок в поиске по БД (запросы и под-режимы поиска)."""
+    """Handle input/buttons in DB search (queries and search sub-modes)."""
     text = update.message.text.strip()
     user_id = update.effective_user.id
     action = _action_key_from_text(text, user_id)
@@ -550,7 +550,7 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def db_search_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка кнопок в режиме просмотра результатов поиска по БД."""
+    """Handle buttons in the DB-search results view mode."""
     text = update.message.text.strip()
     user_id = update.effective_user.id
     action = _action_key_from_text(text, user_id)
@@ -570,8 +570,8 @@ async def db_search_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "db_search_topics_lern",
     }:
         return await db_search_input(update, context)
-    # «отправить учить» доступно гостю (личное обучение); правка/удаление общего
-    # слова (clarify_fields/delete) — только владельцу (P3.2, до личных media в P4).
+    # "send to learning" is available to a guest (personal learning); editing/deleting
+    # a shared word (clarify_fields/delete) is owner-only (P3.2, until personal media in P4).
     if action == "send_learn":
         return await clarify_fields_input(update, context)
     if (action == "clarify_fields" or text == "delete") and is_owner(user_id):

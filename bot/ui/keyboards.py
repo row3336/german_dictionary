@@ -25,7 +25,7 @@ from ..labels import (
 
 
 def _main_menu_keys(user_id):
-    """Главное меню. Кнопка «Добавить слово» — только владельцу (P3.2)."""
+    """Main menu. The "Add words" button is owner-only (P3.2)."""
     lang = _user_interface_lang(user_id)
     first_row = [t(lang, "tests"), t(lang, "db_search")]
     if is_owner(user_id):
@@ -42,7 +42,7 @@ def _main_menu_markup(user_id):
 
 
 def _tests_menu_keys(user_id):
-    """Клавиатура меню тестов (кнопка «Изучение» локализована, режимы квиза — нейтральны)."""
+    """Tests menu keyboard ("Learning" button is localized, quiz modes are neutral)."""
     lang = _user_interface_lang(user_id)
     return [
         [t(lang, "learning"), QUIZ_RU_DE_TEXT, QUIZ_DE_RU_TEXT, QUIZ_PL_SG_TEXT],
@@ -51,7 +51,7 @@ def _tests_menu_keys(user_id):
 
 
 def _ru_de_menu_keys(user_id):
-    """Клавиатура Lang>De: основной FSRS + weak-режимы (подписи локализованы)."""
+    """Lang>De keyboard: standard FSRS + weak modes (labels localized)."""
     lang = _user_interface_lang(user_id)
     return [
         [t(lang, "standard_fsrs"), t(lang, "weak_article_mode")],
@@ -61,7 +61,7 @@ def _ru_de_menu_keys(user_id):
 
 
 def _learning_menu_keys(user_id):
-    """Клавиатура меню изучения (все подписи локализованы)."""
+    """Learning menu keyboard (all labels localized)."""
     lang = _user_interface_lang(user_id)
     return [
         [t(lang, "learning_start"), t(lang, "learning_mix_mode"), t(lang, "add_for_learning"), t(lang, "learning_reset")],
@@ -70,7 +70,7 @@ def _learning_menu_keys(user_id):
 
 
 def _settings_menu_keys(user_id):
-    """Меню настроек. parse_VF и dump — только владельцу (P3.2)."""
+    """Settings menu. parse_VF and dump are owner-only (P3.2)."""
     lang = _user_interface_lang(user_id)
     owner = is_owner(user_id)
     rows = [[PARSE_VF_TEXT, t(lang, "algo_settings")] if owner else [t(lang, "algo_settings")]]
@@ -80,9 +80,9 @@ def _settings_menu_keys(user_id):
 
 
 def _algo_settings_menu_keys(user_id):
-    """Меню настроек алгоритма. «unit_tests» — только владельцу (P3.2)."""
+    """Algo settings menu. "unit_tests" is owner-only (P3.2)."""
     lang = _user_interface_lang(user_id)
-    # «unit_tests» — owner-only (P3.2): прогон тестов в боте.
+    # "unit_tests" is owner-only (P3.2): in-bot test run.
     study_row = [t(lang, "drill_sett"), t(lang, "learning_sett")]
     if is_owner(user_id):
         study_row.append(t(lang, "unit_tests"))
@@ -113,7 +113,7 @@ def _learning_settings_menu_keys(user_id):
 
 
 def _quiz_markup(user_id, article=False, allow_idk=True):
-    """Клавиатура под вопросом квиза (варианты ответа + служебные кнопки)."""
+    """Keyboard under a quiz question (answer options + service buttons)."""
     lang = _user_interface_lang(user_id)
     rows = []
     if article:
@@ -128,7 +128,7 @@ def _quiz_markup(user_id, article=False, allow_idk=True):
 
 
 def _quiz_idle_markup(user_id):
-    """Клавиатура в простое квиза (между вопросами)."""
+    """Keyboard while the quiz is idle (between questions)."""
     lang = _user_interface_lang(user_id)
     rows = [[t(lang, "send_learn"), INPUT_ERR_TEXT]]
     if is_owner(user_id):
@@ -186,8 +186,8 @@ def _type_choice_markup():
 
 
 def _clarify_root_markup(user_id):
-    """Корневая клавиатура карточки. Правка/удаление общего слова — только владельцу
-    (P3.2); гость видит лишь «отправить учить» (своё личное обучение)."""
+    """Root card keyboard. Editing/deleting a shared word is owner-only (P3.2);
+    a guest sees only "send to learning" (their personal learning)."""
     lang = _user_interface_lang(user_id)
     if is_owner(user_id):
         return ReplyKeyboardMarkup(

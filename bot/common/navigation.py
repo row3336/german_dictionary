@@ -28,7 +28,7 @@ from ..ui.keyboards import _main_menu_markup, _tests_menu_keys
 
 
 def _action_key_from_text(text, user_id):
-    """Сопоставить текст нажатой кнопки с действием (учитывая язык интерфейса юзера)."""
+    """Map the pressed button text to an action (honoring the user's interface language)."""
     lang = _user_interface_lang(user_id)
     keys = [
         ("start", "start"),
@@ -62,7 +62,7 @@ def _action_key_from_text(text, user_id):
         ("learning_reminder_interval", "learning_reminder_interval"),
         ("learning_reminder_cooldown", "learning_reminder_cooldown"),
         ("learning_ready_quorum", "learning_ready_quorum"),
-        # Локализованные кнопки учёбы (P2.5): ключ i18n → действие.
+        # Localized study buttons (P2.5): i18n key -> action.
         ("learning", "learning"),
         ("learning_start", "learning_start"),
         ("add_for_learning", "learning_add"),
@@ -89,11 +89,11 @@ def _action_key_from_text(text, user_id):
     for key, action in keys:
         mapping[t(lang, key)] = action
         mapping[t("en", key)] = action
-    # Языко-нейтральные подписи квиза (одинаковы на всех языках).
+    # Language-neutral quiz labels (identical across all languages).
     mapping[QUIZ_RU_DE_TEXT] = "quiz_l1_de"
     mapping[QUIZ_DE_RU_TEXT] = "quiz_de_l1"
     mapping[QUIZ_PL_SG_TEXT] = "quiz_pl_sg"
-    # Кнопки учёбы/weak-режимов локализованы и маршрутизируются через список keys выше.
+    # Study/weak-mode buttons are localized and routed via the keys list above.
     mapping["flags!"] = "review_flags"
     mapping[PARSE_VF_TEXT] = "review_flags"
     mapping["Back"] = "back"

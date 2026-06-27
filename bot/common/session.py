@@ -316,7 +316,7 @@ def _maybe_take_weak_drill_entry(context, mode, user_id, avoid_id=None, force=Fa
 
 
 def _enqueue_weak_drill(context, mode, word_id, user_id):
-    """Поставить слово в очередь дрилла после НЕВЕРНОГО ответа (бюджет = настройка repeats)."""
+    """Queue a word for drilling after a WRONG answer (budget = the repeats setting)."""
     if not word_id:
         return
     repeats = _weak_drill_repeats(get_db_path(), user_id)
