@@ -296,6 +296,16 @@ def init_db(db_path):
                 FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
             );
 
+            CREATE TABLE IF NOT EXISTS user_word_media (
+                user_id INTEGER NOT NULL,
+                word_id TEXT NOT NULL,
+                image TEXT NOT NULL DEFAULT '',
+                example TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (user_id, word_id),
+                FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
+            );
+
             CREATE TABLE IF NOT EXISTS word_flags (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 word_id TEXT NOT NULL,
@@ -1685,6 +1695,66 @@ def list_pending_users(db_path):
         }
         for row in rows
     ]
+
+
+# --- Personal example/image (P4): a guest's per-word override, owner edits stay
+# in the shared `words`. Read is COALESCE(NULLIF(personal,''), shared). ---
+
+def get_user_word_media(db_path, user_id, word_id):
+    """This user's personal image/example for a word; {} if none set."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT image, example FROM user_word_media WHERE user_id = ? AND word_id = ?",
+            (int(user_id), str(word_id)),
+        ).fetchone()
+    if not row:
+        return {}
+    return {"image": row["image"] or "", "example": row["example"] or ""}
+
+
+def set_user_word_media(db_path, user_id, word_id, image=None, example=None):
+    """Upsert this user's personal image/example for a word (only given fields)."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO user_word_media (user_id, word_id) VALUES (?, ?)",
+            (int(user_id), str(word_id)),
+        )
+        sets, params = [], []
+        if image is not None:
+            sets.append("image = ?")
+            params.append(_safe_text(image))
+        if example is not None:
+            sets.append("example = ?")
+            params.append(_safe_text(example))
+        if sets:
+            params.extend([int(user_id), str(word_id)])
+            conn.execute(
+                f"UPDATE user_word_media SET {', '.join(sets)}, updated_at = CURRENT_TIMESTAMP "
+                f"WHERE user_id = ? AND word_id = ?",
+                params,
+            )
+
+
+def apply_user_word_media(db_path, user_id, entry):
+    """Overlay this user's personal image/example onto a word entry.
+
+    Returns a copy with personal values substituted where they are non-empty
+    (COALESCE(NULLIF(personal,''), shared)); the input entry is left unchanged.
+    The owner has no personal rows, so they always see the shared word.
+    """
+    if not user_id or not entry or not entry.get("id"):
+        return entry
+    media = get_user_word_media(db_path, user_id, entry.get("id"))
+    if not media:
+        return entry
+    out = dict(entry)
+    for field in ("image", "example"):
+        value = media.get(field, "")
+        if value:
+            out[field] = value
+    return out
 
 
 def _normalize_interface_lang(value):

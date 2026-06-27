@@ -191,6 +191,32 @@ class V1ToV2MigrationTest(unittest.TestCase):
         self.assertTrue(report["healthcheck"]["ok"])
         self.assertEqual(get_user_version(db), SCHEMA_VERSION)
 
+    def test_v2_to_v3_adds_user_word_media(self):
+        d = tempfile.mkdtemp()
+        db = os.path.join(d, "words.db")
+        init_db(db)
+        # simulate a real v2 DB: user_word_media absent, version marker at 2
+        conn = sqlite3.connect(db)
+        conn.execute("DROP TABLE user_word_media")
+        conn.commit()
+        conn.close()
+        set_user_version(db, 2)
+        self.assertNotIn("user_word_media", _schema(db))
+
+        report = apply_migrations_safely(db, os.path.join(d, "backups"))
+
+        self.assertTrue(report["migrated"])
+        self.assertEqual(report["from_version"], 2)
+        self.assertEqual(report["to_version"], SCHEMA_VERSION)
+        self.assertGreaterEqual(SCHEMA_VERSION, 3)
+        self.assertIn("user_word_media", _schema(db))
+        self.assertEqual(
+            {"user_id", "word_id", "image", "example", "updated_at"},
+            _schema(db)["user_word_media"],
+        )
+        self.assertTrue(report["healthcheck"]["ok"])
+        self.assertEqual(get_user_version(db), SCHEMA_VERSION)
+
 
 if __name__ == "__main__":
     unittest.main()
