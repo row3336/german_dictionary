@@ -1,9 +1,12 @@
 import os
 
-from openai import OpenAI
-
 
 def _get_client():
+    # Import openai lazily: importing this module (and its importers, e.g.
+    # add_words) must not require the openai package — only actually generating
+    # fields does. Keeps non-AI code paths (and their tests) dependency-free.
+    from openai import OpenAI
+
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY is missing in .env")
