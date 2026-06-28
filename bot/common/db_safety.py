@@ -19,7 +19,8 @@ from pathlib import Path
 
 # Current schema level. 1 = single-user baseline (state at v1.0-single-user).
 # 2 = P2 (+ user_settings). 3 = P4 (+ user_word_media).
-SCHEMA_VERSION = 3
+# 4 = P6 (+ error_reports, + feedback).
+SCHEMA_VERSION = 4
 
 # Tables whose row counts we snapshot before/after a migration (must not shrink).
 _COUNT_TABLES = (
@@ -31,6 +32,8 @@ _COUNT_TABLES = (
     "users",
     "word_synonyms",
     "user_word_media",
+    "error_reports",
+    "feedback",
 )
 
 # Keep the db_events timeline bounded (it's tiny, but never let it grow forever).

@@ -317,6 +317,34 @@ def init_db(db_path):
                 FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
             );
 
+            -- P6: user error/fix report on a word card, with a small trace of where
+            -- it happened (mode/state/last_action). Modeled on word_flags.
+            CREATE TABLE IF NOT EXISTS error_reports (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                word_id TEXT NOT NULL,
+                user_id INTEGER NOT NULL,
+                mode TEXT NOT NULL DEFAULT '',
+                state TEXT NOT NULL DEFAULT '',
+                last_action TEXT NOT NULL DEFAULT '',
+                comment TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                reviewed_at TEXT NOT NULL DEFAULT '',
+                FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_error_reports_status_created ON error_reports(status, created_at);
+
+            -- P6: general user feedback about the bot (not word-specific).
+            CREATE TABLE IF NOT EXISTS feedback (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                text TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                reviewed_at TEXT NOT NULL DEFAULT ''
+            );
+            CREATE INDEX IF NOT EXISTS idx_feedback_status_created ON feedback(status, created_at);
+
             CREATE TABLE IF NOT EXISTS quiz_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
@@ -4145,6 +4173,158 @@ def list_pending_word_flags(db_path, limit=0):
         item["flag_created_at"] = row["flag_created_at"] or ""
         result.append(item)
     return result
+
+
+# --- P6: user error/fix reports + general feedback. Users write their own rows;
+# the owner reviews all and closes (status -> reviewed) or deletes via buttons. ---
+
+def add_error_report(db_path, user_id, word_id, comment, mode="", state="", last_action=""):
+    """Store a user's error/fix report on a word, with a small where-it-happened trace."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO error_reports
+                (word_id, user_id, mode, state, last_action, comment, status, created_at, reviewed_at)
+            VALUES (?, ?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP, '')
+            """,
+            (
+                _safe_text(word_id), int(user_id), _safe_text(mode),
+                _safe_text(state), _safe_text(last_action), _safe_text(comment),
+            ),
+        )
+        return int(cur.lastrowid)
+
+
+def list_error_reports(db_path, status="pending", limit=0):
+    """Reports for owner review (default: pending), newest last; joins word + username."""
+    init_db(db_path)
+    query = """
+        SELECT r.id, r.word_id, r.user_id, r.mode, r.state, r.last_action,
+               r.comment, r.status, r.created_at,
+               w.german AS german, u.username AS username, u.first_name AS first_name
+        FROM error_reports r
+        LEFT JOIN words w ON w.id = r.word_id
+        LEFT JOIN users u ON u.user_id = r.user_id
+        WHERE r.status = ?
+        ORDER BY r.created_at ASC
+    """
+    params = [_safe_text(status)]
+    if int(limit) > 0:
+        query += " LIMIT ?"
+        params.append(int(limit))
+    with _connect(db_path) as conn:
+        rows = conn.execute(query, tuple(params)).fetchall()
+    return [
+        {
+            "id": int(row["id"]),
+            "word_id": row["word_id"] or "",
+            "user_id": int(row["user_id"]),
+            "mode": row["mode"] or "",
+            "state": row["state"] or "",
+            "last_action": row["last_action"] or "",
+            "comment": row["comment"] or "",
+            "status": row["status"] or "",
+            "created_at": row["created_at"] or "",
+            "german": row["german"] or "",
+            "username": row["username"] or "",
+            "first_name": row["first_name"] or "",
+        }
+        for row in rows
+    ]
+
+
+def set_error_report_status(db_path, report_id, status):
+    """Mark a report reviewed/pending."""
+    safe = _safe_text(status).strip().lower()
+    if safe not in {"pending", "reviewed"}:
+        raise ValueError("Invalid report status.")
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        conn.execute(
+            """
+            UPDATE error_reports
+            SET status = ?, reviewed_at = CASE WHEN ? = 'reviewed' THEN CURRENT_TIMESTAMP ELSE '' END
+            WHERE id = ?
+            """,
+            (safe, safe, int(report_id)),
+        )
+
+
+def delete_error_report(db_path, report_id):
+    """Remove a report row entirely."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        conn.execute("DELETE FROM error_reports WHERE id = ?", (int(report_id),))
+
+
+def add_feedback(db_path, user_id, text):
+    """Store a user's general feedback about the bot."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO feedback (user_id, text, status, created_at, reviewed_at)
+            VALUES (?, ?, 'pending', CURRENT_TIMESTAMP, '')
+            """,
+            (int(user_id), _safe_text(text)),
+        )
+        return int(cur.lastrowid)
+
+
+def list_feedback(db_path, status="pending", limit=0):
+    """Feedback for owner review (default: pending), newest last; joins username."""
+    init_db(db_path)
+    query = """
+        SELECT f.id, f.user_id, f.text, f.status, f.created_at,
+               u.username AS username, u.first_name AS first_name
+        FROM feedback f
+        LEFT JOIN users u ON u.user_id = f.user_id
+        WHERE f.status = ?
+        ORDER BY f.created_at ASC
+    """
+    params = [_safe_text(status)]
+    if int(limit) > 0:
+        query += " LIMIT ?"
+        params.append(int(limit))
+    with _connect(db_path) as conn:
+        rows = conn.execute(query, tuple(params)).fetchall()
+    return [
+        {
+            "id": int(row["id"]),
+            "user_id": int(row["user_id"]),
+            "text": row["text"] or "",
+            "status": row["status"] or "",
+            "created_at": row["created_at"] or "",
+            "username": row["username"] or "",
+            "first_name": row["first_name"] or "",
+        }
+        for row in rows
+    ]
+
+
+def set_feedback_status(db_path, feedback_id, status):
+    """Mark feedback reviewed/pending."""
+    safe = _safe_text(status).strip().lower()
+    if safe not in {"pending", "reviewed"}:
+        raise ValueError("Invalid feedback status.")
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        conn.execute(
+            """
+            UPDATE feedback
+            SET status = ?, reviewed_at = CASE WHEN ? = 'reviewed' THEN CURRENT_TIMESTAMP ELSE '' END
+            WHERE id = ?
+            """,
+            (safe, safe, int(feedback_id)),
+        )
+
+
+def delete_feedback(db_path, feedback_id):
+    """Remove a feedback row entirely."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        conn.execute("DELETE FROM feedback WHERE id = ?", (int(feedback_id),))
 
 
 def create_template_from_word(raw_word):

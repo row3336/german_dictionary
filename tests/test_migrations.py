@@ -217,6 +217,40 @@ class V1ToV2MigrationTest(unittest.TestCase):
         self.assertTrue(report["healthcheck"]["ok"])
         self.assertEqual(get_user_version(db), SCHEMA_VERSION)
 
+    def test_v3_to_v4_adds_error_reports_and_feedback(self):
+        d = tempfile.mkdtemp()
+        db = os.path.join(d, "words.db")
+        init_db(db)
+        # simulate a real v3 DB: P6 tables absent, version marker at 3
+        conn = sqlite3.connect(db)
+        conn.execute("DROP TABLE error_reports")
+        conn.execute("DROP TABLE feedback")
+        conn.commit()
+        conn.close()
+        set_user_version(db, 3)
+        schema = _schema(db)
+        self.assertNotIn("error_reports", schema)
+        self.assertNotIn("feedback", schema)
+
+        report = apply_migrations_safely(db, os.path.join(d, "backups"))
+
+        self.assertTrue(report["migrated"])
+        self.assertEqual(report["from_version"], 3)
+        self.assertEqual(report["to_version"], SCHEMA_VERSION)
+        self.assertGreaterEqual(SCHEMA_VERSION, 4)
+        schema = _schema(db)
+        self.assertEqual(
+            {"id", "word_id", "user_id", "mode", "state", "last_action",
+             "comment", "status", "created_at", "reviewed_at"},
+            schema["error_reports"],
+        )
+        self.assertEqual(
+            {"id", "user_id", "text", "status", "created_at", "reviewed_at"},
+            schema["feedback"],
+        )
+        self.assertTrue(report["healthcheck"]["ok"])
+        self.assertEqual(get_user_version(db), SCHEMA_VERSION)
+
 
 if __name__ == "__main__":
     unittest.main()
