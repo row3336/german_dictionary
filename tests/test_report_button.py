@@ -38,13 +38,13 @@ class ReportButtonTest(unittest.TestCase):
                 os.environ[k] = v
 
     def test_report_button_on_card_for_owner_and_guest(self):
-        # en label for report_card.
-        self.assertIn("report / fix", _flat(K._clarify_root_markup(OWNER)))
-        self.assertIn("report / fix", _flat(K._clarify_root_markup(GUEST)))
+        # en label for report_card on the unified clarify card.
+        self.assertIn("report / fix", _flat(K._clarify_fields_markup("quiz", OWNER)))
+        self.assertIn("report / fix", _flat(K._clarify_fields_markup("quiz", GUEST)))
 
     def test_guest_card_has_no_delete(self):
-        self.assertNotIn("delete", _flat(K._clarify_root_markup(GUEST)))
-        self.assertIn("delete", _flat(K._clarify_root_markup(OWNER)))
+        self.assertNotIn("delete", _flat(K._clarify_fields_markup("quiz", GUEST)))
+        self.assertIn("delete", _flat(K._clarify_fields_markup("quiz", OWNER)))
 
     def test_guest_quiz_has_clarify_entry(self):
         # P6.2/P6.3: a guest can now open the clarify card from quizzes too.

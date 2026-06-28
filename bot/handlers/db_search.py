@@ -6,11 +6,10 @@ clarify_fields entry, and the DB_SEARCH / DB_SEARCH_VIEW state handlers.
 from telegram import ReplyKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
-from ..app_config import DB_SEARCH, DB_SEARCH_VIEW, MENU, get_db_path, is_owner
+from ..app_config import ADD_EDIT, DB_SEARCH, DB_SEARCH_VIEW, MENU, get_db_path, is_owner
 from ..common.lang import _mode_l1_de, _user_dict_lang, _user_interface_lang
 from ..common.navigation import _action_key_from_text
 from ..common.settings import _learning_daily_qty, _learning_schedule_seconds
-from ..handlers.clarify_fields import clarify_fields_input
 from ..i18n import t
 from ..storage import (
     _safe_text,
@@ -37,7 +36,7 @@ from ..ui.formatting import (
     _format_topic_learning_line,
     _format_word_card,
 )
-from ..ui.keyboards import _clarify_root_markup, _main_menu_markup
+from ..ui.keyboards import _clarify_fields_markup, _main_menu_markup
 
 
 def _db_search_markup(user_id):
@@ -537,16 +536,18 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 lines.append(f"- {phrase}")
         await update.message.reply_text(f"```text\n{chr(10).join(lines)}\n```", parse_mode="Markdown")
-    await update.message.reply_text(
-        "Choose edit action:",
-        reply_markup=_clarify_root_markup(user_id),
-    )
     context.user_data["quiz_entry"] = entry
     context.user_data["quiz_edit_entry"] = entry
     context.user_data["edit_source"] = "quiz"
-    context.user_data["edit_stage"] = "pick_scope"
+    context.user_data["edit_stage"] = "pick_field"
     context.user_data["edit_return_state"] = DB_SEARCH_VIEW
-    return DB_SEARCH_VIEW
+    # P6: the card is one screen now (fields + report + send-to-learning); hand the
+    # conversation to the clarify (ADD_EDIT) handler directly.
+    await update.message.reply_text(
+        "Choose action:",
+        reply_markup=_clarify_fields_markup("quiz", user_id, in_search=True),
+    )
+    return ADD_EDIT
 
 
 async def db_search_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -570,13 +571,6 @@ async def db_search_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "db_search_topics_lern",
     }:
         return await db_search_input(update, context)
-    # "send to learning" and editing example/image (personal version, P4) are open to a
-    # guest; deleting a shared word stays owner-only.
-    if action in {"send_learn", "clarify_fields"}:
-        return await clarify_fields_input(update, context)
-    if text == t(_user_interface_lang(user_id), "report_card"):
-        return await clarify_fields_input(update, context)
-    if text == "delete" and is_owner(user_id):
-        return await clarify_fields_input(update, context)
-    # Any other text is treated as a new search query.
+    # Any other text is treated as a new search query. (Editing a found word now
+    # happens on the unified card screen handled by the ADD_EDIT clarify handler.)
     return await db_search_input(update, context)

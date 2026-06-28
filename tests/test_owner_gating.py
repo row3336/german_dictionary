@@ -83,26 +83,33 @@ class OwnerGatingTest(unittest.TestCase):
         self.assertTrue(any("unit" in x for x in owner))
         self.assertFalse(any("unit" in x for x in guest))
 
-    def test_clarify_root_guest_can_edit_media_but_not_delete(self):
-        # P4.3: a guest gets clarify (to edit their personal example/image) and
-        # send_learn, but never delete (deleting a shared word stays owner-only).
-        owner = _flat(K._clarify_root_markup(OWNER).rows)
-        guest = _flat(K._clarify_root_markup(GUEST).rows)
+    def test_clarify_card_guest_can_edit_media_report_but_not_delete(self):
+        # P4.3/P6: on the unified card a guest gets image/example + report, never
+        # delete; the owner gets delete (deleting a shared word stays owner-only).
+        owner = _flat(K._clarify_fields_markup("quiz", OWNER).rows)
+        guest = _flat(K._clarify_fields_markup("quiz", GUEST).rows)
         self.assertIn("delete", owner)
         self.assertNotIn("delete", guest)
-        self.assertTrue(any("учить" in x or "вчити" in x or "send_learn" in x for x in guest))
-        self.assertTrue(any("уточн" in x or "уточни" in x or "clarify" in x for x in guest))
+        self.assertIn("image", guest)
+        self.assertIn("example", guest)
+        self.assertTrue(any("ошибка" in x or "помилка" in x or "report" in x for x in guest))
 
-    def test_clarify_fields_markup_guest_restricted_to_media(self):
-        # P4.3: in the field picker a guest may only choose image/example; the owner
-        # gets the full grid (translations, article, type, etc.).
+    def test_clarify_card_guest_restricted_to_media(self):
+        # P4.3: a guest may only edit image/example (+ report/back); the owner gets
+        # the full grid (translations, article, type, etc.).
         guest = _flat(K._clarify_fields_markup("quiz", GUEST).rows)
-        self.assertEqual(set(guest), {"image", "example", "back"})
         for f in ("ru", "article", "type", "plural", "prateritum"):
             self.assertNotIn(f, guest)
         owner = _flat(K._clarify_fields_markup("quiz", OWNER).rows)
         self.assertIn("article", owner)
-        self.assertIn("type", owner)
+
+    def test_send_learn_on_card_only_in_search(self):
+        # P6: send-to-learning on the card appears only when opened from db_search
+        # (in a quiz it's already on the quiz keyboard).
+        quiz = _flat(K._clarify_fields_markup("quiz", GUEST, in_search=False).rows)
+        search = _flat(K._clarify_fields_markup("quiz", GUEST, in_search=True).rows)
+        self.assertFalse(any("учить" in x or "вчити" in x or "send_learn" in x for x in quiz))
+        self.assertTrue(any("учить" in x or "вчити" in x or "send_learn" in x for x in search))
 
 
 if __name__ == "__main__":

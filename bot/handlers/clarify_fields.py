@@ -7,7 +7,7 @@ Quiz prompt senders come from handlers.quiz (already extracted).
 
 The UI button is "clarify_fields"; functions/keyboards are named to match
 (clarify_fields_input, _start_clarify_fields, _resume_after_clarify,
-_clarify_fields_markup, _clarify_root_markup). The FSM state stays ADD_EDIT
+_clarify_fields_markup). The FSM state stays ADD_EDIT
 (internal, shared with the add-flow).
 """
 
@@ -55,10 +55,16 @@ from ..ui.formatting import (
 from ..ui.keyboards import (
     _clarify_fields_markup,
     _main_menu_markup,
-    _clarify_root_markup,
     _quiz_markup,
     _type_choice_markup,
 )
+
+
+def _clarify_screen(context: ContextTypes.DEFAULT_TYPE, user_id):
+    """Unified clarify keyboard for the current edit context (P6 collapsed card)."""
+    in_search = context.user_data.get("edit_return_state") == DB_SEARCH_VIEW
+    source = context.user_data.get("edit_source", "add")
+    return _clarify_fields_markup(source, user_id, in_search=in_search)
 
 
 def _allowed_clarify_fields(source, user_id=None):
@@ -152,7 +158,7 @@ async def _start_clarify_fields(update: Update, context: ContextTypes.DEFAULT_TY
         return await _back_to_tests(update, context)
     context.user_data["edit_source"] = "quiz"
     context.user_data["quiz_edit_entry"] = entry
-    context.user_data["edit_stage"] = "pick_scope"
+    context.user_data["edit_stage"] = "pick_field"
     context.user_data["edit_return_state"] = return_state
     await _reply_text_with_retry(
         update.message,
@@ -162,7 +168,7 @@ async def _start_clarify_fields(update: Update, context: ContextTypes.DEFAULT_TY
     await _reply_text_with_retry(
         update.message,
         "Choose edit action:",
-        reply_markup=_clarify_root_markup(update.effective_user.id),
+        reply_markup=_clarify_screen(context, update.effective_user.id),
     )
     return ADD_EDIT
 
@@ -253,11 +259,11 @@ async def _resume_after_clarify(update: Update, context: ContextTypes.DEFAULT_TY
         )
         context.user_data["quiz_edit_entry"] = entry
         context.user_data["edit_source"] = "quiz"
-        context.user_data["edit_stage"] = "pick_scope"
+        context.user_data["edit_stage"] = "pick_field"
         await _reply_text_with_retry(
             update.message,
             "Choose edit action:",
-            reply_markup=_clarify_root_markup(update.effective_user.id),
+            reply_markup=_clarify_screen(context, update.effective_user.id),
         )
         return ADD_EDIT
 
@@ -291,16 +297,16 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text("No entry to edit.", reply_markup=_main_menu_markup(update.effective_user.id))
         return MENU
 
-    stage = context.user_data.get("edit_stage", "pick_scope" if source == "quiz" else "pick_field")
+    stage = context.user_data.get("edit_stage", "pick_field")
 
     if stage == "report_comment":
         # P6.2: user typed their error/fix report; back/stop cancels back to the card.
         lang = _user_interface_lang(update.effective_user.id)
         if _action_key_from_text(text, update.effective_user.id) in ("back", "stop"):
-            context.user_data["edit_stage"] = "pick_scope"
+            context.user_data["edit_stage"] = "pick_field"
             await _reply_text_with_retry(
                 update.message, "Choose edit action:",
-                reply_markup=_clarify_root_markup(update.effective_user.id),
+                reply_markup=_clarify_screen(context, update.effective_user.id),
             )
             return ADD_EDIT
         word_id = entry.get("id") or ""
@@ -323,7 +329,7 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
                 )
             except Exception:
                 pass
-        context.user_data["edit_stage"] = "pick_scope"
+        context.user_data["edit_stage"] = "pick_field"
         if return_state == DB_SEARCH_VIEW:
             return await _send_db_search_prompt(update, update.effective_user.id, t(lang, "report_saved"))
         return await _resume_after_clarify(update, context, t(lang, "report_saved"))
@@ -331,10 +337,10 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
     if stage == "delete_confirm":
         # P6.2: only an explicit "yes" deletes; anything else (incl. back) cancels.
         if text.strip().lower() != "yes":
-            context.user_data["edit_stage"] = "pick_scope"
+            context.user_data["edit_stage"] = "pick_field"
             await _reply_text_with_retry(
                 update.message, "Choose edit action:",
-                reply_markup=_clarify_root_markup(update.effective_user.id),
+                reply_markup=_clarify_screen(context, update.effective_user.id),
             )
             return ADD_EDIT
         word_id = entry.get("id")
@@ -346,7 +352,7 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
         last_answered = context.user_data.get("quiz_last_answered_entry")
         if last_answered and last_answered.get("id") == word_id:
             context.user_data.pop("quiz_last_answered_entry", None)
-        context.user_data["edit_stage"] = "pick_scope"
+        context.user_data["edit_stage"] = "pick_field"
         context.user_data.pop("edit_field", None)
         state = context.user_data.get("edit_return_state")
         prefix = "✅ Deleted." if removed else "❌ Word not found."
@@ -370,22 +376,17 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
 
     if _action_key_from_text(text, update.effective_user.id) == "back":
         if source == "quiz":
-            if stage == "pick_scope" and context.user_data.get("edit_return_state") == DB_SEARCH_VIEW:
-                context.user_data.pop("quiz_edit_entry", None)
-                return await _send_db_search_prompt(update, update.effective_user.id, None)
-            if stage == "pick_scope":
-                return await _resume_after_clarify(update, context, "❌ Edit canceled.")
+            # P6: one unified card screen — back from it exits the edit; back from a
+            # value-entry returns to the card.
             if stage == "pick_field":
-                context.user_data["edit_stage"] = "pick_scope"
-                await update.message.reply_text(
-                    "Choose edit action:",
-                    reply_markup=_clarify_root_markup(update.effective_user.id),
-                )
-                return ADD_EDIT
+                if context.user_data.get("edit_return_state") == DB_SEARCH_VIEW:
+                    context.user_data.pop("quiz_edit_entry", None)
+                    return await _send_db_search_prompt(update, update.effective_user.id, None)
+                return await _resume_after_clarify(update, context, "❌ Edit canceled.")
             context.user_data["edit_stage"] = "pick_field"
             await update.message.reply_text(
                 "Choose field to edit:",
-                reply_markup=_clarify_fields_markup(source, update.effective_user.id),
+                reply_markup=_clarify_screen(context, update.effective_user.id),
             )
             return ADD_EDIT
 
@@ -395,56 +396,6 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text(
             "Choose field to edit:",
             reply_markup=_clarify_fields_markup(source, update.effective_user.id),
-        )
-        return ADD_EDIT
-
-    if source == "quiz" and stage == "pick_scope":
-        token = text.strip().lower()
-        action = _action_key_from_text(text.strip(), update.effective_user.id)
-        if action == "clarify_fields":
-            context.user_data["edit_stage"] = "pick_field"
-            await update.message.reply_text(
-                "Choose field to edit:",
-                reply_markup=_clarify_fields_markup("quiz", update.effective_user.id),
-            )
-            return ADD_EDIT
-        if action == "send_learn":
-            added = _send_entry_to_learning(update, context, entry_key="quiz_edit_entry")
-            context.user_data["edit_stage"] = "pick_scope"
-            state = context.user_data.get("edit_return_state")
-            prefix = "✅ Added to learning." if added else "Nothing to send."
-            if state == DB_SEARCH_VIEW:
-                return await _send_db_search_prompt(update, update.effective_user.id, prefix)
-            return await _resume_after_clarify(update, context, prefix)
-        if text == t(_user_interface_lang(update.effective_user.id), "report_card"):
-            lang = _user_interface_lang(update.effective_user.id)
-            context.user_data["edit_stage"] = "report_comment"
-            await update.message.reply_text(
-                t(lang, "report_prompt"),
-                reply_markup=ReplyKeyboardMarkup([[t(lang, "back")]], resize_keyboard=True),
-            )
-            return ADD_EDIT
-        if token == "delete":
-            word_id = entry.get("id")
-            if not word_id:
-                await update.message.reply_text(
-                    "❌ Cannot delete: missing word id.",
-                    reply_markup=_clarify_root_markup(update.effective_user.id),
-                )
-                return ADD_EDIT
-            # P6.2: require an explicit "yes" before deleting (like reset_periodicity).
-            context.user_data["edit_stage"] = "delete_confirm"
-            await update.message.reply_text(
-                'Type "yes" to delete this word:',
-                reply_markup=ReplyKeyboardMarkup(
-                    [[t(_user_interface_lang(update.effective_user.id), "back")]],
-                    resize_keyboard=True,
-                ),
-            )
-            return ADD_EDIT
-        await update.message.reply_text(
-            "Use buttons: fields, send_learn, delete, back.",
-            reply_markup=_clarify_root_markup(update.effective_user.id),
         )
         return ADD_EDIT
 
@@ -458,6 +409,39 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
         return ADD_EDIT
 
     if stage == "pick_field":
+        if source == "quiz":
+            # P6: card actions now live on the unified field screen (no root menu).
+            uid = update.effective_user.id
+            if _action_key_from_text(text, uid) == "send_learn":
+                added = _send_entry_to_learning(update, context, entry_key="quiz_edit_entry")
+                state = context.user_data.get("edit_return_state")
+                prefix = "✅ Added to learning." if added else "Nothing to send."
+                if state == DB_SEARCH_VIEW:
+                    return await _send_db_search_prompt(update, uid, prefix)
+                return await _resume_after_clarify(update, context, prefix)
+            if text == t(_user_interface_lang(uid), "report_card"):
+                lang = _user_interface_lang(uid)
+                context.user_data["edit_stage"] = "report_comment"
+                await update.message.reply_text(
+                    t(lang, "report_prompt"),
+                    reply_markup=ReplyKeyboardMarkup([[t(lang, "back")]], resize_keyboard=True),
+                )
+                return ADD_EDIT
+            if text.strip().lower() == "delete" and is_owner(uid):
+                word_id = entry.get("id")
+                if not word_id:
+                    await update.message.reply_text(
+                        "❌ Cannot delete: missing word id.",
+                        reply_markup=_clarify_screen(context, uid),
+                    )
+                    return ADD_EDIT
+                # P6.2: require an explicit "yes" before deleting (like reset_periodicity).
+                context.user_data["edit_stage"] = "delete_confirm"
+                await update.message.reply_text(
+                    'Type "yes" to delete this word:',
+                    reply_markup=ReplyKeyboardMarkup([[t(_user_interface_lang(uid), "back")]], resize_keyboard=True),
+                )
+                return ADD_EDIT
         field = text.strip().lower()
         allowed_fields = _allowed_clarify_fields(source, update.effective_user.id)
         if field not in allowed_fields:
@@ -513,7 +497,7 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
         return ADD_EDIT
 
     context.user_data[entry_key] = updated
-    context.user_data["edit_stage"] = "pick_scope" if source == "quiz" else "pick_field"
+    context.user_data["edit_stage"] = "pick_field"
     context.user_data.pop("edit_field", None)
     if source == "quiz":
         user_id = update.effective_user.id

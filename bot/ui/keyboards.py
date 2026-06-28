@@ -140,11 +140,15 @@ def _weak_article_markup(user_id):
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 
-def _clarify_fields_markup(source, user_id=None):
-    """Field-picker keyboard. A guest (non-owner) edits only image/example —
-    their personal version (P4); the owner gets the full field grid."""
-    if source == "quiz" and user_id is not None and not is_owner(user_id):
-        return ReplyKeyboardMarkup([["image", "example", BACK_TEXT]], resize_keyboard=True)
+def _clarify_fields_markup(source, user_id=None, in_search=False):
+    """Unified clarify/card keyboard (P6: no separate root menu — one screen).
+
+    A guest (non-owner) edits only image/example (personal, P4) + report; the
+    owner gets the full field grid + delete. For quizzes/db_search the screen also
+    carries the report button, owner delete, and (db_search only) send-to-learning.
+    `source == "add"` keeps the plain field grid (AI add flow, no card actions).
+    """
+    lang = _user_interface_lang(user_id) if user_id is not None else "en"
     if source == "add":
         return ReplyKeyboardMarkup(
             [
@@ -155,16 +159,20 @@ def _clarify_fields_markup(source, user_id=None):
             ],
             resize_keyboard=True,
         )
+    if source == "quiz" and user_id is not None and not is_owner(user_id):
+        rows = [["image", "example", t(lang, "report_card")]]
+        rows.append([t(lang, "send_learn"), BACK_TEXT] if in_search else [BACK_TEXT])
+        return ReplyKeyboardMarkup(rows, resize_keyboard=True)
     if source == "quiz":
-        return ReplyKeyboardMarkup(
-            [
-                ["ru", "ukr", "de", SYNONYMS_TEXT],
-                ["article", "plural", "type", "infinitive"],
-                ["prateritum", "partizip2", "komparativ", "superlativ"],
-                ["image", "example", BACK_TEXT],
-            ],
-            resize_keyboard=True,
-    )
+        rows = [
+            ["ru", "ukr", "de", SYNONYMS_TEXT],
+            ["article", "plural", "type", "infinitive"],
+            ["prateritum", "partizip2", "komparativ", "superlativ"],
+            ["image", "example", t(lang, "report_card")],
+        ]
+        last = ([t(lang, "send_learn")] if in_search else []) + ["delete", BACK_TEXT]
+        rows.append(last)
+        return ReplyKeyboardMarkup(rows, resize_keyboard=True)
     return ReplyKeyboardMarkup([["russian", BACK_TEXT]], resize_keyboard=True)
 
 
@@ -177,26 +185,6 @@ def _type_choice_markup():
     else:
         rows.append([BACK_TEXT])
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
-
-
-def _clarify_root_markup(user_id):
-    """Root card keyboard. Editing/deleting a shared word is owner-only (P3.2);
-    a guest sees only "send to learning" (their personal learning)."""
-    lang = _user_interface_lang(user_id)
-    if is_owner(user_id):
-        return ReplyKeyboardMarkup(
-            [[t(lang, "clarify_fields"), t(lang, "send_learn")],
-             [t(lang, "report_card")],
-             ["delete", t(lang, "back")]],
-            resize_keyboard=True,
-        )
-    # Guest: edit example/image (personal version, P4) + send to learning + report; no delete.
-    return ReplyKeyboardMarkup(
-        [[t(lang, "clarify_fields"), t(lang, "send_learn")],
-         [t(lang, "report_card")],
-         [t(lang, "back")]],
-        resize_keyboard=True,
-    )
 
 
 def _add_keys(user_id):
