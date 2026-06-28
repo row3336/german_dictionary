@@ -30,6 +30,7 @@ from ..app_config import (
     QUIZ_PRATERITUM_WEAK,
     QUIZ_RU_DE,
     get_db_path,
+    get_owner_id,
     is_owner,
 )
 from ..common.lang import _user_dict_lang, _user_interface_lang
@@ -42,7 +43,7 @@ from ..handlers.quiz import (
 )
 from ..i18n import t
 from ..labels import SYNONYMS_TEXT
-from ..storage import delete_word, set_user_word_media, update_word_fields
+from ..storage import add_error_report, delete_word, set_user_word_media, update_word_fields
 from ..text_utils import type_label as _type_label
 from ..ui.formatting import (
     _format_article_question,
@@ -291,6 +292,42 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
         return MENU
 
     stage = context.user_data.get("edit_stage", "pick_scope" if source == "quiz" else "pick_field")
+
+    if stage == "report_comment":
+        # P6.2: user typed their error/fix report; back/stop cancels back to the card.
+        lang = _user_interface_lang(update.effective_user.id)
+        if _action_key_from_text(text, update.effective_user.id) in ("back", "stop"):
+            context.user_data["edit_stage"] = "pick_scope"
+            await _reply_text_with_retry(
+                update.message, "Choose edit action:",
+                reply_markup=_clarify_root_markup(update.effective_user.id),
+            )
+            return ADD_EDIT
+        word_id = entry.get("id") or ""
+        return_state = context.user_data.get("edit_return_state")
+        add_error_report(
+            get_db_path(), update.effective_user.id, word_id, text,
+            mode=str(return_state), state="clarify", last_action=entry.get("german", ""),
+        )
+        owner_id = get_owner_id()
+        if owner_id and owner_id != update.effective_user.id:
+            u = update.effective_user
+            tag = f"@{u.username}" if u.username else (u.first_name or str(u.id))
+            try:
+                await context.bot.send_message(
+                    chat_id=owner_id,
+                    text=(
+                        f"{t(_user_interface_lang(owner_id), 'report_owner_hdr')} #error_report\n"
+                        f"{tag} · {entry.get('german', '')}\n\n{text}"
+                    ),
+                )
+            except Exception:
+                pass
+        context.user_data["edit_stage"] = "pick_scope"
+        if return_state == DB_SEARCH_VIEW:
+            return await _send_db_search_prompt(update, update.effective_user.id, t(lang, "report_saved"))
+        return await _resume_after_clarify(update, context, t(lang, "report_saved"))
+
     if _action_key_from_text(text, update.effective_user.id) == "back":
         if source == "quiz":
             if stage == "pick_scope" and context.user_data.get("edit_return_state") == DB_SEARCH_VIEW:
@@ -339,6 +376,14 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
             if state == DB_SEARCH_VIEW:
                 return await _send_db_search_prompt(update, update.effective_user.id, prefix)
             return await _resume_after_clarify(update, context, prefix)
+        if text == t(_user_interface_lang(update.effective_user.id), "report_card"):
+            lang = _user_interface_lang(update.effective_user.id)
+            context.user_data["edit_stage"] = "report_comment"
+            await update.message.reply_text(
+                t(lang, "report_prompt"),
+                reply_markup=ReplyKeyboardMarkup([[t(lang, "back")]], resize_keyboard=True),
+            )
+            return ADD_EDIT
         if token == "delete":
             word_id = entry.get("id")
             if not word_id:

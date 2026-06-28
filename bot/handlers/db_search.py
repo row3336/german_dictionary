@@ -574,6 +574,8 @@ async def db_search_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # guest; deleting a shared word stays owner-only.
     if action in {"send_learn", "clarify_fields"}:
         return await clarify_fields_input(update, context)
+    if text == t(_user_interface_lang(user_id), "report_card"):
+        return await clarify_fields_input(update, context)
     if text == "delete" and is_owner(user_id):
         return await clarify_fields_input(update, context)
     # Any other text is treated as a new search query.

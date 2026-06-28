@@ -194,12 +194,16 @@ def _clarify_root_markup(user_id):
     lang = _user_interface_lang(user_id)
     if is_owner(user_id):
         return ReplyKeyboardMarkup(
-            [[t(lang, "clarify_fields"), t(lang, "send_learn")], ["delete", t(lang, "back")]],
+            [[t(lang, "clarify_fields"), t(lang, "send_learn")],
+             [t(lang, "report_card")],
+             ["delete", t(lang, "back")]],
             resize_keyboard=True,
         )
-    # Guest: edit example/image (personal version, P4) + send to learning; no delete.
+    # Guest: edit example/image (personal version, P4) + send to learning + report; no delete.
     return ReplyKeyboardMarkup(
-        [[t(lang, "clarify_fields"), t(lang, "send_learn")], [t(lang, "back")]],
+        [[t(lang, "clarify_fields"), t(lang, "send_learn")],
+         [t(lang, "report_card")],
+         [t(lang, "back")]],
         resize_keyboard=True,
     )
 
