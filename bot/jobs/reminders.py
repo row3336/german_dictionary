@@ -7,7 +7,6 @@
    if the FSRS review queue still has due words, ping the owner.
 """
 
-import logging
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
@@ -17,22 +16,24 @@ from ..app_config import (
     FSRS_AFTERNOON_REMINDER_JOB_NAME,
     LEARNING_REMINDER_JOB_NAME,
     get_db_path,
-    get_owner_id,
 )
-from ..common.lang import _mode_l1_de
+from ..common.lang import _mode_l1_de, _user_interface_lang
+from ..common.outbound import SendStats, send_to_user
 from ..common.settings import (
     _learning_ready_quorum,
     _learning_reminder_cooldown,
     _learning_reminder_interval,
 )
+from ..i18n import t
 from ..storage import (
     fsrs_due_forecast,
-    get_setting,
+    get_user_setting,
     learning_active_batches,
     learning_batch_mark_notified,
     learning_batch_update_ready_state,
     learning_status_snapshot,
-    set_setting,
+    list_active_users,
+    set_user_setting,
 )
 
 _BERLIN_TZ = ZoneInfo("Europe/Berlin")
@@ -56,18 +57,18 @@ async def _learning_reminder_job(context: ContextTypes.DEFAULT_TYPE):
     db_path = get_db_path()
     now = datetime.now(timezone.utc)
     now_iso = now.strftime("%Y-%m-%dT%H:%M:%SZ")
-    # Reminder timings are now per-user (P2.4d), but the background job still reads
-    # owner/global (owner override -> global -> default). Per-user applies in P5.
-    owner_id = get_owner_id()
-    reminder_interval = _learning_reminder_interval(db_path, owner_id)
-    reminder_cooldown = _learning_reminder_cooldown(db_path, owner_id)
-    quorum_pct = _learning_ready_quorum(db_path, owner_id)
+    # Broadcast to every user with an active batch (P5.2): timings/quorum and the
+    # message language are read per-user (owner override -> global -> default).
+    send_stats = SendStats()
 
     for batch in learning_active_batches(db_path):
         user_id = int(batch.get("user_id") or 0)
         batch_id = str(batch.get("id") or "")
         if not user_id or not batch_id:
             continue
+        quorum_pct = _learning_ready_quorum(db_path, user_id)
+        reminder_interval = _learning_reminder_interval(db_path, user_id)
+        reminder_cooldown = _learning_reminder_cooldown(db_path, user_id)
         stats = learning_status_snapshot(db_path, user_id=user_id, quorum_pct=quorum_pct)
         if stats.get("batch_id") != batch_id:
             continue
@@ -86,54 +87,48 @@ async def _learning_reminder_job(context: ContextTypes.DEFAULT_TYPE):
             continue
         if notify_elapsed < reminder_cooldown:
             continue
-        try:
-            await context.bot.send_message(
-                chat_id=user_id,
-                text=(
-                    f"Learning reminder:\n"
-                    f"due_now = {stats.get('due_count', 0)} / need {stats.get('ready_needed', 0)}\n"
-                    f"Use Learning -> learning session."
-                ),
-            )
+        lang = _user_interface_lang(user_id)
+        text = t(lang, "reminder_learning_ready").format(
+            due=stats.get("due_count", 0),
+            need=stats.get("ready_needed", 0),
+        )
+        result = await send_to_user(
+            context.bot, user_id, text, "learning_reminder", stats=send_stats,
+        )
+        if result != "error":
             learning_batch_mark_notified(db_path, batch_id=batch_id, now_iso=now_iso)
-        except Exception:
-            continue
+
+    send_stats.log("learning_reminder")
 
 
 async def _fsrs_afternoon_reminder_job(context: ContextTypes.DEFAULT_TYPE):
-    """FSRS-queue reminder: 18:00 Berlin, once/day, only if words are due."""
+    """FSRS-queue reminder to ALL users: 18:00 Berlin, once/day each, only if due."""
     db_path = get_db_path()
-    owner_id = get_owner_id()
-    if not owner_id:
-        return
-
     now_berlin = datetime.now(_BERLIN_TZ)
     if now_berlin.hour < _FSRS_REMINDER_HOUR_BERLIN:
         return
 
     today = now_berlin.date().isoformat()
-    if get_setting(db_path, _FSRS_REMINDER_DATE_KEY, "") == today:
-        return
-
-    mode = _mode_l1_de(owner_id)
-    total = int(fsrs_due_forecast(db_path, owner_id, mode).get("total", 0))
-    if total <= 0:
-        # Queue is done for now — no reminder, and don't mark the day done: if words
-        # become due later this evening we still want to remind once.
-        return
-
-    try:
-        await context.bot.send_message(
-            chat_id=owner_id,
-            text=(
-                f"⏰ FSRS queue not done: {total} word(s) ready to review.\n"
-                f"Open tests → Ru>De to finish today's queue."
-            ),
+    send_stats = SendStats()
+    for user_id in list_active_users(db_path):
+        # Per-user once-a-day dedup (was a single global key before P5).
+        if get_user_setting(db_path, user_id, _FSRS_REMINDER_DATE_KEY, "") == today:
+            continue
+        mode = _mode_l1_de(user_id)
+        total = int(fsrs_due_forecast(db_path, user_id, mode).get("total", 0))
+        if total <= 0:
+            # Queue is done for now — no reminder, and don't mark the day done: if
+            # words become due later this evening we still want to remind once.
+            continue
+        lang = _user_interface_lang(user_id)
+        text = t(lang, "reminder_fsrs_due").format(total=total)
+        result = await send_to_user(
+            context.bot, user_id, text, "fsrs_reminder", stats=send_stats,
         )
-        set_setting(db_path, _FSRS_REMINDER_DATE_KEY, today)
-    except Exception:
-        logging.exception("FSRS afternoon reminder failed")
-        return
+        if result != "error":
+            set_user_setting(db_path, user_id, _FSRS_REMINDER_DATE_KEY, today)
+
+    send_stats.log("fsrs_reminder")
 
 
 def _configure_learning_reminders(app: Application):
