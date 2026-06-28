@@ -26,6 +26,17 @@ def _add_words(db_path, n):
             )
 
 
+def _table_exists(db_path, name):
+    conn = sqlite3.connect(db_path)
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
+        ).fetchone()
+        return row is not None
+    finally:
+        conn.close()
+
+
 def _event_kinds(db_path):
     conn = sqlite3.connect(db_path)
     try:
@@ -139,6 +150,36 @@ class DryRunTest(unittest.TestCase):
         self.assertEqual(get_user_version(db), 0)
         self.assertEqual(run_healthcheck(db)["counts"]["words"], 9)
         self.assertFalse(os.path.exists(os.path.join(d, "backups")))
+
+    def test_dry_run_rehearses_v3_to_v4_without_touching_live(self):
+        # Simulate a real v3 DB (P6 tables absent, version marker 3) and confirm the
+        # dry-run rehearses creating error_reports/feedback on the COPY only.
+        d = tempfile.mkdtemp()
+        db = os.path.join(d, "words.db")
+        init_db(db)
+        _add_words(db, 5)
+        conn = sqlite3.connect(db)
+        conn.execute("DROP TABLE error_reports")
+        conn.execute("DROP TABLE feedback")
+        conn.commit()
+        conn.close()
+        set_user_version(db, 3)
+
+        report = dry_run_migration(db)
+        self.assertTrue(report["ok"])
+        self.assertTrue(report["migrated"])
+        self.assertEqual(report["from_version"], 3)
+        self.assertEqual(report["to_version"], SCHEMA_VERSION)
+        # the copy got the new tables; words preserved
+        self.assertIn("error_reports", report["counts_after"])
+        self.assertIn("feedback", report["counts_after"])
+        self.assertEqual(report["counts_after"]["words"], 5)
+
+        # live DB is untouched: still v3, P6 tables still absent, data intact
+        self.assertEqual(get_user_version(db), 3)
+        self.assertFalse(_table_exists(db, "error_reports"))
+        self.assertFalse(_table_exists(db, "feedback"))
+        self.assertEqual(run_healthcheck(db)["counts"]["words"], 5)
 
     def test_dry_run_missing_source(self):
         d = tempfile.mkdtemp()
