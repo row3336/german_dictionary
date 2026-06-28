@@ -74,7 +74,9 @@ def _settings_menu_keys(user_id):
     owner = is_owner(user_id)
     rows = [[PARSE_VF_TEXT, t(lang, "algo_settings")] if owner else [t(lang, "algo_settings")]]
     rows.append([t(lang, "interface_lang_btn"), t(lang, "dict_lang_btn")])
-    rows.append([t(lang, "dump"), t(lang, "back")] if owner else [t(lang, "back")])
+    # "feedback" is open to everyone (P6.3).
+    rows.append([t(lang, "feedback_btn"), t(lang, "dump"), t(lang, "back")] if owner
+                else [t(lang, "feedback_btn"), t(lang, "back")])
     return rows
 
 

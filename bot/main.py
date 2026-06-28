@@ -21,6 +21,7 @@ from telegram.ext import (
 
 from .app_config import (
     ACCESS_MESSAGE,
+    FEEDBACK_INPUT,
     ACCESS_REJECTED,
     ADD_CLARIFY,
     ADD_CONFIRM,
@@ -146,6 +147,7 @@ from .handlers.settings import (
     settings_menu_choice,
     topic_filter_edit,
 )
+from .handlers.feedback import feedback_input
 from .handlers.access import (
     access_decision_callback,
     access_message_input,
@@ -391,6 +393,7 @@ def main():
             SELECT_DICT_LANG: [MessageHandler(filters.TEXT & ~filters.COMMAND, select_dict_lang)],
             ACCESS_REJECTED: [MessageHandler(filters.TEXT & ~filters.COMMAND, access_rejected_choice)],
             ACCESS_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, access_message_input)],
+            FEEDBACK_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, feedback_input)],
             TESTS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, tests_menu_choice)],
             DB_SEARCH: [MessageHandler(filters.TEXT & ~filters.COMMAND, db_search_input)],
             DB_SEARCH_VIEW: [MessageHandler(filters.TEXT & ~filters.COMMAND, db_search_view)],

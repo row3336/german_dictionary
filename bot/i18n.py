@@ -114,6 +114,10 @@ TEXTS = {
         "report_prompt": "Describe what's wrong or what to change:",
         "report_saved": "✅ Report sent. Thank you!",
         "report_owner_hdr": "🛠 New report",
+        "feedback_btn": "feedback",
+        "feedback_prompt": "Type your feedback about the bot:",
+        "feedback_saved": "✅ Feedback sent. Thank you!",
+        "feedback_owner_hdr": "💬 New feedback",
     },
     "ru": {
         "start": "Старт",
@@ -217,6 +221,10 @@ TEXTS = {
         "report_prompt": "Опишите, что не так или что предложить изменить:",
         "report_saved": "✅ Репорт отправлен. Спасибо!",
         "report_owner_hdr": "🛠 Новый репорт",
+        "feedback_btn": "фидбек",
+        "feedback_prompt": "Напишите ваш отзыв о боте:",
+        "feedback_saved": "✅ Отзыв отправлен. Спасибо!",
+        "feedback_owner_hdr": "💬 Новый фидбек",
     },
     "uk": {
         "start": "Старт",
@@ -320,6 +328,10 @@ TEXTS = {
         "report_prompt": "Опишіть, що не так або що запропонувати змінити:",
         "report_saved": "✅ Репорт надіслано. Дякую!",
         "report_owner_hdr": "🛠 Новий репорт",
+        "feedback_btn": "відгук",
+        "feedback_prompt": "Напишіть ваш відгук про бота:",
+        "feedback_saved": "✅ Відгук надіслано. Дякую!",
+        "feedback_owner_hdr": "💬 Новий фідбек",
     },
 }
 
