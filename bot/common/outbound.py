@@ -21,12 +21,17 @@ from ..app_config import get_log_path
 _log = logging.getLogger("outbound")
 _configured = False
 
+# Daily rotation, keep ~1 month. The log is tiny (anomalies + one aggregate line
+# per non-empty cycle), so a month of history is cheap and lets us spot ban/429
+# patterns that build up over weeks (useful for the P7 load test).
+_LOG_RETENTION_DAYS = 30
+
 
 def configure_outbound_logger():
     """Attach a dedicated rotating file handler to the 'outbound' logger.
 
-    Idempotent. Writes next to the main bot log (`outbound.log`), small
-    backupCount so disk stays bounded; does not propagate to the root logger.
+    Idempotent. Writes next to the main bot log (`outbound.log`), daily rotation
+    with bounded retention (_LOG_RETENTION_DAYS); does not propagate to root.
     """
     global _configured
     if _configured:
@@ -37,7 +42,7 @@ def configure_outbound_logger():
         filename=str(path),
         when="D",
         interval=1,
-        backupCount=7,
+        backupCount=_LOG_RETENTION_DAYS,
         encoding="utf-8",
         utc=True,
     )
