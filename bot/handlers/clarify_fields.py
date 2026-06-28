@@ -328,6 +328,46 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
             return await _send_db_search_prompt(update, update.effective_user.id, t(lang, "report_saved"))
         return await _resume_after_clarify(update, context, t(lang, "report_saved"))
 
+    if stage == "delete_confirm":
+        # P6.2: only an explicit "yes" deletes; anything else (incl. back) cancels.
+        if text.strip().lower() != "yes":
+            context.user_data["edit_stage"] = "pick_scope"
+            await _reply_text_with_retry(
+                update.message, "Choose edit action:",
+                reply_markup=_clarify_root_markup(update.effective_user.id),
+            )
+            return ADD_EDIT
+        word_id = entry.get("id")
+        removed = delete_word(get_db_path(), word_id) if word_id else False
+        context.user_data.pop("quiz_edit_entry", None)
+        current_quiz_entry = context.user_data.get("quiz_entry")
+        if current_quiz_entry and current_quiz_entry.get("id") == word_id:
+            context.user_data.pop("quiz_entry", None)
+        last_answered = context.user_data.get("quiz_last_answered_entry")
+        if last_answered and last_answered.get("id") == word_id:
+            context.user_data.pop("quiz_last_answered_entry", None)
+        context.user_data["edit_stage"] = "pick_scope"
+        context.user_data.pop("edit_field", None)
+        state = context.user_data.get("edit_return_state")
+        prefix = "✅ Deleted." if removed else "❌ Word not found."
+        if state == QUIZ_RU_DE:
+            return await _send_ru_de_prompt(update, context, prefix)
+        if state == QUIZ_DE_RU:
+            return await _send_de_ru_prompt(update, context, prefix)
+        if state == QUIZ_ARTICLE:
+            return await _send_article_prompt(update, context, prefix)
+        if state == QUIZ_ARTICLE_WEAK:
+            return await _send_article_weak_prompt(update, context, prefix)
+        if state == QUIZ_PLURAL_WEAK:
+            return await _send_plural_weak_prompt(update, context, prefix)
+        if state == QUIZ_PRATERITUM_WEAK:
+            return await _send_prateritum_weak_prompt(update, context, prefix)
+        if state == QUIZ_PARTIZIP2_WEAK:
+            return await _send_partizip2_weak_prompt(update, context, prefix)
+        if state == DB_SEARCH_VIEW:
+            return await _send_db_search_prompt(update, update.effective_user.id, prefix)
+        return await _back_to_tests(update, context)
+
     if _action_key_from_text(text, update.effective_user.id) == "back":
         if source == "quiz":
             if stage == "pick_scope" and context.user_data.get("edit_return_state") == DB_SEARCH_VIEW:
@@ -392,35 +432,16 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
                     reply_markup=_clarify_root_markup(update.effective_user.id),
                 )
                 return ADD_EDIT
-            removed = delete_word(get_db_path(), word_id)
-            context.user_data.pop("quiz_edit_entry", None)
-            current_quiz_entry = context.user_data.get("quiz_entry")
-            if current_quiz_entry and current_quiz_entry.get("id") == word_id:
-                context.user_data.pop("quiz_entry", None)
-            last_answered = context.user_data.get("quiz_last_answered_entry")
-            if last_answered and last_answered.get("id") == word_id:
-                context.user_data.pop("quiz_last_answered_entry", None)
-            context.user_data["edit_stage"] = "pick_scope"
-            context.user_data.pop("edit_field", None)
-            state = context.user_data.get("edit_return_state")
-            prefix = "✅ Deleted." if removed else "❌ Word not found."
-            if state == QUIZ_RU_DE:
-                return await _send_ru_de_prompt(update, context, prefix)
-            if state == QUIZ_DE_RU:
-                return await _send_de_ru_prompt(update, context, prefix)
-            if state == QUIZ_ARTICLE:
-                return await _send_article_prompt(update, context, prefix)
-            if state == QUIZ_ARTICLE_WEAK:
-                return await _send_article_weak_prompt(update, context, prefix)
-            if state == QUIZ_PLURAL_WEAK:
-                return await _send_plural_weak_prompt(update, context, prefix)
-            if state == QUIZ_PRATERITUM_WEAK:
-                return await _send_prateritum_weak_prompt(update, context, prefix)
-            if state == QUIZ_PARTIZIP2_WEAK:
-                return await _send_partizip2_weak_prompt(update, context, prefix)
-            if state == DB_SEARCH_VIEW:
-                return await _send_db_search_prompt(update, update.effective_user.id, prefix)
-            return await _back_to_tests(update, context)
+            # P6.2: require an explicit "yes" before deleting (like reset_periodicity).
+            context.user_data["edit_stage"] = "delete_confirm"
+            await update.message.reply_text(
+                'Type "yes" to delete this word:',
+                reply_markup=ReplyKeyboardMarkup(
+                    [[t(_user_interface_lang(update.effective_user.id), "back")]],
+                    resize_keyboard=True,
+                ),
+            )
+            return ADD_EDIT
         await update.message.reply_text(
             "Use buttons: fields, send_learn, delete, back.",
             reply_markup=_clarify_root_markup(update.effective_user.id),
