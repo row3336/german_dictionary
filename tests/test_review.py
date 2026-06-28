@@ -105,6 +105,45 @@ class ReviewReportsTest(unittest.TestCase):
         st = _run(review_reports_choice(_Update("open", GUEST), ctx))
         self.assertEqual(st, SETTINGS_MENU)
 
+    def test_delete_single_with_yes_no(self):
+        ctx = _Ctx()
+        _run(owner_review_menu_choice(_Update("reports", OWNER), ctx))
+        _run(review_reports_choice(_Update("open", OWNER), ctx))
+        _run(review_reports_choice(_Update("1", OWNER), ctx))
+        _run(review_reports_choice(_Update("delete", OWNER), ctx))
+        self.assertEqual(ctx.user_data["review_sub"], "confirm_delete")
+        _run(review_reports_choice(_Update("yes", OWNER), ctx))
+        self.assertEqual(list_error_reports(self.db, status="pending"), [])
+        self.assertEqual(list_error_reports(self.db, status="reviewed"), [])  # deleted, not closed
+
+    def test_delete_no_keeps_report(self):
+        ctx = _Ctx()
+        _run(owner_review_menu_choice(_Update("reports", OWNER), ctx))
+        _run(review_reports_choice(_Update("open", OWNER), ctx))
+        _run(review_reports_choice(_Update("1", OWNER), ctx))
+        _run(review_reports_choice(_Update("delete", OWNER), ctx))
+        _run(review_reports_choice(_Update("no", OWNER), ctx))
+        self.assertEqual(len(list_error_reports(self.db, status="pending")), 1)
+
+    def test_delete_all_requires_yes(self):
+        add_error_report(self.db, GUEST, "w1", "second")
+        ctx = _Ctx()
+        _run(owner_review_menu_choice(_Update("reports", OWNER), ctx))
+        _run(review_reports_choice(_Update("delete all", OWNER), ctx))
+        self.assertEqual(ctx.user_data["review_sub"], "delete_all_confirm")
+        _run(review_reports_choice(_Update("yes", OWNER), ctx))
+        self.assertEqual(list_error_reports(self.db, status="pending"), [])
+
+    def test_closed_tab_shows_reviewed(self):
+        ctx = _Ctx()
+        _run(owner_review_menu_choice(_Update("reports", OWNER), ctx))
+        _run(review_reports_choice(_Update("open", OWNER), ctx))
+        _run(review_reports_choice(_Update("1", OWNER), ctx))
+        _run(review_reports_choice(_Update("close", OWNER), ctx))
+        _run(review_reports_choice(_Update("closed", OWNER), ctx))
+        self.assertEqual(ctx.user_data["review_status"], "reviewed")
+        self.assertEqual(len(ctx.user_data["review_numbers"]), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

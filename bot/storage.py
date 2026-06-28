@@ -4258,6 +4258,16 @@ def delete_error_report(db_path, report_id):
         conn.execute("DELETE FROM error_reports WHERE id = ?", (int(report_id),))
 
 
+def delete_all_error_reports(db_path, status=None):
+    """Delete every report (or only those with `status` when given)."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        if status is None:
+            conn.execute("DELETE FROM error_reports")
+        else:
+            conn.execute("DELETE FROM error_reports WHERE status = ?", (_safe_text(status),))
+
+
 def add_feedback(db_path, user_id, text):
     """Store a user's general feedback about the bot."""
     init_db(db_path)

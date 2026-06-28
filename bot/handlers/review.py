@@ -20,7 +20,12 @@ from ..app_config import (
 from ..common.lang import _user_interface_lang
 from ..common.navigation import _action_key_from_text
 from ..i18n import t
-from ..storage import list_error_reports, set_error_report_status
+from ..storage import (
+    delete_all_error_reports,
+    delete_error_report,
+    list_error_reports,
+    set_error_report_status,
+)
 from ..ui.keyboards import _settings_menu_keys
 
 
@@ -79,18 +84,37 @@ def _fmt_reports_list(reports, lang):
     return "\n".join(lines)
 
 
-async def _show_reports_list(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id):
-    """Render the pending reports list and reset the review sub-state to 'list'."""
+def _list_keys(lang, reports, status):
+    """List keyboard: open/delete-all when non-empty; pending list also offers 'closed'."""
+    rows = []
+    if reports:
+        rows.append([t(lang, "review_open"), t(lang, "review_delete_all")])
+    if status == "pending":
+        rows.append([t(lang, "review_closed"), t(lang, "back")])
+    else:
+        rows.append([t(lang, "back")])
+    return rows
+
+
+def _item_keys(lang, status):
+    """Item-card keyboard: close only for open reports; delete for both."""
+    if status == "pending":
+        return [[t(lang, "review_close"), t(lang, "review_delete")], [t(lang, "back")]]
+    return [[t(lang, "review_delete")], [t(lang, "back")]]
+
+
+async def _show_reports_list(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id, status="pending"):
+    """Render the reports list for `status` (pending/reviewed); reset sub-state to 'list'."""
     lang = _user_interface_lang(user_id)
-    reports = list_error_reports(get_db_path(), status="pending")
+    reports = list_error_reports(get_db_path(), status=status)
     context.user_data["review_numbers"] = {i: r["id"] for i, r in enumerate(reports, 1)}
     context.user_data["review_items"] = {r["id"]: r for r in reports}
     context.user_data["review_sub"] = "list"
-    keys = [[t(lang, "review_open")], [t(lang, "back")]] if reports else [[t(lang, "back")]]
+    context.user_data["review_status"] = status
     await update.message.reply_text(
         f"```text\n{_fmt_reports_list(reports, lang)}\n```",
         parse_mode="Markdown",
-        reply_markup=ReplyKeyboardMarkup(keys, resize_keyboard=True),
+        reply_markup=ReplyKeyboardMarkup(_list_keys(lang, reports, status), resize_keyboard=True),
     )
     return REVIEW_REPORTS
 
@@ -104,7 +128,7 @@ def _fmt_report_item(item):
 
 
 async def review_reports_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Reports list navigation: open -> pick number -> item card -> close."""
+    """Reports navigation: open→number→card→close/delete; delete-all; closed tab."""
     text = update.message.text.strip()
     user_id = update.effective_user.id
     if not is_owner(user_id):
@@ -112,10 +136,14 @@ async def review_reports_choice(update: Update, context: ContextTypes.DEFAULT_TY
     lang = _user_interface_lang(user_id)
     action = _action_key_from_text(text, user_id)
     sub = context.user_data.get("review_sub", "list")
+    status = context.user_data.get("review_status", "pending")
 
     if action == "back":
-        if sub in ("pick", "item"):
-            return await _show_reports_list(update, context, user_id)
+        if sub in ("pick", "item", "confirm_delete", "delete_all_confirm"):
+            return await _show_reports_list(update, context, user_id, status)
+        # back from a list: closed tab returns to open; open list returns to submenu.
+        if status == "reviewed":
+            return await _show_reports_list(update, context, user_id, "pending")
         return await _send_review_menu(update, user_id)
 
     if sub == "list":
@@ -129,7 +157,16 @@ async def review_reports_choice(update: Update, context: ContextTypes.DEFAULT_TY
                 reply_markup=ReplyKeyboardMarkup(rows, resize_keyboard=True),
             )
             return REVIEW_REPORTS
-        return await _show_reports_list(update, context, user_id)
+        if text == t(lang, "review_delete_all") and context.user_data.get("review_numbers"):
+            context.user_data["review_sub"] = "delete_all_confirm"
+            await update.message.reply_text(
+                t(lang, "review_delete_all_prompt"),
+                reply_markup=ReplyKeyboardMarkup([[t(lang, "back")]], resize_keyboard=True),
+            )
+            return REVIEW_REPORTS
+        if status == "pending" and text == t(lang, "review_closed"):
+            return await _show_reports_list(update, context, user_id, "reviewed")
+        return await _show_reports_list(update, context, user_id, status)
 
     if sub == "pick":
         try:
@@ -138,20 +175,41 @@ async def review_reports_choice(update: Update, context: ContextTypes.DEFAULT_TY
             rid = None
         item = context.user_data.get("review_items", {}).get(rid)
         if not item:
-            return await _show_reports_list(update, context, user_id)
+            return await _show_reports_list(update, context, user_id, status)
         context.user_data["review_sub"] = "item"
         context.user_data["review_current"] = rid
         await update.message.reply_text(
             _fmt_report_item(item),
             parse_mode="Markdown",
-            reply_markup=ReplyKeyboardMarkup([[t(lang, "review_close")], [t(lang, "back")]], resize_keyboard=True),
+            reply_markup=ReplyKeyboardMarkup(_item_keys(lang, status), resize_keyboard=True),
         )
         return REVIEW_REPORTS
 
-    if sub == "item" and text == t(lang, "review_close"):
-        rid = context.user_data.get("review_current")
-        if rid:
-            set_error_report_status(get_db_path(), rid, "reviewed")
-        return await _show_reports_list(update, context, user_id)
+    if sub == "item":
+        if status == "pending" and text == t(lang, "review_close"):
+            rid = context.user_data.get("review_current")
+            if rid:
+                set_error_report_status(get_db_path(), rid, "reviewed")
+            return await _show_reports_list(update, context, user_id, status)
+        if text == t(lang, "review_delete"):
+            context.user_data["review_sub"] = "confirm_delete"
+            await update.message.reply_text(
+                t(lang, "review_confirm_delete"),
+                reply_markup=ReplyKeyboardMarkup([[t(lang, "yes_btn"), t(lang, "no_btn")]], resize_keyboard=True),
+            )
+            return REVIEW_REPORTS
+        return await _show_reports_list(update, context, user_id, status)
 
-    return await _show_reports_list(update, context, user_id)
+    if sub == "confirm_delete":
+        if text == t(lang, "yes_btn"):
+            rid = context.user_data.get("review_current")
+            if rid:
+                delete_error_report(get_db_path(), rid)
+        return await _show_reports_list(update, context, user_id, status)
+
+    if sub == "delete_all_confirm":
+        if text.strip().lower() == "yes":
+            delete_all_error_reports(get_db_path(), status=status)
+        return await _show_reports_list(update, context, user_id, status)
+
+    return await _show_reports_list(update, context, user_id, status)
