@@ -10,9 +10,24 @@ from _telegram_stub import install
 
 install()
 
-from bot.app_config import OWNER_REVIEW_MENU, REVIEW_REPORTS, SETTINGS_MENU  # noqa: E402
-from bot.handlers.review import owner_review_menu_choice, review_reports_choice  # noqa: E402
-from bot.storage import add_error_report, init_db, list_error_reports  # noqa: E402
+from bot.app_config import (  # noqa: E402
+    OWNER_REVIEW_MENU,
+    REVIEW_FEEDBACK,
+    REVIEW_REPORTS,
+    SETTINGS_MENU,
+)
+from bot.handlers.review import (  # noqa: E402
+    owner_review_menu_choice,
+    review_feedback_choice,
+    review_reports_choice,
+)
+from bot.storage import (  # noqa: E402
+    add_error_report,
+    add_feedback,
+    init_db,
+    list_error_reports,
+    list_feedback,
+)
 from bot.ui import keyboards as K  # noqa: E402
 
 OWNER, GUEST = 999, 111
@@ -143,6 +158,53 @@ class ReviewReportsTest(unittest.TestCase):
         _run(review_reports_choice(_Update("closed", OWNER), ctx))
         self.assertEqual(ctx.user_data["review_status"], "reviewed")
         self.assertEqual(len(ctx.user_data["review_numbers"]), 1)
+
+
+class FeedbackReviewTest(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.NamedTemporaryFile(delete=False)
+        tmp.close()
+        self.db = tmp.name
+        self.addCleanup(lambda: os.unlink(self.db))
+        init_db(self.db)
+        self.fid = add_feedback(self.db, GUEST, "nice bot")
+        self._old = {k: os.environ.get(k) for k in ("DB_PATH", "OWNER_ID")}
+        os.environ["DB_PATH"] = self.db
+        os.environ["OWNER_ID"] = str(OWNER)
+        self.addCleanup(self._restore)
+
+    def _restore(self):
+        for k, v in self._old.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    def test_open_and_delete_feedback(self):
+        ctx = _Ctx()
+        st = _run(owner_review_menu_choice(_Update("feedback", OWNER), ctx))
+        self.assertEqual(st, REVIEW_FEEDBACK)
+        self.assertEqual(ctx.user_data["review_numbers"], {1: self.fid})
+        _run(review_feedback_choice(_Update("open", OWNER), ctx))
+        upd = _Update("1", OWNER)
+        _run(review_feedback_choice(upd, ctx))
+        self.assertEqual(ctx.user_data["review_sub"], "item")
+        self.assertTrue(any("tg://user?id=111" in m for m in upd.message.replies))
+        _run(review_feedback_choice(_Update("delete", OWNER), ctx))
+        _run(review_feedback_choice(_Update("yes", OWNER), ctx))
+        self.assertEqual(list_feedback(self.db, status="pending"), [])
+
+    def test_delete_all_feedback(self):
+        add_feedback(self.db, GUEST, "second")
+        ctx = _Ctx()
+        _run(owner_review_menu_choice(_Update("feedback", OWNER), ctx))
+        _run(review_feedback_choice(_Update("delete all", OWNER), ctx))
+        _run(review_feedback_choice(_Update("yes", OWNER), ctx))
+        self.assertEqual(list_feedback(self.db, status="pending"), [])
+
+    def test_guest_blocked(self):
+        ctx = _Ctx()
+        self.assertEqual(_run(review_feedback_choice(_Update("open", GUEST), ctx)), SETTINGS_MENU)
 
 
 if __name__ == "__main__":

@@ -134,6 +134,7 @@ TEXTS = {
         "review_deleted": "✅ Deleted.",
         "yes_btn": "yes",
         "no_btn": "no",
+        "review_fb_empty": "No feedback.",
     },
     "ru": {
         "start": "Старт",
@@ -257,6 +258,7 @@ TEXTS = {
         "review_deleted": "✅ Удалено.",
         "yes_btn": "да",
         "no_btn": "нет",
+        "review_fb_empty": "Нет фидбеков.",
     },
     "uk": {
         "start": "Старт",
@@ -380,6 +382,7 @@ TEXTS = {
         "review_deleted": "✅ Видалено.",
         "yes_btn": "так",
         "no_btn": "ні",
+        "review_fb_empty": "Немає відгуків.",
     },
 }
 

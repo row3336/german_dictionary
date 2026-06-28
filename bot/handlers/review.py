@@ -12,6 +12,7 @@ from telegram.ext import ContextTypes
 
 from ..app_config import (
     OWNER_REVIEW_MENU,
+    REVIEW_FEEDBACK,
     REVIEW_REPORTS,
     SETTINGS_MENU,
     get_db_path,
@@ -22,8 +23,11 @@ from ..common.navigation import _action_key_from_text
 from ..i18n import t
 from ..storage import (
     delete_all_error_reports,
+    delete_all_feedback,
     delete_error_report,
+    delete_feedback,
     list_error_reports,
+    list_feedback,
     set_error_report_status,
 )
 from ..ui.keyboards import _settings_menu_keys
@@ -70,7 +74,8 @@ async def owner_review_menu_choice(update: Update, context: ContextTypes.DEFAULT
         return SETTINGS_MENU
     if text == t(lang, "review_reports"):
         return await _show_reports_list(update, context, user_id)
-    # feedback list lands in 8c; for now re-show the submenu.
+    if text == t(lang, "review_feedback"):
+        return await _show_feedback_list(update, context, user_id)
     return await _send_review_menu(update, user_id)
 
 
@@ -213,3 +218,115 @@ async def review_reports_choice(update: Update, context: ContextTypes.DEFAULT_TY
         return await _show_reports_list(update, context, user_id, status)
 
     return await _show_reports_list(update, context, user_id, status)
+
+
+# --- Feedback list (P6.3 8c): no status/close — just view + delete. ---
+
+def _fmt_feedback_list(items, lang):
+    if not items:
+        return t(lang, "review_fb_empty")
+    lines = []
+    for i, f in enumerate(items, 1):
+        txt = (f.get("text") or "").replace("\n", " ")[:70]
+        lines.append(f"{i}) {_who(f)} · {txt}")
+    return "\n".join(lines)
+
+
+def _fb_list_keys(lang, items):
+    rows = [[t(lang, "review_open"), t(lang, "review_delete_all")]] if items else []
+    rows.append([t(lang, "back")])
+    return rows
+
+
+async def _show_feedback_list(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id):
+    """Render the feedback list and reset the review sub-state to 'list'."""
+    lang = _user_interface_lang(user_id)
+    items = list_feedback(get_db_path(), status="pending")
+    context.user_data["review_numbers"] = {i: f["id"] for i, f in enumerate(items, 1)}
+    context.user_data["review_items"] = {f["id"]: f for f in items}
+    context.user_data["review_sub"] = "list"
+    await update.message.reply_text(
+        f"```text\n{_fmt_feedback_list(items, lang)}\n```",
+        parse_mode="Markdown",
+        reply_markup=ReplyKeyboardMarkup(_fb_list_keys(lang, items), resize_keyboard=True),
+    )
+    return REVIEW_FEEDBACK
+
+
+def _fmt_feedback_item(item):
+    return f"💬 feedback #{item['id']}\n{_clickable(item)}\n```text\n{item.get('text', '')}\n```"
+
+
+async def review_feedback_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Feedback navigation: open→number→card→delete; delete-all. No close/status."""
+    text = update.message.text.strip()
+    user_id = update.effective_user.id
+    if not is_owner(user_id):
+        return SETTINGS_MENU
+    lang = _user_interface_lang(user_id)
+    action = _action_key_from_text(text, user_id)
+    sub = context.user_data.get("review_sub", "list")
+
+    if action == "back":
+        if sub in ("pick", "item", "confirm_delete", "delete_all_confirm"):
+            return await _show_feedback_list(update, context, user_id)
+        return await _send_review_menu(update, user_id)
+
+    if sub == "list":
+        if text == t(lang, "review_open") and context.user_data.get("review_numbers"):
+            context.user_data["review_sub"] = "pick"
+            nums = list(context.user_data["review_numbers"])
+            rows = [[str(n) for n in nums[i:i + 5]] for i in range(0, len(nums), 5)]
+            rows.append([t(lang, "back")])
+            await update.message.reply_text(
+                t(lang, "review_pick"),
+                reply_markup=ReplyKeyboardMarkup(rows, resize_keyboard=True),
+            )
+            return REVIEW_FEEDBACK
+        if text == t(lang, "review_delete_all") and context.user_data.get("review_numbers"):
+            context.user_data["review_sub"] = "delete_all_confirm"
+            await update.message.reply_text(
+                t(lang, "review_delete_all_prompt"),
+                reply_markup=ReplyKeyboardMarkup([[t(lang, "back")]], resize_keyboard=True),
+            )
+            return REVIEW_FEEDBACK
+        return await _show_feedback_list(update, context, user_id)
+
+    if sub == "pick":
+        try:
+            fid = context.user_data.get("review_numbers", {}).get(int(text.strip()))
+        except ValueError:
+            fid = None
+        item = context.user_data.get("review_items", {}).get(fid)
+        if not item:
+            return await _show_feedback_list(update, context, user_id)
+        context.user_data["review_sub"] = "item"
+        context.user_data["review_current"] = fid
+        await update.message.reply_text(
+            _fmt_feedback_item(item),
+            parse_mode="Markdown",
+            reply_markup=ReplyKeyboardMarkup([[t(lang, "review_delete")], [t(lang, "back")]], resize_keyboard=True),
+        )
+        return REVIEW_FEEDBACK
+
+    if sub == "item" and text == t(lang, "review_delete"):
+        context.user_data["review_sub"] = "confirm_delete"
+        await update.message.reply_text(
+            t(lang, "review_confirm_delete"),
+            reply_markup=ReplyKeyboardMarkup([[t(lang, "yes_btn"), t(lang, "no_btn")]], resize_keyboard=True),
+        )
+        return REVIEW_FEEDBACK
+
+    if sub == "confirm_delete":
+        if text == t(lang, "yes_btn"):
+            fid = context.user_data.get("review_current")
+            if fid:
+                delete_feedback(get_db_path(), fid)
+        return await _show_feedback_list(update, context, user_id)
+
+    if sub == "delete_all_confirm":
+        if text.strip().lower() == "yes":
+            delete_all_feedback(get_db_path())
+        return await _show_feedback_list(update, context, user_id)
+
+    return await _show_feedback_list(update, context, user_id)

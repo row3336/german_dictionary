@@ -4337,6 +4337,13 @@ def delete_feedback(db_path, feedback_id):
         conn.execute("DELETE FROM feedback WHERE id = ?", (int(feedback_id),))
 
 
+def delete_all_feedback(db_path):
+    """Delete every feedback row."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        conn.execute("DELETE FROM feedback")
+
+
 def create_template_from_word(raw_word):
     """Handle create template from word."""
     raw_word = raw_word.strip()
