@@ -14,66 +14,70 @@ from ..app_config import (
     get_db_path,
     get_owner_id,
 )
-from ..common.lang import _mode_de_l1, _mode_l1_de
+from ..common.lang import _mode_de_l1, _mode_l1_de, _user_interface_lang
+from ..common.outbound import SendStats, send_to_user
 from ..common.settings import _fsrs_report_hour_utc
+from ..i18n import t
 from ..storage import (
     count_learning_done_in_week,
     fsrs_due_forecast,
     get_daily_first_touch_retention,
     get_setting,
+    get_user_setting,
     get_weekly_first_touch_retention,
+    list_active_users,
     set_setting,
+    set_user_setting,
 )
 
+# Spread the nightly retention broadcast over the night: each tick sends to at
+# most this many not-yet-notified users, so sends drain over several ticks
+# instead of bursting (AIORateLimiter paces the within-tick rate on top).
+RETENTION_BROADCAST_JOB_NAME = "retention_broadcast_job"
+_RETENTION_BATCH_PER_TICK = 5
 
-def _format_retention_daily_text(retention):
-    """Handle format daily first-touch retention text."""
+
+def _retention_zone(lang, rate):
+    """Localized retention-zone label for a first-touch rate."""
+    if rate < 70.0:
+        key = "report_zone_overload"
+    elif 80.0 <= rate <= 90.0:
+        key = "report_zone_optimal"
+    elif rate > 95.0:
+        key = "report_zone_easy"
+    else:
+        key = "report_zone_outside"
+    return t(lang, key)
+
+
+def _format_retention_daily_text(retention, lang):
+    """Localized daily first-touch retention text."""
     day = retention.get("date", "")
     total = int(retention.get("total") or 0)
     correct = int(retention.get("correct") or 0)
     rate = float(retention.get("rate") or 0.0)
     if total <= 0:
-        return f"#daily\nRetention rate ({day}, first touch): no data."
-    if rate < 70.0:
-        zone = "<70%: overload"
-    elif 80.0 <= rate <= 90.0:
-        zone = "80-90%: optimal"
-    elif rate > 95.0:
-        zone = ">95%: too easy (you can add more new words)"
-    else:
-        zone = "outside optimal range"
-    return (
-        f"#daily\n"
-        f"Retention rate ({day}, first touch): {rate:.1f}%\n"
-        f"Correct: {correct}/{total}\n"
-        f"{zone}"
+        return t(lang, "report_retention_daily_nodata").format(day=day)
+    return t(lang, "report_retention_daily").format(
+        day=day, rate=f"{rate:.1f}", correct=correct, total=total,
+        zone=_retention_zone(lang, rate),
     )
 
 
-def _format_retention_weekly_text(retention, learning_done=0):
-    """Handle weekly first-touch retention text."""
+def _format_retention_weekly_text(retention, learning_done, lang):
+    """Localized weekly first-touch retention text."""
     ws = retention.get("week_start", "")
     we = retention.get("week_end", "")
     total = int(retention.get("total") or 0)
     correct = int(retention.get("correct") or 0)
     rate = float(retention.get("rate") or 0.0)
-    learning_line = f"Learning completed: {learning_done}"
     if total <= 0:
-        return f"#weekly\nRetention rate ({ws}..{we}, first touch): no data.\n{learning_line}"
-    if rate < 70.0:
-        zone = "<70%: overload"
-    elif 80.0 <= rate <= 90.0:
-        zone = "80-90%: optimal"
-    elif rate > 95.0:
-        zone = ">95%: too easy (you can add more new words)"
-    else:
-        zone = "outside optimal range"
-    return (
-        f"#weekly\n"
-        f"Retention rate ({ws}..{we}, first touch): {rate:.1f}%\n"
-        f"Correct: {correct}/{total}\n"
-        f"{zone}\n"
-        f"{learning_line}"
+        return t(lang, "report_retention_weekly_nodata").format(
+            ws=ws, we=we, learning=learning_done,
+        )
+    return t(lang, "report_retention_weekly").format(
+        ws=ws, we=we, rate=f"{rate:.1f}", correct=correct, total=total,
+        zone=_retention_zone(lang, rate), learning=learning_done,
     )
 
 
@@ -100,7 +104,7 @@ def _should_send_fsrs_daily_report(db_path, now_utc):
 
 
 async def _fsrs_daily_report_job(context: ContextTypes.DEFAULT_TYPE):
-    """Handle fsrs daily report job."""
+    """Owner-only FSRS forecast + peak-window state (retention moved to P5.3 broadcast)."""
     db_path = get_db_path()
     owner_id = get_owner_id()
     if not owner_id:
@@ -121,39 +125,6 @@ async def _fsrs_daily_report_job(context: ContextTypes.DEFAULT_TYPE):
             text=f"```text\n{text}\n```",
             parse_mode="Markdown",
         )
-        report_day = (now.date() - timedelta(days=1)).isoformat()
-        retention = get_daily_first_touch_retention(
-            db_path,
-            user_id=owner_id,
-            target_date=report_day,
-            modes=(_mode_l1_de(owner_id), _mode_de_l1(owner_id)),
-        )
-        await context.bot.send_message(
-            chat_id=owner_id,
-            text=f"```text\n{_format_retention_daily_text(retention)}\n```",
-            parse_mode="Markdown",
-        )
-        # Weekly report: send once on Monday after report hour, for previous week.
-        report_hour = _fsrs_report_hour_utc(db_path)
-        if now.weekday() == 0 and now.hour >= report_hour:
-            prev_ref = now.date() - timedelta(days=7)
-            prev_ws = prev_ref - timedelta(days=prev_ref.weekday())
-            prev_ws_iso = prev_ws.isoformat()
-            last_weekly = get_setting(db_path, FSRS_WEEKLY_REPORT_WEEK_KEY, "")
-            if last_weekly != prev_ws_iso:
-                weekly = get_weekly_first_touch_retention(
-                    db_path,
-                    user_id=owner_id,
-                    week_start=prev_ws_iso,
-                    modes=(_mode_l1_de(owner_id), _mode_de_l1(owner_id)),
-                )
-                learning_done = count_learning_done_in_week(db_path, owner_id, week_start=prev_ws_iso)
-                await context.bot.send_message(
-                    chat_id=owner_id,
-                    text=f"```text\n{_format_retention_weekly_text(weekly, learning_done)}\n```",
-                    parse_mode="Markdown",
-                )
-                set_setting(db_path, FSRS_WEEKLY_REPORT_WEEK_KEY, prev_ws_iso)
         set_setting(db_path, FSRS_REPORT_DATE_KEY, today)
         set_setting(db_path, "fsrs_peak_hour_today", "")
         set_setting(db_path, FSRS_PEAK_NOTIFY_DATE_KEY, "")
@@ -162,6 +133,64 @@ async def _fsrs_daily_report_job(context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         logging.exception("FSRS daily report failed")
         return
+
+
+async def _retention_broadcast_job(context: ContextTypes.DEFAULT_TYPE):
+    """P5.3 — broadcast per-user retention (daily + weekly-on-Monday) to all users.
+
+    Each user gets their OWN numbers, in their own language, once per day. Sends
+    are spread over the night: starting at the report hour, each tick handles at
+    most `_RETENTION_BATCH_PER_TICK` not-yet-notified users (per-user dedup keys),
+    so the broadcast drains over several ticks instead of bursting.
+    """
+    db_path = get_db_path()
+    now = datetime.now(timezone.utc)
+    report_hour = _fsrs_report_hour_utc(db_path)
+    if now.hour < report_hour:
+        return
+    today = now.date().isoformat()
+    report_day = (now.date() - timedelta(days=1)).isoformat()
+    is_monday = now.weekday() == 0
+    prev_ws_iso = ""
+    if is_monday:
+        prev_ref = now.date() - timedelta(days=7)
+        prev_ws_iso = (prev_ref - timedelta(days=prev_ref.weekday())).isoformat()
+
+    send_stats = SendStats()
+    handled = 0
+    for user_id in list_active_users(db_path):
+        if handled >= _RETENTION_BATCH_PER_TICK:
+            break
+        if get_user_setting(db_path, user_id, FSRS_REPORT_DATE_KEY, "") == today:
+            continue
+        lang = _user_interface_lang(user_id)
+        modes = (_mode_l1_de(user_id), _mode_de_l1(user_id))
+        retention = get_daily_first_touch_retention(
+            db_path, user_id=user_id, target_date=report_day, modes=modes,
+        )
+        daily_text = _format_retention_daily_text(retention, lang)
+        result = await send_to_user(
+            context.bot, user_id, f"```text\n{daily_text}\n```",
+            "retention_daily", stats=send_stats, parse_mode="Markdown",
+        )
+        # Weekly is handled in the same pass (before marking the daily dedup) so a
+        # user never gets the daily mark without their pending weekly.
+        if is_monday and get_user_setting(db_path, user_id, FSRS_WEEKLY_REPORT_WEEK_KEY, "") != prev_ws_iso:
+            weekly = get_weekly_first_touch_retention(
+                db_path, user_id=user_id, week_start=prev_ws_iso, modes=modes,
+            )
+            learning_done = count_learning_done_in_week(db_path, user_id, week_start=prev_ws_iso)
+            weekly_text = _format_retention_weekly_text(weekly, learning_done, lang)
+            await send_to_user(
+                context.bot, user_id, f"```text\n{weekly_text}\n```",
+                "retention_weekly", stats=send_stats, parse_mode="Markdown",
+            )
+            set_user_setting(db_path, user_id, FSRS_WEEKLY_REPORT_WEEK_KEY, prev_ws_iso)
+        if result != "error":
+            set_user_setting(db_path, user_id, FSRS_REPORT_DATE_KEY, today)
+        handled += 1
+
+    send_stats.log("retention")
 
 
 async def _fsrs_peak_notify_job(context: ContextTypes.DEFAULT_TYPE):
@@ -206,10 +235,9 @@ def _configure_fsrs_reports(app: Application):
     job_queue = app.job_queue
     if job_queue is None:
         return
-    for job in job_queue.get_jobs_by_name(FSRS_REPORT_JOB_NAME):
-        job.schedule_removal()
-    for job in job_queue.get_jobs_by_name(FSRS_PEAK_JOB_NAME):
-        job.schedule_removal()
+    for name in (FSRS_REPORT_JOB_NAME, FSRS_PEAK_JOB_NAME, RETENTION_BROADCAST_JOB_NAME):
+        for job in job_queue.get_jobs_by_name(name):
+            job.schedule_removal()
     # Run frequently and guard by date/hour so reports still work after restarts.
     job_queue.run_repeating(
         _fsrs_daily_report_job,
@@ -222,4 +250,12 @@ def _configure_fsrs_reports(app: Application):
         interval=900,
         first=900,
         name=FSRS_PEAK_JOB_NAME,
+    )
+    # Per-user retention broadcast: ticks every 10 min, drains the night window
+    # in small batches (the job itself gates by report hour + per-user dedup).
+    job_queue.run_repeating(
+        _retention_broadcast_job,
+        interval=600,
+        first=120,
+        name=RETENTION_BROADCAST_JOB_NAME,
     )
