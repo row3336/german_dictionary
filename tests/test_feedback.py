@@ -75,11 +75,14 @@ class FeedbackTest(unittest.TestCase):
             else:
                 os.environ[k] = v
 
-    def test_feedback_button_in_settings_for_all(self):
+    def test_feedback_button_placement(self):
+        # P6.3: a guest submits feedback; the owner gets the review/feedback submenu
+        # (reviews instead of submitting), so no plain feedback-input button.
         flat_owner = [c for row in K._settings_menu_keys(OWNER) for c in row]
         flat_guest = [c for row in K._settings_menu_keys(GUEST) for c in row]
-        self.assertIn("feedback", flat_owner)   # en label
         self.assertIn("feedback", flat_guest)
+        self.assertIn("review/feedback", flat_owner)
+        self.assertNotIn("feedback", flat_owner)
 
     def test_input_stores_and_notifies_owner(self):
         upd = _Update("please add dark mode", _User(GUEST, username="bob"))

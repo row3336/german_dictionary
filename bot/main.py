@@ -23,6 +23,8 @@ from .app_config import (
     ACCESS_MESSAGE,
     FEEDBACK_INPUT,
     LANGUAGE_MENU,
+    OWNER_REVIEW_MENU,
+    REVIEW_REPORTS,
     ACCESS_REJECTED,
     ADD_CLARIFY,
     ADD_CONFIRM,
@@ -150,6 +152,7 @@ from .handlers.settings import (
     topic_filter_edit,
 )
 from .handlers.feedback import feedback_input
+from .handlers.review import owner_review_menu_choice, review_reports_choice
 from .handlers.access import (
     access_decision_callback,
     access_message_input,
@@ -404,6 +407,8 @@ def main():
             QUIZ_RU_DE_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_ru_de_menu_choice)],
             SETTINGS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, settings_menu_choice)],
             LANGUAGE_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, language_menu_choice)],
+            OWNER_REVIEW_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, owner_review_menu_choice)],
+            REVIEW_REPORTS: [MessageHandler(filters.TEXT & ~filters.COMMAND, review_reports_choice)],
             ALGO_SETTINGS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, algo_settings_menu_choice)],
             DRILL_SETTINGS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, drill_settings_menu_choice)],
             LEARNING_SETTINGS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, learning_settings_menu_choice)],

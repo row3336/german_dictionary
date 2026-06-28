@@ -704,6 +704,10 @@ async def settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
         from .feedback import _start_feedback
         return await _start_feedback(update, user_id)
 
+    if is_owner(user_id) and text == t(_user_interface_lang(user_id), "review_menu"):
+        from .review import _send_review_menu
+        return await _send_review_menu(update, user_id)
+
     # parse_VF and dump are owner-only (P3.2). Defense in depth: the buttons are hidden
     # from guests in _settings_menu_keys, plus we close the actions against raw text.
     if action in {"dump", "review_flags"} and not is_owner(user_id):
