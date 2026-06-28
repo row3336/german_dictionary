@@ -20,7 +20,8 @@ def install():
             "ReplyKeyboardMarkup", (),
             {"__init__": lambda self, rows=None, **k: setattr(self, "rows", rows)},
         )
-    for _n in ("ReplyKeyboardRemove", "Update", "InlineKeyboardButton", "InlineKeyboardMarkup"):
+    for _n in ("ReplyKeyboardRemove", "Update", "InlineKeyboardButton", "InlineKeyboardMarkup",
+               "LabeledPrice"):
         if not hasattr(tg, _n):
             setattr(tg, _n, type(_n, (), {"__init__": lambda self, *a, **k: None}))
 

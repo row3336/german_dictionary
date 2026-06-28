@@ -76,9 +76,10 @@ def _settings_menu_keys(user_id):
     first = [t(lang, "algo_settings"), PARSE_VF_TEXT, t(lang, "language_sett")] if owner \
         else [t(lang, "algo_settings"), t(lang, "language_sett")]
     rows = [first]
-    # Owner reviews reports/feedback (review_menu); a guest submits feedback (P6.3).
+    # Owner reviews reports/feedback (review_menu); a guest submits feedback +
+    # can support the project with Telegram Stars (P6.3/P6.4).
     rows.append([t(lang, "review_menu"), t(lang, "dump"), t(lang, "back")] if owner
-                else [t(lang, "feedback_btn"), t(lang, "back")])
+                else [t(lang, "feedback_btn"), t(lang, "support_project"), t(lang, "back")])
     return rows
 
 

@@ -135,6 +135,11 @@ TEXTS = {
         "yes_btn": "yes",
         "no_btn": "no",
         "review_fb_empty": "No feedback.",
+        "support_project": "⭐ support project",
+        "donate_title": "Support the project",
+        "donate_desc": "Send a few Telegram Stars to support development. Thank you!",
+        "donate_label": "Support",
+        "donate_thanks": "⭐ Thank you for your support!",
     },
     "ru": {
         "start": "Старт",
@@ -259,6 +264,11 @@ TEXTS = {
         "yes_btn": "да",
         "no_btn": "нет",
         "review_fb_empty": "Нет фидбеков.",
+        "support_project": "⭐ поддержать проект",
+        "donate_title": "Поддержать проект",
+        "donate_desc": "Отправьте немного Telegram Stars в поддержку разработки. Спасибо!",
+        "donate_label": "Поддержка",
+        "donate_thanks": "⭐ Спасибо за поддержку!",
     },
     "uk": {
         "start": "Старт",
@@ -383,6 +393,11 @@ TEXTS = {
         "yes_btn": "так",
         "no_btn": "ні",
         "review_fb_empty": "Немає відгуків.",
+        "support_project": "⭐ підтримати проєкт",
+        "donate_title": "Підтримати проєкт",
+        "donate_desc": "Надішліть трохи Telegram Stars на підтримку розробки. Дякую!",
+        "donate_label": "Підтримка",
+        "donate_thanks": "⭐ Дякую за підтримку!",
     },
 }
 

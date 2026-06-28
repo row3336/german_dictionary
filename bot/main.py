@@ -16,6 +16,7 @@ from telegram.ext import (
     ContextTypes,
     ConversationHandler,
     MessageHandler,
+    PreCheckoutQueryHandler,
     filters,
 )
 
@@ -158,6 +159,7 @@ from .handlers.review import (
     review_feedback_choice,
     review_reports_choice,
 )
+from .handlers.donate import precheckout_callback, successful_payment_callback
 from .handlers.access import (
     access_decision_callback,
     access_message_input,
@@ -453,6 +455,9 @@ def main():
     app.add_handler(conv)
     # Global handler for the owner's inline decisions on access requests (P3.1).
     app.add_handler(CallbackQueryHandler(access_decision_callback, pattern=r"^access:"))
+    # Telegram Stars donation (P6.4): pre-checkout approval + post-payment thanks.
+    app.add_handler(PreCheckoutQueryHandler(precheckout_callback))
+    app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
     app.run_polling()
 
 
