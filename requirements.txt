@@ -1,4 +1,4 @@
-# python-telegram-bot 20+ (async)
-python-telegram-bot==20.7
+# python-telegram-bot 20+ (async); [rate-limiter] pulls aiolimiter for AIORateLimiter (P5)
+python-telegram-bot[rate-limiter]==20.7
 python-dotenv==1.0.1
 openai==1.40.0

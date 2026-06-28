@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-from .app_config import CEFR_LEVELS, is_owner
+from .app_config import CEFR_LEVELS, get_owner_id, is_owner
 from .text_utils import cap_word
 
 DEFAULT_EASE = 2.5
@@ -1695,6 +1695,24 @@ def list_pending_users(db_path):
         }
         for row in rows
     ]
+
+
+def list_active_users(db_path):
+    """User ids that should receive broadcasts (P5): every 'approved' user plus
+    the owner (who may not have an 'approved' row). Distinct, owner included,
+    sorted; 0/empty ids dropped.
+    """
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT user_id FROM users WHERE status = 'approved'",
+        ).fetchall()
+    ids = {_safe_int(row["user_id"]) for row in rows}
+    owner_id = get_owner_id()
+    if owner_id:
+        ids.add(int(owner_id))
+    ids.discard(0)
+    return sorted(ids)
 
 
 # --- Personal example/image (P4): a guest's per-word value, owner edits stay in

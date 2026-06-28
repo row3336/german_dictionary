@@ -9,6 +9,7 @@ from datetime import (
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import (
+    AIORateLimiter,
     Application,
     CallbackQueryHandler,
     CommandHandler,
@@ -97,6 +98,7 @@ from .storage import (
 )
 from .common.db_safety import apply_migrations_safely
 from .common.lang import _user_interface_lang
+from .common.outbound import configure_outbound_logger
 from .common.navigation import _back_to_tests
 from .i18n import t
 from .handlers.dump import (
@@ -281,6 +283,8 @@ def _configure_logging():
     root_logger.addHandler(stream_handler)
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
+    # Outbound send log (P5) goes to its own rotating file, off the root logger.
+    configure_outbound_logger()
     logging.getLogger("apscheduler").setLevel(logging.WARNING)
     logging.getLogger("apscheduler.executors.default").setLevel(logging.WARNING)
 
@@ -354,9 +358,13 @@ def main():
     # Timeouts/pool tuned for a flaky VPS↔Telegram route: PTB defaults (connect/read
     # 5s, pool size 1, pool_timeout 1s) are too tight and cause ConnectTimeout/pool
     # exhaustion → lost/delayed quiz sends (diagnosed in docs/todo.md).
+    # AIORateLimiter is the outbound governor (P5): paces ALL sends <=30 msg/s
+    # globally and auto-retries 429/RetryAfter, so broadcasts to all users can't
+    # burst into a Telegram flood/ban. Needs the [rate-limiter] extra (aiolimiter).
     app = (
         Application.builder()
         .token(token)
+        .rate_limiter(AIORateLimiter())
         .connect_timeout(20)
         .read_timeout(20)
         .write_timeout(20)
