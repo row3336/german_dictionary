@@ -157,10 +157,6 @@ def get_log_path():
     return Path(os.getenv("LOG_PATH", "./data/bot.log"))
 
 
-def get_suggestions_path():
-    """Handle get suggestions path."""
-    return Path(os.getenv("SUGGESTIONS_PATH", "./data/suggested_words.txt"))
-
 
 def get_info_path():
     """Handle get info path."""

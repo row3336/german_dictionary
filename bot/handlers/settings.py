@@ -87,7 +87,6 @@ from ..ui.keyboards import (
 
 # Extra imports for the verbformen-heavy Settings root router (settings_menu_choice).
 from ..app_config import BACK_TEXT, DUMP_MENU, LANGUAGE_MENU
-from ..common.dumps import _create_suggestions_dump_file
 from ..handlers.dump import _dump_menu_keys
 from ..labels import (
     VF_APPLY_TEXT,
@@ -652,7 +651,7 @@ async def topic_filter_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Settings menu router: languages/algo (guest ok), parse_VF/dump/suggested are owner-only (P3.2)."""
+    """Settings menu router: languages/algo (guest ok), parse_VF/dump are owner-only (P3.2)."""
     text = update.message.text.strip()
     user_id = update.effective_user.id
     action = _action_key_from_text(text, user_id)
@@ -848,20 +847,6 @@ async def settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
             return await _send_vf_menu(update, f"verify: ok={ok}, still_diff={bad}")
 
         return await _send_vf_menu(update, "Use parse_VF buttons.")
-
-    if action == "suggested_words":
-        if not is_owner(user_id):  # owner-only (P3.2)
-            return SETTINGS_MENU
-        suggestions_path = _create_suggestions_dump_file()
-        if suggestions_path is None:
-            await update.message.reply_text("No suggested words file yet.")
-            return SETTINGS_MENU
-        await update.message.reply_document(
-            document=suggestions_path.open("rb"),
-            filename=suggestions_path.name,
-            caption="✅ Suggested words dump created.",
-        )
-        return SETTINGS_MENU
 
     await update.message.reply_text(
         "Use settings buttons.",

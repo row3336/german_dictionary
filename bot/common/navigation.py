@@ -51,7 +51,6 @@ def _action_key_from_text(text, user_id):
         ("dump_db", "dump_db"),
         ("dump_logs", "dump_logs"),
         ("dump", "dump"),
-        ("suggested_words", "suggested_words"),
         ("review_flags", "review_flags"),
         ("algo_settings", "algo_settings"),
         ("topic_filter", "topic_filter"),
