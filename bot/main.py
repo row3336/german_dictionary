@@ -22,6 +22,7 @@ from telegram.ext import (
 from .app_config import (
     ACCESS_MESSAGE,
     FEEDBACK_INPUT,
+    LANGUAGE_MENU,
     ACCESS_REJECTED,
     ADD_CLARIFY,
     ADD_CONFIRM,
@@ -141,6 +142,7 @@ from .handlers.settings import (
     algo_settings_edit,
     algo_settings_menu_choice,
     drill_settings_menu_choice,
+    language_menu_choice,
     learning_settings_menu_choice,
     select_dict_lang,
     select_ui_lang,
@@ -401,6 +403,7 @@ def main():
             LEARNING_QUIZ: [MessageHandler(filters.TEXT & ~filters.COMMAND, learning_quiz)],
             QUIZ_RU_DE_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_ru_de_menu_choice)],
             SETTINGS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, settings_menu_choice)],
+            LANGUAGE_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, language_menu_choice)],
             ALGO_SETTINGS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, algo_settings_menu_choice)],
             DRILL_SETTINGS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, drill_settings_menu_choice)],
             LEARNING_SETTINGS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, learning_settings_menu_choice)],

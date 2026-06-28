@@ -77,6 +77,7 @@ from ..ui.keyboards import (
     _add_keys,
     _algo_settings_menu_keys,
     _drill_settings_menu_keys,
+    _language_menu_keys,
     _learning_settings_menu_keys,
     _main_menu_markup,
     _ru_de_menu_keys,
@@ -85,7 +86,7 @@ from ..ui.keyboards import (
 )
 
 # Extra imports for the verbformen-heavy Settings root router (settings_menu_choice).
-from ..app_config import BACK_TEXT, DUMP_MENU
+from ..app_config import BACK_TEXT, DUMP_MENU, LANGUAGE_MENU
 from ..common.dumps import _create_suggestions_dump_file
 from ..handlers.dump import _dump_menu_keys
 from ..labels import (
@@ -263,6 +264,34 @@ async def _ask_dictionary_language(update: Update, user_id):
         reply_markup=ReplyKeyboardMarkup([[choices[0]], [choices[1]], [choices[2]]], resize_keyboard=True),
     )
     return SELECT_DICT_LANG
+
+
+async def _send_language_menu(update: Update, user_id):
+    """Show the language submenu (P6.3): interface + dictionary language."""
+    lang = _user_interface_lang(user_id)
+    await update.message.reply_text(
+        t(lang, "language_sett"),
+        reply_markup=ReplyKeyboardMarkup(_language_menu_keys(user_id), resize_keyboard=True),
+    )
+    return LANGUAGE_MENU
+
+
+async def language_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Language submenu router: interface/dict language; back returns to Settings."""
+    text = update.message.text.strip()
+    user_id = update.effective_user.id
+    action = _action_key_from_text(text, user_id)
+    if action == "back":
+        await update.message.reply_text(
+            t(_user_interface_lang(user_id), "settings_title"),
+            reply_markup=ReplyKeyboardMarkup(_settings_menu_keys(user_id), resize_keyboard=True),
+        )
+        return SETTINGS_MENU
+    if action == "interface_lang":
+        return await _ask_interface_language(update)
+    if action == "dict_lang":
+        return await _ask_dictionary_language(update, user_id)
+    return await _send_language_menu(update, user_id)
 
 
 async def select_ui_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -665,11 +694,8 @@ async def settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
         context.user_data.pop("vf_menu", None)
         return await _back_to_main_menu(update)
 
-    if action == "interface_lang":
-        return await _ask_interface_language(update)
-
-    if action == "dict_lang":
-        return await _ask_dictionary_language(update, user_id)
+    if text == t(_user_interface_lang(user_id), "language_sett"):
+        return await _send_language_menu(update, user_id)
 
     if action == "algo_settings":
         return await _send_algo_settings_menu(update, user_id)

@@ -72,12 +72,23 @@ def _settings_menu_keys(user_id):
     """Settings menu. parse_VF and dump are owner-only (P3.2)."""
     lang = _user_interface_lang(user_id)
     owner = is_owner(user_id)
-    rows = [[PARSE_VF_TEXT, t(lang, "algo_settings")] if owner else [t(lang, "algo_settings")]]
-    rows.append([t(lang, "interface_lang_btn"), t(lang, "dict_lang_btn")])
+    # Languages now live in their own submenu (P6.3): "language_sett".
+    first = [t(lang, "algo_settings"), PARSE_VF_TEXT, t(lang, "language_sett")] if owner \
+        else [t(lang, "algo_settings"), t(lang, "language_sett")]
+    rows = [first]
     # "feedback" is open to everyone (P6.3).
     rows.append([t(lang, "feedback_btn"), t(lang, "dump"), t(lang, "back")] if owner
                 else [t(lang, "feedback_btn"), t(lang, "back")])
     return rows
+
+
+def _language_menu_keys(user_id):
+    """Language submenu (P6.3): interface + dictionary language, then back."""
+    lang = _user_interface_lang(user_id)
+    return [
+        [t(lang, "interface_lang_btn"), t(lang, "dict_lang_btn")],
+        [t(lang, "back")],
+    ]
 
 
 def _algo_settings_menu_keys(user_id):

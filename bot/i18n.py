@@ -118,6 +118,7 @@ TEXTS = {
         "feedback_prompt": "Type your feedback about the bot:",
         "feedback_saved": "✅ Feedback sent. Thank you!",
         "feedback_owner_hdr": "💬 New feedback",
+        "language_sett": "language_sett",
     },
     "ru": {
         "start": "Старт",
@@ -225,6 +226,7 @@ TEXTS = {
         "feedback_prompt": "Напишите ваш отзыв о боте:",
         "feedback_saved": "✅ Отзыв отправлен. Спасибо!",
         "feedback_owner_hdr": "💬 Новый фидбек",
+        "language_sett": "настройки языка",
     },
     "uk": {
         "start": "Старт",
@@ -332,6 +334,7 @@ TEXTS = {
         "feedback_prompt": "Напишіть ваш відгук про бота:",
         "feedback_saved": "✅ Відгук надіслано. Дякую!",
         "feedback_owner_hdr": "💬 Новий фідбек",
+        "language_sett": "налаштування мови",
     },
 }
 
