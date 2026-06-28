@@ -7,7 +7,6 @@ their handler groups and are moved alongside them in later refactor stages.
 from telegram import ReplyKeyboardMarkup
 
 from ..app_config import (
-    AI_CLARIFY_FIELD,
     BACK_TEXT,
     I_DONT_KNOW_TEXT,
     INPUT_ERR_TEXT,
@@ -120,10 +119,8 @@ def _quiz_markup(user_id, article=False, allow_idk=True):
         rows.append(["der", "die", "das"])
     elif allow_idk:
         rows.append([t(lang, "send_learn"), I_DONT_KNOW_TEXT, INPUT_ERR_TEXT])
-    if is_owner(user_id):
-        rows.append([AI_CLARIFY_FIELD, t(lang, "stop")])
-    else:
-        rows.append([t(lang, "stop")])
+    # "clarify_fields" (card with personal example/image + report) is open to all (P6.2).
+    rows.append([t(lang, "clarify_fields"), t(lang, "stop")])
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 
@@ -131,10 +128,7 @@ def _quiz_idle_markup(user_id):
     """Keyboard while the quiz is idle (between questions)."""
     lang = _user_interface_lang(user_id)
     rows = [[t(lang, "send_learn"), INPUT_ERR_TEXT]]
-    if is_owner(user_id):
-        rows.append([AI_CLARIFY_FIELD, t(lang, "back")])
-    else:
-        rows.append([t(lang, "back")])
+    rows.append([t(lang, "clarify_fields"), t(lang, "back")])
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 
@@ -142,10 +136,7 @@ def _weak_article_markup(user_id):
     """Handle weak article markup."""
     lang = _user_interface_lang(user_id)
     rows = [["der", "die", "das"]]
-    if is_owner(user_id):
-        rows.append([AI_CLARIFY_FIELD, INPUT_ERR_TEXT, t(lang, "stop")])
-    else:
-        rows.append([INPUT_ERR_TEXT, t(lang, "stop")])
+    rows.append([t(lang, "clarify_fields"), INPUT_ERR_TEXT, t(lang, "stop")])
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 

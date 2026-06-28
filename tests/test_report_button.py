@@ -46,6 +46,12 @@ class ReportButtonTest(unittest.TestCase):
         self.assertNotIn("delete", _flat(K._clarify_root_markup(GUEST)))
         self.assertIn("delete", _flat(K._clarify_root_markup(OWNER)))
 
+    def test_guest_quiz_has_clarify_entry(self):
+        # P6.2/P6.3: a guest can now open the clarify card from quizzes too.
+        self.assertIn("clarify_fields", _flat(K._quiz_markup(GUEST)))
+        self.assertIn("clarify_fields", _flat(K._quiz_markup(OWNER)))
+        self.assertIn("clarify_fields", _flat(K._weak_article_markup(GUEST)))
+
 
 if __name__ == "__main__":
     unittest.main()

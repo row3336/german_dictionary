@@ -9,7 +9,6 @@ from telegram import ReplyKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from ..app_config import (
-    AI_CLARIFY_FIELD,
     FLAG_TEXT,
     INPUT_ERR_TEXT,
     I_DONT_KNOW_TEXT,
@@ -147,7 +146,7 @@ async def quiz_article_weak(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await _send_article_weak_prompt(update, context, prefix, force_entry=context.user_data.get("quiz_entry"))
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_ARTICLE_WEAK)
-    if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
+    if _action_key_from_text(text, update.effective_user.id) == "clarify_fields":
         return await _start_clarify_fields(update, context, QUIZ_ARTICLE_WEAK)
 
     entry = context.user_data.get("quiz_entry")
@@ -196,7 +195,7 @@ async def quiz_plural_weak(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await _send_plural_weak_prompt(update, context, prefix, force_entry=context.user_data.get("quiz_entry"))
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_PLURAL_WEAK)
-    if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
+    if _action_key_from_text(text, update.effective_user.id) == "clarify_fields":
         return await _start_clarify_fields(update, context, QUIZ_PLURAL_WEAK)
 
     entry = context.user_data.get("quiz_entry")
@@ -247,7 +246,7 @@ async def quiz_prateritum_weak(update: Update, context: ContextTypes.DEFAULT_TYP
         return await _send_prateritum_weak_prompt(update, context, prefix, force_entry=context.user_data.get("quiz_entry"))
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_PRATERITUM_WEAK)
-    if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
+    if _action_key_from_text(text, update.effective_user.id) == "clarify_fields":
         return await _start_clarify_fields(update, context, QUIZ_PRATERITUM_WEAK)
 
     entry = context.user_data.get("quiz_entry")
@@ -298,7 +297,7 @@ async def quiz_partizip2_weak(update: Update, context: ContextTypes.DEFAULT_TYPE
         return await _send_partizip2_weak_prompt(update, context, prefix, force_entry=context.user_data.get("quiz_entry"))
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_PARTIZIP2_WEAK)
-    if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
+    if _action_key_from_text(text, update.effective_user.id) == "clarify_fields":
         return await _start_clarify_fields(update, context, QUIZ_PARTIZIP2_WEAK)
 
     entry = context.user_data.get("quiz_entry")

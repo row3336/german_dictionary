@@ -11,7 +11,6 @@ from telegram import ReplyKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from ..app_config import (
-    AI_CLARIFY_FIELD,
     FLAG_TEXT,
     I_DONT_KNOW_TEXT,
     INPUT_ERR_TEXT,
@@ -468,7 +467,7 @@ async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await _send_ru_de_prompt(update, context, prefix)
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_RU_DE)
-    if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
+    if _action_key_from_text(text, update.effective_user.id) == "clarify_fields":
         return await _start_clarify_fields(update, context, QUIZ_RU_DE)
 
     entry = context.user_data.get("quiz_entry")
@@ -520,7 +519,7 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await _send_de_ru_prompt(update, context, prefix)
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_DE_RU)
-    if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
+    if _action_key_from_text(text, update.effective_user.id) == "clarify_fields":
         return await _start_clarify_fields(update, context, QUIZ_DE_RU)
 
     entry = context.user_data.get("quiz_entry")
@@ -572,7 +571,7 @@ async def quiz_pl_sg(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await _send_pl_sg_prompt(update, context, prefix)
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_PL_SG)
-    if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
+    if _action_key_from_text(text, update.effective_user.id) == "clarify_fields":
         return await _start_clarify_fields(update, context, QUIZ_PL_SG)
 
     entry = context.user_data.get("quiz_entry")
@@ -619,7 +618,7 @@ async def quiz_article(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await _stop_with_summary(update, context, MODE_ARTICLE)
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_ARTICLE)
-    if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
+    if _action_key_from_text(text, update.effective_user.id) == "clarify_fields":
         return await _start_clarify_fields(update, context, QUIZ_ARTICLE)
 
     entry = context.user_data.get("quiz_entry")
