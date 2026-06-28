@@ -110,6 +110,10 @@ TEXTS = {
         "report_zone_optimal": "80-90%: optimal",
         "report_zone_easy": ">95%: too easy (you can add more new words)",
         "report_zone_outside": "outside optimal range",
+        "report_card": "report / fix",
+        "report_prompt": "Describe what's wrong or what to change:",
+        "report_saved": "✅ Report sent. Thank you!",
+        "report_owner_hdr": "🛠 New report",
     },
     "ru": {
         "start": "Старт",
@@ -209,6 +213,10 @@ TEXTS = {
         "report_zone_optimal": "80-90%: оптимально",
         "report_zone_easy": ">95%: слишком легко (можно добавить новых слов)",
         "report_zone_outside": "вне оптимального диапазона",
+        "report_card": "ошибка / правка",
+        "report_prompt": "Опишите, что не так или что предложить изменить:",
+        "report_saved": "✅ Репорт отправлен. Спасибо!",
+        "report_owner_hdr": "🛠 Новый репорт",
     },
     "uk": {
         "start": "Старт",
@@ -308,6 +316,10 @@ TEXTS = {
         "report_zone_optimal": "80-90%: оптимально",
         "report_zone_easy": ">95%: занадто легко (можна додати нових слів)",
         "report_zone_outside": "поза оптимальним діапазоном",
+        "report_card": "помилка / правка",
+        "report_prompt": "Опишіть, що не так або що запропонувати змінити:",
+        "report_saved": "✅ Репорт надіслано. Дякую!",
+        "report_owner_hdr": "🛠 Новий репорт",
     },
 }
 
