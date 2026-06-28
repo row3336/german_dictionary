@@ -15,6 +15,9 @@ from ..i18n import t
 from ..storage import add_feedback
 from ..ui.keyboards import _settings_menu_keys
 
+# P8: cap feedback length against abuse/bloat.
+_MAX_FEEDBACK_LEN = 1000
+
 
 async def _start_feedback(update: Update, user_id):
     """Prompt the user to type their feedback; enter the FEEDBACK_INPUT state."""
@@ -42,7 +45,7 @@ async def feedback_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if _action_key_from_text(text, user_id) == "back" or not text:
         await _back_to_settings(update, user_id, t(lang, "settings_title"))
         return SETTINGS_MENU
-    add_feedback(get_db_path(), user_id, text)
+    add_feedback(get_db_path(), user_id, text[:_MAX_FEEDBACK_LEN])
     owner_id = get_owner_id()
     if owner_id and owner_id != user_id:
         u = update.effective_user

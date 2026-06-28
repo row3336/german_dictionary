@@ -207,5 +207,26 @@ class FeedbackReviewTest(unittest.TestCase):
         self.assertEqual(_run(review_feedback_choice(_Update("open", GUEST), ctx)), SETTINGS_MENU)
 
 
+class ReviewHardeningTest(unittest.TestCase):
+    """P8a — user content reflected in Markdown must be neutralized."""
+
+    def test_comment_backticks_escaped(self):
+        from bot.handlers.review import _fmt_report_item
+        card = _fmt_report_item({
+            "id": 1, "user_id": 111, "username": "", "first_name": "x",
+            "german": "Haus", "mode": "ru_de", "comment": "```evil",
+        })
+        self.assertNotIn("```evil", card)   # raw code-fence breakout neutralized
+        self.assertIn("\\`", card)           # backticks are escaped
+
+    def test_clickable_label_has_no_link_breakers(self):
+        from bot.handlers.review import _clickable
+        link = _clickable({"id": 1, "user_id": 111, "username": "", "first_name": "a]b)c(d"})
+        label = link[1:link.index("](")]
+        for ch in "[]()":
+            self.assertNotIn(ch, label)
+        self.assertIn("tg://user?id=111", link)
+
+
 if __name__ == "__main__":
     unittest.main()

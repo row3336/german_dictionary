@@ -21,6 +21,7 @@ from ..app_config import (
 from ..common.lang import _user_interface_lang
 from ..common.navigation import _action_key_from_text
 from ..i18n import t
+from ..text_utils import md_escape
 from ..storage import (
     delete_all_error_reports,
     delete_all_feedback,
@@ -41,8 +42,15 @@ def _who(item):
 
 
 def _clickable(item):
-    """Markdown link to the author's profile (works without a @username)."""
-    return f"[{_who(item)}](tg://user?id={int(item['user_id'])})"
+    """Markdown link to the author's profile (works without a @username).
+
+    The label is escaped and stripped of link-breaking chars so a crafted
+    username/first_name can't break out of the Markdown link (P8 hardening).
+    """
+    label = md_escape(_who(item))
+    for ch in "[]()":
+        label = label.replace(ch, "")
+    return f"[{label}](tg://user?id={int(item['user_id'])})"
 
 
 def _owner_review_keys(user_id):
@@ -84,8 +92,10 @@ def _fmt_reports_list(reports, lang):
         return t(lang, "review_empty")
     lines = []
     for i, r in enumerate(reports, 1):
-        comment = (r.get("comment") or "").replace("\n", " ")[:60]
-        lines.append(f"{i}) {_who(r)} · {r.get('german', '')} · {r.get('mode', '')} · {comment}")
+        comment = md_escape((r.get("comment") or "").replace("\n", " ")[:60])
+        lines.append(
+            f"{i}) {md_escape(_who(r))} · {md_escape(r.get('german', ''))} · {r.get('mode', '')} · {comment}"
+        )
     return "\n".join(lines)
 
 
@@ -127,9 +137,9 @@ async def _show_reports_list(update: Update, context: ContextTypes.DEFAULT_TYPE,
 def _fmt_report_item(item):
     head = (
         f"🛠 report #{item['id']}\n{_clickable(item)}\n"
-        f"word: {item.get('german', '')} | {item.get('mode', '')}"
+        f"word: {md_escape(item.get('german', ''))} | {item.get('mode', '')}"
     )
-    return f"{head}\n```text\n{item.get('comment', '')}\n```"
+    return f"{head}\n```text\n{md_escape(item.get('comment', ''))}\n```"
 
 
 async def review_reports_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -227,8 +237,8 @@ def _fmt_feedback_list(items, lang):
         return t(lang, "review_fb_empty")
     lines = []
     for i, f in enumerate(items, 1):
-        txt = (f.get("text") or "").replace("\n", " ")[:70]
-        lines.append(f"{i}) {_who(f)} · {txt}")
+        txt = md_escape((f.get("text") or "").replace("\n", " ")[:70])
+        lines.append(f"{i}) {md_escape(_who(f))} · {txt}")
     return "\n".join(lines)
 
 
@@ -254,7 +264,7 @@ async def _show_feedback_list(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 def _fmt_feedback_item(item):
-    return f"💬 feedback #{item['id']}\n{_clickable(item)}\n```text\n{item.get('text', '')}\n```"
+    return f"💬 feedback #{item['id']}\n{_clickable(item)}\n```text\n{md_escape(item.get('text', ''))}\n```"
 
 
 async def review_feedback_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):

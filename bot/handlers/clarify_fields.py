@@ -60,6 +60,11 @@ from ..ui.keyboards import (
 )
 
 
+# P8: cap user-supplied free text (report / personal media) against abuse/bloat.
+_MAX_REPORT_LEN = 1000
+_MAX_MEDIA_LEN = 1000
+
+
 def _clarify_screen(context: ContextTypes.DEFAULT_TYPE, user_id):
     """Unified clarify keyboard for the current edit context (P6 collapsed card)."""
     in_search = context.user_data.get("edit_return_state") == DB_SEARCH_VIEW
@@ -309,6 +314,7 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
                 reply_markup=_clarify_screen(context, update.effective_user.id),
             )
             return ADD_EDIT
+        text = text[:_MAX_REPORT_LEN]  # P8: cap report length (anti-abuse)
         word_id = entry.get("id") or ""
         return_state = context.user_data.get("edit_return_state")
         add_error_report(
@@ -476,6 +482,9 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
             reply_markup=_clarify_fields_markup(source, update.effective_user.id),
         )
         return ADD_EDIT
+
+    if field in ("image", "example"):
+        text = text[:_MAX_MEDIA_LEN]  # P8: cap personal media length (anti-abuse)
 
     if field == "type":
         normalized_type = _type_label(text)

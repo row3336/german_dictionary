@@ -132,8 +132,10 @@ def _format_word_card(entry, title="Word card:", user_id=None):
         f"russian: {entry.get('russian', '') or '-'}",
         f"ukrainian: {entry.get('ukrainian', '') or '-'}",
         f"english: {entry.get('english', '') or '-'}",
-        f"image: {entry.get('image', '') or '-'}",
-        f"example: {entry.get('example', '') or '-'}",
+        # Personal image/example are user-writable (P4) → escape so they can't break
+        # out of the ```code``` block they're rendered in (P8 hardening).
+        f"image: {_md_escape(entry.get('image', '')) or '-'}",
+        f"example: {_md_escape(entry.get('example', '')) or '-'}",
     ]
     return "\n".join(lines)
 
