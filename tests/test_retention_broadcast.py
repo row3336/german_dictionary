@@ -7,6 +7,7 @@ are monkeypatched so no full quiz-event fixture is needed; telegram is stubbed.
 """
 
 import asyncio
+import datetime as _dt
 import os
 import tempfile
 import unittest
@@ -34,6 +35,17 @@ class _Ctx:
         self.bot = bot
 
 
+class _FrozenDatetime:
+    """Stand-in for reports.datetime so .now(tz) is deterministic (bug #22:
+    the job branches on now.weekday(), so tests must pin the day of week)."""
+
+    def __init__(self, value):
+        self._value = value
+
+    def now(self, tz=None):
+        return self._value
+
+
 def _run(coro):
     return asyncio.run(coro)
 
@@ -51,8 +63,9 @@ class RetentionBroadcastTest(unittest.TestCase):
 
         self._orig = {k: getattr(R, k) for k in (
             "list_active_users", "_user_interface_lang", "_mode_l1_de", "_mode_de_l1",
-            "get_daily_first_touch_retention", "_fsrs_report_hour_utc",
-            "_RETENTION_BATCH_PER_TICK",
+            "get_daily_first_touch_retention", "get_weekly_first_touch_retention",
+            "count_learning_done_in_week", "_fsrs_report_hour_utc",
+            "_RETENTION_BATCH_PER_TICK", "datetime",
         )}
         self.addCleanup(self._restore_globals)
         R._fsrs_report_hour_utc = lambda db: 0  # window always open
@@ -70,6 +83,21 @@ class RetentionBroadcastTest(unittest.TestCase):
         R.get_daily_first_touch_retention = (
             lambda db, user_id, target_date=None, modes=None: self._daily[user_id]
         )
+        # Per-user weekly numbers: U1 has data, U2 empty, U3 has data.
+        self._weekly = {
+            U1: {"week_start": "2026-06-15", "week_end": "2026-06-21", "total": 50, "correct": 47, "rate": 94.0},
+            U2: {"week_start": "2026-06-15", "week_end": "2026-06-21", "total": 0, "correct": 0, "rate": 0.0},
+            U3: {"week_start": "2026-06-15", "week_end": "2026-06-21", "total": 20, "correct": 14, "rate": 70.0},
+        }
+        R.get_weekly_first_touch_retention = (
+            lambda db, user_id, week_start=None, modes=None: self._weekly[user_id]
+        )
+        R.count_learning_done_in_week = lambda db, user_id, week_start=None: 5
+        # Bug #22: pin the clock to a NON-Monday so the daily-path tests don't also
+        # trigger the Monday weekly broadcast (its functions are stubbed above, but
+        # the day of week must be deterministic regardless of when the suite runs).
+        self._frozen = _dt.datetime(2026, 6, 24, 12, 0, tzinfo=_dt.timezone.utc)  # Wednesday
+        R.datetime = _FrozenDatetime(self._frozen)
 
     def _restore_env(self):
         for k, v in self._old_env.items():
@@ -99,8 +127,7 @@ class RetentionBroadcastTest(unittest.TestCase):
         bot = _FakeBot()
         _run(R._retention_broadcast_job(_Ctx(bot)))
         first = list(bot.sent)
-        today = __import__("datetime").datetime.now(
-            __import__("datetime").timezone.utc).date().isoformat()
+        today = self._frozen.date().isoformat()
         self.assertEqual(get_user_setting(self.db, U1, R.FSRS_REPORT_DATE_KEY, ""), today)
         _run(R._retention_broadcast_job(_Ctx(bot)))
         self.assertEqual(bot.sent, first)  # no re-send same day
@@ -114,11 +141,22 @@ class RetentionBroadcastTest(unittest.TestCase):
         _run(R._retention_broadcast_job(_Ctx(bot)))
         self.assertEqual(len(bot.sent), 3)  # remaining user delivered next tick
 
+    def test_weekly_on_monday(self):
+        # On Monday each user gets BOTH daily and weekly (bug #22 regression guard:
+        # the weekly path used to be unstubbed -> the suite went red every Monday).
+        R.datetime = _FrozenDatetime(_dt.datetime(2026, 6, 29, 12, 0, tzinfo=_dt.timezone.utc))  # Monday
+        bot = _FakeBot()
+        _run(R._retention_broadcast_job(_Ctx(bot)))
+        self.assertEqual(len(bot.sent), 6)  # 3 users x (daily + weekly)
+        weekly = {cid: text for cid, text in bot.sent if "#weekly" in text}
+        self.assertEqual(set(weekly), {U1, U2, U3})
+        self.assertIn("47/50", weekly[U1])    # U1 ru weekly numbers
+        self.assertIn("no data", weekly[U2])  # U2 en empty weekly -> localized no-data
+        self.assertIn("14/20", weekly[U3])    # U3 uk weekly numbers
+
     def test_window_closed_before_report_hour(self):
-        R._fsrs_report_hour_utc = lambda db: 23  # effectively closed most of the day
-        import datetime as _dt
-        if _dt.datetime.now(_dt.timezone.utc).hour >= 23:
-            self.skipTest("current UTC hour is inside the window")
+        # Frozen hour is 12 (< 23) -> window closed -> nothing sent.
+        R._fsrs_report_hour_utc = lambda db: 23
         bot = _FakeBot()
         _run(R._retention_broadcast_job(_Ctx(bot)))
         self.assertEqual(bot.sent, [])
