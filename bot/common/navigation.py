@@ -11,7 +11,7 @@ from telegram.error import NetworkError, RetryAfter, TimedOut
 from telegram.ext import ContextTypes
 
 from ..app_config import MENU, TESTS_MENU
-from ..common.lang import _user_interface_lang
+from ..common.lang import _QUIZ_DIR_SOURCES, _user_interface_lang
 from ..common.session import (
     _reset_fsrs_cycle_state,
     _reset_retry_state,
@@ -20,9 +20,7 @@ from ..common.session import (
 from ..i18n import t
 from ..labels import (
     PARSE_VF_TEXT,
-    QUIZ_DE_RU_TEXT,
     QUIZ_PL_SG_TEXT,
-    QUIZ_RU_DE_TEXT,
 )
 from ..ui.keyboards import _main_menu_markup, _tests_menu_keys
 
@@ -88,9 +86,12 @@ def _action_key_from_text(text, user_id):
     for key, action in keys:
         mapping[t(lang, key)] = action
         mapping[t("en", key)] = action
-    # Language-neutral quiz labels (identical across all languages).
-    mapping[QUIZ_RU_DE_TEXT] = "quiz_l1_de"
-    mapping[QUIZ_DE_RU_TEXT] = "quiz_de_l1"
+    # Quiz-direction labels carry the dict language now (#17): map every variant
+    # ("Ru > De"/"Ua > De"/"En > De" and "De > …") back, so a press routes
+    # regardless of which dict language rendered the button.
+    for src in _QUIZ_DIR_SOURCES:
+        mapping[f"{src} > De"] = "quiz_l1_de"
+        mapping[f"De > {src}"] = "quiz_de_l1"
     mapping[QUIZ_PL_SG_TEXT] = "quiz_pl_sg"
     # Study/weak-mode buttons are localized and routed via the keys list above.
     mapping["flags!"] = "review_flags"

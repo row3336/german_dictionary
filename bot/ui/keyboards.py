@@ -12,13 +12,11 @@ from ..app_config import (
     INPUT_ERR_TEXT,
     is_owner,
 )
-from ..common.lang import _user_interface_lang
+from ..common.lang import _quiz_dir_labels, _user_interface_lang
 from ..i18n import t
 from ..labels import (
     PARSE_VF_TEXT,
-    QUIZ_DE_RU_TEXT,
     QUIZ_PL_SG_TEXT,
-    QUIZ_RU_DE_TEXT,
     SYNONYMS_TEXT,
 )
 
@@ -41,10 +39,11 @@ def _main_menu_markup(user_id):
 
 
 def _tests_menu_keys(user_id):
-    """Tests menu keyboard ("Learning" button is localized, quiz modes are neutral)."""
+    """Tests menu keyboard. Quiz-direction buttons carry the dict language (#17)."""
     lang = _user_interface_lang(user_id)
+    l1de, del1 = _quiz_dir_labels(user_id)
     return [
-        [t(lang, "learning"), QUIZ_RU_DE_TEXT, QUIZ_DE_RU_TEXT, QUIZ_PL_SG_TEXT],
+        [t(lang, "learning"), l1de, del1, QUIZ_PL_SG_TEXT],
         [t(lang, "topic_filter"), t(lang, "back")],
     ]
 

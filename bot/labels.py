@@ -28,10 +28,9 @@ VF_STOP_TEXT = "stop_parse"
 SYN_CONFIRM_TEXT = "Confirm"
 SYN_CANCEL_TEXT = "Cancel"
 QUIZ_FIELDS_TEXT = "clarify_fields"
-# Language-neutral quiz mode labels: identical across all interface languages
-# (the dict language is generalized to "Lang" so we don't hardcode Ru for a Uk/En dict).
-QUIZ_RU_DE_TEXT = "Lang > De"
-QUIZ_DE_RU_TEXT = "De > Lang"
+# Quiz-direction labels ("Ru > De" / "De > Ru") are built per-user from the
+# DICTIONARY language (#17) — see bot/common/lang.py `_quiz_dir_labels`. They used
+# to be static "Lang > De"/"De > Lang" placeholders here.
 QUIZ_PL_SG_TEXT = "pl > sg"
 LEARNING_TEXT = "Learning"
 LEARNING_START_TEXT = "learning session"

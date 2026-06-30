@@ -21,7 +21,7 @@ from ..app_config import (
     get_db_path,
     is_owner,
 )
-from ..common.lang import _user_dict_lang, _user_interface_lang
+from ..common.lang import _quiz_dir_labels, _user_dict_lang, _user_interface_lang
 from ..common.navigation import _action_key_from_text, _reply_text_with_retry
 from ..common.session import (
     _enqueue_weak_drill,
@@ -36,7 +36,6 @@ from ..common.settings import _topic_filter_for_query
 from ..common.txlog import _capture_transaction_snapshot, _log_transaction
 from ..handlers.quiz import _plural_matches, _stop_with_summary
 from ..i18n import t
-from ..labels import QUIZ_RU_DE_TEXT
 from ..storage import (
     apply_user_word_media,
     apply_weak_input_err,
@@ -110,9 +109,10 @@ async def quiz_verb_weak_menu_choice(update: Update, context: ContextTypes.DEFAU
     action = _action_key_from_text(text, update.effective_user.id)
     lang = _user_interface_lang(update.effective_user.id)
     if action == "back":
+        l1de, _ = _quiz_dir_labels(update.effective_user.id)
         await _reply_text_with_retry(
             update.message,
-            f"{QUIZ_RU_DE_TEXT}:",
+            f"{l1de}:",
             reply_markup=ReplyKeyboardMarkup(_ru_de_menu_keys(update.effective_user.id), resize_keyboard=True),
         )
         return QUIZ_RU_DE_MENU

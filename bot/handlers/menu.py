@@ -20,7 +20,13 @@ from ..app_config import (
     get_info_path,
     is_owner as _is_owner_only,
 )
-from ..common.lang import _mode_de_l1, _mode_l1_de, _mode_pl_sg, _user_interface_lang
+from ..common.lang import (
+    _mode_de_l1,
+    _mode_l1_de,
+    _mode_pl_sg,
+    _quiz_dir_labels,
+    _user_interface_lang,
+)
 from ..common.navigation import _action_key_from_text, _back_to_main_menu, _clear_last_answer
 from ..common.session import _reset_retry_state, _reset_session, _reset_weak_drill_state
 from ..common.settings import _topic_filter_banner, _topic_filter_value
@@ -32,9 +38,7 @@ from ..handlers.settings import _ask_dictionary_language, _ask_interface_languag
 from ..handlers.weak import _send_article_weak_prompt, _send_plural_weak_prompt
 from ..i18n import normalize_interface_lang, t
 from ..labels import (
-    QUIZ_DE_RU_TEXT,
     QUIZ_PL_SG_TEXT,
-    QUIZ_RU_DE_TEXT,
 )
 from ..storage import (
     get_setting,
@@ -254,8 +258,9 @@ async def tests_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if action == "back":
         return await _back_to_main_menu(update)
     if action == "quiz_l1_de":
+        l1de, _ = _quiz_dir_labels(user_id)
         await update.message.reply_text(
-            f"{QUIZ_RU_DE_TEXT}:\n\n{_topic_filter_banner(user_id)}",
+            f"{l1de}:\n\n{_topic_filter_banner(user_id)}",
             reply_markup=ReplyKeyboardMarkup(_ru_de_menu_keys(user_id), resize_keyboard=True),
             parse_mode="Markdown",
         )
@@ -264,10 +269,11 @@ async def tests_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _reset_retry_state(context)
         _clear_last_answer(context)
         _reset_session(context, _mode_de_l1(user_id))
+        _, del1 = _quiz_dir_labels(user_id)
         return await _send_de_ru_prompt(
             update,
             context,
-            f"{QUIZ_DE_RU_TEXT}:\n\n{_topic_filter_banner(user_id)}",
+            f"{del1}:\n\n{_topic_filter_banner(user_id)}",
         )
     if action == "quiz_pl_sg":
         _reset_retry_state(context)
