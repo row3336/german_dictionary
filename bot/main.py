@@ -93,7 +93,6 @@ from .app_config import (
     get_db_path,
     get_dump_dir,
     get_log_path,
-    is_owner,
 )
 from .storage import (
     add_word_flag,
@@ -168,11 +167,13 @@ from .handlers.donate import (
     successful_payment_callback,
 )
 from .handlers.access import (
+    access_allowed,
     access_decision_callback,
     access_message_input,
     access_rejected_choice,
 )
 from .handlers.menu import (
+    _guest_start,
     menu_choice,
     quiz_ru_de_menu_choice,
     start,
@@ -198,11 +199,6 @@ from .jobs.reports import _configure_fsrs_reports
 logger = logging.getLogger(__name__)
 
 
-def _is_owner_only(user_id):
-    """Handle is owner only."""
-    return is_owner(user_id)
-
-
 async def _on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
     """Log unhandled errors and nudge the user to retry the last action.
 
@@ -223,9 +219,10 @@ async def _on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
 async def undo_steps(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /undo [N] rollback by transaction log."""
     user_id = update.effective_user.id
-    if not _is_owner_only(user_id):
-        await update.message.reply_text("❌ Owner-only bot.")
-        return ConversationHandler.END
+    # #9: /undo is per-user (transaction_log/restore/delete are all scoped by
+    # user_id), so any APPROVED user may undo THEIR OWN steps — not owner-only.
+    if not access_allowed(user_id):
+        return await _guest_start(update, context)
     steps = 1
     if context.args:
         try:

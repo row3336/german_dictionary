@@ -41,5 +41,13 @@ def install():
         ext.ContextTypes = type("ContextTypes", (), {"DEFAULT_TYPE": object})
     if not hasattr(ext, "ConversationHandler"):
         ext.ConversationHandler = type("ConversationHandler", (), {"END": -1})
+    # Handlers / limiter referenced by bot.main's imports (only instantiated inside
+    # main(), so no-op constructors suffice for importing the module under test).
+    for _n in ("AIORateLimiter", "Application", "CallbackQueryHandler", "CommandHandler",
+               "MessageHandler", "PreCheckoutQueryHandler"):
+        if not hasattr(ext, _n):
+            setattr(ext, _n, type(_n, (), {"__init__": lambda self, *a, **k: None}))
+    if not hasattr(ext, "filters"):
+        ext.filters = types.SimpleNamespace()
     sys.modules["telegram.ext"] = ext
     tg.ext = ext
