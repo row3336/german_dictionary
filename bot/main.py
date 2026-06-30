@@ -108,6 +108,8 @@ from .common.db_safety import apply_migrations_safely
 from .common.lang import _user_interface_lang
 from .common.outbound import configure_outbound_logger
 from .common.navigation import _back_to_tests
+from .common.txlog import UNDO_MSG_ID_KEY, UNDO_TOTAL_KEY
+from .ui.keyboards import _main_menu_markup
 from .i18n import t
 from .handlers.dump import (
     auto_dump_choice,
@@ -233,9 +235,6 @@ async def undo_steps(update: Update, context: ContextTypes.DEFAULT_TYPE):
             steps = 1
     steps = max(1, min(20, steps))
     logs = list_transaction_logs(get_db_path(), user_id=user_id, limit=steps)
-    if not logs:
-        await update.message.reply_text("Nothing to undo.")
-        return MENU
     restored = 0
     processed_ids = []
     for item in logs:
@@ -244,8 +243,31 @@ async def undo_steps(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if restore_user_word_state(get_db_path(), snapshot):
             restored += 1
         processed_ids.append(int(item.get("id")))
-    delete_transaction_logs(get_db_path(), user_id=user_id, ids=processed_ids)
-    await update.message.reply_text(f"Undo done: {restored}/{len(logs)} step(s).")
+    if processed_ids:
+        delete_transaction_logs(get_db_path(), user_id=user_id, ids=processed_ids)
+
+    # Consecutive /undo presses accumulate into ONE message edited in place (a live
+    # step counter) instead of one reply per press; the main-menu keyboard is shown
+    # so the keyboard matches the state we land in (MENU). Any other action resets
+    # the counter via reset_undo_progress() (called from start/menu_choice).
+    total = int(context.user_data.get(UNDO_TOTAL_KEY, 0)) + restored
+    if restored:
+        context.user_data[UNDO_TOTAL_KEY] = total
+        text = f"↩️ Undo done: {total} step(s)."
+    else:
+        text = f"↩️ Undo done: {total} step(s). Nothing more to undo." if total else "Nothing to undo."
+
+    msg_id = context.user_data.get(UNDO_MSG_ID_KEY)
+    if msg_id and restored:
+        try:
+            await context.bot.edit_message_text(
+                chat_id=update.effective_chat.id, message_id=msg_id, text=text,
+            )
+            return MENU
+        except Exception:
+            pass  # message gone/uneditable -> fall through and send a fresh one
+    sent = await update.message.reply_text(text, reply_markup=_main_menu_markup(user_id))
+    context.user_data[UNDO_MSG_ID_KEY] = sent.message_id
     return MENU
 
 

@@ -30,6 +30,7 @@ from ..common.lang import (
 from ..common.navigation import _action_key_from_text, _back_to_main_menu, _clear_last_answer
 from ..common.session import _reset_retry_state, _reset_session, _reset_weak_drill_state
 from ..common.settings import _topic_filter_banner, _topic_filter_value
+from ..common.txlog import reset_undo_progress
 from ..handlers.access import access_allowed, show_rejected_screen
 from ..handlers.db_search import _send_db_search_prompt
 from ..handlers.learning import _send_learning_menu
@@ -77,6 +78,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/start entry: owner gets their onboarding, a guest goes through the approval flow (P3.1)."""
     user = update.effective_user
     user_id = user.id
+    reset_undo_progress(context)  # leaving the undo flow ends its live counter
     if not _is_owner_only(user_id):
         return await _guest_start(update, context)
     ui_lang = get_setting(get_db_path(), OWNER_INTERFACE_LANG_KEY, "")
@@ -126,6 +128,7 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     user_id = update.effective_user.id
     action = _action_key_from_text(text, user_id)
+    reset_undo_progress(context)  # navigating the menu ends any live undo counter
 
     if action == "start":
         return await start(update, context)
