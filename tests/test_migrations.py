@@ -252,5 +252,96 @@ class V1ToV2MigrationTest(unittest.TestCase):
         self.assertEqual(get_user_version(db), SCHEMA_VERSION)
 
 
+class FormStatsActiveMigrationTest(unittest.TestCase):
+    """#18 — adding form_stats.*_active is a safe additive migration that
+    backfills the weak-episode flag for words already in an episode."""
+
+    def test_v4_to_v5_adds_active_columns_and_backfills(self):
+        d = tempfile.mkdtemp()
+        db = os.path.join(d, "words.db")
+        # Build a v4-style DB: words + a form_stats WITHOUT the *_active columns.
+        conn = sqlite3.connect(db)
+        conn.executescript(
+            """
+            CREATE TABLE words (
+                id TEXT PRIMARY KEY,
+                type TEXT NOT NULL,
+                article TEXT NOT NULL DEFAULT '',
+                german TEXT NOT NULL DEFAULT '',
+                plural TEXT NOT NULL DEFAULT '',
+                infinitive TEXT NOT NULL DEFAULT '',
+                prateritum TEXT NOT NULL DEFAULT '',
+                partizip2 TEXT NOT NULL DEFAULT '',
+                russian TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE form_stats (
+                user_id INTEGER NOT NULL,
+                word_id TEXT NOT NULL,
+                article_errors INTEGER NOT NULL DEFAULT 0,
+                article_streak_wrong INTEGER NOT NULL DEFAULT 0,
+                article_streak_correct INTEGER NOT NULL DEFAULT 0,
+                article_review_stage INTEGER NOT NULL DEFAULT 0,
+                article_next_review TEXT DEFAULT NULL,
+                plural_errors INTEGER NOT NULL DEFAULT 0,
+                plural_streak_wrong INTEGER NOT NULL DEFAULT 0,
+                plural_streak_correct INTEGER NOT NULL DEFAULT 0,
+                plural_review_stage INTEGER NOT NULL DEFAULT 0,
+                plural_next_review TEXT DEFAULT NULL,
+                prateritum_errors INTEGER NOT NULL DEFAULT 0,
+                prateritum_streak_wrong INTEGER NOT NULL DEFAULT 0,
+                prateritum_streak_correct INTEGER NOT NULL DEFAULT 0,
+                prateritum_review_stage INTEGER NOT NULL DEFAULT 0,
+                prateritum_next_review TEXT DEFAULT NULL,
+                partizip2_errors INTEGER NOT NULL DEFAULT 0,
+                partizip2_streak_wrong INTEGER NOT NULL DEFAULT 0,
+                partizip2_streak_correct INTEGER NOT NULL DEFAULT 0,
+                partizip2_review_stage INTEGER NOT NULL DEFAULT 0,
+                partizip2_next_review TEXT DEFAULT NULL,
+                PRIMARY KEY (user_id, word_id)
+            );
+            """
+        )
+        conn.execute("INSERT INTO words (id, type, german) VALUES ('w_active', 'nomen', 'Tisch')")
+        conn.execute("INSERT INTO words (id, type, german) VALUES ('w_idle', 'nomen', 'Lampe')")
+        # w_active: legacy-active episode (2 article errors) → flag must backfill to 1.
+        conn.execute(
+            "INSERT INTO form_stats (user_id, word_id, article_errors) VALUES (1, 'w_active', 2)"
+        )
+        # w_idle: not weak → flag stays 0.
+        conn.execute(
+            "INSERT INTO form_stats (user_id, word_id, article_errors) VALUES (1, 'w_idle', 0)"
+        )
+        conn.commit()
+        conn.close()
+        set_user_version(db, 4)
+        self.assertNotIn("article_active", _schema(db)["form_stats"])
+
+        report = apply_migrations_safely(db, os.path.join(d, "backups"))
+
+        self.assertTrue(report["migrated"])
+        self.assertEqual(report["from_version"], 4)
+        self.assertEqual(report["to_version"], SCHEMA_VERSION)
+        self.assertGreaterEqual(SCHEMA_VERSION, 5)
+        cols = _schema(db)["form_stats"]
+        for field in ("article", "plural", "prateritum", "partizip2"):
+            self.assertIn(f"{field}_active", cols)
+
+        conn = sqlite3.connect(db)
+        try:
+            active = conn.execute(
+                "SELECT article_active FROM form_stats WHERE word_id='w_active'"
+            ).fetchone()[0]
+            idle = conn.execute(
+                "SELECT article_active FROM form_stats WHERE word_id='w_idle'"
+            ).fetchone()[0]
+        finally:
+            conn.close()
+        self.assertEqual(active, 1)  # already-active episode preserved
+        self.assertEqual(idle, 0)
+        self.assertTrue(report["healthcheck"]["ok"])
+        self.assertEqual(get_user_version(db), SCHEMA_VERSION)
+
+
 if __name__ == "__main__":
     unittest.main()

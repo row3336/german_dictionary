@@ -12,9 +12,20 @@ from .text_utils import cap_word
 DEFAULT_EASE = 2.5
 MIN_EASE = 1.3
 MAX_EASE = 3.5
-WEAK_ACTIVE_MIN_ERRORS = 2
+# A word ENTERS a weak episode when, on a wrong answer, total errors reach
+# WEAK_ACTIVE_MIN_ERRORS or it has WEAK_ACTIVE_MIN_STREAK_WRONG wrong in a row.
+# Entry only flips the persistent per-form `*_active` flag; once set, the word is
+# HELD in the quiz regardless of how the counters move, until it gets
+# WEAK_ACTIVE_CLEAR_STREAK correct in a row (which clears the flag and promotes
+# it to the day-based review ladder). Separating entry from hold is why the flag
+# exists: a single correct must not drop a freshly-entered word before it can
+# earn its 3-in-a-row (see docs/multiuser_test_bugs.md #18).
+WEAK_ACTIVE_MIN_ERRORS = 3
 WEAK_ACTIVE_MIN_STREAK_WRONG = 2
 WEAK_ACTIVE_CLEAR_STREAK = 3
+# Old (pre-flag) entry rule, kept only to backfill the `*_active` flag for words
+# that were already in an episode when the v4->v5 migration ran.
+WEAK_LEGACY_ACTIVE_MIN_ERRORS = 2
 WEAK_REVIEW_DAYS_STAGE1 = 1
 WEAK_REVIEW_DAYS_STAGE2 = 2
 WEAK_REVIEW_DAYS_STAGE3 = 5
@@ -189,21 +200,25 @@ def _repair_word_fk_tables(conn):
             article_streak_correct INTEGER NOT NULL DEFAULT 0,
             article_review_stage INTEGER NOT NULL DEFAULT 0,
             article_next_review TEXT DEFAULT NULL,
+            article_active INTEGER NOT NULL DEFAULT 0,
             plural_errors INTEGER NOT NULL DEFAULT 0,
             plural_streak_wrong INTEGER NOT NULL DEFAULT 0,
             plural_streak_correct INTEGER NOT NULL DEFAULT 0,
             plural_review_stage INTEGER NOT NULL DEFAULT 0,
             plural_next_review TEXT DEFAULT NULL,
+            plural_active INTEGER NOT NULL DEFAULT 0,
             prateritum_errors INTEGER NOT NULL DEFAULT 0,
             prateritum_streak_wrong INTEGER NOT NULL DEFAULT 0,
             prateritum_streak_correct INTEGER NOT NULL DEFAULT 0,
             prateritum_review_stage INTEGER NOT NULL DEFAULT 0,
             prateritum_next_review TEXT DEFAULT NULL,
+            prateritum_active INTEGER NOT NULL DEFAULT 0,
             partizip2_errors INTEGER NOT NULL DEFAULT 0,
             partizip2_streak_wrong INTEGER NOT NULL DEFAULT 0,
             partizip2_streak_correct INTEGER NOT NULL DEFAULT 0,
             partizip2_review_stage INTEGER NOT NULL DEFAULT 0,
             partizip2_next_review TEXT DEFAULT NULL,
+            partizip2_active INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY (user_id, word_id),
             FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
         )
@@ -371,21 +386,25 @@ def init_db(db_path):
                 article_streak_correct INTEGER NOT NULL DEFAULT 0,
                 article_review_stage INTEGER NOT NULL DEFAULT 0,
                 article_next_review TEXT DEFAULT NULL,
+                article_active INTEGER NOT NULL DEFAULT 0,
                 plural_errors INTEGER NOT NULL DEFAULT 0,
                 plural_streak_wrong INTEGER NOT NULL DEFAULT 0,
                 plural_streak_correct INTEGER NOT NULL DEFAULT 0,
                 plural_review_stage INTEGER NOT NULL DEFAULT 0,
                 plural_next_review TEXT DEFAULT NULL,
+                plural_active INTEGER NOT NULL DEFAULT 0,
                 prateritum_errors INTEGER NOT NULL DEFAULT 0,
                 prateritum_streak_wrong INTEGER NOT NULL DEFAULT 0,
                 prateritum_streak_correct INTEGER NOT NULL DEFAULT 0,
                 prateritum_review_stage INTEGER NOT NULL DEFAULT 0,
                 prateritum_next_review TEXT DEFAULT NULL,
+                prateritum_active INTEGER NOT NULL DEFAULT 0,
                 partizip2_errors INTEGER NOT NULL DEFAULT 0,
                 partizip2_streak_wrong INTEGER NOT NULL DEFAULT 0,
                 partizip2_streak_correct INTEGER NOT NULL DEFAULT 0,
                 partizip2_review_stage INTEGER NOT NULL DEFAULT 0,
                 partizip2_next_review TEXT DEFAULT NULL,
+                partizip2_active INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (user_id, word_id),
                 FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
             );
@@ -566,10 +585,21 @@ def _ensure_schema(conn):
     for field in ("article", "plural", "prateritum", "partizip2"):
         stage_col = f"{field}_review_stage"
         next_col = f"{field}_next_review"
+        active_col = f"{field}_active"
         if stage_col not in form_cols:
             conn.execute(f"ALTER TABLE form_stats ADD COLUMN {stage_col} INTEGER NOT NULL DEFAULT 0")
         if next_col not in form_cols:
             conn.execute(f"ALTER TABLE form_stats ADD COLUMN {next_col} TEXT DEFAULT NULL")
+        # v4 -> v5: persistent weak-episode flag. Backfill rows that were already
+        # in an episode under the legacy (pre-flag) entry rule so the migration
+        # never drops a word that was active when it ran (docs §0.2 item 1).
+        if active_col not in form_cols:
+            conn.execute(f"ALTER TABLE form_stats ADD COLUMN {active_col} INTEGER NOT NULL DEFAULT 0")
+            conn.execute(
+                f"UPDATE form_stats SET {active_col} = 1 "
+                f"WHERE {field}_errors >= {WEAK_LEGACY_ACTIVE_MIN_ERRORS} "
+                f"OR {field}_streak_wrong >= {WEAK_ACTIVE_MIN_STREAK_WRONG}"
+            )
 
     quiz_cols = {
         row["name"] if isinstance(row, sqlite3.Row) else row[1]
@@ -856,7 +886,7 @@ def get_statistics_snapshot(db_path, user_id, mode):
             SELECT
                 SUM(
                     CASE
-                        WHEN w.type = 'nomen' AND (fs.article_errors >= 2 OR fs.article_streak_wrong >= 2) THEN 1
+                        WHEN w.type = 'nomen' AND fs.article_active = 1 THEN 1
                         ELSE 0
                     END
                 ) AS article_active,
@@ -864,7 +894,7 @@ def get_statistics_snapshot(db_path, user_id, mode):
                     CASE
                         WHEN w.type = 'nomen'
                          AND fs.article_review_stage = 1
-                         AND NOT (fs.article_errors >= 2 OR fs.article_streak_wrong >= 2) THEN 1
+                         AND fs.article_active = 0 THEN 1
                         ELSE 0
                     END
                 ) AS article_stage1,
@@ -872,7 +902,7 @@ def get_statistics_snapshot(db_path, user_id, mode):
                     CASE
                         WHEN w.type = 'nomen'
                          AND fs.article_review_stage = 2
-                         AND NOT (fs.article_errors >= 2 OR fs.article_streak_wrong >= 2) THEN 1
+                         AND fs.article_active = 0 THEN 1
                         ELSE 0
                     END
                 ) AS article_stage2,
@@ -880,14 +910,14 @@ def get_statistics_snapshot(db_path, user_id, mode):
                     CASE
                         WHEN w.type = 'nomen'
                          AND fs.article_review_stage = 3
-                         AND NOT (fs.article_errors >= 2 OR fs.article_streak_wrong >= 2) THEN 1
+                         AND fs.article_active = 0 THEN 1
                         ELSE 0
                     END
                 ) AS article_stage3,
 
                 SUM(
                     CASE
-                        WHEN w.type = 'nomen' AND (fs.plural_errors >= 2 OR fs.plural_streak_wrong >= 2) THEN 1
+                        WHEN w.type = 'nomen' AND fs.plural_active = 1 THEN 1
                         ELSE 0
                     END
                 ) AS plural_active,
@@ -895,7 +925,7 @@ def get_statistics_snapshot(db_path, user_id, mode):
                     CASE
                         WHEN w.type = 'nomen'
                          AND fs.plural_review_stage = 1
-                         AND NOT (fs.plural_errors >= 2 OR fs.plural_streak_wrong >= 2) THEN 1
+                         AND fs.plural_active = 0 THEN 1
                         ELSE 0
                     END
                 ) AS plural_stage1,
@@ -903,7 +933,7 @@ def get_statistics_snapshot(db_path, user_id, mode):
                     CASE
                         WHEN w.type = 'nomen'
                          AND fs.plural_review_stage = 2
-                         AND NOT (fs.plural_errors >= 2 OR fs.plural_streak_wrong >= 2) THEN 1
+                         AND fs.plural_active = 0 THEN 1
                         ELSE 0
                     END
                 ) AS plural_stage2,
@@ -911,14 +941,14 @@ def get_statistics_snapshot(db_path, user_id, mode):
                     CASE
                         WHEN w.type = 'nomen'
                          AND fs.plural_review_stage = 3
-                         AND NOT (fs.plural_errors >= 2 OR fs.plural_streak_wrong >= 2) THEN 1
+                         AND fs.plural_active = 0 THEN 1
                         ELSE 0
                     END
                 ) AS plural_stage3,
 
                 SUM(
                     CASE
-                        WHEN w.type = 'verb' AND (fs.partizip2_errors >= 2 OR fs.partizip2_streak_wrong >= 2) THEN 1
+                        WHEN w.type = 'verb' AND fs.partizip2_active = 1 THEN 1
                         ELSE 0
                     END
                 ) AS partizip2_active,
@@ -926,7 +956,7 @@ def get_statistics_snapshot(db_path, user_id, mode):
                     CASE
                         WHEN w.type = 'verb'
                          AND fs.partizip2_review_stage = 1
-                         AND NOT (fs.partizip2_errors >= 2 OR fs.partizip2_streak_wrong >= 2) THEN 1
+                         AND fs.partizip2_active = 0 THEN 1
                         ELSE 0
                     END
                 ) AS partizip2_stage1,
@@ -934,7 +964,7 @@ def get_statistics_snapshot(db_path, user_id, mode):
                     CASE
                         WHEN w.type = 'verb'
                          AND fs.partizip2_review_stage = 2
-                         AND NOT (fs.partizip2_errors >= 2 OR fs.partizip2_streak_wrong >= 2) THEN 1
+                         AND fs.partizip2_active = 0 THEN 1
                         ELSE 0
                     END
                 ) AS partizip2_stage2,
@@ -942,14 +972,14 @@ def get_statistics_snapshot(db_path, user_id, mode):
                     CASE
                         WHEN w.type = 'verb'
                          AND fs.partizip2_review_stage = 3
-                         AND NOT (fs.partizip2_errors >= 2 OR fs.partizip2_streak_wrong >= 2) THEN 1
+                         AND fs.partizip2_active = 0 THEN 1
                         ELSE 0
                     END
                 ) AS partizip2_stage3,
 
                 SUM(
                     CASE
-                        WHEN w.type = 'verb' AND (fs.prateritum_errors >= 2 OR fs.prateritum_streak_wrong >= 2) THEN 1
+                        WHEN w.type = 'verb' AND fs.prateritum_active = 1 THEN 1
                         ELSE 0
                     END
                 ) AS prateritum_active,
@@ -957,7 +987,7 @@ def get_statistics_snapshot(db_path, user_id, mode):
                     CASE
                         WHEN w.type = 'verb'
                          AND fs.prateritum_review_stage = 1
-                         AND NOT (fs.prateritum_errors >= 2 OR fs.prateritum_streak_wrong >= 2) THEN 1
+                         AND fs.prateritum_active = 0 THEN 1
                         ELSE 0
                     END
                 ) AS prateritum_stage1,
@@ -965,7 +995,7 @@ def get_statistics_snapshot(db_path, user_id, mode):
                     CASE
                         WHEN w.type = 'verb'
                          AND fs.prateritum_review_stage = 2
-                         AND NOT (fs.prateritum_errors >= 2 OR fs.prateritum_streak_wrong >= 2) THEN 1
+                         AND fs.prateritum_active = 0 THEN 1
                         ELSE 0
                     END
                 ) AS prateritum_stage2,
@@ -973,7 +1003,7 @@ def get_statistics_snapshot(db_path, user_id, mode):
                     CASE
                         WHEN w.type = 'verb'
                          AND fs.prateritum_review_stage = 3
-                         AND NOT (fs.prateritum_errors >= 2 OR fs.prateritum_streak_wrong >= 2) THEN 1
+                         AND fs.prateritum_active = 0 THEN 1
                         ELSE 0
                     END
                 ) AS prateritum_stage3
@@ -3286,25 +3316,23 @@ def update_form_stats(db_path, user_id, word_id, checks):
         today_iso = (date.today() + timedelta(days=WEAK_REVIEW_DAYS_STAGE1)).isoformat()
         for field in fields:
             ok = safe_checks[field]
+            pre_row = conn.execute(
+                f"""
+                SELECT
+                    {field}_errors AS errors,
+                    {field}_streak_wrong AS streak_wrong,
+                    {field}_review_stage AS stage,
+                    {field}_active AS active
+                FROM form_stats
+                WHERE user_id = ? AND word_id = ?
+                """,
+                (int(user_id), _safe_text(word_id)),
+            ).fetchone()
+            pre_errors = int(pre_row["errors"] or 0) if pre_row else 0
+            pre_streak_wrong = int(pre_row["streak_wrong"] or 0) if pre_row else 0
+            pre_stage = int(pre_row["stage"] or 0) if pre_row else 0
+            was_active_before = bool(pre_row["active"]) if pre_row else False
             if ok:
-                pre_row = conn.execute(
-                    f"""
-                    SELECT
-                        {field}_errors AS errors,
-                        {field}_streak_wrong AS streak_wrong,
-                        {field}_review_stage AS stage
-                    FROM form_stats
-                    WHERE user_id = ? AND word_id = ?
-                    """,
-                    (int(user_id), _safe_text(word_id)),
-                ).fetchone()
-                pre_errors = int(pre_row["errors"] or 0) if pre_row else 0
-                pre_streak_wrong = int(pre_row["streak_wrong"] or 0) if pre_row else 0
-                pre_stage = int(pre_row["stage"] or 0) if pre_row else 0
-                was_active_before = (
-                    pre_errors >= WEAK_ACTIVE_MIN_ERRORS
-                    or pre_streak_wrong >= WEAK_ACTIVE_MIN_STREAK_WRONG
-                )
                 conn.execute(
                     f"""
                     UPDATE form_stats
@@ -3323,13 +3351,17 @@ def update_form_stats(db_path, user_id, word_id, checks):
                     (int(user_id), _safe_text(word_id)),
                 ).fetchone()
                 streak = int(row["s"] or 0) if row else 0
+                # A single correct must NOT clear the episode flag: a freshly-entered
+                # word is held in the quiz until it earns WEAK_ACTIVE_CLEAR_STREAK in a
+                # row — only then the flag drops and the word promotes to the ladder.
                 if streak >= WEAK_ACTIVE_CLEAR_STREAK:
                     conn.execute(
                         f"""
                         UPDATE form_stats
                         SET {field}_errors = 0,
                             {field}_streak_wrong = 0,
-                            {field}_streak_correct = 0
+                            {field}_streak_correct = 0,
+                            {field}_active = 0
                         WHERE user_id = ? AND word_id = ?
                         """,
                         (int(user_id), _safe_text(word_id)),
@@ -3355,6 +3387,20 @@ def update_form_stats(db_path, user_id, word_id, checks):
                     """,
                     (int(user_id), _safe_text(word_id)),
                 )
+                # Entry: flip the episode flag once the wrong answer reaches the
+                # entry threshold (total errors) or the wrong-streak threshold.
+                if (
+                    pre_errors + 1 >= WEAK_ACTIVE_MIN_ERRORS
+                    or pre_streak_wrong + 1 >= WEAK_ACTIVE_MIN_STREAK_WRONG
+                ):
+                    conn.execute(
+                        f"""
+                        UPDATE form_stats
+                        SET {field}_active = 1
+                        WHERE user_id = ? AND word_id = ?
+                        """,
+                        (int(user_id), _safe_text(word_id)),
+                    )
 
 
 def update_weak_review_state(db_path, user_id, word_id, field, ok):
@@ -3369,9 +3415,8 @@ def update_weak_review_state(db_path, user_id, word_id, field, ok):
         row = conn.execute(
             f"""
             SELECT
-                {field}_errors AS errors,
-                {field}_streak_wrong AS streak_wrong,
-                {field}_review_stage AS stage
+                {field}_review_stage AS stage,
+                {field}_active AS active
             FROM form_stats
             WHERE user_id = ? AND word_id = ?
             """,
@@ -3379,10 +3424,8 @@ def update_weak_review_state(db_path, user_id, word_id, field, ok):
         ).fetchone()
         if not row:
             return 0
-        errors = int(row["errors"] or 0)
-        streak_wrong = int(row["streak_wrong"] or 0)
         stage = int(row["stage"] or 0)
-        active = errors >= WEAK_ACTIVE_MIN_ERRORS or streak_wrong >= WEAK_ACTIVE_MIN_STREAK_WRONG
+        active = bool(row["active"])
         if active or stage <= 0:
             return stage
         if ok:
@@ -3459,15 +3502,21 @@ def apply_weak_input_err(db_path, user_id, word_id, field):
         new_errors = max(0, errors - 1)
         new_streak_wrong = max(0, streak_wrong - 1)
         new_streak_correct = streak_correct + 1
+        # input_err explicitly reverses the last (mis-matched) wrong answer, so it
+        # may pull a word back OUT of an episode it never should have entered — if
+        # the reverted counters no longer meet the entry threshold, drop the flag.
+        # (The normal-correct path keeps the flag; only this manual undo clears it.)
+        active = new_errors >= WEAK_ACTIVE_MIN_ERRORS or new_streak_wrong >= WEAK_ACTIVE_MIN_STREAK_WRONG
         conn.execute(
             f"""
             UPDATE form_stats
             SET {field}_errors = ?,
                 {field}_streak_wrong = ?,
-                {field}_streak_correct = ?
+                {field}_streak_correct = ?,
+                {field}_active = ?
             WHERE user_id = ? AND word_id = ?
             """,
-            (new_errors, new_streak_wrong, new_streak_correct, int(user_id), _safe_text(word_id)),
+            (new_errors, new_streak_wrong, new_streak_correct, 1 if active else 0, int(user_id), _safe_text(word_id)),
         )
     return True
 
@@ -3484,7 +3533,8 @@ def get_form_state(db_path, user_id, word_id, field):
             SELECT
                 {field}_errors AS errors,
                 {field}_streak_wrong AS streak_wrong,
-                {field}_review_stage AS stage
+                {field}_review_stage AS stage,
+                {field}_active AS active
             FROM form_stats
             WHERE user_id = ? AND word_id = ?
             """,
@@ -3495,7 +3545,7 @@ def get_form_state(db_path, user_id, word_id, field):
     errors = int(row["errors"] or 0)
     streak_wrong = int(row["streak_wrong"] or 0)
     stage = int(row["stage"] or 0)
-    active = errors >= WEAK_ACTIVE_MIN_ERRORS or streak_wrong >= WEAK_ACTIVE_MIN_STREAK_WRONG
+    active = bool(row["active"])
     return {"errors": errors, "streak_wrong": streak_wrong, "review_stage": stage, "active": active}
 
 
@@ -3524,10 +3574,7 @@ def list_weak_words(db_path, user_id, weak_field, word_type=None, topics=None, l
         return []
     init_db(db_path)
     today = date.today().isoformat()
-    active_cond = (
-        f"(fs.{weak_field}_errors >= {WEAK_ACTIVE_MIN_ERRORS} "
-        f"OR fs.{weak_field}_streak_wrong >= {WEAK_ACTIVE_MIN_STREAK_WRONG})"
-    )
+    active_cond = f"(fs.{weak_field}_active = 1)"
     review_cond = f"(fs.{weak_field}_review_stage > 0 AND date(fs.{weak_field}_next_review) <= date(?))"
     where = [
         "fs.user_id = ?",

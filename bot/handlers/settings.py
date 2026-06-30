@@ -148,7 +148,7 @@ async def _send_algo_settings_menu(update: Update, user_id):
             f"{t(lang, 'weak_drill_gap')} = {weak_drill_gap}",
             f"{t(lang, 'weak_drill_repeats')} = {weak_drill_repeats}",
             f"{t(lang, 'topic_filter')} = {_topic_filter_value(user_id)}",
-            f"weak.active = err>={WEAK_ACTIVE_MIN_ERRORS} or wrong_streak>={WEAK_ACTIVE_MIN_STREAK_WRONG}",
+            f"weak.enter = err>={WEAK_ACTIVE_MIN_ERRORS} or wrong_streak>={WEAK_ACTIVE_MIN_STREAK_WRONG} (held until clear)",
             f"weak.to_review = {WEAK_ACTIVE_CLEAR_STREAK} correct in row",
             f"weak.review_days = {WEAK_REVIEW_DAYS_STAGE1}/{WEAK_REVIEW_DAYS_STAGE2}/{WEAK_REVIEW_DAYS_STAGE3}",
             f"topics = {topics_line}",

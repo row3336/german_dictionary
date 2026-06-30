@@ -76,9 +76,9 @@ def _progress(conn, user_id, word_id, mode, due, interval=1, reps=1, ease=2.5):
 
 
 def _weak_article(conn, user_id, word_id, errors=3):
-    # enough article errors to make the word "weak" for this user (other cols default 0)
+    # active weak episode for this user: errors + the persistent episode flag set
     conn.execute(
-        "INSERT INTO form_stats (user_id, word_id, article_errors) VALUES (?, ?, ?)",
+        "INSERT INTO form_stats (user_id, word_id, article_errors, article_active) VALUES (?, ?, ?, 1)",
         (user_id, word_id, errors),
     )
 
