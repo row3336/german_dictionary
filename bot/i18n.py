@@ -65,7 +65,7 @@ TEXTS = {
         "learning_sett": "learning",
         "add_for_learning": "add for learning",
         "learning_start": "learning session",
-        "learning_skip": "To FSRS",
+        "learning_skip": "skip_learning",
         "learning_next": "next",
         "learning_reset": "reset learning",
         "send_learn": "send_learn",
