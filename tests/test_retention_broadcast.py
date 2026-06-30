@@ -46,6 +46,16 @@ class _FrozenDatetime:
         return self._value
 
 
+class _FrozenDate:
+    """Stand-in for reports.date so .today() is deterministic (peak job uses it)."""
+
+    def __init__(self, value):
+        self._value = value
+
+    def today(self):
+        return self._value
+
+
 def _run(coro):
     return asyncio.run(coro)
 
@@ -207,6 +217,86 @@ class RetentionZoneTest(unittest.TestCase):
         zone = R.t("en", "report_zone_slightly_easy")
         self.assertIn(zone, daily)
         self.assertIn(zone, weekly)
+
+
+OWNER = 9000
+
+
+class OwnerOnlyFsrsReportTest(unittest.TestCase):
+    """P5 — FSRS forecast (daily report) and peak-notify go ONLY to the owner.
+
+    Both jobs send to chat_id=owner_id and never iterate users, so a guest can
+    never receive them. The clock and forecast are pinned so the send fires."""
+
+    def setUp(self):
+        tmp = tempfile.NamedTemporaryFile(delete=False)
+        tmp.close()
+        self.db = tmp.name
+        self.addCleanup(lambda: os.unlink(self.db))
+        init_db(self.db)
+        self._old_env = {k: os.environ.get(k) for k in ("DB_PATH", "OWNER_ID")}
+        os.environ["DB_PATH"] = self.db
+        os.environ["OWNER_ID"] = str(OWNER)
+        self.addCleanup(self._restore_env)
+
+        self._orig = {k: getattr(R, k) for k in (
+            "fsrs_due_forecast", "_mode_l1_de", "_fsrs_report_hour_utc", "datetime", "date",
+        )}
+        self.addCleanup(self._restore_globals)
+        self._forecast_calls = []
+
+        def _forecast(db, uid, mode):
+            self._forecast_calls.append(uid)
+            return {"total": 7, "peak_hour": 18, "peak_count": 3}
+
+        R.fsrs_due_forecast = _forecast
+        R._mode_l1_de = lambda uid: "ru_de"
+        R._fsrs_report_hour_utc = lambda db: 0  # window open
+        self._frozen = _dt.datetime(2026, 6, 24, 20, 0, tzinfo=_dt.timezone.utc)
+        R.datetime = _FrozenDatetime(self._frozen)
+        R.date = _FrozenDate(self._frozen.date())
+
+    def _restore_env(self):
+        for k, v in self._old_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    def _restore_globals(self):
+        for k, v in self._orig.items():
+            setattr(R, k, v)
+
+    def test_daily_forecast_goes_only_to_owner(self):
+        bot = _FakeBot()
+        _run(R._fsrs_daily_report_job(_Ctx(bot)))
+        self.assertEqual([cid for cid, _ in bot.sent], [OWNER])  # owner and no one else
+        self.assertIn("FSRS today: 7 due", bot.sent[0][1])
+        self.assertEqual(self._forecast_calls, [OWNER])  # forecast computed for the owner
+
+    def test_daily_dedup_same_day(self):
+        bot = _FakeBot()
+        _run(R._fsrs_daily_report_job(_Ctx(bot)))
+        _run(R._fsrs_daily_report_job(_Ctx(bot)))
+        self.assertEqual(len(bot.sent), 1)  # second run is deduped for the day
+
+    def test_daily_no_send_without_owner(self):
+        os.environ["OWNER_ID"] = "0"
+        bot = _FakeBot()
+        _run(R._fsrs_daily_report_job(_Ctx(bot)))
+        self.assertEqual(bot.sent, [])
+
+    def test_peak_notify_only_to_owner(self):
+        from bot.app_config import FSRS_REPORT_DATE_KEY
+        from bot.storage import set_setting
+        # Peak job preconditions: today's report already sent, peak hour known & reached.
+        today = self._frozen.date().isoformat()
+        set_setting(self.db, FSRS_REPORT_DATE_KEY, today)
+        set_setting(self.db, "fsrs_peak_hour_today", "18")
+        bot = _FakeBot()
+        _run(R._fsrs_peak_notify_job(_Ctx(bot)))
+        self.assertEqual([cid for cid, _ in bot.sent], [OWNER])
+        self.assertIn("peak window", bot.sent[0][1].lower())
 
 
 if __name__ == "__main__":
