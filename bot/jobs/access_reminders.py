@@ -1,9 +1,10 @@
 """Background reminder to the owner about unhandled access requests (P3.1).
 
 Every 2 hours (ACCESS_REMINDER_INTERVAL_SECONDS), if any users are 'pending',
-sends the owner a digest list. The digest does NOT contain a live
-#user_confirmation_request hashtag (the tag is mentioned in text without the "#")
-so searching the open hashtag returns only the request messages, not reminders.
+sends the owner a digest list. The digest carries no live
+#user_confirmation_request hashtag by default (so the open-hashtag search isn't
+polluted by every reminder); instead it offers a toggle button that reveals the
+searchable hashtag on demand and hides it again — see access.pending_tag_keyboard.
 """
 
 import logging
@@ -13,11 +14,11 @@ from telegram.ext import Application, ContextTypes
 from ..app_config import (
     ACCESS_REMINDER_INTERVAL_SECONDS,
     ACCESS_REMINDER_JOB_NAME,
-    ACCESS_REQUEST_HASHTAG,
     get_db_path,
     get_owner_id,
 )
 from ..common.lang import _user_interface_lang
+from ..handlers.access import pending_tag_keyboard
 from ..i18n import t
 from ..storage import list_pending_users
 
@@ -43,11 +44,14 @@ async def _access_pending_reminder_job(context: ContextTypes.DEFAULT_TYPE):
     lines = [f"⏰ {len(pending)} {t(lang, 'access_reminder_owner')}:"]
     for user in pending:
         lines.append(f"• {_user_tag(user)} (id {user['user_id']})")
-    lines.append("")
-    # Tag without the "#" so the digest never matches the open-requests hashtag search.
-    lines.append(f"{t(lang, 'access_reminder_hint')} {ACCESS_REQUEST_HASHTAG.lstrip('#')}")
+    # No hashtag in the body: the "show tag" button reveals it on demand instead,
+    # so the open-requests hashtag search isn't cluttered by every reminder.
     try:
-        await context.bot.send_message(chat_id=owner_id, text="\n".join(lines))
+        await context.bot.send_message(
+            chat_id=owner_id,
+            text="\n".join(lines),
+            reply_markup=pending_tag_keyboard(lang, shown=False),
+        )
     except Exception:
         logger.warning("Failed to send the access-requests reminder", exc_info=True)
 

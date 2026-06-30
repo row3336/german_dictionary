@@ -6,7 +6,8 @@ scenario. A guest is registered as 'pending'; the owner receives a message tagge
 background job (jobs/access_reminders.py) reminds the owner. The owner's decision
 edits the original message: removes the buttons and swaps the hashtag to
 #user_confirmation_done, so searching the open hashtag only surfaces unhandled
-requests.
+requests. The reminder digest carries no live hashtag itself; a toggle button
+(pending_tag_keyboard) reveals/hides it on demand to keep that search clean.
 
 Leaf module: imports only app_config/lang/i18n/storage — never settings/menu, so
 those can import it without cycles.
@@ -112,14 +113,50 @@ async def _notify_guest(context: ContextTypes.DEFAULT_TYPE, user_id, key):
         logger.warning("Failed to notify the guest about the access decision", exc_info=True)
 
 
+# Callback data for the digest's search-tag toggle (no user id, unlike approve/reject).
+ACCESS_TAG_SHOW = f"{ACCESS_CALLBACK_PREFIX}:tagshow"
+ACCESS_TAG_HIDE = f"{ACCESS_CALLBACK_PREFIX}:taghide"
+# Suffix the toggle appends/strips so the live hashtag is searchable only while shown.
+_TAG_SUFFIX = f"\n\n{ACCESS_REQUEST_HASHTAG}"
+
+
+def pending_tag_keyboard(lang, shown):
+    """Toggle button for the pending-digest: reveal or hide the searchable hashtag.
+
+    The owner can't be detected tapping the hashtag itself (client-side search),
+    so the digest carries the live tag only while 'shown'; hiding it again keeps
+    the open-hashtag search clean (it would otherwise list every 2h reminder)."""
+    if shown:
+        label, data = t(lang, "access_reminder_hide_tag"), ACCESS_TAG_HIDE
+    else:
+        label, data = t(lang, "access_reminder_show_tag"), ACCESS_TAG_SHOW
+    return InlineKeyboardMarkup([[InlineKeyboardButton(label, callback_data=data)]])
+
+
+async def _toggle_search_tag(query, lang, show):
+    """Reveal/hide the live hashtag on the digest message and flip its button."""
+    base = (query.message.text or "")
+    if base.endswith(_TAG_SUFFIX):  # idempotent: strip any existing tag first
+        base = base[: -len(_TAG_SUFFIX)]
+    text = base + _TAG_SUFFIX if show else base
+    try:
+        await query.edit_message_text(text, reply_markup=pending_tag_keyboard(lang, show))
+    except Exception:
+        logger.warning("Failed to toggle the access-digest search tag", exc_info=True)
+
+
 async def access_decision_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle the owner's inline decision (✅ approve / ❌ reject)."""
+    """Handle the owner's inline decision (✅ approve / ❌ reject) or tag toggle."""
     query = update.callback_query
     await query.answer()
     if not is_owner(query.from_user.id):
         return
+    data = query.data or ""
+    if data in (ACCESS_TAG_SHOW, ACCESS_TAG_HIDE):
+        await _toggle_search_tag(query, _owner_lang(), show=(data == ACCESS_TAG_SHOW))
+        return
     try:
-        _, action, raw_uid = (query.data or "").split(":")
+        _, action, raw_uid = data.split(":")
         uid = int(raw_uid)
     except (ValueError, AttributeError):
         return
