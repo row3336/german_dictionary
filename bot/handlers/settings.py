@@ -133,6 +133,13 @@ from ..verb_forms_parsing.parser import (
 )
 
 
+def _settings_edit_back_markup(user_id):
+    """Keyboard for value-input prompts (bug #19): a single Back button so the
+    user can leave the input mode without having to type a value. The edit/confirm
+    handlers treat 'back' (and, for the reset confirm, any non-'yes') as cancel."""
+    return ReplyKeyboardMarkup([[t(_user_interface_lang(user_id), "back")]], resize_keyboard=True)
+
+
 def _settings_submenu_text(lang, desc_key, rows):
     """Build a settings submenu message (bug #0): the mode description, then each
     parameter's current value with a one-line explanation, all in the user's lang.
@@ -409,7 +416,7 @@ async def algo_settings_menu_choice(update: Update, context: ContextTypes.DEFAUL
         context.user_data["algo_setting_edit"] = "reset_periodicity"
         await update.message.reply_text(
             'Type "yes" to reset periodicity:',
-            reply_markup=ReplyKeyboardRemove(),
+            reply_markup=_settings_edit_back_markup(user_id),
         )
         return ALGO_SETTINGS_CONFIRM
 
@@ -455,7 +462,7 @@ async def fsrs_settings_menu_choice(update: Update, context: ContextTypes.DEFAUL
         context.user_data["algo_edit_return"] = "fsrs"
         await update.message.reply_text(
             "Enter ses.rtr_gap (number of FSRS questions between retries):",
-            reply_markup=ReplyKeyboardRemove(),
+            reply_markup=_settings_edit_back_markup(user_id),
         )
         return ALGO_SETTINGS_EDIT
 
@@ -464,7 +471,7 @@ async def fsrs_settings_menu_choice(update: Update, context: ContextTypes.DEFAUL
         context.user_data["algo_edit_return"] = "fsrs"
         await update.message.reply_text(
             "Enter ses.rtr_it (retry repetitions per word):",
-            reply_markup=ReplyKeyboardRemove(),
+            reply_markup=_settings_edit_back_markup(user_id),
         )
         return ALGO_SETTINGS_EDIT
 
@@ -486,7 +493,7 @@ async def drill_settings_menu_choice(update: Update, context: ContextTypes.DEFAU
         context.user_data["algo_edit_return"] = "drill"
         await update.message.reply_text(
             "Enter weak.drill_gap (normal weak questions between drill repeats):",
-            reply_markup=ReplyKeyboardRemove(),
+            reply_markup=_settings_edit_back_markup(user_id),
         )
         return ALGO_SETTINGS_EDIT
 
@@ -495,7 +502,7 @@ async def drill_settings_menu_choice(update: Update, context: ContextTypes.DEFAU
         context.user_data["algo_edit_return"] = "drill"
         await update.message.reply_text(
             "Enter weak.drill_repeats (total weak shows per word in session):",
-            reply_markup=ReplyKeyboardRemove(),
+            reply_markup=_settings_edit_back_markup(user_id),
         )
         return ALGO_SETTINGS_EDIT
 
@@ -517,30 +524,30 @@ async def learning_settings_menu_choice(update: Update, context: ContextTypes.DE
     if text == t(lang, "learning_daily_qty"):
         context.user_data["algo_setting_edit"] = LEARNING_DAILY_QTY_KEY
         context.user_data["algo_edit_return"] = "learning"
-        await update.message.reply_text("Enter learning.daily_qty:", reply_markup=ReplyKeyboardRemove())
+        await update.message.reply_text("Enter learning.daily_qty:", reply_markup=_settings_edit_back_markup(user_id))
         return ALGO_SETTINGS_EDIT
     if text == t(lang, "learning_intervals"):
         context.user_data["algo_setting_edit"] = LEARNING_INTERVALS_KEY
         context.user_data["algo_edit_return"] = "learning"
         await update.message.reply_text(
             "Enter learning.intervals_sec as comma-separated seconds (example: 30,120,600,3600):",
-            reply_markup=ReplyKeyboardRemove(),
+            reply_markup=_settings_edit_back_markup(user_id),
         )
         return ALGO_SETTINGS_EDIT
     if text == t(lang, "learning_reminder_interval"):
         context.user_data["algo_setting_edit"] = LEARNING_REMINDER_INTERVAL_KEY
         context.user_data["algo_edit_return"] = "learning"
-        await update.message.reply_text("Enter learning.reminder_interval_sec:", reply_markup=ReplyKeyboardRemove())
+        await update.message.reply_text("Enter learning.reminder_interval_sec:", reply_markup=_settings_edit_back_markup(user_id))
         return ALGO_SETTINGS_EDIT
     if text == t(lang, "learning_reminder_cooldown"):
         context.user_data["algo_setting_edit"] = LEARNING_REMINDER_COOLDOWN_KEY
         context.user_data["algo_edit_return"] = "learning"
-        await update.message.reply_text("Enter learning.reminder_cooldown_sec:", reply_markup=ReplyKeyboardRemove())
+        await update.message.reply_text("Enter learning.reminder_cooldown_sec:", reply_markup=_settings_edit_back_markup(user_id))
         return ALGO_SETTINGS_EDIT
     if text == t(lang, "learning_ready_quorum"):
         context.user_data["algo_setting_edit"] = LEARNING_READY_QUORUM_KEY
         context.user_data["algo_edit_return"] = "learning"
-        await update.message.reply_text("Enter learning.ready_quorum_pct (1-100):", reply_markup=ReplyKeyboardRemove())
+        await update.message.reply_text("Enter learning.ready_quorum_pct (1-100):", reply_markup=_settings_edit_back_markup(user_id))
         return ALGO_SETTINGS_EDIT
     await update.message.reply_text(
         "Use learning settings buttons.",

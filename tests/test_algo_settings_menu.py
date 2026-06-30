@@ -42,9 +42,11 @@ class _Msg:
     def __init__(self, text):
         self.text = text
         self.replies = []
+        self.markups = []
 
     async def reply_text(self, text, **kw):
         self.replies.append(text)
+        self.markups.append(kw.get("reply_markup"))
 
 
 class _Update:
@@ -153,6 +155,32 @@ class AlgoSettingsMenuTest(unittest.TestCase):
         self.assertEqual(ctx.user_data["algo_edit_return"], "fsrs")
         state = _run(algo_settings_edit(_Update("4", GUEST), ctx))
         self.assertEqual(state, FSRS_SETTINGS_MENU)
+
+    # --- #19: value-input prompts offer a Back button (exit without a value) ---
+    def test_value_prompt_offers_back_button(self):
+        from telegram import ReplyKeyboardMarkup
+        upd = _Update(t("en", "ses_rtr_gap"), GUEST)
+        _run(fsrs_settings_menu_choice(upd, _Ctx()))
+        markup = upd.message.markups[-1]
+        self.assertIsInstance(markup, ReplyKeyboardMarkup)
+        self.assertIn(t("en", "back"), [c for row in markup.rows for c in row])
+
+    def test_value_prompt_back_cancels_to_submenu(self):
+        # enter the edit, then press Back -> returns to the originating submenu,
+        # and no value got persisted (state cleared)
+        ctx = _Ctx()
+        _run(fsrs_settings_menu_choice(_Update(t("en", "ses_rtr_gap"), GUEST), ctx))
+        state = _run(algo_settings_edit(_Update(t("en", "back"), GUEST), ctx))
+        self.assertEqual(state, FSRS_SETTINGS_MENU)
+        self.assertNotIn("algo_setting_edit", ctx.user_data)
+
+    def test_reset_periodicity_prompt_offers_back_button(self):
+        from telegram import ReplyKeyboardMarkup
+        upd = _Update(t("en", "reset_periodicity"), GUEST)
+        _run(algo_settings_menu_choice(upd, _Ctx()))
+        markup = upd.message.markups[-1]
+        self.assertIsInstance(markup, ReplyKeyboardMarkup)
+        self.assertIn(t("en", "back"), [c for row in markup.rows for c in row])
 
     # --- i18n completeness ------------------------------------------------
     def test_explanation_keys_present_and_localized(self):
