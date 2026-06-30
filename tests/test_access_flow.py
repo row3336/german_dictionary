@@ -15,6 +15,7 @@ from bot.storage import (
     init_db,
     list_pending_users,
     register_or_update_user,
+    set_user_interface_lang,
     set_user_status,
 )
 
@@ -80,6 +81,27 @@ class AccessFlowTest(unittest.TestCase):
         set_user_status(self.db, U1, "approved")
         # a decision on U1 doesn't affect U2
         self.assertEqual(get_user_status(self.db, U2), "pending")
+
+    def test_owner_row_born_approved_not_pending(self):
+        # #11 root: an upsert that creates the owner's row (e.g. a language change)
+        # must NOT stamp it 'pending'; a guest's still does.
+        os.environ["OWNER_ID"] = str(OWNER)
+        self.addCleanup(lambda: os.environ.pop("OWNER_ID", None))
+        set_user_interface_lang(self.db, OWNER, "en")
+        self.assertEqual(get_user_status(self.db, OWNER), "approved")
+        register_or_update_user(self.db, U1, "alice", "Alice")
+        self.assertEqual(get_user_status(self.db, U1), "pending")
+
+    def test_pending_list_excludes_owner(self):
+        # #11 symptom: even a stray pending owner row must not surface in the digest.
+        os.environ["OWNER_ID"] = str(OWNER)
+        self.addCleanup(lambda: os.environ.pop("OWNER_ID", None))
+        register_or_update_user(self.db, OWNER, "", "")
+        set_user_status(self.db, OWNER, "pending")  # force the bad state
+        register_or_update_user(self.db, U1, "alice", "Alice")
+        ids = [u["user_id"] for u in list_pending_users(self.db)]
+        self.assertIn(U1, ids)
+        self.assertNotIn(OWNER, ids)
 
 
 if __name__ == "__main__":

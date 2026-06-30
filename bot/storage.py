@@ -1553,6 +1553,16 @@ def cleanup_transaction_logs(db_path, days=7):
         )
 
 
+def _initial_user_status(user_id):
+    """Status for a freshly-created users row: 'pending', EXCEPT the owner, who is
+    never pending (#11). is_owner() overrides status everywhere, and a pending
+    owner row used to surface in the access-requests digest — spamming the owner
+    with a request to approve himself. Any upsert that may create the owner's row
+    (language/registration) goes through this so the owner row is born 'approved'.
+    """
+    return "approved" if is_owner(user_id) else "pending"
+
+
 def register_or_update_user(db_path, user_id, username="", first_name=""):
     """Handle register or update user."""
     init_db(db_path)
@@ -1573,17 +1583,18 @@ def register_or_update_user(db_path, user_id, username="", first_name=""):
             _ensure_default_user_levels(conn, int(user_id))
             return existing["status"]
 
+        status = _initial_user_status(user_id)
         conn.execute(
             """
             INSERT INTO users (
                 user_id, username, first_name, status, interface_lang, dict_lang, created_at, updated_at
             )
-            VALUES (?, ?, ?, 'pending', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            VALUES (?, ?, ?, ?, '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
-            (int(user_id), _safe_text(username), _safe_text(first_name)),
+            (int(user_id), _safe_text(username), _safe_text(first_name), status),
         )
         _ensure_default_user_levels(conn, int(user_id))
-    return "pending"
+    return status
 
 
 def get_user_status(db_path, user_id):
@@ -1704,15 +1715,22 @@ def get_user_info(db_path, user_id):
 
 
 def list_pending_users(db_path):
-    """Users with status 'pending' (awaiting the owner's approval)."""
+    """Users with status 'pending' (awaiting the owner's approval).
+
+    The owner is always excluded (#11): is_owner overrides status, so the owner is
+    never a real applicant — and a stray pending owner row must not show up in the
+    access-requests digest/reminder (it would ask the owner to approve himself).
+    """
     init_db(db_path)
+    owner_id = int(get_owner_id() or 0)
     with _connect(db_path) as conn:
         rows = conn.execute(
             """
             SELECT user_id, username, first_name, created_at
-            FROM users WHERE status = 'pending'
+            FROM users WHERE status = 'pending' AND user_id != ?
             ORDER BY created_at
             """,
+            (owner_id,),
         ).fetchall()
     return [
         {
@@ -1837,12 +1855,12 @@ def set_user_interface_lang(db_path, user_id, interface_lang):
         conn.execute(
             """
             INSERT INTO users (user_id, username, first_name, status, interface_lang, dict_lang, created_at, updated_at)
-            VALUES (?, '', '', 'pending', ?, '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            VALUES (?, '', '', ?, ?, '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             ON CONFLICT(user_id) DO UPDATE SET
                 interface_lang = excluded.interface_lang,
                 updated_at = CURRENT_TIMESTAMP
             """,
-            (int(user_id), value),
+            (int(user_id), _initial_user_status(user_id), value),
         )
         _ensure_default_user_levels(conn, int(user_id))
 
@@ -1857,12 +1875,12 @@ def set_user_dict_lang(db_path, user_id, dict_lang):
         conn.execute(
             """
             INSERT INTO users (user_id, username, first_name, status, interface_lang, dict_lang, created_at, updated_at)
-            VALUES (?, '', '', 'pending', '', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            VALUES (?, '', '', ?, '', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             ON CONFLICT(user_id) DO UPDATE SET
                 dict_lang = excluded.dict_lang,
                 updated_at = CURRENT_TIMESTAMP
             """,
-            (int(user_id), value),
+            (int(user_id), _initial_user_status(user_id), value),
         )
         _ensure_default_user_levels(conn, int(user_id))
 
