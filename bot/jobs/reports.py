@@ -1,18 +1,19 @@
-"""Background jobs: daily FSRS due-report, peak-window notify, retention reports."""
+"""Background job: per-user retention reports (daily + weekly-on-Monday).
+
+The owner-only FSRS forecast + peak-window notify were removed: the 18:00 Berlin
+evening reminder already nudges about unfinished due words, and the live stats
+show the ready count at any moment, so those two extra owner sends were redundant.
+"""
 
 import logging
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 
 from telegram.ext import Application, ContextTypes
 
 from ..app_config import (
-    FSRS_PEAK_JOB_NAME,
-    FSRS_PEAK_NOTIFY_DATE_KEY,
     FSRS_REPORT_DATE_KEY,
-    FSRS_REPORT_JOB_NAME,
     FSRS_WEEKLY_REPORT_WEEK_KEY,
     get_db_path,
-    get_owner_id,
 )
 from ..common.lang import _mode_de_l1, _mode_l1_de, _user_interface_lang
 from ..common.outbound import SendStats, send_to_user
@@ -20,13 +21,10 @@ from ..common.settings import _fsrs_report_hour_utc
 from ..i18n import t
 from ..storage import (
     count_learning_done_in_week,
-    fsrs_due_forecast,
     get_daily_first_touch_retention,
-    get_setting,
     get_user_setting,
     get_weekly_first_touch_retention,
     list_active_users,
-    set_setting,
     set_user_setting,
 )
 
@@ -89,60 +87,6 @@ def _format_retention_weekly_text(retention, learning_done, lang):
     )
 
 
-def _format_fsrs_report_text(total, peak_hour, peak_count):
-    """Handle format fsrs report text."""
-    if total <= 0:
-        return "FSRS today: 0 due."
-    if peak_hour is None:
-        return f"FSRS today: {total} due."
-    return (
-        f"FSRS today: {total} due.\n"
-        f"Peak hour ~{peak_hour:02d}:00 UTC (approx), count {peak_count}."
-    )
-
-
-def _should_send_fsrs_daily_report(db_path, now_utc):
-    """Handle should send fsrs daily report."""
-    today = now_utc.date().isoformat()
-    last_date = get_setting(db_path, FSRS_REPORT_DATE_KEY, "")
-    if last_date == today:
-        return False
-    report_hour = _fsrs_report_hour_utc(db_path)
-    return now_utc.hour >= report_hour
-
-
-async def _fsrs_daily_report_job(context: ContextTypes.DEFAULT_TYPE):
-    """Owner-only FSRS forecast + peak-window state (retention moved to P5.3 broadcast)."""
-    db_path = get_db_path()
-    owner_id = get_owner_id()
-    if not owner_id:
-        return
-    now = datetime.now(timezone.utc)
-    if not _should_send_fsrs_daily_report(db_path, now):
-        return
-    today = now.date().isoformat()
-    mode = _mode_l1_de(owner_id)
-    forecast = fsrs_due_forecast(db_path, owner_id, mode)
-    total = int(forecast.get("total", 0))
-    peak_hour = forecast.get("peak_hour")
-    peak_count = int(forecast.get("peak_count", 0))
-    text = _format_fsrs_report_text(total, peak_hour, peak_count)
-    try:
-        await context.bot.send_message(
-            chat_id=owner_id,
-            text=f"```text\n{text}\n```",
-            parse_mode="Markdown",
-        )
-        set_setting(db_path, FSRS_REPORT_DATE_KEY, today)
-        set_setting(db_path, "fsrs_peak_hour_today", "")
-        set_setting(db_path, FSRS_PEAK_NOTIFY_DATE_KEY, "")
-        if peak_hour is not None:
-            set_setting(db_path, "fsrs_peak_hour_today", str(int(peak_hour)))
-    except Exception:
-        logging.exception("FSRS daily report failed")
-        return
-
-
 async def _retention_broadcast_job(context: ContextTypes.DEFAULT_TYPE):
     """P5.3 — broadcast per-user retention (daily + weekly-on-Monday) to all users.
 
@@ -201,64 +145,13 @@ async def _retention_broadcast_job(context: ContextTypes.DEFAULT_TYPE):
     send_stats.log("retention")
 
 
-async def _fsrs_peak_notify_job(context: ContextTypes.DEFAULT_TYPE):
-    """Handle fsrs peak notify job."""
-    db_path = get_db_path()
-    owner_id = get_owner_id()
-    if not owner_id:
-        return
-    today = date.today().isoformat()
-    peak_notified = get_setting(db_path, FSRS_PEAK_NOTIFY_DATE_KEY, "")
-    if peak_notified == today:
-        return
-    report_date = get_setting(db_path, FSRS_REPORT_DATE_KEY, "")
-    if report_date != today:
-        return
-    peak_hour_raw = get_setting(db_path, "fsrs_peak_hour_today", "")
-    try:
-        peak_hour = int(peak_hour_raw)
-    except (TypeError, ValueError):
-        return
-    now = datetime.now(timezone.utc)
-    if now.hour < peak_hour:
-        return
-    mode = _mode_l1_de(owner_id)
-    forecast = fsrs_due_forecast(db_path, owner_id, mode)
-    total = int(forecast.get("total", 0))
-    if total <= 0:
-        return
-    try:
-        await context.bot.send_message(
-            chat_id=owner_id,
-            text=f"FSRS peak window now. Due today: {total}.",
-        )
-        set_setting(db_path, FSRS_PEAK_NOTIFY_DATE_KEY, today)
-    except Exception:
-        logging.exception("FSRS peak notify failed")
-        return
-
-
 def _configure_fsrs_reports(app: Application):
-    """Handle configure fsrs reports."""
+    """Schedule the per-user retention broadcast (forecast/peak jobs were removed)."""
     job_queue = app.job_queue
     if job_queue is None:
         return
-    for name in (FSRS_REPORT_JOB_NAME, FSRS_PEAK_JOB_NAME, RETENTION_BROADCAST_JOB_NAME):
-        for job in job_queue.get_jobs_by_name(name):
-            job.schedule_removal()
-    # Run frequently and guard by date/hour so reports still work after restarts.
-    job_queue.run_repeating(
-        _fsrs_daily_report_job,
-        interval=600,
-        first=30,
-        name=FSRS_REPORT_JOB_NAME,
-    )
-    job_queue.run_repeating(
-        _fsrs_peak_notify_job,
-        interval=900,
-        first=900,
-        name=FSRS_PEAK_JOB_NAME,
-    )
+    for job in job_queue.get_jobs_by_name(RETENTION_BROADCAST_JOB_NAME):
+        job.schedule_removal()
     # Per-user retention broadcast: ticks every 10 min, drains the night window
     # in small batches (the job itself gates by report hour + per-user dedup).
     job_queue.run_repeating(

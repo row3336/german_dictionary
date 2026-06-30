@@ -37,7 +37,6 @@ LEARNING_REMINDER_COOLDOWN_KEY = "learning_reminder_cooldown_sec"
 LEARNING_READY_QUORUM_KEY = "learning_ready_quorum_pct"
 FSRS_REPORT_HOUR_KEY = "fsrs_report_utc_hour"
 FSRS_REPORT_DATE_KEY = "fsrs_report_date"
-FSRS_PEAK_NOTIFY_DATE_KEY = "fsrs_peak_notify_date"
 FSRS_WEEKLY_REPORT_WEEK_KEY = "fsrs_weekly_report_week"
 
 OWNER_INTERFACE_LANG_KEY = "owner_interface_lang"
@@ -65,8 +64,6 @@ ACCESS_DONE_HASHTAG = "#user_confirmation_done"
 # callback_data prefix of approval inline buttons: "access:approve:<uid>" / "access:reject:<uid>".
 ACCESS_CALLBACK_PREFIX = "access"
 FSRS_REPORT_UTC_HOUR_DEFAULT = 3
-FSRS_REPORT_JOB_NAME = "fsrs_daily_report_job"
-FSRS_PEAK_JOB_NAME = "fsrs_peak_notify_job"
 LEARNING_WARMUP_INTERVALS = (0, 0, 0)
 
 ARTICLE_SET = {
