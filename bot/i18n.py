@@ -190,7 +190,7 @@ TEXTS = {
         "algo_settings": "настройки алгоритма",
         "ses_rtr_gap": "интервал повтора",
         "ses_rtr_it": "повторов подряд",
-        "reset_periodicity": "сброс переодичности",
+        "reset_periodicity": "сброс периодичности",
         "reset_defaults": "сброс настроек к дефолту",
         "topic_filter": "фильтр тем",
         "drill_sett": "настройки дрилл повторов",
