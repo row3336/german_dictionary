@@ -95,6 +95,19 @@ class LanguageMenuTest(unittest.TestCase):
             for key, value in table.items():
                 self.assertNotIn("переодичн", str(value), f"{lang}/{key}")
 
+    def test_learning_skip_label_clear_and_routes(self):
+        # #12: the learning "skip" button now reads "в FSRS"/"у FSRS"/"To FSRS"
+        # (not the raw "skip_learning" key), and the new label still routes.
+        from bot.common.navigation import _action_key_from_text
+        from bot.i18n import TEXTS
+        from bot.storage import register_or_update_user, set_user_interface_lang
+        self.assertEqual(TEXTS["en"]["learning_skip"], "To FSRS")
+        self.assertEqual(TEXTS["ru"]["learning_skip"], "в FSRS")
+        self.assertEqual(TEXTS["uk"]["learning_skip"], "у FSRS")
+        register_or_update_user(self.db, GUEST, "g", "G")
+        set_user_interface_lang(self.db, GUEST, "ru")
+        self.assertEqual(_action_key_from_text("в FSRS", GUEST), "learning_skip")
+
 
 if __name__ == "__main__":
     unittest.main()
