@@ -92,22 +92,30 @@ def _language_menu_keys(user_id):
 
 
 def _algo_settings_menu_keys(user_id):
-    """Algo settings menu. "unit_tests" is owner-only (P3.2)."""
+    """Algo settings menu (bug #0). FSRS/weak params now live in their submenus;
+    "unit_tests" is owner-only (P3.2), third in the weak/learning row."""
     lang = _user_interface_lang(user_id)
-    # "unit_tests" is owner-only (P3.2): in-bot test run.
-    study_row = [t(lang, "drill_sett"), t(lang, "learning_sett")]
+    study_row = [t(lang, "weak_sett"), t(lang, "learning_sett")]
     if is_owner(user_id):
         study_row.append(t(lang, "unit_tests"))
     return [
-        [t(lang, "topic_filter"), t(lang, "ses_rtr_gap"), t(lang, "ses_rtr_it")],
+        [t(lang, "topic_filter"), t(lang, "fsrs_sett")],
         study_row,
-        [t(lang, "reset_periodicity"), t(lang, "reset_defaults")],
+        [t(lang, "reset_periodicity"), t(lang, "reset_defaults"), t(lang, "back")],
+    ]
+
+
+def _fsrs_settings_menu_keys(user_id):
+    """FSRS settings submenu: the two in-session retry params, then back (bug #0)."""
+    lang = _user_interface_lang(user_id)
+    return [
+        [t(lang, "ses_rtr_gap"), t(lang, "ses_rtr_it")],
         [t(lang, "back")],
     ]
 
 
 def _drill_settings_menu_keys(user_id):
-    """Handle drill settings menu keys."""
+    """Weak-settings submenu keys (UI label: weak_sett): the two weak-drill params."""
     lang = _user_interface_lang(user_id)
     return [
         [t(lang, "weak_drill_gap"), t(lang, "weak_drill_repeats")],
