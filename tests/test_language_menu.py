@@ -87,6 +87,14 @@ class LanguageMenuTest(unittest.TestCase):
     def test_router_unknown_redraws_submenu(self):
         self.assertEqual(_run(language_menu_choice(_Update("???", GUEST), None)), LANGUAGE_MENU)
 
+    def test_no_periodicity_typo(self):
+        # #8 regression: the RU "сброс переодичности" typo must not come back
+        # anywhere in the i18n tables.
+        from bot.i18n import TEXTS
+        for lang, table in TEXTS.items():
+            for key, value in table.items():
+                self.assertNotIn("переодичн", str(value), f"{lang}/{key}")
+
 
 if __name__ == "__main__":
     unittest.main()
