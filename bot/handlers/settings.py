@@ -321,9 +321,14 @@ async def language_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
             reply_markup=ReplyKeyboardMarkup(_settings_menu_keys(user_id), resize_keyboard=True),
         )
         return SETTINGS_MENU
+    # #4: mark that the picker was opened from Settings (not onboarding), so after
+    # the choice we return to the language submenu instead of dragging the user
+    # through the dictionary-language onboarding step / main menu.
     if action == "interface_lang":
+        context.user_data["lang_pick_from_settings"] = True
         return await _ask_interface_language(update)
     if action == "dict_lang":
+        context.user_data["lang_pick_from_settings"] = True
         return await _ask_dictionary_language(update, user_id)
     return await _send_language_menu(update, user_id)
 
@@ -341,6 +346,10 @@ async def select_ui_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return SELECT_UI_LANG
 
     set_user_interface_lang(get_db_path(), user_id, interface_lang)
+    # #4: changing the interface language from Settings only switches it and goes
+    # back to the language submenu — it must NOT continue into dict-lang onboarding.
+    if context.user_data.pop("lang_pick_from_settings", False):
+        return await _send_language_menu(update, user_id)
     # Owner and approved guest continue onboarding (dictionary language).
     if access_allowed(user_id):
         return await _ask_dictionary_language(update, user_id)
@@ -362,6 +371,10 @@ async def select_dict_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await _ask_dictionary_language(update, user_id)
 
     set_user_dict_lang(get_db_path(), user_id, dict_lang)
+    # #4: a dict-language change made from Settings returns to the language submenu;
+    # only the onboarding path falls through to the main menu.
+    if context.user_data.pop("lang_pick_from_settings", False):
+        return await _send_language_menu(update, user_id)
     await update.message.reply_text(
         t(lang, "main_menu"),
         reply_markup=_main_menu_markup(user_id),

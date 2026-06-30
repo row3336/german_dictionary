@@ -15,7 +15,7 @@ from bot.app_config import (  # noqa: E402
     SELECT_UI_LANG,
     SETTINGS_MENU,
 )
-from bot.handlers.settings import language_menu_choice  # noqa: E402
+from bot.handlers.settings import language_menu_choice, select_dict_lang, select_ui_lang  # noqa: E402
 from bot.storage import init_db  # noqa: E402
 from bot.ui import keyboards as K  # noqa: E402
 
@@ -35,6 +35,11 @@ class _Update:
     def __init__(self, text, uid):
         self.message = _Msg(text)
         self.effective_user = type("U", (), {"id": uid})()
+
+
+class _Ctx:
+    def __init__(self):
+        self.user_data = {}
 
 
 def _flat(rows):
@@ -81,8 +86,8 @@ class LanguageMenuTest(unittest.TestCase):
         self.assertEqual(state, SETTINGS_MENU)
 
     def test_router_opens_language_pickers(self):
-        self.assertEqual(_run(language_menu_choice(_Update("interface language", GUEST), None)), SELECT_UI_LANG)
-        self.assertEqual(_run(language_menu_choice(_Update("dict language", GUEST), None)), SELECT_DICT_LANG)
+        self.assertEqual(_run(language_menu_choice(_Update("interface language", GUEST), _Ctx())), SELECT_UI_LANG)
+        self.assertEqual(_run(language_menu_choice(_Update("dict language", GUEST), _Ctx())), SELECT_DICT_LANG)
 
     def test_router_unknown_redraws_submenu(self):
         self.assertEqual(_run(language_menu_choice(_Update("???", GUEST), None)), LANGUAGE_MENU)
@@ -94,6 +99,33 @@ class LanguageMenuTest(unittest.TestCase):
         for lang, table in TEXTS.items():
             for key, value in table.items():
                 self.assertNotIn("переодичн", str(value), f"{lang}/{key}")
+
+    def test_interface_lang_from_settings_no_dict_onboarding(self):
+        # #4: opening the interface-language picker from Settings and choosing a
+        # language returns to the language submenu — NOT into dict-lang onboarding.
+        ctx = _Ctx()
+        self.assertEqual(_run(language_menu_choice(_Update("interface language", OWNER), ctx)), SELECT_UI_LANG)
+        state = _run(select_ui_lang(_Update("Русский", OWNER), ctx))
+        self.assertEqual(state, LANGUAGE_MENU)
+        self.assertNotIn("lang_pick_from_settings", ctx.user_data)
+
+    def test_interface_lang_onboarding_still_asks_dict(self):
+        # without the settings flag (i.e. /start onboarding) the owner continues
+        # into the dictionary-language picker as before.
+        state = _run(select_ui_lang(_Update("Русский", OWNER), _Ctx()))
+        self.assertEqual(state, SELECT_DICT_LANG)
+
+    def test_dict_lang_from_settings_returns_to_language_menu(self):
+        # #4: a dict-language change from Settings returns to the language submenu,
+        # not the main menu.
+        from bot.i18n import t as _t
+        from bot.storage import set_user_interface_lang
+        set_user_interface_lang(self.db, OWNER, "en")
+        ctx = _Ctx()
+        self.assertEqual(_run(language_menu_choice(_Update("dict language", OWNER), ctx)), SELECT_DICT_LANG)
+        state = _run(select_dict_lang(_Update(_t("en", "dict_ru"), OWNER), ctx))
+        self.assertEqual(state, LANGUAGE_MENU)
+        self.assertNotIn("lang_pick_from_settings", ctx.user_data)
 
     def test_learning_skip_label_clear_and_routes(self):
         # #12: the learning skip button is localized for ru/uk ("в FSRS"/"у FSRS")
