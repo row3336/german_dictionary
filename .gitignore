@@ -18,7 +18,9 @@ data/
 .claude/settings.json
 
 # Internal working docs — local only, not versioned (design notes, todo, logs).
-docs/
+# Split from former docs/: claude_docs/ (Claude working notes), project_docs/ (project reference).
+claude_docs/
+project_docs/
 
 # Local scratch / temp notes — never versioned.
 temp.txt
