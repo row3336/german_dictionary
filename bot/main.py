@@ -22,6 +22,8 @@ from telegram.ext import (
 
 from .app_config import (
     ACCESS_MESSAGE,
+    DONATE_AMOUNT,
+    DONATE_CUSTOM,
     FEEDBACK_INPUT,
     LANGUAGE_MENU,
     OWNER_REVIEW_MENU,
@@ -159,7 +161,12 @@ from .handlers.review import (
     review_feedback_choice,
     review_reports_choice,
 )
-from .handlers.donate import precheckout_callback, successful_payment_callback
+from .handlers.donate import (
+    donate_amount_choice,
+    donate_custom_input,
+    precheckout_callback,
+    successful_payment_callback,
+)
 from .handlers.access import (
     access_decision_callback,
     access_message_input,
@@ -406,6 +413,8 @@ def main():
             ACCESS_REJECTED: [MessageHandler(filters.TEXT & ~filters.COMMAND, access_rejected_choice)],
             ACCESS_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, access_message_input)],
             FEEDBACK_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, feedback_input)],
+            DONATE_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, donate_amount_choice)],
+            DONATE_CUSTOM: [MessageHandler(filters.TEXT & ~filters.COMMAND, donate_custom_input)],
             TESTS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, tests_menu_choice)],
             DB_SEARCH: [MessageHandler(filters.TEXT & ~filters.COMMAND, db_search_input)],
             DB_SEARCH_VIEW: [MessageHandler(filters.TEXT & ~filters.COMMAND, db_search_view)],

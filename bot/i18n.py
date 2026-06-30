@@ -141,6 +141,10 @@ TEXTS = {
         "donate_desc": "Send a few Telegram Stars to support development. Thank you!",
         "donate_label": "Support",
         "donate_thanks": "⭐ Thank you for your support!",
+        "donate_choose_amount": "Choose a support amount (⭐):",
+        "donate_custom_btn": "✏️ Custom amount",
+        "donate_custom_prompt": "Enter the number of Stars (e.g. 50):",
+        "donate_invalid_amount": "Enter a whole number of Stars (1–100000). Try again:",
     },
     "ru": {
         "start": "Старт",
@@ -271,6 +275,10 @@ TEXTS = {
         "donate_desc": "Отправьте немного Telegram Stars в поддержку разработки. Спасибо!",
         "donate_label": "Поддержка",
         "donate_thanks": "⭐ Спасибо за поддержку!",
+        "donate_choose_amount": "Выберите сумму поддержки (⭐):",
+        "donate_custom_btn": "✏️ Своя сумма",
+        "donate_custom_prompt": "Введите количество звёзд (например 50):",
+        "donate_invalid_amount": "Введите целое число звёзд (1–100000). Попробуйте ещё раз:",
     },
     "uk": {
         "start": "Старт",
@@ -401,6 +409,10 @@ TEXTS = {
         "donate_desc": "Надішліть трохи Telegram Stars на підтримку розробки. Дякую!",
         "donate_label": "Підтримка",
         "donate_thanks": "⭐ Дякую за підтримку!",
+        "donate_choose_amount": "Оберіть суму підтримки (⭐):",
+        "donate_custom_btn": "✏️ Своя сума",
+        "donate_custom_prompt": "Введіть кількість зірок (наприклад 50):",
+        "donate_invalid_amount": "Введіть ціле число зірок (1–100000). Спробуйте ще раз:",
     },
 }
 
