@@ -38,15 +38,23 @@ _RETENTION_BATCH_PER_TICK = 5
 
 
 def _retention_zone(lang, rate):
-    """Localized retention-zone label for a first-touch rate."""
+    """Localized retention-zone label for a first-touch rate.
+
+    Five directional zones (owner-approved): <70% overload (too hard),
+    70-80% below optimal, 80-90% optimal, 90-95% slightly easy, >95% too easy.
+    Splitting the old catch-all "outside" preserves the direction (overload vs
+    too easy), so the advice points the right way.
+    """
     if rate < 70.0:
         key = "report_zone_overload"
-    elif 80.0 <= rate <= 90.0:
+    elif rate < 80.0:
+        key = "report_zone_below_optimal"
+    elif rate <= 90.0:
         key = "report_zone_optimal"
-    elif rate > 95.0:
-        key = "report_zone_easy"
+    elif rate <= 95.0:
+        key = "report_zone_slightly_easy"
     else:
-        key = "report_zone_outside"
+        key = "report_zone_too_easy"
     return t(lang, key)
 
 

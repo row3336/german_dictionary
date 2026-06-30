@@ -162,5 +162,52 @@ class RetentionBroadcastTest(unittest.TestCase):
         self.assertEqual(bot.sent, [])
 
 
+class RetentionZoneTest(unittest.TestCase):
+    """Bug #23: five directional zones replace the old catch-all 'outside'.
+
+    Thresholds: <70 overload / 70-80 below_optimal / 80-90 optimal /
+    90-95 slightly_easy / >95 too_easy. We pin every boundary so a future tweak
+    can't silently fold two zones together (which is the bug we are fixing)."""
+
+    # (rate, expected i18n key) across the boundaries owner asked to verify.
+    CASES = [
+        (0.0, "report_zone_overload"),
+        (69.9, "report_zone_overload"),
+        (70.0, "report_zone_below_optimal"),
+        (79.9, "report_zone_below_optimal"),
+        (80.0, "report_zone_optimal"),
+        (90.0, "report_zone_optimal"),
+        (90.2, "report_zone_slightly_easy"),  # the value from the live report
+        (95.0, "report_zone_slightly_easy"),
+        (95.1, "report_zone_too_easy"),
+        (100.0, "report_zone_too_easy"),
+    ]
+
+    def test_zone_boundaries_all_languages(self):
+        for lang in ("en", "ru", "uk"):
+            for rate, key in self.CASES:
+                with self.subTest(lang=lang, rate=rate):
+                    self.assertEqual(R._retention_zone(lang, rate), R.t(lang, key))
+
+    def test_old_catch_all_key_removed(self):
+        # The directionless keys must be gone so nothing falls back to them.
+        for lang in ("en", "ru", "uk"):
+            self.assertEqual(R.t(lang, "report_zone_outside"), "report_zone_outside")
+            self.assertEqual(R.t(lang, "report_zone_easy"), "report_zone_easy")
+
+    def test_zone_appears_in_daily_and_weekly_text(self):
+        # One function feeds both reports; a slightly-easy rate must surface the
+        # directional label (not the old "outside") in each.
+        retention = {
+            "date": "2026-06-24", "week_start": "2026-06-22", "week_end": "2026-06-28",
+            "total": 50, "correct": 45, "rate": 90.2,
+        }
+        daily = R._format_retention_daily_text(retention, "en")
+        weekly = R._format_retention_weekly_text(retention, 3, "en")
+        zone = R.t("en", "report_zone_slightly_easy")
+        self.assertIn(zone, daily)
+        self.assertIn(zone, weekly)
+
+
 if __name__ == "__main__":
     unittest.main()
