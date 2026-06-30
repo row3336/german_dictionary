@@ -37,10 +37,11 @@ class ReportButtonTest(unittest.TestCase):
             else:
                 os.environ[k] = v
 
-    def test_report_button_on_card_for_owner_and_guest(self):
-        # en label for report_card on the unified clarify card.
-        self.assertIn("report / fix", _flat(K._clarify_fields_markup("quiz", OWNER)))
+    def test_report_button_guest_only_not_owner(self):
+        # #20: the "report / fix" button is for guests (they report TO the owner);
+        # the owner edits fields directly and must NOT see it.
         self.assertIn("report / fix", _flat(K._clarify_fields_markup("quiz", GUEST)))
+        self.assertNotIn("report / fix", _flat(K._clarify_fields_markup("quiz", OWNER)))
 
     def test_guest_card_has_no_delete(self):
         self.assertNotIn("delete", _flat(K._clarify_fields_markup("quiz", GUEST)))

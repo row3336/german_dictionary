@@ -178,11 +178,13 @@ def _clarify_fields_markup(source, user_id=None, in_search=False):
         rows.append([t(lang, "send_learn"), BACK_TEXT] if in_search else [BACK_TEXT])
         return ReplyKeyboardMarkup(rows, resize_keyboard=True)
     if source == "quiz":
+        # Owner edits fields directly, so no "report / fix" button (#20) — that's
+        # for guests to report TO the owner; the owner has nobody to report to.
         rows = [
             ["ru", "ukr", "de", SYNONYMS_TEXT],
             ["article", "plural", "type", "infinitive"],
             ["prateritum", "partizip2", "komparativ", "superlativ"],
-            ["image", "example", t(lang, "report_card")],
+            ["image", "example"],
         ]
         last = ([t(lang, "send_learn")] if in_search else []) + ["delete", BACK_TEXT]
         rows.append(last)
