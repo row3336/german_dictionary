@@ -28,11 +28,16 @@ from ..storage import (
     set_user_setting,
 )
 
-# Spread the nightly retention broadcast over the night: each tick sends to at
+# Spread the retention broadcast over the morning window: each tick sends to at
 # most this many not-yet-notified users, so sends drain over several ticks
 # instead of bursting (AIORateLimiter paces the within-tick rate on top).
 RETENTION_BROADCAST_JOB_NAME = "retention_broadcast_job"
 _RETENTION_BATCH_PER_TICK = 5
+# Bug #21: send ONLY in a narrow morning window [report_hour, report_hour+N), not
+# all day — so the report lands once in the morning and never mid-day. The window
+# must be wide enough to drain the user base in batches (N hours x 6 ticks/hour x
+# batch). Default report_hour is early UTC, so report_hour+N stays within the day.
+_RETENTION_WINDOW_HOURS = 3
 
 
 def _retention_zone(lang, rate):
@@ -90,15 +95,17 @@ def _format_retention_weekly_text(retention, learning_done, lang):
 async def _retention_broadcast_job(context: ContextTypes.DEFAULT_TYPE):
     """P5.3 — broadcast per-user retention (daily + weekly-on-Monday) to all users.
 
-    Each user gets their OWN numbers, in their own language, once per day. Sends
-    are spread over the night: starting at the report hour, each tick handles at
-    most `_RETENTION_BATCH_PER_TICK` not-yet-notified users (per-user dedup keys),
-    so the broadcast drains over several ticks instead of bursting.
+    Each user gets their OWN numbers, in their own language, once per day. Bug #21:
+    the broadcast runs ONLY in a narrow morning window (so it lands once in the
+    morning, never mid-day), and a report with no data (total==0) is skipped
+    entirely — a brand-new or idle user gets nothing instead of a "no data"
+    message. The window drains in batches of `_RETENTION_BATCH_PER_TICK` per tick,
+    gated by per-user dedup keys.
     """
     db_path = get_db_path()
     now = datetime.now(timezone.utc)
     report_hour = _fsrs_report_hour_utc(db_path)
-    if now.hour < report_hour:
+    if not (report_hour <= now.hour < report_hour + _RETENTION_WINDOW_HOURS):
         return
     today = now.date().isoformat()
     report_day = (now.date() - timedelta(days=1)).isoformat()
@@ -120,25 +127,33 @@ async def _retention_broadcast_job(context: ContextTypes.DEFAULT_TYPE):
         retention = get_daily_first_touch_retention(
             db_path, user_id=user_id, target_date=report_day, modes=modes,
         )
-        daily_text = _format_retention_daily_text(retention, lang)
-        result = await send_to_user(
-            context.bot, user_id, f"```text\n{daily_text}\n```",
-            "retention_daily", stats=send_stats, parse_mode="Markdown",
-        )
+        # Skip the daily send when there is nothing to report (bug #21). No send =
+        # no error, so we still mark the dedup below and won't retry this user.
+        daily_ok = True
+        if int(retention.get("total") or 0) > 0:
+            daily_text = _format_retention_daily_text(retention, lang)
+            result = await send_to_user(
+                context.bot, user_id, f"```text\n{daily_text}\n```",
+                "retention_daily", stats=send_stats, parse_mode="Markdown",
+            )
+            daily_ok = result != "error"
         # Weekly is handled in the same pass (before marking the daily dedup) so a
         # user never gets the daily mark without their pending weekly.
         if is_monday and get_user_setting(db_path, user_id, FSRS_WEEKLY_REPORT_WEEK_KEY, "") != prev_ws_iso:
             weekly = get_weekly_first_touch_retention(
                 db_path, user_id=user_id, week_start=prev_ws_iso, modes=modes,
             )
-            learning_done = count_learning_done_in_week(db_path, user_id, week_start=prev_ws_iso)
-            weekly_text = _format_retention_weekly_text(weekly, learning_done, lang)
-            await send_to_user(
-                context.bot, user_id, f"```text\n{weekly_text}\n```",
-                "retention_weekly", stats=send_stats, parse_mode="Markdown",
-            )
+            if int(weekly.get("total") or 0) > 0:
+                learning_done = count_learning_done_in_week(db_path, user_id, week_start=prev_ws_iso)
+                weekly_text = _format_retention_weekly_text(weekly, learning_done, lang)
+                await send_to_user(
+                    context.bot, user_id, f"```text\n{weekly_text}\n```",
+                    "retention_weekly", stats=send_stats, parse_mode="Markdown",
+                )
+            # Mark the week handled even when empty (skipped), so we don't recompute
+            # it on every Monday tick.
             set_user_setting(db_path, user_id, FSRS_WEEKLY_REPORT_WEEK_KEY, prev_ws_iso)
-        if result != "error":
+        if daily_ok:
             set_user_setting(db_path, user_id, FSRS_REPORT_DATE_KEY, today)
         handled += 1
 
@@ -152,8 +167,8 @@ def _configure_fsrs_reports(app: Application):
         return
     for job in job_queue.get_jobs_by_name(RETENTION_BROADCAST_JOB_NAME):
         job.schedule_removal()
-    # Per-user retention broadcast: ticks every 10 min, drains the night window
-    # in small batches (the job itself gates by report hour + per-user dedup).
+    # Per-user retention broadcast: ticks every 10 min, drains the morning window
+    # in small batches (the job itself gates by the window + per-user dedup).
     job_queue.run_repeating(
         _retention_broadcast_job,
         interval=600,

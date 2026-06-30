@@ -1,9 +1,10 @@
 """P5.3 — per-user retention broadcast.
 
 Each active user gets their OWN daily retention numbers in their own language,
-once per day (per-user dedup); the night window is drained in small batches per
-tick; an empty-data day still sends a localized 'no data' line. Module functions
-are monkeypatched so no full quiz-event fixture is needed; telegram is stubbed.
+once per day (per-user dedup); the broadcast runs only in a narrow morning window,
+drained in small batches per tick; an empty-data day (total==0) is skipped entirely
+(bug #21). Module functions are monkeypatched so no full quiz-event fixture is
+needed; telegram is stubbed.
 """
 
 import asyncio
@@ -68,7 +69,9 @@ class RetentionBroadcastTest(unittest.TestCase):
             "_RETENTION_BATCH_PER_TICK", "datetime",
         )}
         self.addCleanup(self._restore_globals)
-        R._fsrs_report_hour_utc = lambda db: 0  # window always open
+        # Morning window is [report_hour, report_hour+N); the frozen clock is hour 12,
+        # so set report_hour=12 to keep the window open in the daily-path tests.
+        R._fsrs_report_hour_utc = lambda db: 12
         R.list_active_users = lambda db: [U1, U2, U3]
         self._lang = {U1: "ru", U2: "en", U3: "uk"}
         R._user_interface_lang = lambda uid: self._lang[uid]
@@ -114,14 +117,22 @@ class RetentionBroadcastTest(unittest.TestCase):
         bot = _FakeBot()
         _run(R._retention_broadcast_job(_Ctx(bot)))
         sent = dict(bot.sent)
-        self.assertEqual(set(sent), {U1, U2, U3})
+        # U2 has empty data -> skipped entirely (bug #21); only U1 and U3 get a report.
+        self.assertEqual(set(sent), {U1, U3})
         self.assertIn("Ретеншн", sent[U1])      # ru
         self.assertIn("9/10", sent[U1])          # U1's own numbers
         self.assertIn("оптимально", sent[U1])    # ru zone for 90%
-        self.assertIn("Retention", sent[U2])     # en
-        self.assertIn("no data", sent[U2])       # U2 empty -> localized no-data
         self.assertIn("Ретеншн", sent[U3])       # uk
         self.assertIn("2/4", sent[U3])           # U3's own numbers
+
+    def test_empty_report_skipped_but_deduped(self):
+        # U2 (total==0) gets no message, yet is marked handled so later ticks
+        # don't re-evaluate it.
+        bot = _FakeBot()
+        _run(R._retention_broadcast_job(_Ctx(bot)))
+        self.assertNotIn(U2, dict(bot.sent))
+        today = self._frozen.date().isoformat()
+        self.assertEqual(get_user_setting(self.db, U2, R.FSRS_REPORT_DATE_KEY, ""), today)
 
     def test_dedup_no_resend_same_day(self):
         bot = _FakeBot()
@@ -132,31 +143,40 @@ class RetentionBroadcastTest(unittest.TestCase):
         _run(R._retention_broadcast_job(_Ctx(bot)))
         self.assertEqual(bot.sent, first)  # no re-send same day
 
-    def test_night_window_batches_per_tick(self):
-        # Batch size 2 -> first tick sends 2 users, second tick the remaining one.
+    def test_window_batches_per_tick(self):
+        # Batch size 2 caps PROCESSED users per tick: first tick handles U1+U2 but
+        # only U1 has data (U2 empty -> skipped), so 1 message; second tick U3 -> 2.
         R._RETENTION_BATCH_PER_TICK = 2
         bot = _FakeBot()
         _run(R._retention_broadcast_job(_Ctx(bot)))
-        self.assertEqual(len(bot.sent), 2)
+        self.assertEqual(len(bot.sent), 1)
         _run(R._retention_broadcast_job(_Ctx(bot)))
-        self.assertEqual(len(bot.sent), 3)  # remaining user delivered next tick
+        self.assertEqual(len(bot.sent), 2)  # remaining user with data delivered next tick
 
     def test_weekly_on_monday(self):
-        # On Monday each user gets BOTH daily and weekly (bug #22 regression guard:
-        # the weekly path used to be unstubbed -> the suite went red every Monday).
+        # On Monday a user with data gets BOTH daily and weekly; U2 (empty daily AND
+        # empty weekly) is skipped on both (bug #21).
         R.datetime = _FrozenDatetime(_dt.datetime(2026, 6, 29, 12, 0, tzinfo=_dt.timezone.utc))  # Monday
         bot = _FakeBot()
         _run(R._retention_broadcast_job(_Ctx(bot)))
-        self.assertEqual(len(bot.sent), 6)  # 3 users x (daily + weekly)
+        self.assertEqual(len(bot.sent), 4)  # U1 (daily+weekly) + U3 (daily+weekly)
         weekly = {cid: text for cid, text in bot.sent if "#weekly" in text}
-        self.assertEqual(set(weekly), {U1, U2, U3})
+        self.assertEqual(set(weekly), {U1, U3})  # U2 empty weekly -> not sent
         self.assertIn("47/50", weekly[U1])    # U1 ru weekly numbers
-        self.assertIn("no data", weekly[U2])  # U2 en empty weekly -> localized no-data
         self.assertIn("14/20", weekly[U3])    # U3 uk weekly numbers
 
     def test_window_closed_before_report_hour(self):
-        # Frozen hour is 12 (< 23) -> window closed -> nothing sent.
+        # Frozen hour is 12 (< 23) -> window not yet open -> nothing sent.
         R._fsrs_report_hour_utc = lambda db: 23
+        bot = _FakeBot()
+        _run(R._retention_broadcast_job(_Ctx(bot)))
+        self.assertEqual(bot.sent, [])
+
+    def test_window_closed_after_morning_window(self):
+        # Bug #21: window is [report_hour, report_hour+N). Frozen hour 12 with
+        # report_hour 8 (N=3 -> [8,11)) is PAST the window -> nothing sent (no
+        # mid-day reports).
+        R._fsrs_report_hour_utc = lambda db: 8
         bot = _FakeBot()
         _run(R._retention_broadcast_job(_Ctx(bot)))
         self.assertEqual(bot.sent, [])
