@@ -13,6 +13,7 @@ from bot.storage import (
     add_word,
     apply_user_word_media,
     get_user_word_media,
+    get_word_by_id,
     init_db,
     set_user_word_media,
 )
@@ -76,6 +77,22 @@ class UserWordMediaTest(unittest.TestCase):
         self.assertEqual(apply_user_word_media(self.db, U2, entry)["example"], "")  # blank, not u1's
         # user_id=None is a non-personalized context (e.g. owner-less) -> shared as-is
         self.assertEqual(apply_user_word_media(self.db, None, entry)["example"], "shared example")
+
+    def test_two_guests_distinct_personals_no_overlap(self):
+        # Mirrors the live P4 check (Himbeere with two personals): two guests set
+        # DIFFERENT personal example/image on the same word; each sees only their
+        # own, neither leaks, and the shared `words` row stays untouched.
+        set_user_word_media(self.db, U1, self.wid, example="guest1 ex", image="g1-img")
+        set_user_word_media(self.db, U2, self.wid, example="guest2 ex", image="g2-img")
+        entry = {"id": self.wid, "image": "shared-img", "example": "shared example"}
+        out1 = apply_user_word_media(self.db, U1, entry)
+        out2 = apply_user_word_media(self.db, U2, entry)
+        self.assertEqual((out1["example"], out1["image"]), ("guest1 ex", "g1-img"))
+        self.assertEqual((out2["example"], out2["image"]), ("guest2 ex", "g2-img"))
+        # the shared word row is never changed by guest writes
+        shared = get_word_by_id(self.db, self.wid)
+        self.assertEqual(shared["example"], "shared example")
+        self.assertEqual(shared["image"], "shared-img")
 
     def test_owner_sees_shared(self):
         os.environ["OWNER_ID"] = "5000"
