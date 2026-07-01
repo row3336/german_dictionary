@@ -17,7 +17,6 @@ from ..app_config import (
     LEARNING_QUIZ,
     TESTS_MENU,
     get_db_path,
-    is_owner,
 )
 from ..common.lang import _user_dict_lang, _user_interface_lang
 from ..common.navigation import _action_key_from_text, _reply_text_with_retry
@@ -384,7 +383,7 @@ async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     action = _action_key_from_text(text, user_id)
     if action == "back":
         return await _send_learning_menu(update, user_id)
-    if text == AI_CLARIFY_FIELD and is_owner(user_id):
+    if text == AI_CLARIFY_FIELD:
         return await _start_clarify_fields(update, context, LEARNING_QUIZ, prefer_current=True)
 
     entry = context.user_data.get("quiz_entry")
