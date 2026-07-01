@@ -21,7 +21,7 @@ from ..app_config import (
     get_db_path,
     is_owner,
 )
-from ..common.lang import _mode_de_l1, _mode_l1_de, _mode_pl_sg, _user_dict_lang
+from ..common.lang import _mode_de_l1, _mode_l1_de, _mode_pl_sg, _user_dict_lang, _user_interface_lang
 from ..common.navigation import _action_key_from_text, _back_to_tests, _reply_text_with_retry
 from ..common.session import (
     _force_take_retry_entry,
@@ -35,6 +35,7 @@ from ..common.session import (
     _set_retry_since_last,
 )
 from ..common.txlog import _capture_transaction_snapshot, _log_transaction
+from ..i18n import t
 from ..storage import QUIZ_ARTICLE as MODE_ARTICLE
 from ..storage import QUIZ_RU_DE as MODE_RU_DE
 from ..storage import (
@@ -240,7 +241,10 @@ def _check_ru_de_strict(entry, answer_text):
 async def _stop_with_summary(update: Update, context: ContextTypes.DEFAULT_TYPE, mode):
     """Handle stop with summary."""
     count = _session_count(context, mode)
-    await _reply_text_with_retry(update.message, f"session words = {count}")
+    await _reply_text_with_retry(
+        update.message,
+        t(_user_interface_lang(update.effective_user.id), "session_words_count").format(count=count),
+    )
     return await _back_to_tests(update, context)
 
 
@@ -293,10 +297,13 @@ async def _send_ru_de_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
         count = _session_count(context, mode)
         if prefix_text:
             await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
-        await _reply_text_with_retry(update.message, f"session words = {count}")
         await _reply_text_with_retry(
             update.message,
-            "No due words. Add more or wait until due date.",
+            t(_user_interface_lang(update.effective_user.id), "session_words_count").format(count=count),
+        )
+        await _reply_text_with_retry(
+            update.message,
+            t(_user_interface_lang(update.effective_user.id), "no_due_words"),
             reply_markup=_quiz_idle_markup(update.effective_user.id),
         )
         return QUIZ_RU_DE
@@ -329,10 +336,13 @@ async def _send_de_ru_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
         count = _session_count(context, mode)
         if prefix_text:
             await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
-        await _reply_text_with_retry(update.message, f"session words = {count}")
         await _reply_text_with_retry(
             update.message,
-            "No due words. Add more or wait until due date.",
+            t(_user_interface_lang(update.effective_user.id), "session_words_count").format(count=count),
+        )
+        await _reply_text_with_retry(
+            update.message,
+            t(_user_interface_lang(update.effective_user.id), "no_due_words"),
             reply_markup=_quiz_idle_markup(update.effective_user.id),
         )
         return QUIZ_DE_RU
@@ -372,10 +382,13 @@ async def _send_pl_sg_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
             count = _session_count(context, mode)
             if prefix_text:
                 await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
-            await _reply_text_with_retry(update.message, f"session words = {count}")
             await _reply_text_with_retry(
                 update.message,
-                "No due plural>singular nouns.",
+                t(_user_interface_lang(update.effective_user.id), "session_words_count").format(count=count),
+            )
+            await _reply_text_with_retry(
+                update.message,
+                t(_user_interface_lang(update.effective_user.id), "no_due_pl_sg"),
                 reply_markup=_quiz_idle_markup(update.effective_user.id),
             )
             return QUIZ_PL_SG
@@ -383,10 +396,13 @@ async def _send_pl_sg_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
         count = _session_count(context, mode)
         if prefix_text:
             await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
-        await _reply_text_with_retry(update.message, f"session words = {count}")
         await _reply_text_with_retry(
             update.message,
-            "No due words. Add more or wait until due date.",
+            t(_user_interface_lang(update.effective_user.id), "session_words_count").format(count=count),
+        )
+        await _reply_text_with_retry(
+            update.message,
+            t(_user_interface_lang(update.effective_user.id), "no_due_words"),
             reply_markup=_quiz_idle_markup(update.effective_user.id),
         )
         return QUIZ_PL_SG
@@ -418,7 +434,7 @@ async def _send_article_prompt(update: Update, context: ContextTypes.DEFAULT_TYP
             await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
         await _reply_text_with_retry(
             update.message,
-            "No due nouns. Add more or wait until due date.",
+            t(_user_interface_lang(update.effective_user.id), "no_due_nouns"),
             reply_markup=ReplyKeyboardMarkup(_tests_menu_keys(update.effective_user.id), resize_keyboard=True),
         )
         return TESTS_MENU
@@ -454,7 +470,8 @@ async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await _stop_with_summary(update, context, _mode_l1_de(update.effective_user.id))
     if action == "input_err":
         applied = _apply_input_err(update, context, _mode_l1_de(update.effective_user.id))
-        prefix = "✅ Fixed previous answer." if applied else "Nothing to fix."
+        lang = _user_interface_lang(update.effective_user.id)
+        prefix = t(lang, "input_err_fixed") if applied else t(lang, "input_err_nothing")
         return await _repeat_current_ru_de(update, context, prefix)
     if action == "send_learn":
         added = _send_entry_to_learning(update, context, entry_key="quiz_entry")
@@ -462,7 +479,8 @@ async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Word is now in active learning (excluded from FSRS due) — drop it from the
             # retry queue and move on to the NEXT word, not the one just sent.
             _remove_from_retry(context, _mode_l1_de(update.effective_user.id), (context.user_data.get("quiz_entry") or {}).get("id"))
-        prefix = "✅ Added to learning." if added else "Nothing to send."
+        lang = _user_interface_lang(update.effective_user.id)
+        prefix = t(lang, "added_to_learning") if added else t(lang, "nothing_to_send")
         return await _send_ru_de_prompt(update, context, prefix)
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_RU_DE)
@@ -508,13 +526,15 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await _stop_with_summary(update, context, _mode_de_l1(update.effective_user.id))
     if action == "input_err":
         applied = _apply_input_err(update, context, _mode_de_l1(update.effective_user.id))
-        prefix = "✅ Fixed previous answer." if applied else "Nothing to fix."
+        lang = _user_interface_lang(update.effective_user.id)
+        prefix = t(lang, "input_err_fixed") if applied else t(lang, "input_err_nothing")
         return await _repeat_current_de_ru(update, context, prefix)
     if action == "send_learn":
         added = _send_entry_to_learning(update, context, entry_key="quiz_entry")
         if added:
             _remove_from_retry(context, _mode_de_l1(update.effective_user.id), (context.user_data.get("quiz_entry") or {}).get("id"))
-        prefix = "✅ Added to learning." if added else "Nothing to send."
+        lang = _user_interface_lang(update.effective_user.id)
+        prefix = t(lang, "added_to_learning") if added else t(lang, "nothing_to_send")
         return await _send_de_ru_prompt(update, context, prefix)
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_DE_RU)
@@ -560,13 +580,15 @@ async def quiz_pl_sg(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await _stop_with_summary(update, context, _mode_pl_sg(update.effective_user.id))
     if action == "input_err":
         applied = _apply_input_err(update, context, _mode_pl_sg(update.effective_user.id))
-        prefix = "✅ Fixed previous answer." if applied else "Nothing to fix."
+        lang = _user_interface_lang(update.effective_user.id)
+        prefix = t(lang, "input_err_fixed") if applied else t(lang, "input_err_nothing")
         return await _send_pl_sg_prompt(update, context, prefix)
     if action == "send_learn":
         added = _send_entry_to_learning(update, context, entry_key="quiz_entry")
         if added:
             _remove_from_retry(context, _mode_pl_sg(update.effective_user.id), (context.user_data.get("quiz_entry") or {}).get("id"))
-        prefix = "✅ Added to learning." if added else "Nothing to send."
+        lang = _user_interface_lang(update.effective_user.id)
+        prefix = t(lang, "added_to_learning") if added else t(lang, "nothing_to_send")
         return await _send_pl_sg_prompt(update, context, prefix)
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_PL_SG)
