@@ -9,7 +9,6 @@ from telegram import ReplyKeyboardMarkup
 from ..app_config import (
     BACK_TEXT,
     I_DONT_KNOW_TEXT,
-    INPUT_ERR_TEXT,
     is_owner,
 )
 from ..common.lang import _quiz_dir_labels, _user_interface_lang
@@ -139,7 +138,7 @@ def _quiz_markup(user_id, article=False, allow_idk=True):
     if article:
         rows.append(["der", "die", "das"])
     elif allow_idk:
-        rows.append([t(lang, "send_learn"), I_DONT_KNOW_TEXT, INPUT_ERR_TEXT])
+        rows.append([t(lang, "send_learn"), I_DONT_KNOW_TEXT, t(lang, "input_err")])
     # "clarify_fields" (card with personal example/image + report) is open to all (P6.2).
     rows.append([t(lang, "clarify_fields"), t(lang, "stop")])
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
@@ -148,7 +147,7 @@ def _quiz_markup(user_id, article=False, allow_idk=True):
 def _quiz_idle_markup(user_id):
     """Keyboard while the quiz is idle (between questions)."""
     lang = _user_interface_lang(user_id)
-    rows = [[t(lang, "send_learn"), INPUT_ERR_TEXT]]
+    rows = [[t(lang, "send_learn"), t(lang, "input_err")]]
     rows.append([t(lang, "clarify_fields"), t(lang, "back")])
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
@@ -157,7 +156,7 @@ def _weak_article_markup(user_id):
     """Handle weak article markup."""
     lang = _user_interface_lang(user_id)
     rows = [["der", "die", "das"]]
-    rows.append([t(lang, "clarify_fields"), INPUT_ERR_TEXT, t(lang, "stop")])
+    rows.append([t(lang, "clarify_fields"), t(lang, "input_err"), t(lang, "stop")])
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 

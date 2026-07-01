@@ -10,8 +10,6 @@ from telegram import ReplyKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from ..app_config import (
-    AI_CLARIFY_FIELD,
-    INPUT_ERR_TEXT,
     I_DONT_KNOW_TEXT,
     LEARNING_MENU,
     LEARNING_QUIZ,
@@ -289,7 +287,7 @@ async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TY
             update.message,
             prompt_text,
             reply_markup=ReplyKeyboardMarkup(
-                [[t(_user_interface_lang(user_id), "learning_next"), t(_user_interface_lang(user_id), "learning_skip")], [AI_CLARIFY_FIELD, t(_user_interface_lang(user_id), "back")]],
+                [[t(_user_interface_lang(user_id), "learning_next"), t(_user_interface_lang(user_id), "learning_skip")], [t(_user_interface_lang(user_id), "clarify_fields"), t(_user_interface_lang(user_id), "back")]],
                 resize_keyboard=True,
             ),
             parse_mode="Markdown",
@@ -326,7 +324,7 @@ async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TY
         update.message,
         prompt_text,
         reply_markup=ReplyKeyboardMarkup(
-            [[I_DONT_KNOW_TEXT, INPUT_ERR_TEXT], [t(_user_interface_lang(user_id), "learning_skip"), AI_CLARIFY_FIELD, t(_user_interface_lang(user_id), "back")]],
+            [[I_DONT_KNOW_TEXT, t(_user_interface_lang(user_id), "input_err")], [t(_user_interface_lang(user_id), "learning_skip"), t(_user_interface_lang(user_id), "clarify_fields"), t(_user_interface_lang(user_id), "back")]],
             resize_keyboard=True,
         ),
         parse_mode="Markdown",
@@ -383,7 +381,7 @@ async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     action = _action_key_from_text(text, user_id)
     if action == "back":
         return await _send_learning_menu(update, user_id)
-    if text == AI_CLARIFY_FIELD:
+    if action == "clarify_fields":
         return await _start_clarify_fields(update, context, LEARNING_QUIZ, prefer_current=True)
 
     entry = context.user_data.get("quiz_entry")
@@ -414,7 +412,7 @@ async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return LEARNING_QUIZ
 
-    if text == INPUT_ERR_TEXT:
+    if action == "input_err":
         applied = _apply_input_err_learning(update, context)
         prefix = "✅ Fixed previous answer." if applied else "Nothing to fix."
         context.user_data.pop("learning_mix_queue", None)

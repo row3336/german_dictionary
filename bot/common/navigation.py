@@ -70,6 +70,7 @@ def _action_key_from_text(text, user_id):
         ("learning_mix_mode", "learning_mix_mode"),
         ("send_learn", "send_learn"),
         ("clarify_fields", "clarify_fields"),
+        ("input_err", "input_err"),
         ("standard_fsrs", "standard_fsrs"),
         ("weak_article_mode", "weak_article"),
         ("weak_plural_mode", "weak_plural"),

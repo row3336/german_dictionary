@@ -13,7 +13,6 @@ from telegram.ext import ContextTypes
 from ..app_config import (
     FLAG_TEXT,
     I_DONT_KNOW_TEXT,
-    INPUT_ERR_TEXT,
     QUIZ_ARTICLE,
     QUIZ_DE_RU,
     QUIZ_PL_SG,
@@ -453,7 +452,7 @@ async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await _back_to_tests(update, context)
     if action == "stop":
         return await _stop_with_summary(update, context, _mode_l1_de(update.effective_user.id))
-    if text == INPUT_ERR_TEXT:
+    if action == "input_err":
         applied = _apply_input_err(update, context, _mode_l1_de(update.effective_user.id))
         prefix = "✅ Fixed previous answer." if applied else "Nothing to fix."
         return await _repeat_current_ru_de(update, context, prefix)
@@ -507,7 +506,7 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await _back_to_tests(update, context)
     if action == "stop":
         return await _stop_with_summary(update, context, _mode_de_l1(update.effective_user.id))
-    if text == INPUT_ERR_TEXT:
+    if action == "input_err":
         applied = _apply_input_err(update, context, _mode_de_l1(update.effective_user.id))
         prefix = "✅ Fixed previous answer." if applied else "Nothing to fix."
         return await _repeat_current_de_ru(update, context, prefix)
@@ -559,7 +558,7 @@ async def quiz_pl_sg(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await _back_to_tests(update, context)
     if action == "stop":
         return await _stop_with_summary(update, context, _mode_pl_sg(update.effective_user.id))
-    if text == INPUT_ERR_TEXT:
+    if action == "input_err":
         applied = _apply_input_err(update, context, _mode_pl_sg(update.effective_user.id))
         prefix = "✅ Fixed previous answer." if applied else "Nothing to fix."
         return await _send_pl_sg_prompt(update, context, prefix)
