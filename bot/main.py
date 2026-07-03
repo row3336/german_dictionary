@@ -22,6 +22,8 @@ from telegram.ext import (
 
 from .app_config import (
     ACCESS_MESSAGE,
+    BROADCAST_CONFIRM,
+    BROADCAST_INPUT,
     DONATE_AMOUNT,
     DONATE_CUSTOM,
     FEEDBACK_INPUT,
@@ -163,6 +165,12 @@ from .handlers.review import (
     owner_review_menu_choice,
     review_feedback_choice,
     review_reports_choice,
+)
+from .handlers.broadcast import (
+    BROADCAST_MENU_CALLBACK,
+    broadcast_confirm,
+    broadcast_input,
+    broadcast_menu_callback,
 )
 from .handlers.donate import (
     donate_amount_choice,
@@ -448,6 +456,8 @@ def main():
             OWNER_REVIEW_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, owner_review_menu_choice)],
             REVIEW_REPORTS: [MessageHandler(filters.TEXT & ~filters.COMMAND, review_reports_choice)],
             REVIEW_FEEDBACK: [MessageHandler(filters.TEXT & ~filters.COMMAND, review_feedback_choice)],
+            BROADCAST_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, broadcast_input)],
+            BROADCAST_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, broadcast_confirm)],
             ALGO_SETTINGS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, algo_settings_menu_choice)],
             FSRS_SETTINGS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, fsrs_settings_menu_choice)],
             DRILL_SETTINGS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, drill_settings_menu_choice)],
@@ -489,6 +499,10 @@ def main():
     app.add_handler(CallbackQueryHandler(access_decision_callback, pattern=r"^access:"))
     # Global handler for the topic-filter inline toggle buttons (spec #8).
     app.add_handler(CallbackQueryHandler(topic_filter_toggle_callback, pattern=r"^topicf:"))
+    # Global handler for the "menu" button attached to owner broadcasts (spec #12).
+    app.add_handler(
+        CallbackQueryHandler(broadcast_menu_callback, pattern=f"^{BROADCAST_MENU_CALLBACK}$")
+    )
     # Telegram Stars donation (P6.4): pre-checkout approval + post-payment thanks.
     app.add_handler(PreCheckoutQueryHandler(precheckout_callback))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))

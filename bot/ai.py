@@ -39,3 +39,36 @@ def generate_fields(prompt_text):
 
     response = client.chat.completions.create(**kwargs)
     return response.choices[0].message.content
+
+
+def _extract_json_object(text):
+    """Best-effort slice of the first {...} block in `text` (AI replies sometimes wrap it in prose)."""
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1 or end < start:
+        return "{}"
+    return text[start : end + 1]
+
+
+def translate_broadcast(russian_text):
+    """Translate a free-text owner broadcast (Russian) into Ukrainian and English.
+
+    Unlike dictionary-entry translation (single words, force-lowercased), this is
+    a full service message: preserve line breaks, punctuation and casing so the
+    tone/meaning of the announcement carries over.
+    """
+    import json
+
+    prompt = (
+        "Translate the following Russian announcement message into Ukrainian and English. "
+        "Keep the same tone, line breaks and punctuation; do not add or omit information. "
+        'Return only JSON: {"ukrainian":"...","english":"..."}.\n\n'
+        f"Russian:\n{russian_text}"
+    )
+    response_text = generate_fields(prompt)
+    data = json.loads(_extract_json_object(response_text))
+    ukrainian = str(data.get("ukrainian", "")).strip()
+    english = str(data.get("english", "")).strip()
+    if not ukrainian or not english:
+        raise ValueError("AI translation returned an empty ukrainian/english field")
+    return {"ru": russian_text, "uk": ukrainian, "en": english}

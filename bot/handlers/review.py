@@ -55,7 +55,11 @@ def _clickable(item):
 
 def _owner_review_keys(user_id):
     lang = _user_interface_lang(user_id)
-    return [[t(lang, "review_reports"), t(lang, "review_feedback")], [t(lang, "back")]]
+    return [
+        [t(lang, "review_reports"), t(lang, "review_feedback")],
+        [t(lang, "review_broadcast")],
+        [t(lang, "back")],
+    ]
 
 
 async def _send_review_menu(update: Update, user_id):
@@ -84,6 +88,10 @@ async def owner_review_menu_choice(update: Update, context: ContextTypes.DEFAULT
         return await _show_reports_list(update, context, user_id)
     if text == t(lang, "review_feedback"):
         return await _show_feedback_list(update, context, user_id)
+    if text == t(lang, "review_broadcast"):
+        from .broadcast import _start_broadcast
+
+        return await _start_broadcast(update, user_id)
     return await _send_review_menu(update, user_id)
 
 
