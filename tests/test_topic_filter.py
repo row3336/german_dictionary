@@ -72,6 +72,29 @@ class FilterLogicTest(unittest.TestCase):
         self.assertIsNone(T.select_all("all", self.NAMES))  # no-op when already all
 
 
+class AddInputParseTest(unittest.TestCase):
+    def test_bare_name(self):
+        self.assertEqual(T.parse_topic_input("05"), ("05", ""))
+
+    def test_space_separator(self):
+        self.assertEqual(T.parse_topic_input("05 Essen und Trinken"), ("05", "Essen und Trinken"))
+
+    def test_comma_dot_dash_separators(self):
+        self.assertEqual(T.parse_topic_input("05, Essen"), ("05", "Essen"))
+        self.assertEqual(T.parse_topic_input("05..Essen"), ("05", "Essen"))
+        self.assertEqual(T.parse_topic_input("05 - Essen"), ("05", "Essen"))
+        self.assertEqual(T.parse_topic_input("05 -, . Essen"), ("05", "Essen"))
+
+    def test_internal_punctuation_preserved(self):
+        self.assertEqual(T.parse_topic_input("07 Essen, Trinken."), ("07", "Essen, Trinken."))
+
+    def test_alpha_name(self):
+        self.assertEqual(T.parse_topic_input("verb Verben"), ("verb", "Verben"))
+
+    def test_empty(self):
+        self.assertEqual(T.parse_topic_input("   "), ("", ""))
+
+
 class RenderTest(unittest.TestCase):
     TOPICS = [("01", "Zahlen"), ("7", ""), ("verb", "Verben")]
 

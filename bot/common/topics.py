@@ -5,6 +5,8 @@ The on-disk filter format is unchanged — a per-user string like '01+03+7' or '
 DB-free so they unit-test without a database; only the render helpers touch telegram.
 """
 
+import re
+
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 # callback_data prefixes for the inline toggle screen
@@ -14,6 +16,30 @@ CB_TOPIC = "topicf:t:"  # + <name>
 
 _ALL_TOKENS = {"all", "*"}
 _BUTTONS_PER_ROW = 5
+
+# add-flow topic input: a name (no separators) then a description; separators
+# between them are any run of space / comma / dot / dash (spec #8).
+_ADD_SEP = r"[\s,.\-]"
+_ADD_NAME_RE = re.compile(rf"[^\s,.\-]+")
+_ADD_LEAD_SEP_RE = re.compile(rf"^{_ADD_SEP}+")
+
+
+def parse_topic_input(raw):
+    """Split owner add-flow topic input into (name, description).
+
+    The name is the leading token up to the first separator; the description is the
+    rest with the separating run stripped (internal punctuation/spaces preserved).
+    '05 Essen und Trinken' / '05, Essen' / '05 - Essen' / '05..Essen' -> ('05','Essen…');
+    bare '05' -> ('05', '').
+    """
+    s = str(raw or "").strip()
+    if not s:
+        return "", ""
+    m = _ADD_NAME_RE.match(s)
+    name = m.group(0) if m else ""
+    rest = s[len(name):]
+    desc = _ADD_LEAD_SEP_RE.sub("", rest).strip()
+    return name, desc
 
 
 def _topic_sort_key(name):

@@ -36,20 +36,25 @@ from ..app_config import (
     PRECHECK_REJECT,
     STOP_TEXT,
     TOPIC_FILTER_EDIT,
+    TOPIC_FILTER_KEY,
     get_db_path,
 )
 from ..common.lang import _user_dict_lang, _user_interface_lang
 from ..common.navigation import _action_key_from_text, _back_to_main_menu, _reply_text_with_retry
 from ..common.settings import _current_topic_value
+from ..common.topics import parse_topic_input
 from ..i18n import t
 from ..storage import (
     add_banned_word,
     add_word,
     find_existing_word,
     has_translation_collision,
+    insert_topic_if_absent,
     is_banned_word,
     list_all_words,
     list_topics,
+    list_topics_with_desc,
+    set_user_setting,
 )
 from ..text_utils import cap_word as _cap_word
 from ..text_utils import md_escape as _md_escape
@@ -703,6 +708,55 @@ async def _show_ai_preview(update: Update, entry):
     return ADD_CONFIRM
 
 
+async def _finalize_add_topic(update, context, name):
+    """Commit the chosen topic for the pending add batch and start processing it.
+
+    The chosen topic is stored the legacy way (as the user's topic_filter, since
+    _current_topic_value drives the topic assigned to each added word).
+    """
+    set_user_setting(get_db_path(), update.effective_user.id, TOPIC_FILTER_KEY, name)
+    context.user_data.pop("topic_return", None)
+    context.user_data.pop("pending_new_topic", None)
+    pending = context.user_data.pop("pending_add_queue", [])
+    context.user_data.pop("pending_add_stats", None)
+    context.user_data["add_queue"] = pending
+    return await _process_next_ai_word(update, context)
+
+
+async def handle_add_topic_input(update, context, raw):
+    """Owner add-flow topic selection (spec #8, text-only — no inline buttons).
+
+    New topic requires a description: 'name description' inserts it; a bare new name
+    triggers a one-shot description prompt (handled on the next turn via
+    'pending_new_topic'). An existing topic is selected as-is and any tail is ignored
+    (descriptions are never edited through the add-flow).
+    """
+    db = get_db_path()
+    pending_name = context.user_data.get("pending_new_topic")
+    if pending_name:
+        desc = str(raw or "").strip()
+        if not desc:
+            await update.message.reply_text(f"Enter description for new topic {pending_name}:")
+            return TOPIC_FILTER_EDIT
+        insert_topic_if_absent(db, pending_name, desc)
+        return await _finalize_add_topic(update, context, pending_name)
+
+    name, desc = parse_topic_input(raw)
+    if not name:
+        await update.message.reply_text("Send a topic name (e.g. '05 Essen' for a new one).")
+        return TOPIC_FILTER_EDIT
+
+    known = {n for n, _ in list_topics_with_desc(db)}
+    if name in known:
+        return await _finalize_add_topic(update, context, name)  # existing: tail ignored
+    if desc:
+        insert_topic_if_absent(db, name, desc)
+        return await _finalize_add_topic(update, context, name)
+    context.user_data["pending_new_topic"] = name
+    await update.message.reply_text(f"Enter description for new topic {name}:")
+    return TOPIC_FILTER_EDIT
+
+
 async def _process_next_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle process next ai word."""
     queue = context.user_data.get("add_queue") or []
@@ -894,7 +948,7 @@ async def add_precheck(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Filtred {len(filtered)}\n"
             f"For recognition {len(recognition)}\n"
             f"Topics: {', '.join(list_topics(get_db_path())) or '-'}\n"
-            "Choose topic for this list:"
+            "Choose a topic, or type 'name description' to create a new one:"
         ),
         reply_markup=ReplyKeyboardMarkup([[t(_user_interface_lang(update.effective_user.id), "back")]], resize_keyboard=True),
     )
@@ -940,7 +994,7 @@ async def add_precheck_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Filtred {len(filtered)}\n"
             f"For recognition {len(recognition)}\n"
             f"Topics: {', '.join(list_topics(get_db_path())) or '-'}\n"
-            "Choose topic for this list:"
+            "Choose a topic, or type 'name description' to create a new one:"
         ),
         reply_markup=ReplyKeyboardMarkup([[t(_user_interface_lang(update.effective_user.id), "back")]], resize_keyboard=True),
     )

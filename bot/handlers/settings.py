@@ -645,9 +645,7 @@ async def algo_settings_confirm(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def topic_filter_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle topic filter edit."""
-    from ..handlers.add_words import _process_next_ai_word
-
+    """Topic filter text input (quiz filter) + owner add-flow topic selection."""
     text = update.message.text.strip()
     user_id = update.effective_user.id
     lang = _user_interface_lang(user_id)
@@ -660,6 +658,7 @@ async def topic_filter_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             context.user_data.pop("pending_add_queue", None)
             context.user_data.pop("pending_add_stats", None)
+            context.user_data.pop("pending_new_topic", None)
             return ADD_INPUT
         if return_to == "algo":
             return await _send_algo_settings_menu(update, user_id)
@@ -681,6 +680,11 @@ async def topic_filter_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return SETTINGS_MENU
 
+    # Owner add-flow owns its own parsing (name + description, new-topic prompt) — spec #8.
+    if context.user_data.get("topic_return") == "add_queue":
+        from ..handlers.add_words import handle_add_topic_input  # local import: anti-cycle
+        return await handle_add_topic_input(update, context, text)
+
     value = text.strip()
     if not value:
         await update.message.reply_text(t(lang, "topic_filter_empty"))
@@ -688,11 +692,6 @@ async def topic_filter_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     set_user_setting(get_db_path(), user_id, TOPIC_FILTER_KEY, value)
     return_to = context.user_data.pop("topic_return", "")
-    if return_to == "add_queue":
-        pending = context.user_data.pop("pending_add_queue", [])
-        stats = context.user_data.pop("pending_add_stats", {})
-        context.user_data["add_queue"] = pending
-        return await _process_next_ai_word(update, context)
     if return_to == "ru_de_menu":
         await update.message.reply_text(
             t(lang, "topic_filter_set").format(value=value),
@@ -713,7 +712,7 @@ async def topic_filter_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return TESTS_MENU
 
     await update.message.reply_text(
-        f"✅ Topic filter set to: {value}",
+        t(lang, "topic_filter_set").format(value=value),
         reply_markup=ReplyKeyboardMarkup(_settings_menu_keys(user_id), resize_keyboard=True),
     )
     return SETTINGS_MENU
