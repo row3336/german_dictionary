@@ -176,6 +176,7 @@ from .handlers.access import (
     access_message_input,
     access_rejected_choice,
 )
+from .handlers.topic_filter import topic_filter_toggle_callback
 from .handlers.menu import (
     _guest_start,
     menu_choice,
@@ -486,6 +487,8 @@ def main():
     app.add_handler(conv)
     # Global handler for the owner's inline decisions on access requests (P3.1).
     app.add_handler(CallbackQueryHandler(access_decision_callback, pattern=r"^access:"))
+    # Global handler for the topic-filter inline toggle buttons (spec #8).
+    app.add_handler(CallbackQueryHandler(topic_filter_toggle_callback, pattern=r"^topicf:"))
     # Telegram Stars donation (P6.4): pre-checkout approval + post-payment thanks.
     app.add_handler(PreCheckoutQueryHandler(precheckout_callback))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))

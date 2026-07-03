@@ -404,15 +404,8 @@ async def algo_settings_menu_choice(update: Update, context: ContextTypes.DEFAUL
         return await _send_learning_settings_menu(update, user_id)
 
     if text == t(lang, "topic_filter"):
-        current = _topic_filter_value(user_id)
-        topics = list_topics(get_db_path())
-        topics_line = ", ".join(topics) if topics else "-"
-        await update.message.reply_text(
-            f"Current topic filter: {current}\nTopics: {topics_line}\nSend e.g. 1+2+food or 'all'.",
-            reply_markup=ReplyKeyboardMarkup([[t(lang, "back")]], resize_keyboard=True),
-        )
-        context.user_data["topic_return"] = "algo"
-        return TOPIC_FILTER_EDIT
+        from .topic_filter import send_topic_filter_screen  # local import: anti-cycle
+        return await send_topic_filter_screen(update, context, user_id, "algo")
 
     if text == t(lang, "unit_tests"):
         if not is_owner(user_id):  # owner-only (P3.2): in-bot test run
