@@ -21,7 +21,8 @@ from pathlib import Path
 # 2 = P2 (+ user_settings). 3 = P4 (+ user_word_media).
 # 4 = P6 (+ error_reports, + feedback).
 # 5 = #18 (+ form_stats.*_active weak-episode flags).
-SCHEMA_VERSION = 5
+# 6 = spec #8 (+ topics registry table, seeded DISTINCT from words.topic).
+SCHEMA_VERSION = 6
 
 # Tables whose row counts we snapshot before/after a migration (must not shrink).
 _COUNT_TABLES = (

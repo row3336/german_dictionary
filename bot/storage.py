@@ -455,6 +455,11 @@ def init_db(db_path):
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS topics (
+                name TEXT PRIMARY KEY,
+                description TEXT NOT NULL DEFAULT ''
+            );
+
             CREATE TABLE IF NOT EXISTS vf_checks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
@@ -566,6 +571,19 @@ def _ensure_schema(conn):
         conn.execute("ALTER TABLE words ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''")
         conn.execute("UPDATE words SET updated_at = created_at WHERE updated_at = ''")
     conn.execute("UPDATE words SET topic = '1' WHERE trim(coalesce(topic, '')) = ''")
+    # spec #8: topics registry. Defensive create (mirrors vf_checks above) + idempotent
+    # seed of every DISTINCT topic in use, with empty description. INSERT OR IGNORE keeps
+    # existing descriptions (name is PK), so re-runs never clobber curated text and new
+    # topics that appear in words are picked up automatically.
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS topics (name TEXT PRIMARY KEY, description TEXT NOT NULL DEFAULT '')"
+    )
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO topics (name)
+        SELECT DISTINCT trim(topic) FROM words WHERE trim(coalesce(topic, '')) != ''
+        """
+    )
     _repair_word_fk_tables(conn)
     _ensure_indexes(conn)
 
@@ -801,6 +819,48 @@ def list_topics(db_path):
             """
         ).fetchall()
     return [row["topic"] for row in rows]
+
+
+def list_topics_with_desc(db_path):
+    """Topics registry (spec #8): list of (name, description) for every known topic.
+
+    Superset of topics currently in use (init_db re-seeds DISTINCT words.topic on every
+    call), so callers get the full button set plus any curated German descriptions.
+    Unsorted here — the shared UI sort helper (_sorted_topics) orders name/buttons.
+    """
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        rows = conn.execute("SELECT name, description FROM topics").fetchall()
+    return [(row["name"], row["description"]) for row in rows]
+
+
+def get_topic_description(db_path, name):
+    """Curated description for a topic name, or '' if unknown/blank."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT description FROM topics WHERE name = ?", (str(name).strip(),)
+        ).fetchone()
+    return row["description"] if row else ""
+
+
+def insert_topic_if_absent(db_path, name, description):
+    """Add a new topic with its description; no-op if the name already exists.
+
+    Returns True if a row was inserted (new topic), False if it already existed.
+    Existing descriptions are never overwritten here (spec #8: descriptions are edited
+    only by the one-off review script, never through the add-flow).
+    """
+    init_db(db_path)
+    name = str(name).strip()
+    if not name:
+        return False
+    with _connect(db_path) as conn:
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO topics (name, description) VALUES (?, ?)",
+            (name, str(description or "").strip()),
+        )
+        return cur.rowcount > 0
 
 
 def get_statistics_snapshot(db_path, user_id, mode):

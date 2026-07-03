@@ -10,6 +10,7 @@ from ..app_config import ADD_EDIT, DB_SEARCH, DB_SEARCH_VIEW, MENU, get_db_path,
 from ..common.lang import _mode_l1_de, _user_dict_lang, _user_interface_lang
 from ..common.navigation import _action_key_from_text
 from ..common.settings import _learning_daily_qty, _learning_schedule_seconds
+from ..common.topics import sorted_topics
 from ..i18n import t
 from ..storage import (
     _safe_text,
@@ -73,18 +74,10 @@ def _db_search_weak_markup(user_id):
     return ReplyKeyboardMarkup([[t(lang, "send_learn"), t(lang, "back")]], resize_keyboard=True)
 
 
-def _topic_sort_key(token):
-    """Handle topic sort key with numeric priority."""
-    value = str(token or "").strip()
-    if value.isdigit():
-        return (0, int(value), value)
-    return (1, value.lower(), value)
-
-
 def _db_search_topic_markup(user_id):
     """Handle db search topic selector markup."""
     lang = _user_interface_lang(user_id)
-    topics = sorted(list_topics(get_db_path()), key=_topic_sort_key)
+    topics = sorted_topics(list_topics(get_db_path()))
     rows = []
     row = []
     for item in topics:

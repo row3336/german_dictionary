@@ -18,7 +18,7 @@ from bot.common.db_safety import (
     run_healthcheck,
     set_user_version,
 )
-from bot.storage import init_db
+from bot.storage import get_topic_description, init_db, list_topics_with_desc
 
 
 def _schema(db_path):
@@ -341,6 +341,102 @@ class FormStatsActiveMigrationTest(unittest.TestCase):
         self.assertEqual(idle, 0)
         self.assertTrue(report["healthcheck"]["ok"])
         self.assertEqual(get_user_version(db), SCHEMA_VERSION)
+
+
+class TopicsRegistryMigrationTest(unittest.TestCase):
+    """spec #8 — v5 -> v6 adds the topics registry, seeded DISTINCT from words.topic."""
+
+    def _seed_v5(self, d):
+        db = os.path.join(d, "words.db")
+        init_db(db)
+        conn = sqlite3.connect(db)
+        # distinct topics '01', '7', 'verb'; '7' twice to prove DISTINCT collapses it
+        conn.executescript(
+            """
+            INSERT INTO words (id, type, topic) VALUES ('w1', 'nomen', '01');
+            INSERT INTO words (id, type, topic) VALUES ('w2', 'verb', '7');
+            INSERT INTO words (id, type, topic) VALUES ('w3', 'verb', '7');
+            INSERT INTO words (id, type, topic) VALUES ('w4', 'nomen', 'verb');
+            """
+        )
+        conn.execute("DROP TABLE topics")
+        conn.commit()
+        conn.close()
+        set_user_version(db, 5)
+        self.assertNotIn("topics", _schema(db))
+        return db
+
+    def test_v5_to_v6_creates_and_seeds_topics(self):
+        d = tempfile.mkdtemp()
+        db = self._seed_v5(d)
+
+        report = apply_migrations_safely(db, os.path.join(d, "backups"))
+
+        self.assertTrue(report["migrated"])
+        self.assertEqual(report["from_version"], 5)
+        self.assertEqual(report["to_version"], SCHEMA_VERSION)
+        self.assertGreaterEqual(SCHEMA_VERSION, 6)
+        self.assertIn("topics", _schema(db))
+        self.assertEqual({"name", "description"}, _schema(db)["topics"])
+        self.assertTrue(report["healthcheck"]["ok"])
+        self.assertEqual(get_user_version(db), SCHEMA_VERSION)
+
+        conn = sqlite3.connect(db)
+        try:
+            rows = conn.execute("SELECT name, description FROM topics ORDER BY name").fetchall()
+        finally:
+            conn.close()
+        # seeded = DISTINCT topics in use, empty descriptions; '7' not duplicated
+        self.assertEqual(rows, [("01", ""), ("7", ""), ("verb", "")])
+
+    def test_backup_taken_on_topics_migration(self):
+        d = tempfile.mkdtemp()
+        db = self._seed_v5(d)
+        report = apply_migrations_safely(db, os.path.join(d, "backups"))
+        self.assertIsNotNone(report["backup"])
+        self.assertTrue(os.path.exists(report["backup"]))
+
+    def test_seed_idempotent_and_preserves_descriptions(self):
+        d = tempfile.mkdtemp()
+        db = self._seed_v5(d)
+        apply_migrations_safely(db, os.path.join(d, "backups"))
+
+        # curate a description, then re-run init_db (defensive re-seed on every call)
+        conn = sqlite3.connect(db)
+        conn.execute("UPDATE topics SET description = 'Zahlen' WHERE name = '01'")
+        conn.commit()
+        conn.close()
+        init_db(db)
+
+        conn = sqlite3.connect(db)
+        try:
+            desc = conn.execute("SELECT description FROM topics WHERE name='01'").fetchone()[0]
+            count = conn.execute("SELECT COUNT(*) FROM topics").fetchone()[0]
+        finally:
+            conn.close()
+        self.assertEqual(desc, "Zahlen")  # not clobbered by re-seed
+        self.assertEqual(count, 3)  # no duplicate rows
+
+    def test_fresh_db_has_topics_table(self):
+        d = tempfile.mkdtemp()
+        db = os.path.join(d, "words.db")
+        report = apply_migrations_safely(db, os.path.join(d, "backups"))
+        self.assertTrue(report["fresh"])
+        self.assertIn("topics", _schema(db))
+        self.assertEqual(get_user_version(db), SCHEMA_VERSION)
+
+    def test_new_topic_in_words_auto_seeded_on_next_init(self):
+        d = tempfile.mkdtemp()
+        db = self._seed_v5(d)
+        apply_migrations_safely(db, os.path.join(d, "backups"))
+        conn = sqlite3.connect(db)
+        conn.execute("INSERT INTO words (id, type, topic) VALUES ('w5', 'nomen', '05')")
+        conn.commit()
+        conn.close()
+        init_db(db)
+        self.assertEqual(get_topic_description(db, "05"), "")
+        names = {n for n, _ in list_topics_with_desc(db)}
+        self.assertIn("05", names)
 
 
 if __name__ == "__main__":
