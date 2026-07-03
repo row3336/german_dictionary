@@ -9,7 +9,7 @@ inline buttons and keep today's plain progress-only screen.
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
-from ..app_config import get_db_path, is_owner
+from ..app_config import APP_VERSION, get_db_path, is_owner
 from ..common.lang import _mode_de_l1, _mode_l1_de, _user_interface_lang
 from ..i18n import t
 from ..storage import get_statistics_snapshot, list_user_activity, select_due
@@ -31,6 +31,8 @@ def _format_progress_text(user_id):
         select_due(db_path, user_id=user_id, mode=_mode_de_l1(user_id), exclude_correct_today=True)
     )
     lines = [
+        f"bot version = v{APP_VERSION}",
+        "",
         f"fsrs_ru_de_due = {fsrs_ru_de_due}",
         f"fsrs_de_ru_due = {fsrs_de_ru_due}",
         "",

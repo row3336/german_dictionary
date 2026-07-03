@@ -74,6 +74,13 @@ FIRE_MESSAGE_EFFECT_ID = "5104841245755180586"  # 🔥 fire - good session (80-9
 POOP_MESSAGE_EFFECT_ID = "5046589136895476101"  # 💩 pile of poo - rough session (<80%)
 SESSION_EFFECT_GOOD_THRESHOLD_PCT = 80
 
+# Spec #14: vMAJOR.MINOR versioning. Single source of truth - bump this constant
+# (+ commit) and tag the same commit `vX.Y` at deploy time (v1.0 = frozen
+# single-user, v2.0 = multiuser release, v2.1+ = each shipped batch of
+# features/fixes, v3.0 = next global redesign). Shown on the stat screen (all
+# users) so a bug report can name the version without asking the owner.
+APP_VERSION = "2.0"
+
 ARTICLE_SET = {
     "der",
     "die",
