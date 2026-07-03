@@ -1,6 +1,7 @@
 # python-telegram-bot async. [rate-limiter]=AIORateLimiter (P5); [job-queue]=reminders/reports.
 # 21.x required for Telegram Stars / XTR donations (P6.4; Stars support since 21.3).
-# NOTE: upgrade 20.7 -> 21.x verified on the server (no telegram installed in the test env).
-python-telegram-bot[job-queue,rate-limiter]==21.6
+# 22.8 (2026-06-12): native InlineKeyboardButton(style=...) for topic-filter (spec #8);
+#   requires Python >= 3.10 (bumped in 22.6). Breaking-change audit: no code changes needed.
+python-telegram-bot[job-queue,rate-limiter]==22.8
 python-dotenv==1.0.1
 openai==1.40.0
