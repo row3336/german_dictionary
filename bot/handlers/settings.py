@@ -41,7 +41,7 @@ from ..app_config import (
     get_db_path,
     is_owner,
 )
-from ..common.lang import _user_interface_lang
+from ..common.lang import _quiz_dir_labels, _user_interface_lang
 from ..common.navigation import _action_key_from_text, _back_to_main_menu
 from ..common.settings import (
     _learning_daily_qty,
@@ -650,6 +650,7 @@ async def topic_filter_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = update.message.text.strip()
     user_id = update.effective_user.id
+    lang = _user_interface_lang(user_id)
     if _action_key_from_text(text, user_id) == "back":
         return_to = context.user_data.pop("topic_return", "")
         if return_to == "add_queue":
@@ -664,19 +665,25 @@ async def topic_filter_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await _send_algo_settings_menu(update, user_id)
         if return_to == "tests_menu":
             await update.message.reply_text(
-                t(_user_interface_lang(user_id), "tests") + ":",
+                t(lang, "tests") + ":",
                 reply_markup=ReplyKeyboardMarkup(_tests_menu_keys(user_id), resize_keyboard=True),
             )
             return TESTS_MENU
+        if return_to == "ru_de_menu":
+            await update.message.reply_text(
+                f"{_quiz_dir_labels(user_id)[0]}:",
+                reply_markup=ReplyKeyboardMarkup(_ru_de_menu_keys(user_id), resize_keyboard=True),
+            )
+            return QUIZ_RU_DE_MENU
         await update.message.reply_text(
-            t(_user_interface_lang(user_id), "settings_title"),
+            t(lang, "settings_title"),
             reply_markup=ReplyKeyboardMarkup(_settings_menu_keys(user_id), resize_keyboard=True),
         )
         return SETTINGS_MENU
 
     value = text.strip()
     if not value:
-        await update.message.reply_text("Send a non-empty topic or 'all'.")
+        await update.message.reply_text(t(lang, "topic_filter_empty"))
         return TOPIC_FILTER_EDIT
 
     set_user_setting(get_db_path(), user_id, TOPIC_FILTER_KEY, value)
@@ -688,19 +695,19 @@ async def topic_filter_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await _process_next_ai_word(update, context)
     if return_to == "ru_de_menu":
         await update.message.reply_text(
-            f"✅ Topic filter set to: {value}",
+            t(lang, "topic_filter_set").format(value=value),
             reply_markup=ReplyKeyboardMarkup(_ru_de_menu_keys(user_id), resize_keyboard=True),
         )
         return QUIZ_RU_DE_MENU
     if return_to == "algo":
         await update.message.reply_text(
-            f"✅ Topic filter set to: {value}",
+            t(lang, "topic_filter_set").format(value=value),
             reply_markup=ReplyKeyboardMarkup(_algo_settings_menu_keys(user_id), resize_keyboard=True),
         )
         return ALGO_SETTINGS_MENU
     if return_to == "tests_menu":
         await update.message.reply_text(
-            f"✅ Topic filter set to: {value}",
+            t(lang, "topic_filter_set").format(value=value),
             reply_markup=ReplyKeyboardMarkup(_tests_menu_keys(user_id), resize_keyboard=True),
         )
         return TESTS_MENU
