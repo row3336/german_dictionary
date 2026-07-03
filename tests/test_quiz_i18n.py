@@ -7,6 +7,7 @@ now route through i18n.
 
 import asyncio
 import os
+import sqlite3
 import sys
 import tempfile
 import types
@@ -67,6 +68,12 @@ class QuizI18nTest(unittest.TestCase):
         self.addCleanup(self._restore)
         register_or_update_user(self.db, GUEST, "g", "G")
         set_user_interface_lang(self.db, GUEST, "ru")
+        # A word under the default topic '1' with no history: the topic filter matches
+        # words (so it's the 'nothing due' path, not spec #8's 'no words for topic').
+        conn = sqlite3.connect(self.db)
+        conn.execute("INSERT INTO words (id, type, topic) VALUES ('seed', 'nomen', '1')")
+        conn.commit()
+        conn.close()
 
     def _restore(self):
         for k, v in self._old.items():

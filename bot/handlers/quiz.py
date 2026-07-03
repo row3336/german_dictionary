@@ -23,6 +23,7 @@ from ..app_config import (
 )
 from ..common.lang import _mode_de_l1, _mode_l1_de, _mode_pl_sg, _user_dict_lang, _user_interface_lang
 from ..common.navigation import _action_key_from_text, _back_to_tests, _reply_text_with_retry
+from ..common.settings import _topic_filter_for_query
 from ..common.session import (
     _force_take_retry_entry,
     _mark_session_word,
@@ -40,6 +41,7 @@ from ..storage import QUIZ_ARTICLE as MODE_ARTICLE
 from ..storage import QUIZ_RU_DE as MODE_RU_DE
 from ..storage import (
     apply_user_word_media,
+    count_words_for_topics,
     get_synonym_group,
     log_quiz_event,
     set_progress,
@@ -64,6 +66,15 @@ from ..ui.formatting import (
     _is_pl_sg_eligible,
 )
 from ..ui.keyboards import _quiz_idle_markup, _quiz_markup, _tests_menu_keys
+
+
+def _no_words_key(user_id, due_key):
+    """Choose the empty-state message (spec #8): 'no words under the selected topics
+    at all' when the topic filter matches zero words in the DB, otherwise the given
+    mode-specific 'no due' key (words exist but none are due)."""
+    if count_words_for_topics(get_db_path(), _topic_filter_for_query(user_id)) == 0:
+        return "topic_no_words_quiz"
+    return due_key
 
 
 # --- answer-state + scoring helpers ---
@@ -303,7 +314,7 @@ async def _send_ru_de_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
         )
         await _reply_text_with_retry(
             update.message,
-            t(_user_interface_lang(update.effective_user.id), "no_due_words"),
+            t(_user_interface_lang(update.effective_user.id), _no_words_key(update.effective_user.id, "no_due_words")),
             reply_markup=_quiz_idle_markup(update.effective_user.id),
         )
         return QUIZ_RU_DE
@@ -342,7 +353,7 @@ async def _send_de_ru_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
         )
         await _reply_text_with_retry(
             update.message,
-            t(_user_interface_lang(update.effective_user.id), "no_due_words"),
+            t(_user_interface_lang(update.effective_user.id), _no_words_key(update.effective_user.id, "no_due_words")),
             reply_markup=_quiz_idle_markup(update.effective_user.id),
         )
         return QUIZ_DE_RU
@@ -388,7 +399,7 @@ async def _send_pl_sg_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
             )
             await _reply_text_with_retry(
                 update.message,
-                t(_user_interface_lang(update.effective_user.id), "no_due_pl_sg"),
+                t(_user_interface_lang(update.effective_user.id), _no_words_key(update.effective_user.id, "no_due_pl_sg")),
                 reply_markup=_quiz_idle_markup(update.effective_user.id),
             )
             return QUIZ_PL_SG
@@ -402,7 +413,7 @@ async def _send_pl_sg_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
         )
         await _reply_text_with_retry(
             update.message,
-            t(_user_interface_lang(update.effective_user.id), "no_due_words"),
+            t(_user_interface_lang(update.effective_user.id), _no_words_key(update.effective_user.id, "no_due_words")),
             reply_markup=_quiz_idle_markup(update.effective_user.id),
         )
         return QUIZ_PL_SG
@@ -434,7 +445,7 @@ async def _send_article_prompt(update: Update, context: ContextTypes.DEFAULT_TYP
             await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
         await _reply_text_with_retry(
             update.message,
-            t(_user_interface_lang(update.effective_user.id), "no_due_nouns"),
+            t(_user_interface_lang(update.effective_user.id), _no_words_key(update.effective_user.id, "no_due_nouns")),
             reply_markup=ReplyKeyboardMarkup(_tests_menu_keys(update.effective_user.id), resize_keyboard=True),
         )
         return TESTS_MENU

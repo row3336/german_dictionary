@@ -33,6 +33,7 @@ from ..handlers.quiz import _check_ru_de_strict
 from ..i18n import t
 from ..storage import (
     apply_user_word_media,
+    count_words_for_topics,
     learning_active_count,
     learning_add_word_by_id,
     learning_add_words,
@@ -304,9 +305,17 @@ async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TY
         context.user_data.pop("learning_mix_queue", None)
         if prefix_text:
             await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
+        if count_words_for_topics(get_db_path(), _topic_filter_for_query(user_id)) == 0:
+            # spec #8: the selected topics hold no words at all (vs. nothing due now)
+            empty_text = t(_user_interface_lang(user_id), "topic_no_words_learning")
+        else:
+            empty_text = (
+                f"No due learning words right now.\nnext_due = "
+                f"{_format_eta_from_iso(learning_status_snapshot(get_db_path(), user_id, _learning_ready_quorum(get_db_path(), user_id)).get('next_due'))}"
+            )
         await _reply_text_with_retry(
             update.message,
-            f"No due learning words right now.\nnext_due = {_format_eta_from_iso(learning_status_snapshot(get_db_path(), user_id, _learning_ready_quorum(get_db_path(), user_id)).get('next_due'))}",
+            empty_text,
             reply_markup=ReplyKeyboardMarkup(
                 [[t(_user_interface_lang(user_id), "back")]],
                 resize_keyboard=True,

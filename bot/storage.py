@@ -806,6 +806,25 @@ def count_words(db_path):
     return int(row["cnt"])
 
 
+def count_words_for_topics(db_path, topics=None):
+    """Number of words matching a topic filter (spec #8).
+
+    topics=None/empty means 'all' (no filter) -> every word. Used to tell 'no words
+    under the selected topics at all' apart from 'words exist but none are due'.
+    """
+    init_db(db_path)
+    clean = [_safe_text(x) for x in (topics or []) if _safe_text(x)]
+    with _connect(db_path) as conn:
+        if not clean:
+            row = conn.execute("SELECT COUNT(*) AS cnt FROM words").fetchone()
+        else:
+            placeholders = ",".join("?" for _ in clean)
+            row = conn.execute(
+                f"SELECT COUNT(*) AS cnt FROM words WHERE topic IN ({placeholders})", clean
+            ).fetchone()
+    return int(row["cnt"])
+
+
 def list_topics(db_path):
     """Handle list topics."""
     init_db(db_path)
