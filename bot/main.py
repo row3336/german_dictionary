@@ -185,6 +185,7 @@ from .handlers.access import (
     access_rejected_choice,
 )
 from .handlers.topic_filter import topic_filter_toggle_callback
+from .handlers.owner_stats import stat_toggle_callback
 from .handlers.menu import (
     _guest_start,
     menu_choice,
@@ -503,6 +504,8 @@ def main():
     app.add_handler(
         CallbackQueryHandler(broadcast_menu_callback, pattern=f"^{BROADCAST_MENU_CALLBACK}$")
     )
+    # Global handler for the owner's [progress]/[users] stat toggle (spec #11).
+    app.add_handler(CallbackQueryHandler(stat_toggle_callback, pattern=r"^stat:"))
     # Telegram Stars donation (P6.4): pre-checkout approval + post-payment thanks.
     app.add_handler(PreCheckoutQueryHandler(precheckout_callback))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))

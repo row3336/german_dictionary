@@ -1870,6 +1870,50 @@ def list_active_users(db_path):
     return sorted(ids)
 
 
+def list_user_activity(db_path):
+    """Approved users with their activity counters (spec #11 owner [users] view):
+    total `quiz_events` (every action, the "big number" already surfaced on the
+    owner's own stat screen) and words moved from learning into FSRS
+    (`learning_items.status IN ('completed','skipped')` — both count, skipped
+    included per the owner's decision 2026-07-03). Sorted by quiz_events count
+    descending (most active first); pending/blocked users are excluded. The
+    owner shows up here too, as a normal row, if their own users-row is approved.
+    """
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                u.user_id AS user_id,
+                u.username AS username,
+                u.first_name AS first_name,
+                COALESCE(qe.cnt, 0) AS quiz_events_count,
+                COALESCE(li.cnt, 0) AS learning_done_count
+            FROM users u
+            LEFT JOIN (
+                SELECT user_id, COUNT(*) AS cnt FROM quiz_events GROUP BY user_id
+            ) qe ON qe.user_id = u.user_id
+            LEFT JOIN (
+                SELECT user_id, COUNT(*) AS cnt FROM learning_items
+                WHERE status IN ('completed', 'skipped')
+                GROUP BY user_id
+            ) li ON li.user_id = u.user_id
+            WHERE u.status = 'approved'
+            ORDER BY quiz_events_count DESC, u.user_id ASC
+            """
+        ).fetchall()
+    return [
+        {
+            "user_id": _safe_int(row["user_id"]),
+            "username": row["username"] or "",
+            "first_name": row["first_name"] or "",
+            "quiz_events_count": int(row["quiz_events_count"] or 0),
+            "learning_done_count": int(row["learning_done_count"] or 0),
+        }
+        for row in rows
+    ]
+
+
 # --- Personal example/image (P4): a guest's per-word value, owner edits stay in
 # the shared `words`. A guest sees ONLY their personal image/example (blank when
 # unset) — never the owner's shared values. The owner sees the shared word. ---

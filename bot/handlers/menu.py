@@ -34,6 +34,7 @@ from ..common.txlog import reset_undo_progress
 from ..handlers.access import access_allowed, show_rejected_screen
 from ..handlers.db_search import _send_db_search_prompt
 from ..handlers.learning import _send_learning_menu
+from ..handlers.owner_stats import _format_progress_text, _owner_stat_keyboard
 from ..handlers.quiz import _send_de_ru_prompt, _send_pl_sg_prompt, _send_ru_de_prompt
 from ..handlers.settings import _ask_dictionary_language, _ask_interface_language
 from ..handlers.weak import _send_article_weak_prompt, _send_plural_weak_prompt
@@ -43,11 +44,9 @@ from ..labels import (
 )
 from ..storage import (
     get_setting,
-    get_statistics_snapshot,
     get_user_languages,
     get_user_status,
     register_or_update_user,
-    select_due,
 )
 from ..text_utils import split_text_chunks as _split_text_chunks
 from ..ui.keyboards import (
@@ -177,73 +176,13 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return MENU
 
     if action == "stat":
-        stats = get_statistics_snapshot(get_db_path(), user_id=user_id, mode=_mode_l1_de(user_id))
-        word_types = stats.get("word_types") or {}
-        db_path = get_db_path()
-        fsrs_ru_de_due = len(
-            select_due(db_path, user_id=user_id, mode=_mode_l1_de(user_id), exclude_correct_today=True)
-        )
-        fsrs_de_ru_due = len(
-            select_due(db_path, user_id=user_id, mode=_mode_de_l1(user_id), exclude_correct_today=True)
-        )
-        lines = [
-            f"fsrs_ru_de_due = {fsrs_ru_de_due}",
-            f"fsrs_de_ru_due = {fsrs_de_ru_due}",
-            "",
-            f"today complete fsrs Ru > De = {stats['today_complete_fsrs_ru_de']}",
-            f"today complete fsrs De > Ru = {stats['today_complete_fsrs_de_ru']}",
-            f"today complete pl > sing = {stats.get('today_complete_pl_sg', 0)}",
-            "",
-            f"today complete weak article = {stats['today_complete_weak_article']}",
-            f"today complete weak plural = {stats['today_complete_weak_plural']}",
-            f"today complete weak partizip2 = {stats['today_complete_weak_partizip2']}",
-            f"today complete weak preteritum = {stats['today_complete_weak_prateritum']}",
-            "",
-            f"5+ correct streak = {stats.get('streak_5p', 0)}",
-            f"4 correct streak = {stats.get('streak_4', 0)}",
-            f"3 correct streak = {stats.get('streak_3', stats.get('streak_3p', 0))}",
-            f"2 correct streak = {stats.get('streak_2', 0)}",
-            f"1 correct = {stats.get('streak_1', 0)}",
-            f"wrong fsrs = {stats.get('wrong_fsrs', 0)}",
-            "",
-            (
-                f"weak article = {stats['weak_article']} "
-                f"({stats['weak_article_stage1']}) "
-                f"({stats['weak_article_stage2']}) "
-                f"({stats['weak_article_stage3']})"
-            ),
-            (
-                f"weak plural = {stats['weak_plural']} "
-                f"({stats['weak_plural_stage1']}) "
-                f"({stats['weak_plural_stage2']}) "
-                f"({stats['weak_plural_stage3']})"
-            ),
-            (
-                f"weak partizip2 = {stats['weak_partizip2']} "
-                f"({stats['weak_partizip2_stage1']}) "
-                f"({stats['weak_partizip2_stage2']}) "
-                f"({stats['weak_partizip2_stage3']})"
-            ),
-            (
-                f"weak preterium = {stats['weak_prateritum']} "
-                f"({stats['weak_prateritum_stage1']}) "
-                f"({stats['weak_prateritum_stage2']}) "
-                f"({stats['weak_prateritum_stage3']})"
-            ),
-            "",
-            f"words in dict = {stats['total_words']}",
-            f"never touched = {stats['never_answered']}",
-            f"words weekly = +{stats['weekly_words']}",
-            f"learning weekly = {stats.get('learning_weekly', 0)}",
-            "",
-            "word types:",
-            *[f"{k} = {word_types[k]}" for k in sorted(word_types.keys())],
-        ]
-        await update.message.reply_text(
-            f"```text\n{chr(10).join(lines)}\n```",
-            reply_markup=_main_menu_markup(user_id),
-            parse_mode="Markdown",
-        )
+        text = f"```text\n{_format_progress_text(user_id)}\n```"
+        if _is_owner_only(user_id):
+            # Spec #11: owner gets a [progress]/[users] inline toggle on this message;
+            # the persistent reply-keyboard from before this screen is left as-is.
+            await update.message.reply_text(text, reply_markup=_owner_stat_keyboard(), parse_mode="Markdown")
+        else:
+            await update.message.reply_text(text, reply_markup=_main_menu_markup(user_id), parse_mode="Markdown")
         return MENU
 
     await update.message.reply_text(t(_user_interface_lang(user_id), "unknown_menu"))
