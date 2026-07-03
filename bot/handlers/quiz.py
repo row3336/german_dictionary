@@ -25,14 +25,20 @@ from ..common.lang import _mode_de_l1, _mode_l1_de, _mode_pl_sg, _user_dict_lang
 from ..common.navigation import _action_key_from_text, _back_to_tests, _reply_text_with_retry
 from ..common.settings import _topic_filter_for_query
 from ..common.session import (
+    _bump_answer_streak,
+    _bump_session_result,
     _force_take_retry_entry,
     _mark_session_word,
     _maybe_take_retry_entry,
     _pick_due_entry,
+    _reaction_emoji_for_streak,
     _register_retry_result,
     _remove_from_retry,
     _retry_since_last,
+    _session_correct_count,
     _session_count,
+    _session_effect_id,
+    _session_wrong_count,
     _set_retry_since_last,
 )
 from ..common.txlog import _capture_transaction_snapshot, _log_transaction
@@ -79,12 +85,36 @@ def _no_words_key(user_id, due_key):
 
 # --- answer-state + scoring helpers ---
 
-def _remember_last_answer(context, entry, mode, ok):
+def _remember_last_answer(context, entry, mode, ok, message_id=None):
     """Handle remember last answer."""
     context.user_data["last_answered_entry"] = entry
     context.user_data["last_answered_mode"] = mode
     context.user_data["last_answered_ok"] = bool(ok)
     context.user_data["last_answered_srs"] = dict(entry.get("srs") or {})
+    context.user_data["last_answered_message_id"] = message_id
+
+
+# --- reactions (spec #9) ---
+# Decorative reaction on the USER's answer message (never the bot's own text) —
+# FSRS quizzes only (Lang>De/De>Lang/pl>sg/article). Best-effort: a failed
+# Bot API call must never break the quiz flow, so failures are swallowed.
+
+async def _set_reaction(context, chat_id, message_id, reaction):
+    """Handle set reaction."""
+    if not message_id:
+        return
+    try:
+        await context.bot.set_message_reaction(chat_id=chat_id, message_id=message_id, reaction=reaction)
+    except Exception:
+        pass
+
+
+async def _apply_answer_reaction(update, context, ok):
+    """React to the just-submitted answer message: streak-based emoji on a
+    correct answer, thumbs-down on a wrong one."""
+    streak = _bump_answer_streak(context, ok)
+    emoji = _reaction_emoji_for_streak(streak) if ok else "\U0001F44E"  # 👎
+    await _set_reaction(context, update.effective_user.id, update.message.message_id, [emoji])
 
 
 def _interval_divisor_for_mode(user_id, mode):
@@ -114,12 +144,13 @@ def _update_srs_for_entry(user_id, entry, mode, ok):
     _log_transaction(user_id, f"quiz:{mode}", snapshot)
 
 
-def _apply_input_err(update, context, mode):
+async def _apply_input_err(update, context, mode):
     """Handle apply input error correction."""
     last_entry = context.user_data.get("last_answered_entry")
     last_mode = context.user_data.get("last_answered_mode")
     last_ok = context.user_data.get("last_answered_ok")
     last_srs = context.user_data.get("last_answered_srs")
+    last_message_id = context.user_data.get("last_answered_message_id")
     if not last_entry or last_mode != mode or last_ok is None:
         return False
     if last_ok:
@@ -141,6 +172,8 @@ def _apply_input_err(update, context, mode):
     _remove_from_retry(context, mode, last_entry.get("id"))
     _set_retry_since_last(context, mode, _retry_since_last(context, mode) + 1)
     context.user_data["last_answered_ok"] = True
+    # spec #9: lift the 👎 reaction from the corrected answer; no new one is set.
+    await _set_reaction(context, update.effective_user.id, last_message_id, [])
     return True
 
 
@@ -249,13 +282,26 @@ def _check_ru_de_strict(entry, answer_text):
 
 # --- session control ---
 
-async def _stop_with_summary(update: Update, context: ContextTypes.DEFAULT_TYPE, mode):
-    """Handle stop with summary."""
+async def _send_session_summary(update: Update, context: ContextTypes.DEFAULT_TYPE, mode):
+    """Send the 'session over' summary (word/correct/wrong counts) with a message
+    effect keyed to this session's accuracy (spec #9 part B): a perfect session
+    gets confetti, 80-99% gets fire, below 80% gets the poop effect, and no
+    answers at all this session gets no effect."""
     count = _session_count(context, mode)
+    correct = _session_correct_count(context, mode)
+    wrong = _session_wrong_count(context, mode)
     await _reply_text_with_retry(
         update.message,
-        t(_user_interface_lang(update.effective_user.id), "session_words_count").format(count=count),
+        t(_user_interface_lang(update.effective_user.id), "session_words_count").format(
+            count=count, correct=correct, wrong=wrong,
+        ),
+        message_effect_id=_session_effect_id(context, mode),
     )
+
+
+async def _stop_with_summary(update: Update, context: ContextTypes.DEFAULT_TYPE, mode):
+    """Handle stop with summary."""
+    await _send_session_summary(update, context, mode)
     return await _back_to_tests(update, context)
 
 
@@ -305,13 +351,9 @@ async def _send_ru_de_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
     if not entry:
         entry = _force_take_retry_entry(context, mode)
     if not entry:
-        count = _session_count(context, mode)
         if prefix_text:
             await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
-        await _reply_text_with_retry(
-            update.message,
-            t(_user_interface_lang(update.effective_user.id), "session_words_count").format(count=count),
-        )
+        await _send_session_summary(update, context, mode)
         await _reply_text_with_retry(
             update.message,
             t(_user_interface_lang(update.effective_user.id), _no_words_key(update.effective_user.id, "no_due_words")),
@@ -344,13 +386,9 @@ async def _send_de_ru_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
     if not entry:
         entry = _force_take_retry_entry(context, mode)
     if not entry:
-        count = _session_count(context, mode)
         if prefix_text:
             await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
-        await _reply_text_with_retry(
-            update.message,
-            t(_user_interface_lang(update.effective_user.id), "session_words_count").format(count=count),
-        )
+        await _send_session_summary(update, context, mode)
         await _reply_text_with_retry(
             update.message,
             t(_user_interface_lang(update.effective_user.id), _no_words_key(update.effective_user.id, "no_due_words")),
@@ -390,13 +428,9 @@ async def _send_pl_sg_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
                 entry = candidate
                 break
         if not entry and attempts > 0:
-            count = _session_count(context, mode)
             if prefix_text:
                 await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
-            await _reply_text_with_retry(
-                update.message,
-                t(_user_interface_lang(update.effective_user.id), "session_words_count").format(count=count),
-            )
+            await _send_session_summary(update, context, mode)
             await _reply_text_with_retry(
                 update.message,
                 t(_user_interface_lang(update.effective_user.id), _no_words_key(update.effective_user.id, "no_due_pl_sg")),
@@ -404,13 +438,9 @@ async def _send_pl_sg_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
             )
             return QUIZ_PL_SG
     if not entry:
-        count = _session_count(context, mode)
         if prefix_text:
             await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
-        await _reply_text_with_retry(
-            update.message,
-            t(_user_interface_lang(update.effective_user.id), "session_words_count").format(count=count),
-        )
+        await _send_session_summary(update, context, mode)
         await _reply_text_with_retry(
             update.message,
             t(_user_interface_lang(update.effective_user.id), _no_words_key(update.effective_user.id, "no_due_words")),
@@ -480,7 +510,7 @@ async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if action == "stop":
         return await _stop_with_summary(update, context, _mode_l1_de(update.effective_user.id))
     if action == "input_err":
-        applied = _apply_input_err(update, context, _mode_l1_de(update.effective_user.id))
+        applied = await _apply_input_err(update, context, _mode_l1_de(update.effective_user.id))
         lang = _user_interface_lang(update.effective_user.id)
         prefix = t(lang, "input_err_fixed") if applied else t(lang, "input_err_nothing")
         return await _repeat_current_ru_de(update, context, prefix)
@@ -509,7 +539,7 @@ async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ok, form_checks = _check_ru_de_strict(entry, text)
     mode = _mode_l1_de(update.effective_user.id)
     if not is_retry:
-        _remember_last_answer(context, entry, mode, ok)
+        _remember_last_answer(context, entry, mode, ok, update.message.message_id)
         _update_srs_for_entry(update.effective_user.id, entry, mode, ok)
         if form_checks:
             update_form_stats(get_db_path(), update.effective_user.id, entry.get("id"), form_checks)
@@ -518,6 +548,8 @@ async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _register_retry_result(context, mode, entry.get("id"), ok, is_retry, update.effective_user.id)
     if not is_retry and ok:
         _set_retry_since_last(context, mode, _retry_since_last(context, mode) + 1)
+    _bump_session_result(context, mode, ok)
+    await _apply_answer_reaction(update, context, ok)
 
     feedback = _format_feedback_ru_de(entry, ok)
     return await _send_ru_de_prompt(update, context, feedback)
@@ -536,7 +568,7 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if action == "stop":
         return await _stop_with_summary(update, context, _mode_de_l1(update.effective_user.id))
     if action == "input_err":
-        applied = _apply_input_err(update, context, _mode_de_l1(update.effective_user.id))
+        applied = await _apply_input_err(update, context, _mode_de_l1(update.effective_user.id))
         lang = _user_interface_lang(update.effective_user.id)
         prefix = t(lang, "input_err_fixed") if applied else t(lang, "input_err_nothing")
         return await _repeat_current_de_ru(update, context, prefix)
@@ -565,13 +597,15 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ok = bool(answer_variants.intersection(set(variants)))
     mode = _mode_de_l1(update.effective_user.id)
     if not is_retry:
-        _remember_last_answer(context, entry, mode, ok)
+        _remember_last_answer(context, entry, mode, ok, update.message.message_id)
         _update_srs_for_entry(update.effective_user.id, entry, mode, ok)
         _mark_session_word(context, mode, entry.get("id"))
     context.user_data["quiz_last_answered_entry"] = entry
     _register_retry_result(context, mode, entry.get("id"), ok, is_retry, update.effective_user.id)
     if not is_retry and ok:
         _set_retry_since_last(context, mode, _retry_since_last(context, mode) + 1)
+    _bump_session_result(context, mode, ok)
+    await _apply_answer_reaction(update, context, ok)
 
     feedback = _format_feedback_de_ru(entry, ok, _user_dict_lang(update.effective_user.id), update.effective_user.id)
     return await _send_de_ru_prompt(update, context, feedback)
@@ -590,7 +624,7 @@ async def quiz_pl_sg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if action == "stop":
         return await _stop_with_summary(update, context, _mode_pl_sg(update.effective_user.id))
     if action == "input_err":
-        applied = _apply_input_err(update, context, _mode_pl_sg(update.effective_user.id))
+        applied = await _apply_input_err(update, context, _mode_pl_sg(update.effective_user.id))
         lang = _user_interface_lang(update.effective_user.id)
         prefix = t(lang, "input_err_fixed") if applied else t(lang, "input_err_nothing")
         return await _send_pl_sg_prompt(update, context, prefix)
@@ -629,13 +663,15 @@ async def quiz_pl_sg(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ok = singular == plural and _article_matches(got, entry.get("article", ""))
     mode = _mode_pl_sg(update.effective_user.id)
     if not is_retry:
-        _remember_last_answer(context, entry, mode, ok)
+        _remember_last_answer(context, entry, mode, ok, update.message.message_id)
         _update_srs_for_entry(update.effective_user.id, entry, mode, ok)
         _mark_session_word(context, mode, entry.get("id"))
     context.user_data["quiz_last_answered_entry"] = entry
     _register_retry_result(context, mode, entry.get("id"), ok, is_retry, update.effective_user.id)
     if not is_retry and ok:
         _set_retry_since_last(context, mode, _retry_since_last(context, mode) + 1)
+    _bump_session_result(context, mode, ok)
+    await _apply_answer_reaction(update, context, ok)
     feedback = _format_feedback_pl_sg(entry, ok)
     return await _send_pl_sg_prompt(update, context, feedback)
 
@@ -671,6 +707,8 @@ async def quiz_article(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _register_retry_result(context, mode, entry.get("id"), ok, is_retry, update.effective_user.id)
     if not is_retry:
         _set_retry_since_last(context, mode, _retry_since_last(context, mode) + 1)
+    _bump_session_result(context, mode, ok)
+    await _apply_answer_reaction(update, context, ok)
 
     feedback = _format_feedback_article(entry, ok, _user_dict_lang(update.effective_user.id))
     return await _send_article_prompt(update, context, feedback)

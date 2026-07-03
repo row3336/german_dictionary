@@ -127,6 +127,7 @@ def _clear_last_answer(context):
     context.user_data.pop("last_answered_mode", None)
     context.user_data.pop("last_answered_ok", None)
     context.user_data.pop("last_answered_srs", None)
+    context.user_data.pop("last_answered_message_id", None)
 
 
 async def _back_to_main_menu(update: Update):

@@ -66,6 +66,14 @@ ACCESS_CALLBACK_PREFIX = "access"
 FSRS_REPORT_UTC_HOUR_DEFAULT = 3
 LEARNING_WARMUP_INTERVALS = (0, 0, 0)
 
+# Spec #9: static Telegram message-effect ids for the FSRS session-end summary
+# (core.telegram.org/api/effects has no published static list; these are the
+# well-known "animated effect" ids for the fixed 6-effect set every client shows).
+CONFETTI_MESSAGE_EFFECT_ID = "5046509860389126442"  # 🎉 party popper - perfect session (100%)
+FIRE_MESSAGE_EFFECT_ID = "5104841245755180586"  # 🔥 fire - good session (80-99%)
+POOP_MESSAGE_EFFECT_ID = "5046589136895476101"  # 💩 pile of poo - rough session (<80%)
+SESSION_EFFECT_GOOD_THRESHOLD_PCT = 80
+
 ARTICLE_SET = {
     "der",
     "die",

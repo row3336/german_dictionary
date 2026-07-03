@@ -7,7 +7,13 @@ see bot/ctx_keys.py for the centralized names to migrate to gradually).
 
 import random
 
-from ..app_config import get_db_path
+from ..app_config import (
+    CONFETTI_MESSAGE_EFFECT_ID,
+    FIRE_MESSAGE_EFFECT_ID,
+    POOP_MESSAGE_EFFECT_ID,
+    SESSION_EFFECT_GOOD_THRESHOLD_PCT,
+    get_db_path,
+)
 from ..common.lang import _mode_de_l1, _mode_l1_de, _mode_pl_sg
 from ..common.settings import (
     _session_retry_gap,
@@ -27,11 +33,24 @@ def _session_key(mode):
     return f"session_seen_{mode}"
 
 
+def _session_correct_key(mode):
+    """Handle session correct key."""
+    return f"session_correct_{mode}"
+
+
+def _session_wrong_key(mode):
+    """Handle session wrong key."""
+    return f"session_wrong_{mode}"
+
+
 def _reset_session(context, mode):
     """Handle reset session."""
     context.user_data["session_mode"] = mode
     context.user_data[_session_key(mode)] = set()
+    context.user_data[_session_correct_key(mode)] = 0
+    context.user_data[_session_wrong_key(mode)] = 0
     _reset_fsrs_cycle_state(context, mode)
+    _reset_answer_streak(context)
 
 
 def _ensure_session_mode(context, mode):
@@ -56,6 +75,71 @@ def _session_count(context, mode):
     if isinstance(seen, set):
         return len(seen)
     return 0
+
+
+def _bump_session_result(context, mode, ok):
+    """Tally one more correct/wrong answer for `mode` this session (spec #9 summary)."""
+    _ensure_session_mode(context, mode)
+    key = _session_correct_key(mode) if ok else _session_wrong_key(mode)
+    context.user_data[key] = int(context.user_data.get(key) or 0) + 1
+
+
+def _session_correct_count(context, mode):
+    """Handle session correct count."""
+    return int(context.user_data.get(_session_correct_key(mode)) or 0)
+
+
+def _session_wrong_count(context, mode):
+    """Handle session wrong count."""
+    return int(context.user_data.get(_session_wrong_key(mode)) or 0)
+
+
+def _session_effect_id(context, mode):
+    """Message-effect id for the session-end summary (spec #9 part B): a perfect
+    session (100% correct) gets confetti, 80-99% gets fire, below 80% gets the
+    poop effect. No answers this session at all -> no effect (nothing to judge)."""
+    correct = _session_correct_count(context, mode)
+    wrong = _session_wrong_count(context, mode)
+    total = correct + wrong
+    if total == 0:
+        return None
+    pct = (correct / total) * 100
+    if pct >= 100:
+        return CONFETTI_MESSAGE_EFFECT_ID
+    if pct >= SESSION_EFFECT_GOOD_THRESHOLD_PCT:
+        return FIRE_MESSAGE_EFFECT_ID
+    return POOP_MESSAGE_EFFECT_ID
+
+
+# --- Answer-reaction streak (spec #9) ---
+# Consecutive-correct-answer counter that only decides which emoji reacts to the
+# user's answer message (decorative). Session-scoped, in-memory only (never
+# written to the DB); resets on any wrong answer or whenever a new session starts.
+
+def _reset_answer_streak(context):
+    """Handle reset answer streak."""
+    context.user_data["quiz_correct_streak"] = 0
+
+
+def _bump_answer_streak(context, ok):
+    """Update the consecutive-correct-answer streak; returns the new value."""
+    if not ok:
+        _reset_answer_streak(context)
+        return 0
+    streak = int(context.user_data.get("quiz_correct_streak") or 0) + 1
+    context.user_data["quiz_correct_streak"] = streak
+    return streak
+
+
+def _reaction_emoji_for_streak(streak):
+    """Correct-answer reaction emoji by consecutive-streak threshold (spec #9):
+    1-9 -> thumbs up, 10-19 -> hundred points, 20+ -> fire. All three are valid
+    Telegram reaction emoji (telegram.constants.ReactionEmoji)."""
+    if streak >= 20:
+        return "\U0001F525"  # 🔥
+    if streak >= 10:
+        return "\U0001F4AF"  # 💯
+    return "\U0001F44D"  # 👍
 
 
 # --- FSRS cycle queue ---

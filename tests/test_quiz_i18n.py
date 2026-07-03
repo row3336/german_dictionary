@@ -89,7 +89,10 @@ class QuizI18nTest(unittest.TestCase):
                 "input_err_fixed", "input_err_nothing", "added_to_learning", "nothing_to_send",
             ):
                 self.assertIn(key, TEXTS[lang], f"{lang}/{key}")
-        self.assertEqual(TEXTS["ru"]["session_words_count"], "слов за сессию = {count}")
+        self.assertEqual(
+            TEXTS["ru"]["session_words_count"],
+            "слов за сессию = {count} (верных: {correct}, неверных: {wrong})",
+        )
         self.assertEqual(TEXTS["ru"]["no_due_words"], "Нет слов к повтору. Добавьте ещё или дождитесь срока.")
 
     def test_ru_de_no_due_words_localized_for_ru_guest(self):
@@ -97,7 +100,7 @@ class QuizI18nTest(unittest.TestCase):
         state = _run(Q._send_ru_de_prompt(update, _Ctx(), None))
         self.assertEqual(state, QUIZ_RU_DE)
         texts = [c[0] for c in update.message.calls]
-        self.assertIn("слов за сессию = 0", texts)
+        self.assertIn("слов за сессию = 0 (верных: 0, неверных: 0)", texts)
         self.assertIn(TEXTS["ru"]["no_due_words"], texts)
         self.assertFalse(any("No due" in t or "session words" in t for t in texts))
 
