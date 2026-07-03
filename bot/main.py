@@ -186,6 +186,7 @@ from .handlers.access import (
 )
 from .handlers.topic_filter import topic_filter_toggle_callback
 from .handlers.owner_stats import stat_toggle_callback
+from .handlers.rescue import rescue_handler
 from .handlers.menu import (
     _guest_start,
     menu_choice,
@@ -509,6 +510,10 @@ def main():
     # Telegram Stars donation (P6.4): pre-checkout approval + post-payment thanks.
     app.add_handler(PreCheckoutQueryHandler(precheckout_callback))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
+    # Rescue handler (spec #13): registered LAST in this same group, so it only
+    # fires when nothing above it (the conversation, any callback handler, the
+    # payment handler) claimed the update — i.e. a stale/lost conversation state.
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, rescue_handler))
     app.run_polling()
 
 
