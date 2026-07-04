@@ -136,8 +136,11 @@ def _card_view(kind, lang, item):
             InlineKeyboardButton(f"✅ {t(lang, 'inbox_close')}", callback_data=f"{CB_PREFIX}r:cl:{item['id']}"),
             InlineKeyboardButton(f"🗑 {t(lang, 'inbox_delete')}", callback_data=f"{CB_PREFIX}r:del:{item['id']}"),
         ], [InlineKeyboardButton("↩", callback_data=f"{CB_PREFIX}r:pg:0")]]
-        # TODO (spec #5 step 1b): [🔧 open word] -> clarify card for item['word_id']
-        # (inline -> reply-keyboard clarify transition; deferred, wired next step).
+        if item.get("word_id"):
+            # spec #5: open the report's word in the existing clarify card. This is a
+            # ConversationHandler entry_point (open_report_word), not the global inb:
+            # handler — so it can enter the clarify conversation.
+            rows.insert(1, [InlineKeyboardButton(f"🔧 {t(lang, 'inbox_open_word')}", callback_data=f"{CB_PREFIX}open:{item['id']}")])
     else:
         text = f"💬 feedback #{item['id']}\n{_who(item)}\n\n{item.get('text', '')}"
         rows = [[
@@ -194,3 +197,31 @@ async def owner_inbox_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             await query.edit_message_text(text, reply_markup=markup)
         except Exception:  # identical content / edit race — safe to ignore
             logger.debug("owner_inbox edit skipped", exc_info=True)
+
+
+async def open_report_word(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """ConversationHandler entry_point for `inb:open:<report_id>` (spec #5).
+
+    Owner-only. Loads the report's word and hands off to the clarify card. Wired as
+    an entry_point (not the global inb: handler) so it can ENTER the clarify
+    conversation; fires when the owner isn't mid-conversation (e.g. a fresh digest
+    after a restart). Returns None when it can't proceed, so the conversation is
+    not entered.
+    """
+    query = update.callback_query
+    user_id = query.from_user.id
+    if not is_owner(user_id):
+        await query.answer(t(_user_interface_lang(user_id), "owner_only"), show_alert=True)
+        return None
+    await query.answer()
+    report_id = (query.data or "")[len(CB_PREFIX) + len("open:"):]
+    item = _find("r", report_id)
+    if not item or not item.get("word_id"):
+        return None
+    from ..storage import get_word_by_id
+    from .clarify_fields import open_clarify_from_report
+
+    entry = get_word_by_id(get_db_path(), item["word_id"])
+    if not entry:
+        return None
+    return await open_clarify_from_report(update, context, dict(entry))

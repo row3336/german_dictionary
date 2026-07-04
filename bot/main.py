@@ -212,7 +212,7 @@ from .jobs.auto_dump import _configure_auto_dump
 from .jobs.reminders import _configure_learning_reminders
 from .jobs.reports import _configure_fsrs_reports
 from .jobs.owner_digest import _configure_owner_digest
-from .handlers.owner_inbox import owner_inbox_callback
+from .handlers.owner_inbox import open_report_word, owner_inbox_callback
 
 
 logger = logging.getLogger(__name__)
@@ -441,6 +441,10 @@ def main():
         entry_points=[
             CommandHandler("start", start),
             CommandHandler("undo", undo_steps),
+            # spec #5: "🔧 open word" from the inline inbox enters the clarify card.
+            # An entry_point (fires when the owner isn't mid-conversation); the global
+            # ^inb: handler covers the rest of the inbox.
+            CallbackQueryHandler(open_report_word, pattern=r"^inb:open:"),
             MessageHandler(filters.Regex(f"^{START_TEXT}$") & ~filters.COMMAND, start),
             # spec #13: any OTHER stale text with no active conversation (e.g. a
             # restart wiped in-memory state and the user taps an old keyboard

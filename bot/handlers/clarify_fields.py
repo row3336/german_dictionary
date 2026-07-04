@@ -238,6 +238,30 @@ async def _start_clarify_fields(update: Update, context: ContextTypes.DEFAULT_TY
     return ADD_EDIT
 
 
+async def open_clarify_from_report(update: Update, context: ContextTypes.DEFAULT_TYPE, entry):
+    """spec #5: enter the owner clarify card for a report's word, coming from the
+    inline inbox (a ConversationHandler entry_point on the `inb:open:` callback).
+
+    The owner edits the shared dictionary as usual. There is no quiz to resume to,
+    so back/after-edit lands in the tests menu (edit_return_state stays unset ->
+    _resume_after_clarify has no quiz_entry -> _back_to_tests). Messages are sent
+    via the callback's chat (a callback has no update.message).
+    """
+    context.user_data["edit_source"] = "quiz"
+    context.user_data["quiz_edit_entry"] = entry
+    context.user_data["edit_stage"] = "pick_field"
+    context.user_data.pop("edit_return_state", None)
+    context.user_data.pop("quiz_entry", None)
+    user_id = update.effective_user.id
+    msg = update.callback_query.message
+    await msg.reply_text(
+        f"```text\n{_format_word_card(entry, 'Word from report:', user_id=user_id)}\n```",
+        parse_mode="Markdown",
+    )
+    await msg.reply_text("Choose edit action:", reply_markup=_clarify_screen(context, user_id))
+    return ADD_EDIT
+
+
 async def _resume_after_clarify(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text, state_override=None):
     """Handle show quiz prompt after edit."""
     from ..handlers.weak import (

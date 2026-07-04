@@ -77,10 +77,19 @@ class DigestTextTest(unittest.TestCase):
         self.assertIn("feedback", txt)
 
 
+class _Msg:
+    def __init__(self):
+        self.replies = []
+
+    async def reply_text(self, text, **kw):
+        self.replies.append(text)
+
+
 class _Query:
     def __init__(self, data, uid):
         self.data = data
         self.from_user = type("U", (), {"id": uid})()
+        self.message = _Msg()
         self.answers = []
         self.edits = []
 
@@ -94,6 +103,7 @@ class _Query:
 class _Update:
     def __init__(self, data, uid):
         self.callback_query = _Query(data, uid)
+        self.effective_user = type("U", (), {"id": uid})()
 
 
 def _flat_cb(markup):
@@ -164,6 +174,42 @@ class InboxCallbackTest(unittest.TestCase):
         add_error_report(self.db, GUEST, self.wid, "b")
         add_feedback(self.db, GUEST, "c")
         self.assertEqual(_count_open(), (2, 1))
+
+    def test_report_card_has_open_word_button(self):
+        add_error_report(self.db, GUEST, self.wid, "typo")
+        rid = list_error_reports(self.db)[0]["id"]
+        q = self._run(f"{CB_PREFIX}r:it:{rid}")
+        _, markup = q.edits[-1]
+        self.assertIn(f"{CB_PREFIX}open:{rid}", _flat_cb(markup))
+
+    def test_feedback_card_has_no_open_word(self):
+        add_feedback(self.db, GUEST, "great")
+        fid = list_feedback(self.db)[0]["id"]
+        q = self._run(f"{CB_PREFIX}f:it:{fid}")
+        _, markup = q.edits[-1]
+        self.assertFalse(any(cb.startswith(f"{CB_PREFIX}open:") for cb in _flat_cb(markup)))
+
+    def test_open_report_word_enters_clarify(self):
+        from bot.app_config import ADD_EDIT
+        from bot.handlers.owner_inbox import open_report_word
+        add_error_report(self.db, GUEST, self.wid, "typo")
+        rid = list_error_reports(self.db)[0]["id"]
+        upd = _Update(f"{CB_PREFIX}open:{rid}", OWNER)
+        ctx = type("C", (), {"user_data": {}})()
+        state = asyncio.run(open_report_word(upd, ctx))
+        self.assertEqual(state, ADD_EDIT)
+        self.assertEqual(ctx.user_data.get("quiz_edit_entry", {}).get("id"), self.wid)
+        self.assertTrue(upd.callback_query.message.replies)  # card sent
+
+    def test_open_report_word_non_owner_denied(self):
+        from bot.handlers.owner_inbox import open_report_word
+        add_error_report(self.db, GUEST, self.wid, "typo")
+        rid = list_error_reports(self.db)[0]["id"]
+        upd = _Update(f"{CB_PREFIX}open:{rid}", GUEST)
+        ctx = type("C", (), {"user_data": {}})()
+        state = asyncio.run(open_report_word(upd, ctx))
+        self.assertIsNone(state)  # not entered
+        self.assertTrue(upd.callback_query.answers and upd.callback_query.answers[0][1])  # alert
 
 
 if __name__ == "__main__":
