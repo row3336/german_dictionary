@@ -508,5 +508,89 @@ class PrepositionColumnsMigrationTest(unittest.TestCase):
         self.assertIn("case_type", cols)
 
 
+class ConjugationColumnsMigrationTest(unittest.TestCase):
+    """spec #3 — v7 -> v8 adds words.conjugation_praesens/_praeteritum +
+    conjugation_progress table (ADD-only)."""
+
+    def _seed_v7(self, d):
+        db = os.path.join(d, "words.db")
+        init_db(db)  # full current schema, then peel the two v8 columns/table back off
+        conn = sqlite3.connect(db)
+        conn.executescript(
+            """
+            INSERT INTO words (id, type, german, infinitive, russian, topic)
+                VALUES ('w1', 'verb', 'gehen', 'gehen', 'идти', '1');
+            INSERT INTO words (id, type, german, russian, topic)
+                VALUES ('w2', 'nomen', 'Haus', 'дом', '1');
+            ALTER TABLE words DROP COLUMN conjugation_praesens;
+            ALTER TABLE words DROP COLUMN conjugation_praeteritum;
+            DROP TABLE conjugation_progress;
+            """
+        )
+        conn.commit()
+        conn.close()
+        set_user_version(db, 7)
+        cols = _schema(db)["words"]
+        self.assertNotIn("conjugation_praesens", cols)
+        self.assertNotIn("conjugation_praeteritum", cols)
+        self.assertNotIn("conjugation_progress", _schema(db))
+        return db
+
+    def test_v7_to_v8_adds_conjugation_columns_and_table_keeps_data(self):
+        d = tempfile.mkdtemp()
+        db = self._seed_v7(d)
+
+        report = apply_migrations_safely(db, os.path.join(d, "backups"))
+
+        self.assertTrue(report["migrated"])
+        self.assertEqual(report["from_version"], 7)
+        self.assertEqual(report["to_version"], SCHEMA_VERSION)
+        self.assertGreaterEqual(SCHEMA_VERSION, 8)
+        schema = _schema(db)
+        self.assertIn("conjugation_praesens", schema["words"])
+        self.assertIn("conjugation_praeteritum", schema["words"])
+        self.assertIn("conjugation_progress", schema)
+        self.assertTrue(report["healthcheck"]["ok"])
+        self.assertEqual(get_user_version(db), SCHEMA_VERSION)
+
+        conn = sqlite3.connect(db)
+        try:
+            rows = conn.execute(
+                "SELECT id, conjugation_praesens, conjugation_praeteritum FROM words ORDER BY id"
+            ).fetchall()
+            count = conn.execute("SELECT COUNT(*) FROM words").fetchone()[0]
+        finally:
+            conn.close()
+        # existing rows default to '' for both new columns; nothing lost
+        self.assertEqual(rows, [("w1", "", ""), ("w2", "", "")])
+        self.assertEqual(count, 2)
+
+    def test_backup_taken_on_conjugation_migration(self):
+        d = tempfile.mkdtemp()
+        db = self._seed_v7(d)
+        report = apply_migrations_safely(db, os.path.join(d, "backups"))
+        self.assertIsNotNone(report["backup"])
+        self.assertTrue(os.path.exists(report["backup"]))
+
+    def test_migration_idempotent(self):
+        d = tempfile.mkdtemp()
+        db = self._seed_v7(d)
+        apply_migrations_safely(db, os.path.join(d, "backups"))
+        # second run: nothing to migrate, healthcheck still ok
+        report2 = apply_migrations_safely(db, os.path.join(d, "backups"))
+        self.assertFalse(report2["migrated"])
+        self.assertTrue(report2["healthcheck"]["ok"])
+        self.assertEqual(get_user_version(db), SCHEMA_VERSION)
+
+    def test_fresh_db_has_conjugation_columns_and_table(self):
+        d = tempfile.mkdtemp()
+        db = os.path.join(d, "words.db")
+        apply_migrations_safely(db, os.path.join(d, "backups"))
+        schema = _schema(db)
+        self.assertIn("conjugation_praesens", schema["words"])
+        self.assertIn("conjugation_praeteritum", schema["words"])
+        self.assertIn("conjugation_progress", schema)
+
+
 if __name__ == "__main__":
     unittest.main()

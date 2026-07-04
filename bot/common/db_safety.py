@@ -23,7 +23,9 @@ from pathlib import Path
 # 5 = #18 (+ form_stats.*_active weak-episode flags).
 # 6 = spec #8 (+ topics registry table, seeded DISTINCT from words.topic).
 # 7 = spec #1 (+ words.preposition_type, + words.case_type; both DEFAULT '').
-SCHEMA_VERSION = 7
+# 8 = spec #3 (+ words.conjugation_praesens, + words.conjugation_praeteritum;
+#     + conjugation_progress table; columns DEFAULT '').
+SCHEMA_VERSION = 8
 
 # Tables whose row counts we snapshot before/after a migration (must not shrink).
 _COUNT_TABLES = (
@@ -37,6 +39,7 @@ _COUNT_TABLES = (
     "user_word_media",
     "error_reports",
     "feedback",
+    "conjugation_progress",
 )
 
 # Keep the db_events timeline bounded (it's tiny, but never let it grow forever).

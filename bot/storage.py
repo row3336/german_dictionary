@@ -7,6 +7,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from .app_config import CASE_TYPES, CEFR_LEVELS, PREPOSITION_TYPES, get_owner_id, is_owner
+from .common.conjugation import parse_conjugation
 from .text_utils import cap_word
 
 DEFAULT_EASE = 2.5
@@ -91,6 +92,7 @@ def _ensure_indexes(conn):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_learning_items_batch_status ON learning_items(batch_id, status)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_transaction_log_user_id ON transaction_log(user_id, id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_transaction_log_created_at ON transaction_log(created_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_conjugation_progress_user ON conjugation_progress(user_id, word_id)")
 
 
 def _repair_word_fk_tables(conn):
@@ -478,6 +480,18 @@ def init_db(db_path):
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
             );
+
+            -- spec #3: passive conjugation drill progress, per user (no FSRS).
+            -- seen_count / last_seen_at drive the weighted-rotation order; guests
+            -- get their own rows (isolated by user_id).
+            CREATE TABLE IF NOT EXISTS conjugation_progress (
+                user_id INTEGER NOT NULL,
+                word_id TEXT NOT NULL,
+                seen_count INTEGER NOT NULL DEFAULT 0,
+                last_seen_at TEXT DEFAULT NULL,
+                PRIMARY KEY (user_id, word_id),
+                FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
+            );
             """
         )
         _ensure_schema(conn)
@@ -577,6 +591,13 @@ def _ensure_schema(conn):
         conn.execute("ALTER TABLE words ADD COLUMN preposition_type TEXT NOT NULL DEFAULT ''")
     if "case_type" not in word_cols:
         conn.execute("ALTER TABLE words ADD COLUMN case_type TEXT NOT NULL DEFAULT ''")
+    # spec #3 (v7 -> v8): conjugation blocks stored inline on the word (the block
+    # is treated as one entity, no separate table). Additive, DEFAULT '' so every
+    # existing row stays valid; content is validated by common.conjugation on write.
+    if "conjugation_praesens" not in word_cols:
+        conn.execute("ALTER TABLE words ADD COLUMN conjugation_praesens TEXT NOT NULL DEFAULT ''")
+    if "conjugation_praeteritum" not in word_cols:
+        conn.execute("ALTER TABLE words ADD COLUMN conjugation_praeteritum TEXT NOT NULL DEFAULT ''")
     conn.execute("UPDATE words SET topic = '1' WHERE trim(coalesce(topic, '')) = ''")
     # spec #8: topics registry. Defensive create (mirrors vf_checks above) + idempotent
     # seed of every DISTINCT topic in use, with empty description. INSERT OR IGNORE keeps
@@ -770,7 +791,13 @@ def _row_to_entry(row):
         "topic": row["topic"] or "",
         "preposition_type": row["preposition_type"] if "preposition_type" in row.keys() else "",
         "case_type": row["case_type"] if "case_type" in row.keys() else "",
+        "conjugation_praesens": row["conjugation_praesens"] if "conjugation_praesens" in row.keys() else "",
+        "conjugation_praeteritum": row["conjugation_praeteritum"] if "conjugation_praeteritum" in row.keys() else "",
     }
+    if "seen_count" in row.keys():
+        entry["seen_count"] = int(row["seen_count"] or 0)
+    if "last_seen_at" in row.keys():
+        entry["last_seen_at"] = row["last_seen_at"]
     if "review_stage" in row.keys():
         entry["review_stage"] = int(row["review_stage"] or 0)
     if "next_review" in row.keys():
@@ -805,6 +832,82 @@ def load_words(db_path):
             """
         ).fetchall()
     return [_row_to_entry(row) for row in rows]
+
+
+# --- spec #3: conjugation storage + carousel selection ------------------------
+
+# A verb enters the conjugation carousel once its L1>De FSRS row has at least
+# this many repetitions (i.e. it's past the "new word" stage). Selection uses the
+# exact L1>De mode string, which is language-dependent, so the caller passes it.
+CONJUGATION_MIN_REPETITIONS = 2
+
+
+def set_word_conjugation(db_path, word_id, praesens, praeteritum=""):
+    """Write a verb's conjugation blocks, validating both against the canonical
+    format. Empty string clears a block; any non-empty value must be a valid
+    6-line block or ValueError is raised (single validator for every write path).
+    """
+    stored_praesens = parse_conjugation(praesens) if str(praesens or "").strip() else ""
+    stored_praeteritum = parse_conjugation(praeteritum) if str(praeteritum or "").strip() else ""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        conn.execute(
+            "UPDATE words SET conjugation_praesens = ?, conjugation_praeteritum = ? WHERE id = ?",
+            (stored_praesens, stored_praeteritum, word_id),
+        )
+
+
+def next_conjugation_word(db_path, user_id, mode, min_repetitions=CONJUGATION_MIN_REPETITIONS):
+    """Return the next verb to show in the conjugation carousel, or None.
+
+    Eligible = a verb with a non-empty Präsens block whose L1>De FSRS row for
+    this user has repetitions >= min_repetitions (topic filter is intentionally
+    NOT applied — spec #3). Order is a weighted rotation: unseen words first,
+    then the one with the highest ``elapsed / (1 + seen_count)`` score, so a verb
+    seen many times resurfaces proportionally less often. Endless, no daily cap.
+    """
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum,
+                   w.partizip2, w.komparativ, w.superlativ, w.russian, w.ukrainian, w.english,
+                   w.image, w.example, w.topic, w.preposition_type, w.case_type,
+                   w.conjugation_praesens, w.conjugation_praeteritum,
+                   COALESCE(cp.seen_count, 0) AS seen_count, cp.last_seen_at AS last_seen_at
+            FROM words w
+            JOIN progress p
+              ON p.word_id = w.id AND p.user_id = ? AND p.mode = ? AND p.repetitions >= ?
+            LEFT JOIN conjugation_progress cp
+              ON cp.word_id = w.id AND cp.user_id = ?
+            WHERE w.type = 'verb' AND trim(COALESCE(w.conjugation_praesens, '')) != ''
+            ORDER BY (cp.last_seen_at IS NULL) DESC,
+                     (julianday('now') - julianday(cp.last_seen_at)) / (1 + COALESCE(cp.seen_count, 0)) DESC,
+                     COALESCE(cp.seen_count, 0) ASC,
+                     w.id ASC
+            LIMIT 1
+            """,
+            (user_id, mode, min_repetitions, user_id),
+        ).fetchone()
+    return _row_to_entry(row) if row is not None else None
+
+
+def record_conjugation_shown(db_path, user_id, word_id):
+    """Mark a verb as shown to this user (the "далее" action): bump seen_count
+    and stamp last_seen_at. Per-user row, created on first show.
+    """
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO conjugation_progress (user_id, word_id, seen_count, last_seen_at)
+            VALUES (?, ?, 1, CURRENT_TIMESTAMP)
+            ON CONFLICT(user_id, word_id) DO UPDATE SET
+                seen_count = seen_count + 1,
+                last_seen_at = CURRENT_TIMESTAMP
+            """,
+            (user_id, word_id),
+        )
 
 
 def count_words(db_path):
