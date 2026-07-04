@@ -1,4 +1,6 @@
-"""P6.3 (8a) — owner review of error reports: list -> open -> item -> close."""
+"""spec #5 — owner review submenu routes reports/feedback/requests to the inline
+inbox engine (the reply-keyboard review flow was removed). Detailed list/card
+behavior lives in test_owner_inbox_spec5 / test_access_tag_toggle."""
 
 import asyncio
 import os
@@ -10,25 +12,10 @@ from _telegram_stub import install
 
 install()
 
-from bot.app_config import (  # noqa: E402
-    OWNER_REVIEW_MENU,
-    REVIEW_FEEDBACK,
-    REVIEW_REPORTS,
-    SETTINGS_MENU,
-)
-from bot.handlers.review import (  # noqa: E402
-    owner_review_menu_choice,
-    review_feedback_choice,
-    review_reports_choice,
-)
-from bot.storage import (  # noqa: E402
-    add_error_report,
-    add_feedback,
-    init_db,
-    list_error_reports,
-    list_feedback,
-)
-from bot.ui import keyboards as K  # noqa: E402
+from bot.app_config import OWNER_REVIEW_MENU, SETTINGS_MENU  # noqa: E402
+from bot.handlers.review import owner_review_menu_choice  # noqa: E402
+from bot.i18n import t  # noqa: E402
+from bot.storage import add_error_report, add_feedback, init_db, register_or_update_user, set_user_status  # noqa: E402
 
 OWNER, GUEST = 999, 111
 
@@ -37,9 +24,11 @@ class _Msg:
     def __init__(self, text):
         self.text = text
         self.replies = []
+        self.markups = []
 
-    async def reply_text(self, text, **kw):
+    async def reply_text(self, text, reply_markup=None, **kw):
         self.replies.append(text)
+        self.markups.append(reply_markup)
 
 
 class _Update:
@@ -53,15 +42,15 @@ class _Ctx:
         self.user_data = {}
 
 
-def _flat(rows):
-    return [c for row in rows for c in row]
-
-
 def _run(coro):
     return asyncio.run(coro)
 
 
-class ReviewReportsTest(unittest.TestCase):
+def _cbs(markup):
+    return [b.callback_data for row in getattr(markup, "inline_keyboard", []) for b in row]
+
+
+class ReviewMenuTest(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.NamedTemporaryFile(delete=False)
         tmp.close()
@@ -72,7 +61,6 @@ class ReviewReportsTest(unittest.TestCase):
         conn.execute("INSERT INTO words (id, type, german, russian) VALUES ('w1','nomen','Haus','дом')")
         conn.commit()
         conn.close()
-        self.rid = add_error_report(self.db, GUEST, "w1", "bad plural", mode="ru_de")
         self._old = {k: os.environ.get(k) for k in ("DB_PATH", "OWNER_ID")}
         os.environ["DB_PATH"] = self.db
         os.environ["OWNER_ID"] = str(OWNER)
@@ -85,147 +73,43 @@ class ReviewReportsTest(unittest.TestCase):
             else:
                 os.environ[k] = v
 
-    def test_settings_entry_owner_vs_guest(self):
-        self.assertIn("review/feedback", _flat(K._settings_menu_keys(OWNER)))
-        self.assertNotIn("review/feedback", _flat(K._settings_menu_keys(GUEST)))
-        self.assertIn("feedback", _flat(K._settings_menu_keys(GUEST)))
+    def _choose(self, key, uid=OWNER):
+        upd = _Update(t(_lang(uid), key), uid)
+        state = _run(owner_review_menu_choice(upd, _Ctx()))
+        return upd, state
 
-    def test_submenu_back_returns_to_settings(self):
-        ctx = _Ctx()
-        st = _run(owner_review_menu_choice(_Update("back", OWNER), ctx))
-        self.assertEqual(st, SETTINGS_MENU)
+    def test_reports_opens_inline_list(self):
+        add_error_report(self.db, GUEST, "w1", "bad plural", mode="ru_de")
+        upd, state = self._choose("review_reports")
+        self.assertEqual(state, OWNER_REVIEW_MENU)
+        # inline list carries a numbered item button for the report
+        self.assertTrue(any(cb.startswith("inb:r:it:") for cb in _cbs(upd.message.markups[-1])))
 
-    def test_open_pick_close_flow(self):
-        ctx = _Ctx()
-        st = _run(owner_review_menu_choice(_Update("reports", OWNER), ctx))
-        self.assertEqual(st, REVIEW_REPORTS)
-        self.assertEqual(ctx.user_data["review_numbers"], {1: self.rid})
+    def test_feedback_opens_inline_list(self):
+        add_feedback(self.db, GUEST, "nice bot")
+        upd, state = self._choose("review_feedback")
+        self.assertEqual(state, OWNER_REVIEW_MENU)
+        self.assertTrue(any(cb.startswith("inb:f:it:") for cb in _cbs(upd.message.markups[-1])))
 
-        _run(review_reports_choice(_Update("open", OWNER), ctx))
-        self.assertEqual(ctx.user_data["review_sub"], "pick")
+    def test_requests_opens_pending_list(self):
+        register_or_update_user(self.db, 222, "amy", "")  # pending
+        upd, state = self._choose("review_requests")
+        self.assertEqual(state, OWNER_REVIEW_MENU)
+        self.assertTrue(any(cb == "access:item:222" for cb in _cbs(upd.message.markups[-1])))
 
-        upd = _Update("1", OWNER)
-        _run(review_reports_choice(upd, ctx))
-        self.assertEqual(ctx.user_data["review_sub"], "item")
-        self.assertEqual(ctx.user_data["review_current"], self.rid)
-        # item card carries a clickable profile link (works without @username)
-        self.assertTrue(any("tg://user?id=111" in m for m in upd.message.replies))
+    def test_back_returns_to_settings(self):
+        _, state = self._choose("back")
+        self.assertEqual(state, SETTINGS_MENU)
 
-        _run(review_reports_choice(_Update("close", OWNER), ctx))
-        self.assertEqual(list_error_reports(self.db, status="pending"), [])
-        self.assertEqual(len(list_error_reports(self.db, status="reviewed")), 1)
-
-    def test_guest_blocked(self):
-        ctx = _Ctx()
-        st = _run(review_reports_choice(_Update("open", GUEST), ctx))
-        self.assertEqual(st, SETTINGS_MENU)
-
-    def test_delete_single_with_yes_no(self):
-        ctx = _Ctx()
-        _run(owner_review_menu_choice(_Update("reports", OWNER), ctx))
-        _run(review_reports_choice(_Update("open", OWNER), ctx))
-        _run(review_reports_choice(_Update("1", OWNER), ctx))
-        _run(review_reports_choice(_Update("delete", OWNER), ctx))
-        self.assertEqual(ctx.user_data["review_sub"], "confirm_delete")
-        _run(review_reports_choice(_Update("yes", OWNER), ctx))
-        self.assertEqual(list_error_reports(self.db, status="pending"), [])
-        self.assertEqual(list_error_reports(self.db, status="reviewed"), [])  # deleted, not closed
-
-    def test_delete_no_keeps_report(self):
-        ctx = _Ctx()
-        _run(owner_review_menu_choice(_Update("reports", OWNER), ctx))
-        _run(review_reports_choice(_Update("open", OWNER), ctx))
-        _run(review_reports_choice(_Update("1", OWNER), ctx))
-        _run(review_reports_choice(_Update("delete", OWNER), ctx))
-        _run(review_reports_choice(_Update("no", OWNER), ctx))
-        self.assertEqual(len(list_error_reports(self.db, status="pending")), 1)
-
-    def test_delete_all_requires_yes(self):
-        add_error_report(self.db, GUEST, "w1", "second")
-        ctx = _Ctx()
-        _run(owner_review_menu_choice(_Update("reports", OWNER), ctx))
-        _run(review_reports_choice(_Update("delete all", OWNER), ctx))
-        self.assertEqual(ctx.user_data["review_sub"], "delete_all_confirm")
-        _run(review_reports_choice(_Update("yes", OWNER), ctx))
-        self.assertEqual(list_error_reports(self.db, status="pending"), [])
-
-    def test_closed_tab_shows_reviewed(self):
-        ctx = _Ctx()
-        _run(owner_review_menu_choice(_Update("reports", OWNER), ctx))
-        _run(review_reports_choice(_Update("open", OWNER), ctx))
-        _run(review_reports_choice(_Update("1", OWNER), ctx))
-        _run(review_reports_choice(_Update("close", OWNER), ctx))
-        _run(review_reports_choice(_Update("closed", OWNER), ctx))
-        self.assertEqual(ctx.user_data["review_status"], "reviewed")
-        self.assertEqual(len(ctx.user_data["review_numbers"]), 1)
+    def test_non_owner_bounced(self):
+        upd = _Update(t("en", "review_reports"), GUEST)
+        state = _run(owner_review_menu_choice(upd, _Ctx()))
+        self.assertEqual(state, SETTINGS_MENU)
 
 
-class FeedbackReviewTest(unittest.TestCase):
-    def setUp(self):
-        tmp = tempfile.NamedTemporaryFile(delete=False)
-        tmp.close()
-        self.db = tmp.name
-        self.addCleanup(lambda: os.unlink(self.db))
-        init_db(self.db)
-        self.fid = add_feedback(self.db, GUEST, "nice bot")
-        self._old = {k: os.environ.get(k) for k in ("DB_PATH", "OWNER_ID")}
-        os.environ["DB_PATH"] = self.db
-        os.environ["OWNER_ID"] = str(OWNER)
-        self.addCleanup(self._restore)
-
-    def _restore(self):
-        for k, v in self._old.items():
-            if v is None:
-                os.environ.pop(k, None)
-            else:
-                os.environ[k] = v
-
-    def test_open_and_delete_feedback(self):
-        ctx = _Ctx()
-        st = _run(owner_review_menu_choice(_Update("feedback", OWNER), ctx))
-        self.assertEqual(st, REVIEW_FEEDBACK)
-        self.assertEqual(ctx.user_data["review_numbers"], {1: self.fid})
-        _run(review_feedback_choice(_Update("open", OWNER), ctx))
-        upd = _Update("1", OWNER)
-        _run(review_feedback_choice(upd, ctx))
-        self.assertEqual(ctx.user_data["review_sub"], "item")
-        self.assertTrue(any("tg://user?id=111" in m for m in upd.message.replies))
-        _run(review_feedback_choice(_Update("delete", OWNER), ctx))
-        _run(review_feedback_choice(_Update("yes", OWNER), ctx))
-        self.assertEqual(list_feedback(self.db, status="pending"), [])
-
-    def test_delete_all_feedback(self):
-        add_feedback(self.db, GUEST, "second")
-        ctx = _Ctx()
-        _run(owner_review_menu_choice(_Update("feedback", OWNER), ctx))
-        _run(review_feedback_choice(_Update("delete all", OWNER), ctx))
-        _run(review_feedback_choice(_Update("yes", OWNER), ctx))
-        self.assertEqual(list_feedback(self.db, status="pending"), [])
-
-    def test_guest_blocked(self):
-        ctx = _Ctx()
-        self.assertEqual(_run(review_feedback_choice(_Update("open", GUEST), ctx)), SETTINGS_MENU)
-
-
-class ReviewHardeningTest(unittest.TestCase):
-    """P8a — user content reflected in Markdown must be neutralized."""
-
-    def test_comment_backticks_escaped(self):
-        from bot.handlers.review import _fmt_report_item
-        card = _fmt_report_item({
-            "id": 1, "user_id": 111, "username": "", "first_name": "x",
-            "german": "Haus", "mode": "ru_de", "comment": "```evil",
-        })
-        self.assertNotIn("```evil", card)   # raw code-fence breakout neutralized
-        self.assertIn("\\`", card)           # backticks are escaped
-
-    def test_clickable_label_has_no_link_breakers(self):
-        from bot.handlers.review import _clickable
-        link = _clickable({"id": 1, "user_id": 111, "username": "", "first_name": "a]b)c(d"})
-        label = link[1:link.index("](")]
-        for ch in "[]()":
-            self.assertNotIn(ch, label)
-        self.assertIn("tg://user?id=111", link)
+def _lang(uid):
+    from bot.common.lang import _user_interface_lang
+    return _user_interface_lang(uid)
 
 
 if __name__ == "__main__":
