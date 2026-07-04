@@ -7,7 +7,7 @@ from telegram import ReplyKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from ..app_config import ADD_EDIT, DB_SEARCH, DB_SEARCH_VIEW, MENU, get_db_path, is_owner
-from ..common.lang import _mode_l1_de, _user_dict_lang, _user_interface_lang
+from ..common.lang import _user_dict_lang, _user_interface_lang
 from ..common.navigation import _action_key_from_text
 from ..common.settings import _learning_daily_qty, _learning_schedule_seconds
 from ..common.topics import sorted_topics
@@ -18,7 +18,7 @@ from ..storage import (
     learning_add_word_by_id,
     learning_get_or_create_batch,
     list_all_words,
-    list_fsrs_weak_words,
+    list_weak_form_words,
     list_learning_queue_words,
     list_topics,
     list_words_by_topic,
@@ -321,10 +321,15 @@ def _list_match_pairs(entries, dict_lang):
     return blocks
 
 
-def _format_fsrs_weak_line(entry, dict_lang):
-    """Handle format fsrs weak line."""
-    streak = int(entry.get("wrong_streak") or 0)
-    return f"{_format_match_line(entry, dict_lang)} | wrong_streak={streak}"
+def _format_weak_form_line(entry):
+    """spec #6: `word — weak forms` (e.g. `Haus — artikel, plural`)."""
+    # Nouns are capitalized (German orthography); verbs stay lowercase.
+    if _low_word(entry.get("type", "")) == "nomen":
+        word = _cap_word(entry.get("german") or "")
+    else:
+        word = entry.get("german") or entry.get("infinitive") or ""
+    forms = ", ".join(entry.get("weak_forms") or [])
+    return f"{word} — {forms}"
 
 
 async def _send_db_search_prompt(update: Update, user_id, prefix_text=None):
@@ -479,13 +484,13 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return DB_SEARCH
     if action == "db_search_weak_words":
         context.user_data.pop("db_search_topic_pick", None)
-        mode = _mode_l1_de(user_id)
-        entries = list_fsrs_weak_words(get_db_path(), user_id=user_id, mode=mode, min_wrong_streak=4)
+        # spec #6: real weak words = active weak-form episodes (#18A), not FSRS streaks.
+        entries = list_weak_form_words(get_db_path(), user_id=user_id)
         if not entries:
             context.user_data.pop("db_search_weak_ids", None)
-            return await _send_db_search_prompt(update, user_id, "No weak words found.")
+            return await _send_db_search_prompt(update, user_id, t(_user_interface_lang(user_id), "no_weak_words"))
         context.user_data["db_search_weak_ids"] = [x.get("id") for x in entries if x.get("id")]
-        lines = [_format_fsrs_weak_line(entry, _user_dict_lang(user_id)) for entry in entries]
+        lines = [_format_weak_form_line(entry) for entry in entries]
         chunks = _split_text_chunks("\n\n".join(lines))
         for idx, chunk in enumerate(chunks):
             markup = _db_search_weak_markup(user_id) if idx == len(chunks) - 1 else None

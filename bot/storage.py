@@ -4266,47 +4266,49 @@ def list_learning_queue_words(db_path, user_id, topics=None):
     return [_row_to_entry(row) for row in rows]
 
 
-def list_fsrs_weak_words(db_path, user_id, mode, min_wrong_streak=4):
-    """Handle list fsrs weak words."""
+# spec #6: display label -> the form's active-episode flag column in form_stats.
+_WEAK_FORM_COLUMNS = (
+    ("artikel", "article_active"),
+    ("plural", "plural_active"),
+    ("präteritum", "prateritum_active"),
+    ("partizip2", "partizip2_active"),
+)
+
+
+def list_weak_form_words(db_path, user_id):
+    """Words with an ACTIVE weak-form episode for this user (spec #6).
+
+    A word is listed when any weak-form flag (#18A `*_active`) is set — the exact
+    same episode mechanics that the weak quizzes use (3 correct in a row clears a
+    flag, dropping the word). Each entry carries a `weak_forms` list of the active
+    forms. Ordered worst-first (most active forms), then alphabetically. Replaces
+    the old wrong-streak list (which was unrelated to the weak-form modes).
+    """
     init_db(db_path)
     with _connect(db_path) as conn:
         rows = conn.execute(
             """
-            WITH ordered AS (
-                SELECT
-                    e.word_id AS word_id,
-                    e.is_correct AS is_correct,
-                    e.id AS id,
-                    SUM(CASE WHEN e.is_correct = 1 THEN 1 ELSE 0 END)
-                        OVER (
-                            PARTITION BY e.word_id
-                            ORDER BY e.id DESC
-                            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-                        ) AS seen_correct
-                FROM quiz_events e
-                WHERE e.user_id = ? AND e.mode = ?
-            ),
-            streaks AS (
-                SELECT
-                    o.word_id AS word_id,
-                    COUNT(*) AS wrong_streak
-                FROM ordered o
-                WHERE o.seen_correct = 0
-                  AND o.is_correct = 0
-                GROUP BY o.word_id
-                HAVING COUNT(*) >= ?
-            )
             SELECT
-                w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ, w.russian,
-                w.ukrainian, w.english, w.topic,
-                s.wrong_streak AS wrong_streak
-            FROM streaks s
-            JOIN words w ON w.id = s.word_id
-            ORDER BY s.wrong_streak DESC, w.created_at ASC
+                w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum,
+                w.partizip2, w.komparativ, w.superlativ, w.russian, w.ukrainian, w.english, w.topic,
+                fs.article_active AS article_active, fs.plural_active AS plural_active,
+                fs.prateritum_active AS prateritum_active, fs.partizip2_active AS partizip2_active
+            FROM form_stats fs
+            JOIN words w ON w.id = fs.word_id
+            WHERE fs.user_id = ?
+              AND (fs.article_active = 1 OR fs.plural_active = 1
+                   OR fs.prateritum_active = 1 OR fs.partizip2_active = 1)
             """,
-            (int(user_id), _safe_text(mode), int(min_wrong_streak)),
+            (int(user_id),),
         ).fetchall()
-    return [_row_to_entry(row) for row in rows]
+    out = []
+    for row in rows:
+        entry = _row_to_entry(row)
+        entry["weak_forms"] = [label for label, col in _WEAK_FORM_COLUMNS if row[col]]
+        out.append(entry)
+    # worst first (most active forms), then alphabetical by German lemma
+    out.sort(key=lambda e: (-len(e["weak_forms"]), (e.get("german") or e.get("infinitive") or "").lower()))
+    return out
 
 
 def find_word_by_value(db_path, token):
