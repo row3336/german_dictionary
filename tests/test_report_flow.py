@@ -93,7 +93,9 @@ class ReportFlowTest(unittest.TestCase):
             else:
                 os.environ[k] = v
 
-    def test_report_comment_saves_and_notifies(self):
+    def test_report_comment_saves_no_instant_owner_ping(self):
+        # spec #5: the report is persisted, but NOT pushed to the owner instantly
+        # (no message, no #error_report tag) — the owner sees it in the digest/inbox.
         ctx = _Ctx({
             "edit_source": "quiz",
             "edit_stage": "report_comment",
@@ -106,8 +108,8 @@ class ReportFlowTest(unittest.TestCase):
         self.assertEqual(len(reports), 1)
         self.assertEqual(reports[0]["comment"], "plural looks wrong")
         self.assertEqual(reports[0]["user_id"], GUEST)
-        # owner got a #error_report notification with @username
-        self.assertTrue(any("#error_report" in m and "@bob" in m for _cid, m in ctx.bot.sent))
+        # no instant owner notification, no tag
+        self.assertFalse(any("#error_report" in m for _cid, m in ctx.bot.sent))
 
     def test_delete_confirm_yes_deletes_word(self):
         ctx = _Ctx({

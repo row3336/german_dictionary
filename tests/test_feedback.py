@@ -84,7 +84,9 @@ class FeedbackTest(unittest.TestCase):
         self.assertIn("review/feedback", flat_owner)
         self.assertNotIn("feedback", flat_owner)
 
-    def test_input_stores_and_notifies_owner(self):
+    def test_input_stores_no_instant_owner_ping(self):
+        # spec #5: feedback is persisted, but NOT pushed to the owner instantly
+        # (no message, no #feedback tag) — the owner sees it in the digest/inbox.
         upd = _Update("please add dark mode", _User(GUEST, username="bob"))
         bot = _Bot()
         state = _run(F.feedback_input(upd, _Ctx(bot)))
@@ -92,8 +94,8 @@ class FeedbackTest(unittest.TestCase):
         fb = list_feedback(self.db, status="pending")
         self.assertEqual(len(fb), 1)
         self.assertEqual(fb[0]["text"], "please add dark mode")
-        # owner got a live notification carrying the text + @username
-        self.assertTrue(any("dark mode" in m and "@bob" in m for _cid, m in bot.sent))
+        # no instant owner notification, no tag
+        self.assertFalse(any("#feedback" in m for _cid, m in bot.sent))
 
     def test_back_cancels_without_saving(self):
         upd = _Update("back", _User(GUEST))

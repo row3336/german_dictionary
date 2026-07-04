@@ -32,7 +32,6 @@ from ..app_config import (
     QUIZ_PRATERITUM_WEAK,
     QUIZ_RU_DE,
     get_db_path,
-    get_owner_id,
     is_owner,
 )
 from ..common.lang import _user_dict_lang, _user_interface_lang
@@ -401,24 +400,12 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
         text = text[:_MAX_REPORT_LEN]  # P8: cap report length (anti-abuse)
         word_id = entry.get("id") or ""
         return_state = context.user_data.get("edit_return_state")
+        # spec #5: the report is only persisted — the owner sees it in the thrice-
+        # daily digest / inline inbox (no instant ping, no #error_report tag).
         add_error_report(
             get_db_path(), update.effective_user.id, word_id, text,
             mode=str(return_state), state="clarify", last_action=entry.get("german", ""),
         )
-        owner_id = get_owner_id()
-        if owner_id and owner_id != update.effective_user.id:
-            u = update.effective_user
-            tag = f"@{u.username}" if u.username else (u.first_name or str(u.id))
-            try:
-                await context.bot.send_message(
-                    chat_id=owner_id,
-                    text=(
-                        f"{t(_user_interface_lang(owner_id), 'report_owner_hdr')} #error_report\n"
-                        f"{tag} · {entry.get('german', '')}\n\n{text}"
-                    ),
-                )
-            except Exception:
-                pass
         context.user_data["edit_stage"] = "pick_field"
         if return_state == DB_SEARCH_VIEW:
             return await _send_db_search_prompt(update, update.effective_user.id, t(lang, "report_saved"))

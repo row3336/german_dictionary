@@ -1,14 +1,14 @@
 """P6.3 — general user feedback.
 
 A "feedback" entry in Settings (open to everyone) → free-text input → stored in
-the `feedback` table + a live notification to the owner (tagged #feedback). No
-status workflow: feedback is just reviewed/deleted by the owner later.
+the `feedback` table. spec #5: no instant owner ping / #feedback tag — the owner
+sees it in the thrice-daily digest / inline inbox and reviews/deletes it there.
 """
 
 from telegram import ReplyKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
-from ..app_config import FEEDBACK_INPUT, SETTINGS_MENU, get_db_path, get_owner_id
+from ..app_config import FEEDBACK_INPUT, SETTINGS_MENU, get_db_path
 from ..common.lang import _user_interface_lang
 from ..common.navigation import _action_key_from_text
 from ..i18n import t
@@ -38,7 +38,11 @@ def _back_to_settings(update, user_id, text):
 
 
 async def feedback_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Store the typed feedback + ping the owner; back cancels to Settings."""
+    """Store the typed feedback; back cancels to Settings.
+
+    spec #5: feedback is only persisted — the owner sees it in the thrice-daily
+    digest / inline inbox (no instant ping, no #feedback tag).
+    """
     text = update.message.text.strip()
     user_id = update.effective_user.id
     lang = _user_interface_lang(user_id)
@@ -46,16 +50,5 @@ async def feedback_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _back_to_settings(update, user_id, t(lang, "settings_title"))
         return SETTINGS_MENU
     add_feedback(get_db_path(), user_id, text[:_MAX_FEEDBACK_LEN])
-    owner_id = get_owner_id()
-    if owner_id and owner_id != user_id:
-        u = update.effective_user
-        tag = f"@{u.username}" if u.username else (u.first_name or str(u.id))
-        try:
-            await context.bot.send_message(
-                chat_id=owner_id,
-                text=f"{t(_user_interface_lang(owner_id), 'feedback_owner_hdr')} #feedback\n{tag}\n\n{text}",
-            )
-        except Exception:
-            pass
     await _back_to_settings(update, user_id, t(lang, "feedback_saved"))
     return SETTINGS_MENU
