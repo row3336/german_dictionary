@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-from .app_config import CEFR_LEVELS, get_owner_id, is_owner
+from .app_config import CASE_TYPES, CEFR_LEVELS, PREPOSITION_TYPES, get_owner_id, is_owner
 from .text_utils import cap_word
 
 DEFAULT_EASE = 2.5
@@ -570,6 +570,13 @@ def _ensure_schema(conn):
         # backfill existing rows to their created_at (unedited == created time).
         conn.execute("ALTER TABLE words ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''")
         conn.execute("UPDATE words SET updated_at = created_at WHERE updated_at = ''")
+    # spec #1 (v6 -> v7): preposition semantic category + governed case. Additive,
+    # DEFAULT '' so every existing row (and an older/rolled-back build) stays valid;
+    # values are a controlled vocabulary validated on write, never free text here.
+    if "preposition_type" not in word_cols:
+        conn.execute("ALTER TABLE words ADD COLUMN preposition_type TEXT NOT NULL DEFAULT ''")
+    if "case_type" not in word_cols:
+        conn.execute("ALTER TABLE words ADD COLUMN case_type TEXT NOT NULL DEFAULT ''")
     conn.execute("UPDATE words SET topic = '1' WHERE trim(coalesce(topic, '')) = ''")
     # spec #8: topics registry. Defensive create (mirrors vf_checks above) + idempotent
     # seed of every DISTINCT topic in use, with empty description. INSERT OR IGNORE keeps
@@ -761,6 +768,8 @@ def _row_to_entry(row):
         "image": row["image"] if "image" in row.keys() else "",
         "example": row["example"] if "example" in row.keys() else "",
         "topic": row["topic"] or "",
+        "preposition_type": row["preposition_type"] if "preposition_type" in row.keys() else "",
+        "case_type": row["case_type"] if "case_type" in row.keys() else "",
     }
     if "review_stage" in row.keys():
         entry["review_stage"] = int(row["review_stage"] or 0)
@@ -2188,7 +2197,7 @@ def find_existing_word(db_path, raw_word):
         row = conn.execute(
             """
             SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian,
-            ukrainian, english, topic
+            ukrainian, english, topic, preposition_type, case_type
             FROM words
             WHERE lower(trim(german)) = ?
                OR lower(trim(infinitive)) = ?
@@ -2231,6 +2240,22 @@ def _dedupe_entry(conn, entry):
         row = conn.execute(
             "SELECT id FROM words WHERE type = 'verb' AND lower(trim(infinitive)) = ? LIMIT 1",
             (key_value,),
+        ).fetchone()
+    elif key_type == "praeposition":
+        # spec #1: the same preposition spelling can be several distinct words, one
+        # per (preposition_type, case_type) meaning — each with its own translation
+        # and FSRS progress. So a duplicate is only an EXACT triple match; a new
+        # (type, case) pair is intentionally allowed through.
+        row = conn.execute(
+            "SELECT id FROM words WHERE type = 'praeposition' "
+            "AND lower(trim(german)) = ? "
+            "AND lower(trim(coalesce(preposition_type, ''))) = ? "
+            "AND lower(trim(coalesce(case_type, ''))) = ? LIMIT 1",
+            (
+                key_value,
+                _normalize_text(entry.get("preposition_type", "")),
+                _normalize_text(entry.get("case_type", "")),
+            ),
         ).fetchone()
     else:
         row = conn.execute(
@@ -2282,8 +2307,8 @@ def add_word(db_path, entry):
             """
             INSERT INTO words (
                 id, type, article, german, plural, infinitive, prateritum, partizip2, komparativ, superlativ,
-                russian, ukrainian, english, image, example, topic, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                russian, ukrainian, english, image, example, topic, preposition_type, case_type, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             """,
             (
                 entry["id"],
@@ -2302,6 +2327,8 @@ def add_word(db_path, entry):
                 _safe_text(entry.get("image", "")),
                 _safe_text(entry.get("example", "")),
                 _safe_text(entry.get("topic", "1")) or "1",
+                _safe_text(entry.get("preposition_type", "")),
+                _safe_text(entry.get("case_type", "")),
             ),
         )
     return entry
@@ -2392,7 +2419,7 @@ def select_due(
     query = f"""
         SELECT
             w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ, w.russian,
-            w.ukrainian, w.english, w.image, w.example, w.topic, ldone.done_at AS learning_done_at,
+            w.ukrainian, w.english, w.image, w.example, w.topic, w.preposition_type, w.case_type, ldone.done_at AS learning_done_at,
             CASE WHEN EXISTS (
                 SELECT 1
                 FROM quiz_events qe
@@ -3378,6 +3405,8 @@ def update_word_fields(db_path, word_id, fields):
         "image",
         "example",
         "topic",
+        "preposition_type",
+        "case_type",
     }
     init_db(db_path)
     with _connect(db_path) as conn:
@@ -3390,6 +3419,16 @@ def update_word_fields(db_path, word_id, fields):
         if key not in allowed:
             continue
         if key not in existing_cols:
+            continue
+        # spec #1: the two preposition columns are a controlled vocabulary. Guard the
+        # storage layer too (defense in depth behind the clarify/AI validation): only
+        # a known value or '' (clears the field) is ever written — never free text.
+        if key in ("preposition_type", "case_type"):
+            normalized = _safe_text(value).strip().lower()
+            allowed_vocab = PREPOSITION_TYPES if key == "preposition_type" else CASE_TYPES
+            if normalized and normalized not in allowed_vocab:
+                continue
+            values[key] = normalized
             continue
         values[key] = _safe_text(value)
     if not values:
@@ -3885,7 +3924,7 @@ def list_synonym_candidates_by_ru(db_path, anchor_word_id):
         rows = conn.execute(
             """
             SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian
-            , ukrainian, english, image, example, topic
+            , ukrainian, english, image, example, topic, preposition_type, case_type
             FROM words
             WHERE lower(trim(type)) = ?
             """,
@@ -3909,7 +3948,7 @@ def get_word_by_id(db_path, word_id):
         row = conn.execute(
             """
             SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian
-            , ukrainian, english, image, example, topic
+            , ukrainian, english, image, example, topic, preposition_type, case_type
             FROM words
             WHERE id = ?
             LIMIT 1
@@ -3928,7 +3967,7 @@ def list_all_words(db_path):
         rows = conn.execute(
             """
             SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian
-            , ukrainian, english, image, example, topic
+            , ukrainian, english, image, example, topic, preposition_type, case_type
             FROM words
             ORDER BY created_at ASC
             """
@@ -3943,7 +3982,7 @@ def list_words_by_topic(db_path, topic):
         rows = conn.execute(
             """
             SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian
-            , ukrainian, english, image, example, topic
+            , ukrainian, english, image, example, topic, preposition_type, case_type
             FROM words
             WHERE topic = ?
             ORDER BY created_at ASC
@@ -4122,7 +4161,7 @@ def find_word_by_value(db_path, token):
         row = conn.execute(
             """
             SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian
-            , ukrainian, english, image, example, topic
+            , ukrainian, english, image, example, topic, preposition_type, case_type
             FROM words
             WHERE id = ?
                OR lower(trim(german)) = ?
@@ -4176,7 +4215,7 @@ def search_word(db_path, token):
         row = conn.execute(
             """
             SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian
-            , ukrainian, english, image, example, topic
+            , ukrainian, english, image, example, topic, preposition_type, case_type
             FROM words
             WHERE id = ?
                OR lower(trim(german)) IN (?, ?)
@@ -4217,7 +4256,7 @@ def search_word(db_path, token):
         rows = conn.execute(
             """
             SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian
-            , ukrainian, english, image, example, topic
+            , ukrainian, english, image, example, topic, preposition_type, case_type
             FROM words
             WHERE lower(german) LIKE ? OR lower(german) LIKE ?
                OR lower(infinitive) LIKE ? OR lower(infinitive) LIKE ?

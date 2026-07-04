@@ -27,6 +27,7 @@ from ..app_config import (
     AI_SKIP,
     ALLOWED_AI_TYPES,
     ARTICLE_SET,
+    CASE_TYPES,
     MENU,
     NUMERAL_SET,
     NUMERIC_RE,
@@ -34,6 +35,7 @@ from ..app_config import (
     PRECHECK_EDIT,
     PRECHECK_KEYS,
     PRECHECK_REJECT,
+    PREPOSITION_TYPES,
     STOP_TEXT,
     TOPIC_FILTER_EDIT,
     TOPIC_FILTER_KEY,
@@ -223,6 +225,12 @@ def _exists_word_for_type(forced_type, lookup_word):
     word = _normalize_lookup_text(lookup_word)
     if not word:
         return False
+    if forced_type == "praeposition":
+        # spec #1: a second meaning of the same preposition is a legitimate new word
+        # (distinct preposition_type/case_type). Don't pre-block on spelling here —
+        # the exact (german, preposition_type, case_type) duplicate is enforced at
+        # save time in storage._dedupe_entry.
+        return False
     if forced_type not in {"nomen", "verb", "phrase"}:
         return bool(find_existing_word(get_db_path(), lookup_word))
     for entry in list_all_words(get_db_path()):
@@ -292,6 +300,11 @@ def _ai_prompt(word, clarification):
         "For nomen return: type, article, german, plural, russian. "
         "For verb return: type, infinitive, prateritum, partizip2, russian. "
         "For adjektiv return: type, german, komparativ, superlativ, russian. "
+        "For praeposition return: type, german, russian, preposition_type, case_type. "
+        "preposition_type is the semantic category, one of: local, temporal, modal, kausal. "
+        "case_type is the governed case, one of: dativ, akkusativ, genitiv, wechsel "
+        "(wechsel = two-way Wechselpraeposition: Dativ on Wo?, Akkusativ on Wohin?). "
+        "If unsure about either, return an empty string for it. "
         "For all other allowed types return: type, german, russian. "
         "Use Russian translations in singular only. No extra text. "
         "German noun plurals are irregular: recall the exact plural form, "
@@ -299,7 +312,8 @@ def _ai_prompt(word, clarification):
         '{"type":"nomen","article":"das","german":"Wort","plural":"Wörter","russian":"слово"}\n'
         '{"type":"nomen","article":"der","german":"Bus","plural":"Busse","russian":"автобус"}\n'
         '{"type":"nomen","article":"die","german":"Stadt","plural":"Städte","russian":"город"}\n'
-        '{"type":"verb","infinitive":"gehen","prateritum":"ging","partizip2":"gegangen","russian":"идти"}'
+        '{"type":"verb","infinitive":"gehen","prateritum":"ging","partizip2":"gegangen","russian":"идти"}\n'
+        '{"type":"praeposition","german":"mit","russian":"с","preposition_type":"modal","case_type":"dativ"}'
         f"\nWord: {word}{extra}"
     )
 
@@ -482,6 +496,23 @@ def _normalize_ai_entry(entry, topic):
             "topic": topic,
         }
 
+    if entry_type == "praeposition":
+        # spec #1: keep the two extra fields, but only if the AI returned a value from
+        # the controlled vocabulary — anything else becomes '' (shown blank on the
+        # owner review step to fix by hand). Never store free text here.
+        ptype = str(entry.get("preposition_type", "")).strip().lower()
+        ctype = str(entry.get("case_type", "")).strip().lower()
+        return {
+            "type": "praeposition",
+            "german": str(entry.get("german", "")).strip(),
+            "russian": _normalize_russian_singular(entry.get("russian", "")),
+            "ukrainian": str(entry.get("ukrainian", "")).strip(),
+            "english": str(entry.get("english", "")).strip(),
+            "topic": topic,
+            "preposition_type": ptype if ptype in PREPOSITION_TYPES else "",
+            "case_type": ctype if ctype in CASE_TYPES else "",
+        }
+
     return {
         "type": entry_type,
         "german": str(entry.get("german", "")).strip(),
@@ -559,6 +590,12 @@ def _format_ai_preview(entry, dict_lang, has_synonym=False):
         "",
         f"*{_md_escape(ger)}* - {_md_escape(translation)}",
     ]
+    # spec #1: surface the preposition fields on the review step so the owner can
+    # verify them (blank = AI unsure / rejected value → fix via clarify buttons).
+    if entry_type == "praeposition":
+        ptype = entry.get("preposition_type", "") or "-"
+        ctype = entry.get("case_type", "") or "-"
+        lines.append(f"_preposition_type: {_md_escape(ptype)} · case_type: {_md_escape(ctype)}_")
     if warn:
         lines += ["", warn]
     return "\n".join(lines)
@@ -596,6 +633,10 @@ async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, w
     if forced_type in {"nomen", "verb", "phrase"}:
         if _exists_word_for_type(forced_type, lookup_word):
             existing = {"type": forced_type, "value": lookup_word}
+    elif forced_type == "praeposition":
+        # spec #1: don't pre-block a new preposition meaning; the exact triple
+        # duplicate is caught at save time (see _exists_word_for_type).
+        existing = None
     else:
         existing = find_existing_word(get_db_path(), lookup_word)
     if existing:

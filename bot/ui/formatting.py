@@ -41,6 +41,54 @@ def _entry_translation(entry, dict_lang):
     return ru
 
 
+# spec #1: how a preposition's governed case is shown PASSIVELY in a question
+# (the learner types only the word — the case is a hint, never asked). Wechsel gets
+# a compact two-way label. Unknown/empty -> no label.
+_CASE_LABELS = {
+    "dativ": "+Dativ",
+    "akkusativ": "+Akkusativ",
+    "genitiv": "+Genitiv",
+    "wechsel": "+D/A (Wechsel)",
+}
+
+
+def _case_label(case_type):
+    """Passive case hint for a preposition question, or '' if none/unknown."""
+    return _CASE_LABELS.get(_low_word(case_type), "")
+
+
+def _preposition_hint_parts(entry):
+    """Extra hint tokens for a preposition: [preposition_type, case_label].
+
+    Both are optional (skipped when not yet annotated). They disambiguate a
+    preposition with several meanings, e.g. `in` = (temporal, +Dativ) vs
+    (local, +D/A (Wechsel)).
+    """
+    parts = []
+    ptype = _low_word(entry.get("preposition_type", ""))
+    if ptype:
+        parts.append(ptype)
+    case_label = _case_label(entry.get("case_type", ""))
+    if case_label:
+        parts.append(case_label)
+    return parts
+
+
+def _type_hint(entry):
+    """Parenthetical hint after an L1>De prompt: '(type[, subtype, +Case])'.
+
+    For a preposition the subtype/case are folded in so the learner sees which
+    meaning is being asked; other types get just '(type)'.
+    """
+    word_type = _low_word(entry.get("type", ""))
+    if not word_type:
+        return ""
+    parts = [word_type]
+    if word_type == "praeposition":
+        parts.extend(_preposition_hint_parts(entry))
+    return f" ({', '.join(parts)})"
+
+
 def _article_variants(text):
     """Split comma-separated article variants and normalize."""
     raw = str(text or "")
@@ -137,23 +185,24 @@ def _format_word_card(entry, title="Word card:", user_id=None):
         f"image: {_md_escape(entry.get('image', '')) or '-'}",
         f"example: {_md_escape(entry.get('example', '')) or '-'}",
     ]
+    # spec #1: prepositions carry two extra owner-curated fields — show them so the
+    # owner can see/verify them on the card (they drive the quiz hints + dedup).
+    if _low_word(entry.get("type", "")) == "praeposition":
+        lines.append(f"preposition_type: {entry.get('preposition_type', '') or '-'}")
+        lines.append(f"case_type: {entry.get('case_type', '') or '-'}")
     return "\n".join(lines)
 
 
 def _format_ru_question(entry, dict_lang):
     """Handle format ru question."""
     value = _normalize_russian_singular(_entry_translation(entry, dict_lang))
-    word_type = _low_word(entry.get("type", ""))
-    type_hint = f" ({word_type})" if word_type else ""
-    return f">>    {_md_escape(value)}{_md_escape(type_hint)} ?"
+    return f">>    {_md_escape(value)}{_md_escape(_type_hint(entry))} ?"
 
 
 def _format_ru_question_no_q(entry, dict_lang):
     """Handle format ru question no q."""
     value = _normalize_russian_singular(_entry_translation(entry, dict_lang))
-    word_type = _low_word(entry.get("type", ""))
-    type_hint = f" ({word_type})" if word_type else ""
-    return f">>    {_md_escape(value)}{_md_escape(type_hint)}"
+    return f">>    {_md_escape(value)}{_md_escape(_type_hint(entry))}"
 
 
 def _format_de_ru_question(entry):
@@ -186,6 +235,15 @@ def _format_de_ru_question(entry):
         supr = _low_word(entry.get("superlativ", ""))
         if supr:
             lines.append(f"_  {_md_escape(supr)}_")
+    elif word_type == "praeposition":
+        # spec #1: the case/subtype hint is MANDATORY here — without it `in?` is
+        # ambiguous between the preposition's several meanings.
+        german = _low_word(entry.get("german", ""))
+        parts = _preposition_hint_parts(entry)
+        if parts:
+            lines.append(f"{_md_escape(german)} {_md_escape('(' + ', '.join(parts) + ')')}")
+        else:
+            lines.append(_md_escape(german))
     else:
         german = _low_word(entry.get("german", ""))
         lines.append(_md_escape(german))

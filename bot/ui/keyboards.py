@@ -8,7 +8,9 @@ from telegram import ReplyKeyboardMarkup
 
 from ..app_config import (
     BACK_TEXT,
+    CASE_TYPES,
     I_DONT_KNOW_TEXT,
+    PREPOSITION_TYPES,
     is_owner,
 )
 from ..common.lang import _quiz_dir_labels, _user_interface_lang
@@ -160,7 +162,7 @@ def _weak_article_markup(user_id):
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 
-def _clarify_fields_markup(source, user_id=None, in_search=False):
+def _clarify_fields_markup(source, user_id=None, in_search=False, is_prep=False):
     """Unified clarify/card keyboard (P6: no separate root menu — one screen).
 
     A guest (non-owner) edits only image/example (personal, P4) + report; the
@@ -170,15 +172,16 @@ def _clarify_fields_markup(source, user_id=None, in_search=False):
     """
     lang = _user_interface_lang(user_id) if user_id is not None else "en"
     if source == "add":
-        return ReplyKeyboardMarkup(
-            [
-                ["ru", "ukr", "en", "de"],
-                ["article", "plural", "type", "infinitive"],
-                ["prateritum", "partizip2", "komparativ", "superlativ"],
-                ["image", "example", BACK_TEXT],
-            ],
-            resize_keyboard=True,
-        )
+        rows = [
+            ["ru", "ukr", "en", "de"],
+            ["article", "plural", "type", "infinitive"],
+            ["prateritum", "partizip2", "komparativ", "superlativ"],
+        ]
+        if is_prep:
+            # spec #1: preposition-only fields (owner add flow).
+            rows.append(["preposition_type", "case_type"])
+        rows.append(["image", "example", BACK_TEXT])
+        return ReplyKeyboardMarkup(rows, resize_keyboard=True)
     if source == "quiz" and user_id is not None and not is_owner(user_id):
         rows = [["image", "example", t(lang, "report_card")]]
         rows.append([t(lang, "send_learn"), BACK_TEXT] if in_search else [BACK_TEXT])
@@ -192,6 +195,10 @@ def _clarify_fields_markup(source, user_id=None, in_search=False):
             ["prateritum", "partizip2", "komparativ", "superlativ"],
             ["image", "example"],
         ]
+        if is_prep:
+            # spec #1: preposition-only fields, so the owner can (re)set the category
+            # and case on an existing preposition straight from its card.
+            rows.append(["preposition_type", "case_type"])
         last = ([t(lang, "send_learn")] if in_search else []) + ["delete", BACK_TEXT]
         rows.append(last)
         return ReplyKeyboardMarkup(rows, resize_keyboard=True)
@@ -207,6 +214,38 @@ def _type_choice_markup():
     else:
         rows.append([BACK_TEXT])
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
+
+
+def _preset_value_markup(values):
+    """One row of capitalized preset buttons + BACK (spec #1 preposition cascade)."""
+    row = [v.capitalize() for v in values]
+    return ReplyKeyboardMarkup([row, [BACK_TEXT]], resize_keyboard=True)
+
+
+def _preposition_type_markup():
+    """Preset buttons for a preposition's semantic category (local/temporal/...)."""
+    return _preset_value_markup(PREPOSITION_TYPES)
+
+
+def _case_type_markup():
+    """Preset buttons for a preposition's governed case (dativ/akkusativ/...)."""
+    return _preset_value_markup(CASE_TYPES)
+
+
+def _value_entry_markup(field, user_id):
+    """Keyboard shown when entering a value for `field` during clarify.
+
+    Controlled-vocabulary fields get preset buttons; everything else gets the
+    plain back/stop keyboard for free-text entry.
+    """
+    if field == "type":
+        return _type_choice_markup()
+    if field == "preposition_type":
+        return _preposition_type_markup()
+    if field == "case_type":
+        return _case_type_markup()
+    lang = _user_interface_lang(user_id)
+    return ReplyKeyboardMarkup([[t(lang, "back"), t(lang, "stop")]], resize_keyboard=True)
 
 
 def _add_keys(user_id):

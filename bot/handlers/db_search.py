@@ -274,7 +274,19 @@ def _list_match_pairs(entries, dict_lang):
         else:
             base = _normalize_lookup_text(entry.get("german", ""))
         if base:
-            by_base.setdefault((entry_type or "word", base), []).append(entry)
+            base_key = (entry_type or "word", base)
+            if entry_type == "praeposition":
+                # spec #1: same-spelling prepositions with a different
+                # (preposition_type, case_type) are intentional distinct words, not
+                # duplicates — fold both into the key so they don't surface as a
+                # "match pair". Only an exact triple match still groups (real dup).
+                base_key = (
+                    entry_type,
+                    base,
+                    _normalize_lookup_text(entry.get("preposition_type", "")),
+                    _normalize_lookup_text(entry.get("case_type", "")),
+                )
+            by_base.setdefault(base_key, []).append(entry)
         translation = _normalize_lookup_text(_entry_translation(entry, dict_lang))
         if translation:
             by_translation.setdefault(("translation", translation), []).append(entry)

@@ -439,5 +439,74 @@ class TopicsRegistryMigrationTest(unittest.TestCase):
         self.assertIn("05", names)
 
 
+class PrepositionColumnsMigrationTest(unittest.TestCase):
+    """spec #1 — v6 -> v7 adds words.preposition_type + words.case_type (ADD-only)."""
+
+    def _seed_v6(self, d):
+        db = os.path.join(d, "words.db")
+        init_db(db)  # full current schema, then peel the two v7 columns back off
+        conn = sqlite3.connect(db)
+        conn.executescript(
+            """
+            INSERT INTO words (id, type, german, russian, topic)
+                VALUES ('w1', 'praeposition', 'in', 'в', '1');
+            INSERT INTO words (id, type, german, russian, topic)
+                VALUES ('w2', 'nomen', 'Haus', 'дом', '1');
+            ALTER TABLE words DROP COLUMN preposition_type;
+            ALTER TABLE words DROP COLUMN case_type;
+            """
+        )
+        conn.commit()
+        conn.close()
+        set_user_version(db, 6)
+        cols = _schema(db)["words"]
+        self.assertNotIn("preposition_type", cols)
+        self.assertNotIn("case_type", cols)
+        return db
+
+    def test_v6_to_v7_adds_preposition_columns_keeps_data(self):
+        d = tempfile.mkdtemp()
+        db = self._seed_v6(d)
+
+        report = apply_migrations_safely(db, os.path.join(d, "backups"))
+
+        self.assertTrue(report["migrated"])
+        self.assertEqual(report["from_version"], 6)
+        self.assertEqual(report["to_version"], SCHEMA_VERSION)
+        self.assertGreaterEqual(SCHEMA_VERSION, 7)
+        cols = _schema(db)["words"]
+        self.assertIn("preposition_type", cols)
+        self.assertIn("case_type", cols)
+        self.assertTrue(report["healthcheck"]["ok"])
+        self.assertEqual(get_user_version(db), SCHEMA_VERSION)
+
+        conn = sqlite3.connect(db)
+        try:
+            rows = conn.execute(
+                "SELECT id, preposition_type, case_type FROM words ORDER BY id"
+            ).fetchall()
+            count = conn.execute("SELECT COUNT(*) FROM words").fetchone()[0]
+        finally:
+            conn.close()
+        # existing rows default to '' for both new columns; nothing lost
+        self.assertEqual(rows, [("w1", "", ""), ("w2", "", "")])
+        self.assertEqual(count, 2)
+
+    def test_backup_taken_on_preposition_migration(self):
+        d = tempfile.mkdtemp()
+        db = self._seed_v6(d)
+        report = apply_migrations_safely(db, os.path.join(d, "backups"))
+        self.assertIsNotNone(report["backup"])
+        self.assertTrue(os.path.exists(report["backup"]))
+
+    def test_fresh_db_has_preposition_columns(self):
+        d = tempfile.mkdtemp()
+        db = os.path.join(d, "words.db")
+        apply_migrations_safely(db, os.path.join(d, "backups"))
+        cols = _schema(db)["words"]
+        self.assertIn("preposition_type", cols)
+        self.assertIn("case_type", cols)
+
+
 if __name__ == "__main__":
     unittest.main()

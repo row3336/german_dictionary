@@ -18,9 +18,11 @@ from ..app_config import (
     ADD_EDIT,
     ALLOWED_AI_TYPES,
     BACK_TEXT,
+    CASE_TYPES,
     DB_SEARCH_VIEW,
     LEARNING_QUIZ,
     MENU,
+    PREPOSITION_TYPES,
     QUIZ_ARTICLE,
     QUIZ_ARTICLE_WEAK,
     QUIZ_DE_RU,
@@ -57,6 +59,7 @@ from ..ui.keyboards import (
     _main_menu_markup,
     _quiz_markup,
     _type_choice_markup,
+    _value_entry_markup,
 )
 
 
@@ -65,29 +68,68 @@ _MAX_REPORT_LEN = 1000
 _MAX_MEDIA_LEN = 1000
 
 
+def _edit_entry(context: ContextTypes.DEFAULT_TYPE):
+    """The entry currently being edited, by source (add vs quiz/db_search)."""
+    source = context.user_data.get("edit_source", "add")
+    entry_key = "pending_entry" if source == "add" else "quiz_edit_entry"
+    return context.user_data.get(entry_key) or {}
+
+
+def _is_prep_entry(entry):
+    """True when the entry is a preposition (spec #1 — gates the extra fields)."""
+    return str((entry or {}).get("type", "")).strip().lower() == "praeposition"
+
+
 def _clarify_screen(context: ContextTypes.DEFAULT_TYPE, user_id):
     """Unified clarify keyboard for the current edit context (P6 collapsed card)."""
     in_search = context.user_data.get("edit_return_state") == DB_SEARCH_VIEW
     source = context.user_data.get("edit_source", "add")
-    return _clarify_fields_markup(source, user_id, in_search=in_search)
+    is_prep = _is_prep_entry(_edit_entry(context))
+    return _clarify_fields_markup(source, user_id, in_search=in_search, is_prep=is_prep)
 
 
-def _allowed_clarify_fields(source, user_id=None):
+def _allowed_clarify_fields(source, user_id=None, is_prep=False):
     """Editable fields for this source. A guest (non-owner) editing a quiz/db_search
-    card may only touch image/example (their personal version, P4)."""
+    card may only touch image/example (their personal version, P4). The two
+    preposition fields (spec #1) are owner-only and only offered for a preposition."""
     if source == "quiz" and user_id is not None and not is_owner(user_id):
         return {"image", "example"}
     if source == "add":
-        return {
+        fields = {
             "ru", "ukr", "en", "de", "article", "plural", "type",
             "prateritum", "partizip2", "infinitive", "komparativ", "superlativ", "image", "example",
         }
-    if source == "quiz":
-        return {
+    elif source == "quiz":
+        fields = {
             "ru", "ukr", "de", "article", "plural", "prateritum",
             "partizip2", "infinitive", "type", SYNONYMS_TEXT, "komparativ", "superlativ", "image", "example",
         }
-    return {"russian", "level"}
+    else:
+        return {"russian", "level"}
+    if is_prep:
+        fields = fields | {"preposition_type", "case_type"}
+    return fields
+
+
+def _prep_cascade_next(context: ContextTypes.DEFAULT_TYPE, field, updated):
+    """Next field in the spec #1 preposition capture cascade, or None.
+
+    Setting type=praeposition arms the cascade and walks preposition_type ->
+    case_type, then disarms. A single edit of one preposition field (cascade not
+    armed) returns None so it just saves and resumes like any other field.
+    """
+    if field == "type":
+        if _is_prep_entry(updated):
+            context.user_data["prep_cascade"] = True
+            return "preposition_type"
+        context.user_data.pop("prep_cascade", None)
+        return None
+    if not context.user_data.get("prep_cascade"):
+        return None
+    if field == "preposition_type":
+        return "case_type"
+    context.user_data.pop("prep_cascade", None)
+    return None
 
 
 def _set_entry_field(entry, raw_update):
@@ -121,6 +163,8 @@ def _set_entry_field(entry, raw_update):
         "german",
         "infinitive",
         "type",
+        "preposition_type",
+        "case_type",
     }
     if field not in allowed:
         return None, f"Unknown field: {field}"
@@ -131,6 +175,14 @@ def _set_entry_field(entry, raw_update):
         if normalized_type not in ALLOWED_AI_TYPES:
             return None, "Invalid type."
         updated["type"] = normalized_type
+    elif field in ("preposition_type", "case_type"):
+        # spec #1: controlled vocabulary — guard the text path (field=value) too, not
+        # just the preset buttons. '' clears the field; anything else must be known.
+        normalized = value.strip().lower()
+        allowed_vocab = PREPOSITION_TYPES if field == "preposition_type" else CASE_TYPES
+        if normalized and normalized not in allowed_vocab:
+            return None, f"Invalid {field}."
+        updated[field] = normalized
     elif field == "russian":
         updated["russian"] = value
     else:
@@ -381,6 +433,7 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
         return await _back_to_tests(update, context)
 
     if _action_key_from_text(text, update.effective_user.id) == "back":
+        context.user_data.pop("prep_cascade", None)  # spec #1: back abandons the cascade
         if source == "quiz":
             # P6: one unified card screen — back from it exits the edit; back from a
             # value-entry returns to the card.
@@ -401,16 +454,19 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
         context.user_data["edit_stage"] = "pick_field"
         await update.message.reply_text(
             "Choose field to edit:",
-            reply_markup=_clarify_fields_markup(source, update.effective_user.id),
+            reply_markup=_clarify_screen(context, update.effective_user.id),
         )
         return ADD_EDIT
 
-    if stage == "enter_value" and context.user_data.get("edit_field") == "type" and text == BACK_TEXT:
+    # spec #1: preset-value fields (type + the two preposition fields) use BACK_TEXT
+    # in their preset keyboards; back from any of them returns to the card.
+    if stage == "enter_value" and context.user_data.get("edit_field") in ("type", "preposition_type", "case_type") and text == BACK_TEXT:
         context.user_data["edit_stage"] = "pick_field"
         context.user_data.pop("edit_field", None)
+        context.user_data.pop("prep_cascade", None)
         await update.message.reply_text(
             "Choose field to edit:",
-            reply_markup=_clarify_fields_markup(source, update.effective_user.id),
+            reply_markup=_clarify_screen(context, update.effective_user.id),
         )
         return ADD_EDIT
 
@@ -449,11 +505,13 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
                 )
                 return ADD_EDIT
         field = text.strip().lower()
-        allowed_fields = _allowed_clarify_fields(source, update.effective_user.id)
+        allowed_fields = _allowed_clarify_fields(
+            source, update.effective_user.id, is_prep=_is_prep_entry(entry)
+        )
         if field not in allowed_fields:
             await update.message.reply_text(
                 "Use field buttons.",
-                reply_markup=_clarify_fields_markup(source, update.effective_user.id),
+                reply_markup=_clarify_screen(context, update.effective_user.id),
             )
             return ADD_EDIT
         if source == "quiz" and field == SYNONYMS_TEXT:
@@ -467,6 +525,13 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
                 "Choose new type:",
                 reply_markup=_type_choice_markup(),
             )
+        elif field in ("preposition_type", "case_type"):
+            # spec #1: pick from preset buttons (controlled vocabulary), no free text.
+            prompt = "Choose preposition category:" if field == "preposition_type" else "Choose case:"
+            await update.message.reply_text(
+                prompt,
+                reply_markup=_value_entry_markup(field, update.effective_user.id),
+            )
         else:
             await update.message.reply_text(
                 f"Enter new value for {field}:",
@@ -479,7 +544,7 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
         context.user_data["edit_stage"] = "pick_field"
         await update.message.reply_text(
             "Choose field to edit:",
-            reply_markup=_clarify_fields_markup(source, update.effective_user.id),
+            reply_markup=_clarify_screen(context, update.effective_user.id),
         )
         return ADD_EDIT
 
@@ -498,7 +563,12 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
     else:
         updated, error = _set_entry_field_value(entry, field, text)
     if error:
-        reply_markup = _type_choice_markup() if field == "type" else ReplyKeyboardMarkup([[t(_user_interface_lang(update.effective_user.id), "back"), t(_user_interface_lang(update.effective_user.id), "stop")]], resize_keyboard=True)
+        # spec #1: preset-value fields re-show their preset buttons on a bad value.
+        reply_markup = (
+            _value_entry_markup(field, update.effective_user.id)
+            if field in ("type", "preposition_type", "case_type")
+            else ReplyKeyboardMarkup([[t(_user_interface_lang(update.effective_user.id), "back"), t(_user_interface_lang(update.effective_user.id), "stop")]], resize_keyboard=True)
+        )
         await update.message.reply_text(
             error,
             reply_markup=reply_markup,
@@ -508,6 +578,11 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
     context.user_data[entry_key] = updated
     context.user_data["edit_stage"] = "pick_field"
     context.user_data.pop("edit_field", None)
+
+    # spec #1: setting type=praeposition (or completing preposition_type) chains the
+    # cascade; the just-saved value is persisted first so bailing out keeps it.
+    next_field = _prep_cascade_next(context, field, updated)
+
     if source == "quiz":
         user_id = update.effective_user.id
         if is_owner(user_id):
@@ -529,6 +604,18 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
         last_answered = context.user_data.get("quiz_last_answered_entry")
         if last_answered and last_answered.get("id") == updated.get("id"):
             context.user_data["quiz_last_answered_entry"] = updated
+
+    if next_field:
+        context.user_data["edit_field"] = next_field
+        context.user_data["edit_stage"] = "enter_value"
+        prompt = "Choose preposition category:" if next_field == "preposition_type" else "Choose case:"
+        await update.message.reply_text(
+            prompt,
+            reply_markup=_value_entry_markup(next_field, update.effective_user.id),
+        )
+        return ADD_EDIT
+
+    if source == "quiz":
         if context.user_data.get("edit_return_state") == DB_SEARCH_VIEW:
             return await _resume_after_clarify(update, context, "✅ Updated.", state_override=DB_SEARCH_VIEW)
         return await _resume_after_clarify(update, context, "✅ Updated.")
