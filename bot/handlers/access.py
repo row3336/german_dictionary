@@ -1,13 +1,11 @@
 """Guest access-approval flow (P3.1): owner request + inline decision + reject screen.
 
-New subsystem — the bot's first and only inline-button / CallbackQueryHandler
-scenario. A guest is registered as 'pending'; the owner receives a message tagged
-#user_confirmation_request with ✅/❌ buttons. Until a request is handled, a
-background job (jobs/access_reminders.py) reminds the owner. The owner's decision
-edits the original message: removes the buttons and swaps the hashtag to
-#user_confirmation_done, so searching the open hashtag only surfaces unhandled
-requests. The reminder digest carries no live hashtag itself; a toggle button
-(pending_tag_keyboard) reveals/hides it on demand to keep that search clean.
+A guest is registered as 'pending'; the owner gets an instant message with inline
+✅/❌ buttons. Until a request is handled, a background job (jobs/access_reminders.py)
+reminds the owner with a [show requests] button (spec #5) that opens an inline,
+actionable pending list → user card → approve/reject. The owner's decision edits
+the message to the outcome and drops the buttons. (The old #user_confirmation_*
+hashtag search + show/hide toggle were removed in spec #5.)
 
 Leaf module: imports only app_config/lang/i18n/storage — never settings/menu, so
 those can import it without cycles.
@@ -20,10 +18,8 @@ from telegram.ext import ContextTypes, ConversationHandler
 
 from ..app_config import (
     ACCESS_CALLBACK_PREFIX,
-    ACCESS_DONE_HASHTAG,
     ACCESS_MESSAGE,
     ACCESS_REJECTED,
-    ACCESS_REQUEST_HASHTAG,
     START_TEXT,
     get_db_path,
     get_owner_id,
@@ -31,7 +27,7 @@ from ..app_config import (
 )
 from ..common.lang import _user_interface_lang
 from ..i18n import t
-from ..storage import get_user_info, get_user_status, set_user_status
+from ..storage import get_user_info, get_user_status, list_pending_users, set_user_status
 
 logger = logging.getLogger(__name__)
 
@@ -66,16 +62,18 @@ def _matches(text, user_id, key):
 
 
 async def notify_owner_access_request(context: ContextTypes.DEFAULT_TYPE, user_id):
-    """Send the owner a guest access request (hashtag + inline ✅/❌)."""
+    """Send the owner an instant guest access request with inline ✅/❌.
+
+    spec #5: the instant request stays (fast handling) but the
+    #user_confirmation_request tag is gone — pending requests are searched via the
+    [show requests] button now, not a hashtag.
+    """
     owner_id = get_owner_id()
     if not owner_id:
         return
     info = get_user_info(get_db_path(), user_id)
     lang = _owner_lang()
-    text = (
-        f"👤 {_user_tag(info)} (id {user_id}) {t(lang, 'access_request_owner')}.\n\n"
-        f"{ACCESS_REQUEST_HASHTAG}"
-    )
+    text = f"👤 {_user_tag(info)} (id {user_id}) {t(lang, 'access_request_owner')}."
     keyboard = InlineKeyboardMarkup([[
         InlineKeyboardButton(
             t(lang, "access_approve_btn"),
@@ -93,9 +91,10 @@ async def notify_owner_access_request(context: ContextTypes.DEFAULT_TYPE, user_i
 
 
 async def _finalize_owner_message(query, outcome_text):
-    """Replace the request text with the outcome, swap hashtag to DONE, drop buttons."""
+    """Replace the request text with the outcome and drop the buttons (spec #5: no
+    #user_confirmation_done tag — the tag-search mechanism is gone)."""
     try:
-        await query.edit_message_text(f"{outcome_text}\n\n{ACCESS_DONE_HASHTAG}", reply_markup=None)
+        await query.edit_message_text(outcome_text, reply_markup=None)
     except Exception:
         # If editing the text fails, at least strip the inline buttons.
         try:
@@ -113,54 +112,72 @@ async def _notify_guest(context: ContextTypes.DEFAULT_TYPE, user_id, key):
         logger.warning("Failed to notify the guest about the access decision", exc_info=True)
 
 
-# Callback data for the digest's search-tag toggle (no user id, unlike approve/reject).
-ACCESS_TAG_SHOW = f"{ACCESS_CALLBACK_PREFIX}:tagshow"
-ACCESS_TAG_HIDE = f"{ACCESS_CALLBACK_PREFIX}:taghide"
-# Suffix the toggle appends/strips so the live hashtag is searchable only while shown.
-_TAG_SUFFIX = f"\n\n{ACCESS_REQUEST_HASHTAG}"
+# spec #5: the #user_confirmation_request tag + show/hide toggle are gone. The
+# digest instead carries a [show requests] button that opens an inline, actionable
+# pending list -> user card -> approve/reject (editing the same message in place).
+ACCESS_LIST = f"{ACCESS_CALLBACK_PREFIX}:list"
 
 
-def pending_tag_keyboard(lang, shown):
-    """Toggle button for the pending-digest: reveal or hide the searchable hashtag.
-
-    The owner can't be detected tapping the hashtag itself (client-side search),
-    so the digest carries the live tag only while 'shown'; hiding it again keeps
-    the open-hashtag search clean (it would otherwise list every 2h reminder)."""
-    if shown:
-        label, data = t(lang, "access_reminder_hide_tag"), ACCESS_TAG_HIDE
-    else:
-        label, data = t(lang, "access_reminder_show_tag"), ACCESS_TAG_SHOW
-    return InlineKeyboardMarkup([[InlineKeyboardButton(label, callback_data=data)]])
+def pending_requests_button(lang):
+    """[show requests] button attached to the access digest / review menu."""
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton(t(lang, "access_show_requests"), callback_data=ACCESS_LIST)]]
+    )
 
 
-async def _toggle_search_tag(query, lang, show):
-    """Reveal/hide the live hashtag on the digest message and flip its button."""
-    base = (query.message.text or "")
-    if base.endswith(_TAG_SUFFIX):  # idempotent: strip any existing tag first
-        base = base[: -len(_TAG_SUFFIX)]
-    text = base + _TAG_SUFFIX if show else base
-    try:
-        await query.edit_message_text(text, reply_markup=pending_tag_keyboard(lang, show))
-    except Exception:
-        logger.warning("Failed to toggle the access-digest search tag", exc_info=True)
+def _pending_list_view(lang):
+    """(text, markup) for the inline pending-requests list (owner-only)."""
+    pending = list_pending_users(get_db_path())
+    if not pending:
+        return t(lang, "access_no_pending"), InlineKeyboardMarkup([])
+    lines = [f"⏰ {len(pending)} {t(lang, 'access_reminder_owner')}:"]
+    rows = []
+    for i, user in enumerate(pending, 1):
+        lines.append(f"{i}) {_user_tag(user)} (id {user['user_id']})")
+        rows.append([InlineKeyboardButton(
+            f"{i}) {_user_tag(user)}", callback_data=f"{ACCESS_CALLBACK_PREFIX}:item:{user['user_id']}"
+        )])
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
+
+
+def _request_card_view(lang, uid):
+    """(text, markup) for a single pending user's card (approve / reject / back)."""
+    info = get_user_info(get_db_path(), uid)
+    text = f"{_user_tag(info)} (id {uid})\n{t(lang, 'access_request_owner')}"
+    rows = [[
+        InlineKeyboardButton(t(lang, "access_approve_btn"), callback_data=f"{ACCESS_CALLBACK_PREFIX}:approve:{uid}"),
+        InlineKeyboardButton(t(lang, "access_reject_btn"), callback_data=f"{ACCESS_CALLBACK_PREFIX}:reject:{uid}"),
+    ], [InlineKeyboardButton("↩", callback_data=ACCESS_LIST)]]
+    return text, InlineKeyboardMarkup(rows)
 
 
 async def access_decision_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle the owner's inline decision (✅ approve / ❌ reject) or tag toggle."""
+    """Owner inline access actions: show list / open card / approve / reject."""
     query = update.callback_query
     await query.answer()
     if not is_owner(query.from_user.id):
         return
     data = query.data or ""
-    if data in (ACCESS_TAG_SHOW, ACCESS_TAG_HIDE):
-        await _toggle_search_tag(query, _owner_lang(), show=(data == ACCESS_TAG_SHOW))
+    lang = _owner_lang()
+    if data == ACCESS_LIST:
+        text, markup = _pending_list_view(lang)
+        try:
+            await query.edit_message_text(text, reply_markup=markup)
+        except Exception:
+            logger.debug("access list edit skipped", exc_info=True)
         return
     try:
         _, action, raw_uid = data.split(":")
         uid = int(raw_uid)
     except (ValueError, AttributeError):
         return
-    lang = _owner_lang()
+    if action == "item":
+        text, markup = _request_card_view(lang, uid)
+        try:
+            await query.edit_message_text(text, reply_markup=markup)
+        except Exception:
+            logger.debug("access card edit skipped", exc_info=True)
+        return
     tag = _user_tag(get_user_info(get_db_path(), uid))
     status = get_user_status(get_db_path(), uid)
     if status != "pending":

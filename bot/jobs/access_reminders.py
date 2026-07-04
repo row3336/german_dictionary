@@ -1,10 +1,9 @@
 """Background reminder to the owner about unhandled access requests (P3.1).
 
-Every 2 hours (ACCESS_REMINDER_INTERVAL_SECONDS), if any users are 'pending',
-sends the owner a digest list. The digest carries no live
-#user_confirmation_request hashtag by default (so the open-hashtag search isn't
-polluted by every reminder); instead it offers a toggle button that reveals the
-searchable hashtag on demand and hides it again — see access.pending_tag_keyboard.
+Every ACCESS_REMINDER_INTERVAL_SECONDS (config constant, currently 2h — a stub;
+moving to 3x/day later = just change the constant), if any users are 'pending',
+sends the owner a digest list with a [show requests] button (spec #5) that opens
+the inline, actionable pending list — see access.pending_requests_button.
 """
 
 import logging
@@ -18,7 +17,7 @@ from ..app_config import (
     get_owner_id,
 )
 from ..common.lang import _user_interface_lang
-from ..handlers.access import pending_tag_keyboard
+from ..handlers.access import pending_requests_button
 from ..i18n import t
 from ..storage import list_pending_users
 
@@ -44,13 +43,12 @@ async def _access_pending_reminder_job(context: ContextTypes.DEFAULT_TYPE):
     lines = [f"⏰ {len(pending)} {t(lang, 'access_reminder_owner')}:"]
     for user in pending:
         lines.append(f"• {_user_tag(user)} (id {user['user_id']})")
-    # No hashtag in the body: the "show tag" button reveals it on demand instead,
-    # so the open-requests hashtag search isn't cluttered by every reminder.
+    # spec #5: a [show requests] button opens the inline actionable list (no hashtag).
     try:
         await context.bot.send_message(
             chat_id=owner_id,
             text="\n".join(lines),
-            reply_markup=pending_tag_keyboard(lang, shown=False),
+            reply_markup=pending_requests_button(lang),
         )
     except Exception:
         logger.warning("Failed to send the access-requests reminder", exc_info=True)

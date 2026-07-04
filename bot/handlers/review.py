@@ -57,7 +57,7 @@ def _owner_review_keys(user_id):
     lang = _user_interface_lang(user_id)
     return [
         [t(lang, "review_reports"), t(lang, "review_feedback")],
-        [t(lang, "review_broadcast")],
+        [t(lang, "review_requests"), t(lang, "review_broadcast")],
         [t(lang, "back")],
     ]
 
@@ -88,6 +88,13 @@ async def owner_review_menu_choice(update: Update, context: ContextTypes.DEFAULT
         return await _show_reports_list(update, context, user_id)
     if text == t(lang, "review_feedback"):
         return await _show_feedback_list(update, context, user_id)
+    if text == t(lang, "review_requests"):
+        # spec #5: on-demand inline pending-access list (same engine as the digest).
+        from .access import _pending_list_view
+
+        list_text, markup = _pending_list_view(lang)
+        await update.message.reply_text(list_text, reply_markup=markup)
+        return OWNER_REVIEW_MENU
     if text == t(lang, "review_broadcast"):
         from .broadcast import _start_broadcast
 

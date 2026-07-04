@@ -56,11 +56,10 @@ LEARNING_REMINDER_JOB_NAME = "learning_reminder_job"
 FSRS_AFTERNOON_REMINDER_JOB_NAME = "fsrs_afternoon_reminder_job"
 # Owner reminders about pending access requests (P3.1).
 ACCESS_REMINDER_JOB_NAME = "access_pending_reminder_job"
+# Access-requests digest cadence (spec #5: a config-constant stub — moving to
+# 3x/day later is just changing this value). The old #user_confirmation_* hashtags
+# were removed (replaced by the inline [show requests] flow).
 ACCESS_REMINDER_INTERVAL_SECONDS = 2 * 60 * 60  # every 2 hours
-# Hashtags: an open request is searchable by REQUEST, a handled one by DONE
-# (so it drops out of the open-requests search).
-ACCESS_REQUEST_HASHTAG = "#user_confirmation_request"
-ACCESS_DONE_HASHTAG = "#user_confirmation_done"
 # callback_data prefix of approval inline buttons: "access:approve:<uid>" / "access:reject:<uid>".
 ACCESS_CALLBACK_PREFIX = "access"
 FSRS_REPORT_UTC_HOUR_DEFAULT = 3
