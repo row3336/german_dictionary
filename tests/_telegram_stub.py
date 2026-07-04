@@ -20,8 +20,17 @@ def install():
             "ReplyKeyboardMarkup", (),
             {"__init__": lambda self, rows=None, **k: setattr(self, "rows", rows)},
         )
-    for _n in ("ReplyKeyboardRemove", "Update", "InlineKeyboardButton", "InlineKeyboardMarkup",
-               "LabeledPrice"):
+    # Inline markup keeps real-like attributes so tests can inspect callback data.
+    if not hasattr(tg, "InlineKeyboardButton"):
+        def _ikb_init(self, text="", callback_data=None, **k):
+            self.text = text
+            self.callback_data = callback_data
+        tg.InlineKeyboardButton = type("InlineKeyboardButton", (), {"__init__": _ikb_init})
+    if not hasattr(tg, "InlineKeyboardMarkup"):
+        def _ikm_init(self, inline_keyboard=None, **k):
+            self.inline_keyboard = inline_keyboard or []
+        tg.InlineKeyboardMarkup = type("InlineKeyboardMarkup", (), {"__init__": _ikm_init})
+    for _n in ("ReplyKeyboardRemove", "Update", "LabeledPrice"):
         if not hasattr(tg, _n):
             setattr(tg, _n, type(_n, (), {"__init__": lambda self, *a, **k: None}))
 

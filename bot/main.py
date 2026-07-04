@@ -211,6 +211,8 @@ from .jobs.access_reminders import _configure_access_reminders
 from .jobs.auto_dump import _configure_auto_dump
 from .jobs.reminders import _configure_learning_reminders
 from .jobs.reports import _configure_fsrs_reports
+from .jobs.owner_digest import _configure_owner_digest
+from .handlers.owner_inbox import owner_inbox_callback
 
 
 logger = logging.getLogger(__name__)
@@ -434,6 +436,7 @@ def main():
     _configure_learning_reminders(app)
     _configure_fsrs_reports(app)
     _configure_access_reminders(app)
+    _configure_owner_digest(app)
     conv = ConversationHandler(
         entry_points=[
             CommandHandler("start", start),
@@ -518,6 +521,8 @@ def main():
     )
     # Global handler for the owner's [progress]/[users] stat toggle (spec #11).
     app.add_handler(CallbackQueryHandler(stat_toggle_callback, pattern=r"^stat:"))
+    # Global handler for the owner inbox — inline reports/feedback navigation (spec #5).
+    app.add_handler(CallbackQueryHandler(owner_inbox_callback, pattern=r"^inb:"))
     # Telegram Stars donation (P6.4): pre-checkout approval + post-payment thanks.
     app.add_handler(PreCheckoutQueryHandler(precheckout_callback))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
