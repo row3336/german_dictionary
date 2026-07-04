@@ -437,6 +437,14 @@ def main():
             CommandHandler("start", start),
             CommandHandler("undo", undo_steps),
             MessageHandler(filters.Regex(f"^{START_TEXT}$") & ~filters.COMMAND, start),
+            # spec #13: any OTHER stale text with no active conversation (e.g. a
+            # restart wiped in-memory state and the user taps an old keyboard
+            # button) enters here — approved -> MENU + heads-up, guest -> onboarding.
+            # As an entry_point it only fires when idle (never mid-conversation),
+            # and the state it returns actually re-enters the conversation (a
+            # standalone handler's return is ignored — that was the bug). Keep it
+            # LAST so /start and the start button match first.
+            MessageHandler(filters.TEXT & ~filters.COMMAND, rescue_handler),
         ],
         states={
             MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, menu_choice)],
@@ -510,10 +518,9 @@ def main():
     # Telegram Stars donation (P6.4): pre-checkout approval + post-payment thanks.
     app.add_handler(PreCheckoutQueryHandler(precheckout_callback))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
-    # Rescue handler (spec #13): registered LAST in this same group, so it only
-    # fires when nothing above it (the conversation, any callback handler, the
-    # payment handler) claimed the update — i.e. a stale/lost conversation state.
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, rescue_handler))
+    # Rescue (spec #13) is wired as the LAST entry_point of `conv` above (not a
+    # standalone handler) so the state it returns actually re-enters the
+    # conversation; a stale text with no active conversation lands there.
     app.run_polling()
 
 
