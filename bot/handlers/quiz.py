@@ -46,6 +46,7 @@ from ..i18n import t
 from ..storage import QUIZ_ARTICLE as MODE_ARTICLE
 from ..storage import QUIZ_RU_DE as MODE_RU_DE
 from ..storage import (
+    _DICT_TRANSLATION_COLUMN,
     apply_user_word_media,
     count_words_for_topics,
     get_synonym_group,
@@ -592,9 +593,16 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == I_DONT_KNOW_TEXT:
         ok = False
     else:
+        dict_lang = _user_dict_lang(update.effective_user.id)
         answer_variants = set(_russian_variants(text))
-        variants = _russian_variants(_entry_translation(entry, _user_dict_lang(update.effective_user.id)))
-        ok = bool(answer_variants.intersection(set(variants)))
+        variants = set(_russian_variants(_entry_translation(entry, dict_lang)))
+        # spec #7: with a personal translation override, _entry_translation returns
+        # the personal one — but the base (shared) translation stays semantically
+        # correct, so accept BOTH (owner's decision, fork 1).
+        if str(entry.get("my_translation", "") or "").strip():
+            base_field = _DICT_TRANSLATION_COLUMN.get(dict_lang, "russian")
+            variants |= set(_russian_variants(entry.get(base_field, "")))
+        ok = bool(answer_variants & variants)
     mode = _mode_de_l1(update.effective_user.id)
     if not is_retry:
         _remember_last_answer(context, entry, mode, ok, update.message.message_id)

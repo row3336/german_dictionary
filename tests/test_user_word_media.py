@@ -51,7 +51,7 @@ class UserWordMediaTest(unittest.TestCase):
         set_user_word_media(self.db, U1, self.wid, example="my example")
         self.assertEqual(
             get_user_word_media(self.db, U1, self.wid),
-            {"image": "", "example": "my example"},
+            {"image": "", "example": "my example", "russian": "", "ukrainian": "", "english": ""},
         )
         set_user_word_media(self.db, U1, self.wid, image="my-img")
         media = get_user_word_media(self.db, U1, self.wid)

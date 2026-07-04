@@ -183,7 +183,8 @@ def _clarify_fields_markup(source, user_id=None, in_search=False, is_prep=False)
         rows.append(["image", "example", BACK_TEXT])
         return ReplyKeyboardMarkup(rows, resize_keyboard=True)
     if source == "quiz" and user_id is not None and not is_owner(user_id):
-        rows = [["image", "example", t(lang, "report_card")]]
+        # spec #7: guest also gets a personal-translation edit button (their dict_lang).
+        rows = [["image", "example"], [t(lang, "my_translation"), t(lang, "report_card")]]
         rows.append([t(lang, "send_learn"), BACK_TEXT] if in_search else [BACK_TEXT])
         return ReplyKeyboardMarkup(rows, resize_keyboard=True)
     if source == "quiz":

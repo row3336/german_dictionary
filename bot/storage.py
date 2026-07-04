@@ -318,6 +318,9 @@ def init_db(db_path):
                 word_id TEXT NOT NULL,
                 image TEXT NOT NULL DEFAULT '',
                 example TEXT NOT NULL DEFAULT '',
+                russian TEXT NOT NULL DEFAULT '',
+                ukrainian TEXT NOT NULL DEFAULT '',
+                english TEXT NOT NULL DEFAULT '',
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (user_id, word_id),
                 FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
@@ -674,6 +677,17 @@ def _ensure_schema(conn):
         conn.execute("ALTER TABLE learning_items ADD COLUMN preview_done INTEGER NOT NULL DEFAULT 0")
     if learning_cols and "updated_at" not in learning_cols:
         conn.execute("ALTER TABLE learning_items ADD COLUMN updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP")
+
+    # spec #7 (v8 -> v9): per-user personal translation overrides live in the SAME
+    # user_word_media row as personal image/example (no new table/rows). A user
+    # overrides only their dict_lang's translation; '' = no personal version.
+    media_cols = {
+        row["name"] if isinstance(row, sqlite3.Row) else row[1]
+        for row in conn.execute("PRAGMA table_info(user_word_media)").fetchall()
+    }
+    for _tr_col in ("russian", "ukrainian", "english"):
+        if _tr_col not in media_cols:
+            conn.execute(f"ALTER TABLE user_word_media ADD COLUMN {_tr_col} TEXT NOT NULL DEFAULT ''")
 
     # Migrate legacy SM2-named settings keys to FSRS names, preserving values.
     for _old_key, _new_key in (
@@ -2030,17 +2044,51 @@ def list_user_activity(db_path):
 # the shared `words`. A guest sees ONLY their personal image/example (blank when
 # unset) — never the owner's shared values. The owner sees the shared word. ---
 
+# spec #7: which words-translation column a user's dict_lang overrides.
+_DICT_TRANSLATION_COLUMN = {"ru": "russian", "uk": "ukrainian", "en": "english"}
+
+
 def get_user_word_media(db_path, user_id, word_id):
-    """This user's personal image/example for a word; {} if none set."""
+    """This user's personal image/example (+ per-lang translations) for a word; {} if none set."""
     init_db(db_path)
     with _connect(db_path) as conn:
         row = conn.execute(
-            "SELECT image, example FROM user_word_media WHERE user_id = ? AND word_id = ?",
+            "SELECT image, example, russian, ukrainian, english FROM user_word_media "
+            "WHERE user_id = ? AND word_id = ?",
             (int(user_id), str(word_id)),
         ).fetchone()
     if not row:
         return {}
-    return {"image": row["image"] or "", "example": row["example"] or ""}
+    return {
+        "image": row["image"] or "",
+        "example": row["example"] or "",
+        "russian": row["russian"] or "",
+        "ukrainian": row["ukrainian"] or "",
+        "english": row["english"] or "",
+    }
+
+
+def set_user_word_translation(db_path, user_id, word_id, dict_lang, value):
+    """Upsert this user's personal translation into their dict_lang column (spec #7).
+
+    Writes to the column matching dict_lang (ru->russian, uk->ukrainian, en->english);
+    '' clears the override (reverts to the shared dictionary). Reuses the existing
+    user_word_media row (same one as personal image/example) — no new rows.
+    """
+    col = _DICT_TRANSLATION_COLUMN.get(_normalize_dict_lang(dict_lang))
+    if not col:
+        raise ValueError("Invalid dict language for personal translation.")
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO user_word_media (user_id, word_id) VALUES (?, ?)",
+            (int(user_id), str(word_id)),
+        )
+        conn.execute(
+            f"UPDATE user_word_media SET {col} = ?, updated_at = CURRENT_TIMESTAMP "
+            f"WHERE user_id = ? AND word_id = ?",
+            (_safe_text(value), int(user_id), str(word_id)),
+        )
 
 
 def set_user_word_media(db_path, user_id, word_id, image=None, example=None):
@@ -2082,6 +2130,13 @@ def apply_user_word_media(db_path, user_id, entry):
     out = dict(entry)
     out["image"] = media.get("image", "")
     out["example"] = media.get("example", "")
+    # spec #7: personal translation override for the user's dict_lang. Kept in a
+    # SEPARATE 'my_translation' key so the base russian/ukrainian/english fields
+    # stay intact — display prefers my_translation, while the De>L1 checker can
+    # still accept the base translation too (both count, per owner's decision).
+    _, dict_lang = get_user_languages(db_path, user_id)
+    col = _DICT_TRANSLATION_COLUMN.get(dict_lang)
+    out["my_translation"] = media.get(col, "") if col else ""
     return out
 
 

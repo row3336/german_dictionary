@@ -215,7 +215,7 @@ class ClarifyValidationTest(_DBTest):
 
     def test_guest_never_gets_prep_fields(self):
         fields = _allowed_clarify_fields("quiz", GUEST, is_prep=True)
-        self.assertEqual(fields, {"image", "example"})
+        self.assertEqual(fields, {"image", "example", "my_translation"})
 
 
 class _Msg:

@@ -45,7 +45,13 @@ from ..handlers.quiz import (
 )
 from ..i18n import t
 from ..labels import SYNONYMS_TEXT
-from ..storage import add_error_report, delete_word, set_user_word_media, update_word_fields
+from ..storage import (
+    add_error_report,
+    delete_word,
+    set_user_word_media,
+    set_user_word_translation,
+    update_word_fields,
+)
 from ..text_utils import type_label as _type_label
 from ..ui.formatting import (
     _format_article_question,
@@ -93,7 +99,8 @@ def _allowed_clarify_fields(source, user_id=None, is_prep=False):
     card may only touch image/example (their personal version, P4). The two
     preposition fields (spec #1) are owner-only and only offered for a preposition."""
     if source == "quiz" and user_id is not None and not is_owner(user_id):
-        return {"image", "example"}
+        # spec #7: guest may also edit their personal translation (their dict_lang).
+        return {"image", "example", "my_translation"}
     if source == "add":
         fields = {
             "ru", "ukr", "en", "de", "article", "plural", "type",
@@ -154,6 +161,7 @@ def _set_entry_field(entry, raw_update):
         "english",
         "image",
         "example",
+        "my_translation",
         "article",
         "plural",
         "prateritum",
@@ -504,7 +512,11 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
                     reply_markup=ReplyKeyboardMarkup([[t(_user_interface_lang(uid), "back")]], resize_keyboard=True),
                 )
                 return ADD_EDIT
-        field = text.strip().lower()
+        # spec #7: the personal-translation button is localized — map it back.
+        if text == t(_user_interface_lang(update.effective_user.id), "my_translation"):
+            field = "my_translation"
+        else:
+            field = text.strip().lower()
         allowed_fields = _allowed_clarify_fields(
             source, update.effective_user.id, is_prep=_is_prep_entry(entry)
         )
@@ -532,6 +544,12 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
                 prompt,
                 reply_markup=_value_entry_markup(field, update.effective_user.id),
             )
+        elif field == "my_translation":
+            # spec #7: localized prompt (personal translation in the user's dict_lang).
+            await update.message.reply_text(
+                t(_user_interface_lang(update.effective_user.id), "my_translation_prompt"),
+                reply_markup=ReplyKeyboardMarkup([[t(_user_interface_lang(update.effective_user.id), "back"), t(_user_interface_lang(update.effective_user.id), "stop")]], resize_keyboard=True),
+            )
         else:
             await update.message.reply_text(
                 f"Enter new value for {field}:",
@@ -548,8 +566,8 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         return ADD_EDIT
 
-    if field in ("image", "example"):
-        text = text[:_MAX_MEDIA_LEN]  # P8: cap personal media length (anti-abuse)
+    if field in ("image", "example", "my_translation"):
+        text = text[:_MAX_MEDIA_LEN]  # P8: cap personal media/translation length (anti-abuse)
 
     if field == "type":
         normalized_type = _type_label(text)
@@ -588,6 +606,16 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
         if is_owner(user_id):
             # Owner edits the shared word directly.
             update_word_fields(get_db_path(), updated.get("id"), updated)
+        elif field == "my_translation":
+            # spec #7: guest personal translation → their dict_lang column in
+            # user_word_media; '' clears it (revert to shared). Shared `words` untouched.
+            set_user_word_translation(
+                get_db_path(),
+                user_id,
+                updated.get("id"),
+                _user_dict_lang(user_id),
+                updated.get("my_translation", ""),
+            )
         else:
             # Guest: persist only the edited image/example to their personal version
             # (P4); the shared `words` row is never touched.

@@ -31,7 +31,15 @@ def _expected_partizip2(entry):
 
 
 def _entry_translation(entry, dict_lang):
-    """Handle entry translation."""
+    """Translation shown to the user, in their dict_lang.
+
+    spec #7: a guest's personal override (entry['my_translation'], set by
+    apply_user_word_media for their dict_lang) wins over the shared dictionary.
+    Falls back to the base russian/ukrainian/english fields when unset.
+    """
+    personal = str(entry.get("my_translation", "") or "").strip()
+    if personal:
+        return personal
     ru = str(entry.get("russian", "") or "").strip()
     ukr = str(entry.get("ukrainian", "") or "").strip()
     eng = str(entry.get("english", "") or "").strip()

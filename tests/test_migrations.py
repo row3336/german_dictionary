@@ -211,7 +211,7 @@ class V1ToV2MigrationTest(unittest.TestCase):
         self.assertGreaterEqual(SCHEMA_VERSION, 3)
         self.assertIn("user_word_media", _schema(db))
         self.assertEqual(
-            {"user_id", "word_id", "image", "example", "updated_at"},
+            {"user_id", "word_id", "image", "example", "russian", "ukrainian", "english", "updated_at"},
             _schema(db)["user_word_media"],
         )
         self.assertTrue(report["healthcheck"]["ok"])
@@ -590,6 +590,71 @@ class ConjugationColumnsMigrationTest(unittest.TestCase):
         self.assertIn("conjugation_praesens", schema["words"])
         self.assertIn("conjugation_praeteritum", schema["words"])
         self.assertIn("conjugation_progress", schema)
+
+
+class UserWordMediaTranslationMigrationTest(unittest.TestCase):
+    """spec #7 — v8 -> v9 adds user_word_media.russian/ukrainian/english (ADD-only)."""
+
+    def _seed_v8(self, d):
+        db = os.path.join(d, "words.db")
+        init_db(db)  # full current schema, then peel the three v9 columns back off
+        conn = sqlite3.connect(db)
+        conn.executescript(
+            """
+            INSERT INTO words (id, type, german, russian, topic) VALUES ('w1', 'nomen', 'Haus', 'дом', '1');
+            INSERT INTO user_word_media (user_id, word_id, example) VALUES (7, 'w1', 'mein Beispiel');
+            ALTER TABLE user_word_media DROP COLUMN russian;
+            ALTER TABLE user_word_media DROP COLUMN ukrainian;
+            ALTER TABLE user_word_media DROP COLUMN english;
+            """
+        )
+        conn.commit()
+        conn.close()
+        set_user_version(db, 8)
+        cols = _schema(db)["user_word_media"]
+        self.assertNotIn("russian", cols)
+        return db
+
+    def test_v8_to_v9_adds_translation_columns_keeps_data(self):
+        d = tempfile.mkdtemp()
+        db = self._seed_v8(d)
+
+        report = apply_migrations_safely(db, os.path.join(d, "backups"))
+
+        self.assertTrue(report["migrated"])
+        self.assertEqual(report["from_version"], 8)
+        self.assertEqual(report["to_version"], SCHEMA_VERSION)
+        self.assertGreaterEqual(SCHEMA_VERSION, 9)
+        cols = _schema(db)["user_word_media"]
+        self.assertTrue({"russian", "ukrainian", "english"} <= cols)
+        self.assertTrue(report["healthcheck"]["ok"])
+        self.assertEqual(get_user_version(db), SCHEMA_VERSION)
+
+        conn = sqlite3.connect(db)
+        try:
+            row = conn.execute(
+                "SELECT example, russian, ukrainian, english FROM user_word_media WHERE user_id=7 AND word_id='w1'"
+            ).fetchone()
+        finally:
+            conn.close()
+        # existing personal example preserved; new translation columns default ''
+        self.assertEqual(row, ("mein Beispiel", "", "", ""))
+
+    def test_backup_and_idempotent(self):
+        d = tempfile.mkdtemp()
+        db = self._seed_v8(d)
+        report = apply_migrations_safely(db, os.path.join(d, "backups"))
+        self.assertIsNotNone(report["backup"])
+        self.assertTrue(os.path.exists(report["backup"]))
+        report2 = apply_migrations_safely(db, os.path.join(d, "backups"))
+        self.assertFalse(report2["migrated"])
+        self.assertTrue(report2["healthcheck"]["ok"])
+
+    def test_fresh_db_has_translation_columns(self):
+        d = tempfile.mkdtemp()
+        db = os.path.join(d, "words.db")
+        apply_migrations_safely(db, os.path.join(d, "backups"))
+        self.assertTrue({"russian", "ukrainian", "english"} <= _schema(db)["user_word_media"])
 
 
 if __name__ == "__main__":

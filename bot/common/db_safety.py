@@ -25,7 +25,9 @@ from pathlib import Path
 # 7 = spec #1 (+ words.preposition_type, + words.case_type; both DEFAULT '').
 # 8 = spec #3 (+ words.conjugation_praesens, + words.conjugation_praeteritum;
 #     + conjugation_progress table; columns DEFAULT '').
-SCHEMA_VERSION = 8
+# 9 = spec #7 (+ user_word_media.russian/ukrainian/english; per-user personal
+#     translation overrides; all DEFAULT '').
+SCHEMA_VERSION = 9
 
 # Tables whose row counts we snapshot before/after a migration (must not shrink).
 _COUNT_TABLES = (
