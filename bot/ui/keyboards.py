@@ -45,7 +45,7 @@ def _tests_menu_keys(user_id):
     l1de, del1 = _quiz_dir_labels(user_id)
     return [
         [t(lang, "learning"), l1de, del1, QUIZ_PL_SG_TEXT],
-        [t(lang, "topic_filter"), t(lang, "back")],
+        [t(lang, "conjugation"), t(lang, "topic_filter"), t(lang, "back")],
     ]
 
 

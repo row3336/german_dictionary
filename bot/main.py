@@ -43,6 +43,7 @@ from .app_config import (
     ALGO_SETTINGS_MENU,
     AUTO_DUMP_MENU,
     AUTO_DUMP_SETTING_KEY,
+    CONJUGATION_MENU,
     DB_SEARCH,
     DB_SEARCH_VIEW,
     DRILL_SETTINGS_MENU,
@@ -139,6 +140,7 @@ from .handlers.learning import (
     learning_menu_choice,
     learning_quiz,
 )
+from .handlers.conjugation import conjugation_input
 from .handlers.add_words import (
     add_clarify,
     add_confirm,
@@ -460,6 +462,7 @@ def main():
             DB_SEARCH_VIEW: [MessageHandler(filters.TEXT & ~filters.COMMAND, db_search_view)],
             LEARNING_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, learning_menu_choice)],
             LEARNING_QUIZ: [MessageHandler(filters.TEXT & ~filters.COMMAND, learning_quiz)],
+            CONJUGATION_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, conjugation_input)],
             QUIZ_RU_DE_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_ru_de_menu_choice)],
             SETTINGS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, settings_menu_choice)],
             LANGUAGE_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, language_menu_choice)],

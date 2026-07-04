@@ -52,6 +52,7 @@ def _action_key_from_text(text, user_id):
         ("review_flags", "review_flags"),
         ("algo_settings", "algo_settings"),
         ("topic_filter", "topic_filter"),
+        ("conjugation", "conjugation"),
         ("fsrs_sett", "fsrs_sett"),
         ("weak_sett", "weak_sett"),
         ("learning_sett", "learning_sett"),

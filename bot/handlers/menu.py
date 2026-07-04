@@ -227,6 +227,9 @@ async def tests_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     if action == "learning":
         return await _send_learning_menu(update, user_id)
+    if action == "conjugation":
+        from .conjugation import start_conjugation  # local import: anti-cycle
+        return await start_conjugation(update, context)
     if action == "topic_filter":
         from .topic_filter import send_topic_filter_screen  # local import: anti-cycle
         return await send_topic_filter_screen(update, context, user_id, "tests_menu")
