@@ -4,6 +4,7 @@ Leaf module: depends only on text_utils/storage/app_config (no handler back-refs
 """
 
 from ..app_config import get_db_path
+from ..common.conjugation import format_conjugation_block
 from ..storage import apply_user_word_media, get_word_study_status
 from ..text_utils import cap_plural as _cap_plural
 from ..text_utils import cap_word as _cap_word
@@ -191,6 +192,31 @@ def _format_word_card(entry, title="Word card:", user_id=None):
         lines.append(f"preposition_type: {entry.get('preposition_type', '') or '-'}")
         lines.append(f"case_type: {entry.get('case_type', '') or '-'}")
     return "\n".join(lines)
+
+
+def _format_conjugation_card(entry, dict_lang):
+    """spec #3 (variant A): conjugation drill card.
+
+    Line 1: ``word — translation`` (translation by the user's dict_lang). Then the
+    Präsens block, and for the closed Präteritum list a second block. Section
+    headers (Präsens/Präteritum) are italic and live OUTSIDE the monospace blocks
+    — Telegram forbids formatting inside ```pre```. Pronouns are plain (owner
+    decision 2026-07-02: no italic, no unicode-italic hack). Blocks are pre-aligned
+    by format_conjugation_block; wrapped here in ```text so forms stay monospaced.
+    """
+    word = str(entry.get("german") or entry.get("infinitive") or "").strip()
+    translation = _entry_translation(entry, dict_lang)
+    header = f"*{_md_escape(word)}*"
+    if translation:
+        header += f" — {_md_escape(translation)}"
+    parts = [header]
+    praesens = format_conjugation_block(entry.get("conjugation_praesens", ""))
+    if praesens:
+        parts.append(f"_Präsens_\n```text\n{praesens}\n```")
+    praeteritum = format_conjugation_block(entry.get("conjugation_praeteritum", ""))
+    if praeteritum:
+        parts.append(f"_Präteritum_\n```text\n{praeteritum}\n```")
+    return "\n\n".join(parts)
 
 
 def _format_ru_question(entry, dict_lang):

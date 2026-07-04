@@ -77,3 +77,28 @@ def is_valid_conjugation(text):
         return True
     except ValueError:
         return False
+
+
+# Pronoun column width for the aligned monospace card: widest pronoun ("er/sie/es",
+# 9 chars) + 1 padding space, so every form starts in the same column.
+_PRONOUN_PAD = max(len(p) for p in PRONOUNS) + 1
+
+
+def format_conjugation_block(stored_text):
+    """Render a stored block as vertically aligned plain text (no markup).
+
+    Pronouns are left-padded to a fixed column so the forms line up; the DB holds
+    only clean lines, so this alignment is applied purely at render time. Returns
+    '' for an empty block. Tolerant of already-canonical DB text (does not
+    re-validate — writes are validated by parse_conjugation).
+    """
+    out = []
+    for line in str(stored_text or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split(None, 1)
+        pronoun = parts[0]
+        form = parts[1] if len(parts) > 1 else ""
+        out.append(f"{pronoun.ljust(_PRONOUN_PAD)}{form}")
+    return "\n".join(out)

@@ -11,10 +11,12 @@ import unittest
 
 from bot.common.conjugation import (
     PRONOUNS,
+    format_conjugation_block,
     is_valid_conjugation,
     parse_conjugation,
     takes_praeteritum,
 )
+from bot.ui.formatting import _format_conjugation_card
 from bot.storage import (
     init_db,
     next_conjugation_word,
@@ -62,6 +64,69 @@ class ValidatorTest(unittest.TestCase):
         self.assertTrue(takes_praeteritum("  Sein "))  # trimmed + case-insensitive
         for inf in ("gehen", "machen", "lernen", ""):
             self.assertFalse(takes_praeteritum(inf))
+
+
+PRAET = "ich konnte\ndu konntest\ner/sie/es konnte\nwir konnten\nihr konntet\nsie/Sie konnten"
+
+
+class RenderTest(unittest.TestCase):
+    def test_block_alignment(self):
+        block = format_conjugation_block(GOOD)
+        lines = block.splitlines()
+        self.assertEqual(len(lines), 6)
+        # every form starts at the same column (right after the widest pronoun + 1)
+        form_cols = [len(line) - len(line.lstrip()) for line in lines]  # sanity: no leading space
+        self.assertEqual(form_cols, [0, 0, 0, 0, 0, 0])
+        starts = [line.index(line.split(None, 1)[1]) for line in lines]
+        self.assertEqual(len(set(starts)), 1)  # all forms aligned to one column
+        self.assertEqual(starts[0], len("er/sie/es") + 1)
+
+    def test_empty_block_renders_empty(self):
+        self.assertEqual(format_conjugation_block(""), "")
+
+    def test_card_word_and_translation_by_dict_lang(self):
+        entry = {
+            "german": "gehen", "infinitive": "gehen",
+            "russian": "идти", "ukrainian": "йти", "english": "to go",
+            "conjugation_praesens": GOOD, "conjugation_praeteritum": "",
+        }
+        self.assertIn("*gehen* — идти", _format_conjugation_card(entry, "ru"))
+        self.assertIn("*gehen* — йти", _format_conjugation_card(entry, "uk"))
+        self.assertIn("*gehen* — to go", _format_conjugation_card(entry, "en"))
+
+    def test_card_translation_falls_back_to_russian(self):
+        entry = {"german": "gehen", "russian": "идти", "conjugation_praesens": GOOD}
+        # uk missing -> falls back to ru
+        self.assertIn("— идти", _format_conjugation_card(entry, "uk"))
+
+    def test_regular_verb_one_block_no_praeteritum(self):
+        entry = {"german": "gehen", "russian": "идти", "conjugation_praesens": GOOD, "conjugation_praeteritum": ""}
+        card = _format_conjugation_card(entry, "ru")
+        self.assertIn("_Präsens_", card)
+        self.assertNotIn("Präteritum", card)
+        self.assertEqual(card.count("```text"), 1)
+
+    def test_modal_two_blocks(self):
+        entry = {"german": "können", "russian": "мочь", "conjugation_praesens": GOOD, "conjugation_praeteritum": PRAET}
+        card = _format_conjugation_card(entry, "ru")
+        self.assertIn("_Präsens_", card)
+        self.assertIn("_Präteritum_", card)
+        self.assertEqual(card.count("```text"), 2)
+
+    def test_headers_italic_outside_code_blocks(self):
+        entry = {"german": "können", "russian": "мочь", "conjugation_praesens": GOOD, "conjugation_praeteritum": PRAET}
+        card = _format_conjugation_card(entry, "ru")
+        # each italic header sits on its own line immediately before an opening fence
+        self.assertIn("_Präsens_\n```text", card)
+        self.assertIn("_Präteritum_\n```text", card)
+
+    def test_pronouns_are_plain(self):
+        # no italic/underscore markup wrapping pronouns inside the block
+        card = _format_conjugation_card(
+            {"german": "gehen", "russian": "идти", "conjugation_praesens": GOOD}, "ru"
+        )
+        self.assertIn("er/sie/es geht", card)
+        self.assertNotIn("_ich_", card)
 
 
 class _DbCase(unittest.TestCase):
