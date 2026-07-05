@@ -257,3 +257,13 @@ def _add_keys(user_id):
 def _add_input_markup(user_id):
     """Handle add input markup."""
     return ReplyKeyboardMarkup([[t(_user_interface_lang(user_id), "back")]], resize_keyboard=True)
+
+
+def _add_menu_markup(user_id):
+    """Add submenu (spec #2): pick the recognition method — AI (current flow),
+    VF add, or VF recheck — plus back. Owner-only screen."""
+    lang = _user_interface_lang(user_id)
+    return ReplyKeyboardMarkup(
+        [[t(lang, "add_ai"), t(lang, "add_vf"), t(lang, "vf_recheck")], [t(lang, "back")]],
+        resize_keyboard=True,
+    )

@@ -16,6 +16,7 @@ from ..app_config import (
     ADD_CONFIRM,
     ADD_EDIT,
     ADD_INPUT,
+    ADD_MENU,
     ADD_PRECHECK,
     ADD_PRECHECK_EDIT,
     AI_BAN_WORD,
@@ -43,7 +44,7 @@ from ..app_config import (
 )
 from ..common.lang import _user_dict_lang, _user_interface_lang
 from ..common.navigation import _action_key_from_text, _back_to_main_menu, _reply_text_with_retry
-from ..common.settings import _current_topic_value
+from ..common.settings import _current_topic_value, _topic_filter_banner
 from ..common.topics import parse_topic_input
 from ..i18n import t
 from ..storage import (
@@ -66,7 +67,13 @@ from ..text_utils import russian_variants as _russian_variants
 from ..text_utils import try_parse_json as _try_parse_json
 from ..text_utils import type_label as _type_label
 from ..ui.formatting import _entry_translation, _format_word_card
-from ..ui.keyboards import _add_keys, _clarify_fields_markup, _main_menu_markup
+from ..ui.keyboards import (
+    _add_input_markup,
+    _add_keys,
+    _add_menu_markup,
+    _clarify_fields_markup,
+    _main_menu_markup,
+)
 
 
 def _stop_keys(user_id):
@@ -874,6 +881,46 @@ def _parse_precheck_edit_lines(lines):
             continue
         result.append(raw)
     return result
+
+
+async def add_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Add submenu router (spec #2): pick recognition method.
+
+    - AI: the current interactive flow, unchanged (prompt -> ADD_INPUT).
+    - VF add / VF recheck: filled in by later spec #2 steps (stubs for now).
+    - back: main menu.
+    """
+    user_id = update.effective_user.id
+    text = update.message.text.strip()
+    action = _action_key_from_text(text, user_id)
+
+    if action == "back":
+        return await _back_to_main_menu(update)
+
+    if action == "add_ai":
+        await _reply_text_with_retry(
+            update.message,
+            f"Send a word or a list (one per line), or upload a .txt file.\n\n{_topic_filter_banner(user_id)}",
+            reply_markup=_add_input_markup(user_id),
+            parse_mode="Markdown",
+        )
+        return ADD_INPUT
+
+    if action in ("add_vf", "vf_recheck"):
+        label = "🌐 VF add" if action == "add_vf" else "🔁 VF recheck"
+        await _reply_text_with_retry(
+            update.message,
+            f"{label} — coming soon.",
+            reply_markup=_add_menu_markup(user_id),
+        )
+        return ADD_MENU
+
+    await _reply_text_with_retry(
+        update.message,
+        "Choose: AI, VF add, VF recheck, or back.",
+        reply_markup=_add_menu_markup(user_id),
+    )
+    return ADD_MENU
 
 
 async def add_input(update: Update, context: ContextTypes.DEFAULT_TYPE):

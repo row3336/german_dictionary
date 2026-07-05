@@ -7,7 +7,7 @@ from telegram import ReplyKeyboardMarkup, Update
 from telegram.ext import ContextTypes, ConversationHandler
 
 from ..app_config import (
-    ADD_INPUT,
+    ADD_MENU,
     MENU,
     OWNER_DICT_LANG_KEY,
     OWNER_INTERFACE_LANG_KEY,
@@ -50,7 +50,7 @@ from ..storage import (
 )
 from ..text_utils import split_text_chunks as _split_text_chunks
 from ..ui.keyboards import (
-    _add_input_markup,
+    _add_menu_markup,
     _main_menu_markup,
     _ru_de_menu_keys,
     _settings_menu_keys,
@@ -142,11 +142,10 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(t(_user_interface_lang(user_id), "unknown_menu"))
             return MENU
         await update.message.reply_text(
-            f"Send a word or a list (one per line), or upload a .txt file.\n\n{_topic_filter_banner(user_id)}",
-            reply_markup=_add_input_markup(user_id),
-            parse_mode="Markdown",
+            "Add words — choose recognition method:",
+            reply_markup=_add_menu_markup(user_id),
         )
-        return ADD_INPUT
+        return ADD_MENU
 
     if action == "tests":
         await update.message.reply_text(

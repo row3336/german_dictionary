@@ -34,6 +34,7 @@ from .app_config import (
     ADD_CONFIRM,
     ADD_EDIT,
     ADD_INPUT,
+    ADD_MENU,
     ADD_PRECHECK,
     ADD_PRECHECK_EDIT,
     ALGO_SETTINGS_CONFIRM,
@@ -144,6 +145,7 @@ from .handlers.add_words import (
     add_confirm,
     add_document,
     add_input,
+    add_menu_choice,
     add_precheck,
     add_precheck_edit,
 )
@@ -479,6 +481,7 @@ def main():
             TOPIC_FILTER_EDIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, topic_filter_edit)],
             DUMP_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, dump_menu_choice)],
             AUTO_DUMP_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, auto_dump_choice)],
+            ADD_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_menu_choice)],
             ADD_INPUT: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, add_input),
                 MessageHandler(filters.Document.ALL, add_document),
