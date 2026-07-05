@@ -283,20 +283,28 @@ def _check_ru_de_strict(entry, answer_text):
 
 # --- session control ---
 
-async def _send_session_summary(update: Update, context: ContextTypes.DEFAULT_TYPE, mode):
+async def _send_session_summary(update: Update, context: ContextTypes.DEFAULT_TYPE, mode, tail_text=None, reply_markup=None):
     """Send the 'session over' summary (word/correct/wrong counts) with a message
     effect keyed to this session's accuracy (spec #9 part B): a perfect session
     gets confetti, 80-99% gets fire, below 80% gets the poop effect, and no
-    answers at all this session gets no effect."""
+    answers at all this session gets no effect.
+
+    `tail_text` (e.g. the 'no due words' notice) is folded into THIS message so it
+    doesn't arrive as a second message that interrupts the effect animation
+    (multiuser bug #5); `reply_markup` is attached to the same message."""
     count = _session_count(context, mode)
     correct = _session_correct_count(context, mode)
     wrong = _session_wrong_count(context, mode)
+    text = t(_user_interface_lang(update.effective_user.id), "session_words_count").format(
+        count=count, correct=correct, wrong=wrong,
+    )
+    if tail_text:
+        text = f"{text}\n\n{tail_text}"
     await _reply_text_with_retry(
         update.message,
-        t(_user_interface_lang(update.effective_user.id), "session_words_count").format(
-            count=count, correct=correct, wrong=wrong,
-        ),
+        text,
         message_effect_id=_session_effect_id(context, mode),
+        reply_markup=reply_markup,
     )
 
 
@@ -376,10 +384,9 @@ async def _send_ru_de_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
     if not entry:
         if prefix_text:
             await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
-        await _send_session_summary(update, context, mode)
-        await _reply_text_with_retry(
-            update.message,
-            t(_user_interface_lang(update.effective_user.id), _no_words_key(update.effective_user.id, "no_due_words")),
+        await _send_session_summary(
+            update, context, mode,
+            tail_text=t(_user_interface_lang(update.effective_user.id), _no_words_key(update.effective_user.id, "no_due_words")),
             reply_markup=_quiz_idle_markup(update.effective_user.id),
         )
         return QUIZ_RU_DE
@@ -411,10 +418,9 @@ async def _send_de_ru_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
     if not entry:
         if prefix_text:
             await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
-        await _send_session_summary(update, context, mode)
-        await _reply_text_with_retry(
-            update.message,
-            t(_user_interface_lang(update.effective_user.id), _no_words_key(update.effective_user.id, "no_due_words")),
+        await _send_session_summary(
+            update, context, mode,
+            tail_text=t(_user_interface_lang(update.effective_user.id), _no_words_key(update.effective_user.id, "no_due_words")),
             reply_markup=_quiz_idle_markup(update.effective_user.id),
         )
         return QUIZ_DE_RU
@@ -453,20 +459,18 @@ async def _send_pl_sg_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
         if not entry and attempts > 0:
             if prefix_text:
                 await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
-            await _send_session_summary(update, context, mode)
-            await _reply_text_with_retry(
-                update.message,
-                t(_user_interface_lang(update.effective_user.id), _no_words_key(update.effective_user.id, "no_due_pl_sg")),
+            await _send_session_summary(
+                update, context, mode,
+                tail_text=t(_user_interface_lang(update.effective_user.id), _no_words_key(update.effective_user.id, "no_due_pl_sg")),
                 reply_markup=_quiz_idle_markup(update.effective_user.id),
             )
             return QUIZ_PL_SG
     if not entry:
         if prefix_text:
             await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
-        await _send_session_summary(update, context, mode)
-        await _reply_text_with_retry(
-            update.message,
-            t(_user_interface_lang(update.effective_user.id), _no_words_key(update.effective_user.id, "no_due_words")),
+        await _send_session_summary(
+            update, context, mode,
+            tail_text=t(_user_interface_lang(update.effective_user.id), _no_words_key(update.effective_user.id, "no_due_words")),
             reply_markup=_quiz_idle_markup(update.effective_user.id),
         )
         return QUIZ_PL_SG

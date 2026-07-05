@@ -100,8 +100,12 @@ class QuizI18nTest(unittest.TestCase):
         state = _run(Q._send_ru_de_prompt(update, _Ctx(), None))
         self.assertEqual(state, QUIZ_RU_DE)
         texts = [c[0] for c in update.message.calls]
-        self.assertIn("слов за сессию = 0 (верных: 0, неверных: 0)", texts)
-        self.assertIn(TEXTS["ru"]["no_due_words"], texts)
+        # bug #5: the summary and the 'no due' notice now ride in ONE message so
+        # the second message doesn't interrupt the effect animation.
+        self.assertTrue(any(
+            "слов за сессию = 0 (верных: 0, неверных: 0)" in t and TEXTS["ru"]["no_due_words"] in t
+            for t in texts
+        ))
         self.assertFalse(any("No due" in t or "session words" in t for t in texts))
 
     def test_pl_sg_no_due_localized_for_ru_guest(self):
@@ -109,7 +113,7 @@ class QuizI18nTest(unittest.TestCase):
         state = _run(Q._send_pl_sg_prompt(update, _Ctx(), None))
         self.assertEqual(state, QUIZ_PL_SG)
         texts = [c[0] for c in update.message.calls]
-        self.assertIn(TEXTS["ru"]["no_due_pl_sg"], texts)
+        self.assertTrue(any(TEXTS["ru"]["no_due_pl_sg"] in t for t in texts))  # bug #5: merged into summary msg
         self.assertFalse(any("No due" in t for t in texts))
 
     def test_article_no_due_localized_for_ru_guest(self):
