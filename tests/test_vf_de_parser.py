@@ -8,7 +8,11 @@ and the headword-mismatch guard.
 import os
 import unittest
 
-from bot.verb_forms_parsing.de_parser import detect_type_and_headword, headword_matches
+from bot.verb_forms_parsing.de_parser import (
+    detect_type_and_headword,
+    headword_matches,
+    parse_translations,
+)
 
 FIX = os.path.join(os.path.dirname(__file__), "fixtures", "verbformen_de")
 
@@ -60,6 +64,34 @@ class TypeHeadwordTest(unittest.TestCase):
     def test_headword_matches_is_case_insensitive(self):
         self.assertTrue(headword_matches("Haus", "haus"))
         self.assertFalse(headword_matches("", "haus"))
+
+
+class TranslationsTest(unittest.TestCase):
+    def test_verb_ru_uk_en_ordered_lowercased(self):
+        t = parse_translations(load("gehen_summary.html"))
+        self.assertEqual(t["ru"][0], "идти")
+        self.assertIn("уходить", t["ru"])
+        self.assertEqual(t["uk"][0], "ходити")
+        self.assertEqual(t["en"][0], "go")
+        # no flag/&nbsp; leaked, everything lowercased
+        for lang in ("ru", "uk", "en"):
+            self.assertTrue(t[lang])
+            self.assertTrue(all(v == v.lower() and "\xa0" not in v and v for v in t[lang]))
+
+    def test_nomen_translations(self):
+        t = parse_translations(load("Haus_summary.html"))
+        self.assertEqual(t["ru"][0], "дом")
+        self.assertEqual(t["en"][0], "house")
+        self.assertEqual(t["uk"][0], "будинок")
+
+    def test_adjektiv_translations(self):
+        t = parse_translations(load("schnell_summary.html"))
+        self.assertEqual(t["ru"][0], "быстрый")
+        self.assertEqual(t["en"][0], "fast")
+
+    def test_missing_language_is_empty_list(self):
+        t = parse_translations("<html><h1>Konjugation des Verbs x</h1></html>")
+        self.assertEqual(t, {"ru": [], "uk": [], "en": []})
 
 
 if __name__ == "__main__":

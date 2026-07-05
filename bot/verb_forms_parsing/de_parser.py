@@ -12,6 +12,7 @@ forms, conjugation, examples, article/plural, komparativ/superlativ) are added
 in the following sub-steps.
 """
 
+import html as _html
 import re
 
 # h1 phrasing -> our word type. Only verbs/nouns/adjectives get a dedicated .de
@@ -56,6 +57,33 @@ def detect_type_and_headword(summary_html):
     m = re.search(r"Deutsche Wörter mit\s+(.+)$", h1)
     quoted = m.group(1).strip(_QUOTE_CHARS) if m else ""
     return {"type": "", "headword": quoted, "has_entry": False}
+
+
+_TRANSLATION_LANGS = ("ru", "uk", "en")
+
+
+def parse_translations(summary_html):
+    """Ordered translation lists per language from the .de summary page.
+
+    Each language lives in a single ``<dd lang="xx">`` whose text is a
+    comma-separated list of meanings (a leading flag ``&nbsp;`` is dropped).
+    Returns ``{"ru": [...], "uk": [...], "en": [...]}`` — every value lowercased
+    and stripped, order preserved (primary meaning first). Missing language -> [].
+
+    The full list is returned on purpose; how many meanings to keep is a
+    presentation/assembly decision (owner trims the review file).
+    """
+    html = summary_html or ""
+    out = {}
+    for lang in _TRANSLATION_LANGS:
+        m = re.search(r'<dd lang="%s">(.*?)</dd>' % lang, html, re.S)
+        if not m:
+            out[lang] = []
+            continue
+        text = _html.unescape(re.sub(r"<[^>]+>", " ", m.group(1)))
+        text = re.sub(r"\s+", " ", text).strip()
+        out[lang] = [p.strip().lower() for p in text.split(",") if p.strip()]
+    return out
 
 
 def headword_matches(headword, query):
