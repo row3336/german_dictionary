@@ -340,6 +340,28 @@ async def _repeat_current_de_ru(update: Update, context: ContextTypes.DEFAULT_TY
     return QUIZ_DE_RU
 
 
+async def _repeat_current_pl_sg(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
+    """Re-show the current pl>sg word after input_err (mirror of _repeat_current_ru_de).
+
+    input_err only corrects the previous answer; it must NOT advance to a new word.
+    Sending the prompt instead would pop the next word off the FSRS queue, changing
+    the already-shown word. Falls back to the prompt only when there's no current entry.
+    """
+    entry = context.user_data.get("quiz_entry")
+    if not entry:
+        return await _send_pl_sg_prompt(update, context, prefix_text)
+    prompt_text = _format_pl_sg_question(entry)
+    if prefix_text:
+        prompt_text = f"{prefix_text}\n\n{prompt_text}"
+    await _reply_text_with_retry(
+        update.message,
+        prompt_text,
+        reply_markup=_quiz_markup(update.effective_user.id, article=False),
+        parse_mode="Markdown",
+    )
+    return QUIZ_PL_SG
+
+
 # --- prompt senders ---
 
 async def _send_ru_de_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
@@ -635,7 +657,7 @@ async def quiz_pl_sg(update: Update, context: ContextTypes.DEFAULT_TYPE):
         applied = await _apply_input_err(update, context, _mode_pl_sg(update.effective_user.id))
         lang = _user_interface_lang(update.effective_user.id)
         prefix = t(lang, "input_err_fixed") if applied else t(lang, "input_err_nothing")
-        return await _send_pl_sg_prompt(update, context, prefix)
+        return await _repeat_current_pl_sg(update, context, prefix)
     if action == "send_learn":
         added = _send_entry_to_learning(update, context, entry_key="quiz_entry")
         if added:
