@@ -16,13 +16,25 @@ import re
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
-from ..app_config import MENU, VF_ADD_INPUT, get_db_path
+from telegram import ReplyKeyboardMarkup
+
+from ..app_config import MENU, VF_ADD_INPUT, VF_APPLY_CONFIRM, get_db_path, get_dump_dir
+from ..common.db_safety import backup_db_with_event
 from ..common.navigation import _action_key_from_text, _back_to_main_menu, _reply_text_with_retry
 from ..common.settings import _current_topic_value
-from ..ui.keyboards import _add_menu_markup
+from ..i18n import t
+from ..common.lang import _user_interface_lang
+from ..storage import add_word, set_word_conjugation
+from ..ui.keyboards import _add_menu_markup, _main_menu_markup
 from .job_runner import DELAY_RANGE, VF_ADD_TASKS, run_job
 from .job_store import active_jobs, create_job, get_job, job_counts, list_items, set_job_status
-from .vf_file import build_review_document, render_review_json, review_filename
+from .vf_file import (
+    build_review_document,
+    parse_review_document,
+    render_apply_preview_json,
+    render_review_json,
+    review_filename,
+)
 
 # Rough per-word estimates, shown with a "≈" so no false precision. Average of a
 # single summary fetch and a verb's summary+conjugation, plus the slow-drip delay.
@@ -234,6 +246,114 @@ async def vf_add_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("File is empty.")
         return VF_ADD_INPUT
     return await start_vf_add_job(update, context, words)
+
+
+# --- Step 5: apply the owner's edited review file ---
+
+def _apply_markup(user_id):
+    lang = _user_interface_lang(user_id)
+    return ReplyKeyboardMarkup([["yes"], [t(lang, "back")]], resize_keyboard=True)
+
+
+def _apply_preview_text(entries, issues):
+    lines = [f"🌐 VF apply preview: {len(entries)} to add, {len(issues)} skipped."]
+    if issues:
+        lines.append("Skipped:")
+        for it in issues[:20]:
+            lines.append(f"- {it['word']} → {it['reason']}")
+    lines.append("")
+    lines.append("Send 'yes' to apply (DB is backed up first), edit & resend the file to change, or back.")
+    return "\n".join(lines)
+
+
+def apply_batch(db_path, entries):
+    """Insert every entry; verbs also get their Präsens conjugation. Returns
+    (saved, duplicates, errors). A duplicate (ValueError from add_word) is skipped."""
+    saved = duplicates = errors = 0
+    for entry in entries:
+        try:
+            row = add_word(db_path, entry)
+        except ValueError:
+            duplicates += 1
+            continue
+        except Exception:  # noqa: BLE001 - one bad row must not abort the batch
+            errors += 1
+            continue
+        conj = str(entry.get("conjugation_praesens", "")).strip()
+        if row and conj:
+            try:
+                set_word_conjugation(db_path, row["id"], conj)
+            except Exception:
+                pass
+        saved += 1
+    return saved, duplicates, errors
+
+
+async def _show_apply_preview(update, context, entries, issues):
+    user_id = update.effective_user.id
+    context.user_data["vf_apply_entries"] = entries
+    await _reply_text_with_retry(update.message, _apply_preview_text(entries, issues), reply_markup=_apply_markup(user_id))
+    data = render_apply_preview_json(entries, issues).encode("utf-8")
+    try:
+        await update.message.reply_document(document=data, filename="vf_apply_preview.json")
+    except Exception:
+        pass
+    return VF_APPLY_CONFIRM
+
+
+async def _read_document_entries(update):
+    doc = update.message.document
+    file = await doc.get_file()
+    data = await file.download_as_bytearray()
+    return parse_review_document(data.decode("utf-8", errors="ignore"))
+
+
+async def vf_review_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """MENU: an uploaded VF review file -> validate, preview, ask to confirm."""
+    if not update.message.document:
+        return MENU
+    entries, issues = await _read_document_entries(update)
+    if entries is None:
+        await _reply_text_with_retry(
+            update.message,
+            "Not a VF review file (expected the JSON the bot sent).",
+            reply_markup=_main_menu_markup(update.effective_user.id),
+        )
+        return MENU
+    return await _show_apply_preview(update, context, entries, issues)
+
+
+async def vf_apply_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """VF_APPLY_CONFIRM: re-edited file re-previews (loop); 'yes' applies; back cancels."""
+    user_id = update.effective_user.id
+    if update.message.document:
+        entries, issues = await _read_document_entries(update)
+        if entries is None:
+            await _reply_text_with_retry(update.message, "Not a valid review file. Try again or back.", reply_markup=_apply_markup(user_id))
+            return VF_APPLY_CONFIRM
+        return await _show_apply_preview(update, context, entries, issues)
+
+    text = (update.message.text or "").strip()
+    if _action_key_from_text(text, user_id) == "back":
+        context.user_data.pop("vf_apply_entries", None)
+        return await _back_to_main_menu(update)
+    if text.lower() != "yes":
+        await _reply_text_with_retry(update.message, "Send 'yes' to apply, edit & resend the file, or back.", reply_markup=_apply_markup(user_id))
+        return VF_APPLY_CONFIRM
+
+    entries = context.user_data.pop("vf_apply_entries", [])
+    if not entries:
+        await _reply_text_with_retry(update.message, "Nothing to apply.", reply_markup=_main_menu_markup(user_id))
+        return MENU
+    db_path = get_db_path()
+    backup_db_with_event(db_path, get_dump_dir(), "vfadd_apply")  # tagged snapshot before writing
+    saved, dups, errors = apply_batch(db_path, entries)
+    await _reply_text_with_retry(
+        update.message,
+        f"✅ VF apply done: {saved} added, {dups} duplicates, {errors} errors. (DB backed up first.)",
+        reply_markup=_main_menu_markup(user_id),
+    )
+    return MENU
 
 
 async def vf_add_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):

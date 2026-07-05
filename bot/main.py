@@ -37,6 +37,7 @@ from .app_config import (
     ADD_MENU,
     ADD_PRECHECK,
     VF_ADD_INPUT,
+    VF_APPLY_CONFIRM,
     ADD_PRECHECK_EDIT,
     ALGO_SETTINGS_CONFIRM,
     ALGO_SETTINGS_EDIT,
@@ -170,6 +171,8 @@ from .verb_forms_parsing.add_flow import (
     vf_add_callback,
     vf_add_document,
     vf_add_input,
+    vf_apply_confirm,
+    vf_review_document,
 )
 from .handlers.broadcast import (
     BROADCAST_MENU_CALLBACK,
@@ -460,7 +463,14 @@ def main():
             MessageHandler(filters.TEXT & ~filters.COMMAND, rescue_handler),
         ],
         states={
-            MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, menu_choice)],
+            MENU: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, menu_choice),
+                MessageHandler(filters.Document.ALL, vf_review_document),  # spec #2: apply an edited VF review file
+            ],
+            VF_APPLY_CONFIRM: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, vf_apply_confirm),
+                MessageHandler(filters.Document.ALL, vf_apply_confirm),
+            ],
             SELECT_UI_LANG: [MessageHandler(filters.TEXT & ~filters.COMMAND, select_ui_lang)],
             SELECT_DICT_LANG: [MessageHandler(filters.TEXT & ~filters.COMMAND, select_dict_lang)],
             ACCESS_REJECTED: [MessageHandler(filters.TEXT & ~filters.COMMAND, access_rejected_choice)],

@@ -11,6 +11,7 @@ build still opens a newer DB. Bump SCHEMA_VERSION whenever init_db's schema grow
 """
 
 import json
+import re
 import shutil
 import sqlite3
 import tempfile
@@ -89,6 +90,23 @@ def backup_db_before_migrate(db_path, dump_dir, schema_version=None):
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     ver = f"-v{schema_version}" if schema_version is not None else ""
     dst = Path(dump_dir) / f"words-premigrate{ver}-{stamp}.db"
+    return backup_database(src, dst)
+
+
+def backup_db_with_event(db_path, dump_dir, event):
+    """Point-in-time backup tagged with an event name (spec #2/#4).
+
+    Taken before a non-migration data change (e.g. a VF-add batch apply). The
+    `event` is baked into the filename now so a future off-site backup-bot can
+    ship these tagged snapshots. Returns the backup Path, or None if no DB yet.
+    """
+    src = Path(db_path)
+    if not src.exists():
+        return None
+    tag = re.sub(r"[^A-Za-z0-9_-]+", "_", str(event or "event")).strip("_") or "event"
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    Path(dump_dir).mkdir(parents=True, exist_ok=True)
+    dst = Path(dump_dir) / f"words-preapply-{tag}-{stamp}.db"
     return backup_database(src, dst)
 
 
