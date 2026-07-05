@@ -175,6 +175,25 @@ def parse_noun_article_plural(summary_html):
     }
 
 
+def parse_adjektiv_degrees(summary_html):
+    """Adjective Komparativ + Superlativ from the .de summary.
+
+    The degrees are rendered as a link run ``… <a>schnell</a>, <a>schneller</a>,
+    <a>am schnellsten</a> …`` (positive, comparative, superlative). The superlative
+    is the first ``am …`` link; the comparative is the link right before it.
+    Missing/non-adjective -> ''. Values lowercased.
+    """
+    links = re.findall(r'<a href="/deklination/adjektive/[^"]*">(.*?)</a>', summary_html or "", re.S)
+    links = [re.sub(r"\s+", " ", _html.unescape(re.sub(r"<[^>]+>", "", x))).strip(" „“”\"") for x in links]
+    for i, text in enumerate(links):
+        if re.match(r"^am\s+\S", text):
+            return {
+                "komparativ": links[i - 1].lower() if i > 0 else "",
+                "superlativ": text.lower(),
+            }
+    return {"komparativ": "", "superlativ": ""}
+
+
 def headword_matches(headword, query):
     """True iff the page's headword equals the requested word (spec #2 guard).
 

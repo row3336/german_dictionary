@@ -11,6 +11,7 @@ import unittest
 from bot.verb_forms_parsing.de_parser import (
     detect_type_and_headword,
     headword_matches,
+    parse_adjektiv_degrees,
     parse_noun_article_plural,
     parse_praesens_conjugation,
     parse_translations,
@@ -147,6 +148,22 @@ class NounArticlePluralTest(unittest.TestCase):
     def test_non_noun_page_is_empty(self):
         r = parse_noun_article_plural(load("gehen_summary.html"))
         self.assertEqual(r, {"article": "", "plural": ""})
+
+
+class AdjektivDegreesTest(unittest.TestCase):
+    def test_schnell(self):
+        r = parse_adjektiv_degrees(load("schnell_summary.html"))
+        self.assertEqual(r["komparativ"], "schneller")
+        self.assertEqual(r["superlativ"], "am schnellsten")
+
+    def test_laut(self):
+        r = parse_adjektiv_degrees(load("laut_summary.html"))
+        self.assertEqual(r["komparativ"], "lauter")
+        self.assertEqual(r["superlativ"], "am lautesten")
+
+    def test_non_adjektiv_page_is_empty(self):
+        r = parse_adjektiv_degrees(load("gehen_summary.html"))
+        self.assertEqual(r, {"komparativ": "", "superlativ": ""})
 
 
 if __name__ == "__main__":
