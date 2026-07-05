@@ -14,6 +14,7 @@ in the following sub-steps.
 
 import html as _html
 import re
+from urllib.parse import unquote
 
 from ..common.conjugation import parse_conjugation
 
@@ -192,6 +193,37 @@ def parse_adjektiv_degrees(summary_html):
                 "superlativ": text.lower(),
             }
     return {"komparativ": "", "superlativ": ""}
+
+
+def parse_examples(summary_html, limit=3):
+    """First `limit` German example sentences from the id="Beispiele" section,
+    joined with newlines (owner stores several examples as \\n-separated lines).
+
+    Each ``<li>`` holds a German sentence (with a satzapp.de/?t=<sentence> link
+    carrying it already assembled) then, after <br>, the English translation with
+    a flag. We take the German sentence from the satzapp link (cleanest), falling
+    back to the text before <br>. Missing section -> ''.
+    """
+    html = summary_html or ""
+    start = html.find('id="Beispiele"')
+    if start == -1:
+        return ""
+    ul = re.search(r'<ul[^>]*class="[^"]*rLst[^"]*"[^>]*>(.*?)</ul>', html[start:], re.S)
+    if not ul:
+        return ""
+    out = []
+    for li in re.findall(r"<li[^>]*>(.*?)</li>", ul.group(1), re.S):
+        m = re.search(r'satzapp\.de/\?t=([^"]+)"', li)
+        if m:
+            sentence = _html.unescape(unquote(m.group(1))).strip()
+        else:  # fallback: German part is everything before the <br> that precedes the translation
+            before_br = re.split(r"<br\b", li, maxsplit=1)[0]
+            sentence = re.sub(r"\s+", " ", _html.unescape(re.sub(r"<[^>]+>", "", before_br))).strip()
+        if sentence:
+            out.append(sentence)
+        if len(out) >= limit:
+            break
+    return "\n".join(out)
 
 
 def headword_matches(headword, query):

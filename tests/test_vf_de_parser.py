@@ -12,6 +12,7 @@ from bot.verb_forms_parsing.de_parser import (
     detect_type_and_headword,
     headword_matches,
     parse_adjektiv_degrees,
+    parse_examples,
     parse_noun_article_plural,
     parse_praesens_conjugation,
     parse_translations,
@@ -164,6 +165,27 @@ class AdjektivDegreesTest(unittest.TestCase):
     def test_non_adjektiv_page_is_empty(self):
         r = parse_adjektiv_degrees(load("gehen_summary.html"))
         self.assertEqual(r, {"komparativ": "", "superlativ": ""})
+
+
+class ExamplesTest(unittest.TestCase):
+    def test_verb_first_three(self):
+        ex = parse_examples(load("gehen_summary.html"))
+        lines = ex.split("\n")
+        self.assertEqual(len(lines), 3)
+        self.assertEqual(lines[0], "Ich gehe jetzt.")
+        # German only — no English translation leaked in
+        self.assertNotIn("taking off", ex)
+
+    def test_noun_first_example(self):
+        ex = parse_examples(load("Haus_summary.html"))
+        self.assertEqual(ex.split("\n")[0], "Ich geh nach Hause.")
+
+    def test_limit_is_respected(self):
+        ex = parse_examples(load("gehen_summary.html"), limit=1)
+        self.assertEqual(ex, "Ich gehe jetzt.")
+
+    def test_no_examples_section(self):
+        self.assertEqual(parse_examples("<html><body>no examples</body></html>"), "")
 
 
 if __name__ == "__main__":
