@@ -22,6 +22,7 @@ from ..common.settings import _current_topic_value
 from ..ui.keyboards import _add_menu_markup
 from .job_runner import DELAY_RANGE, VF_ADD_TASKS, run_job
 from .job_store import active_jobs, create_job, get_job, job_counts, list_items, set_job_status
+from .vf_file import build_review_document, render_review_json, review_filename
 
 # Rough per-word estimates, shown with a "≈" so no false precision. Average of a
 # single summary fetch and a verb's summary+conjugation, plus the slow-drip delay.
@@ -124,18 +125,27 @@ def _render(db_path, job_id):
     return progress_text(job, counts, details_items=items), progress_keyboard(job)
 
 
+async def _send_review_file(bot, chat_id, job_id, counts):
+    """Build the review JSON for a finished/partial/stopped job and send it."""
+    data = render_review_json(build_review_document(get_db_path(), job_id)).encode("utf-8")
+    caption = f"🌐 VF review — {counts['done']} parsed, {counts['error']} errors. Edit and send back to apply."
+    try:
+        await bot.send_document(chat_id=chat_id, document=data, filename=review_filename(job_id), caption=caption)
+    except Exception:
+        await bot.send_message(chat_id=chat_id, text="VF parsing finished, but sending the review file failed.")
+
+
 async def _make_progress_cb(bot, chat_id, job_id):
     async def on_progress(job, counts, done):
         text, kb = _render(get_db_path(), job_id)
-        if text is None:
-            return
-        ui = VF_ADD_UI.get(job_id, {})
-        try:
-            await bot.edit_message_text(text, chat_id=chat_id, message_id=ui.get("message_id"), reply_markup=kb)
-        except Exception:
-            pass  # a "message not modified" / transient edit error must not kill the job
+        if text is not None:
+            ui = VF_ADD_UI.get(job_id, {})
+            try:
+                await bot.edit_message_text(text, chat_id=chat_id, message_id=ui.get("message_id"), reply_markup=kb)
+            except Exception:
+                pass  # a "message not modified" / transient edit error must not kill the job
         if done:
-            await bot.send_message(chat_id=chat_id, text=f"✅ VF parsing finished ({counts['done']} ok, {counts['error']} errors). File next (step 4/5).")
+            await _send_review_file(bot, chat_id, job_id, counts)
             VF_ADD_TASKS.pop(job_id, None)
 
     return on_progress

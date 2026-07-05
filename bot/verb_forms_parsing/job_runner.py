@@ -64,6 +64,10 @@ async def run_job(
     while True:
         job = get_job(db_path, job_id)
         if not job or job["status"] == "stopped":
+            # a manual stop is still terminal: hand the partial results to the UI
+            # (which sends the review file) just like a normal completion.
+            if on_progress and job:
+                await on_progress(job, job_counts(db_path, job_id), done=True)
             return job["status"] if job else "stopped"
         if job["status"] == "paused":
             await asyncio.sleep(PAUSE_POLL_SEC)

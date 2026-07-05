@@ -74,6 +74,18 @@ class JobRunnerTest(unittest.TestCase):
         self.assertEqual(status, "stopped")
         self.assertEqual(JS.job_counts(self.db, jid)["pending"], 2)
 
+    def test_stop_fires_progress_done(self):
+        # a stopped job still notifies the UI (done=True) so the review file is sent
+        jid = JS.create_job(self.db, 7, 100, "t", ["gehen"])
+        JS.set_job_status(self.db, jid, "stopped")
+        seen = []
+
+        async def on_progress(job, counts, done):
+            seen.append(done)
+
+        self._run(jid, fetcher=lambda w: ("", ""), on_progress=on_progress)
+        self.assertEqual(seen, [True])
+
     def test_stop_takes_effect_next_iteration(self):
         jid = JS.create_job(self.db, 7, 100, "t", ["gehen", "Haus"])
 
