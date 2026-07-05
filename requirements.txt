@@ -5,3 +5,8 @@
 python-telegram-bot[job-queue,rate-limiter]==22.8
 python-dotenv==1.0.1
 openai==1.40.0
+# Transitive of openai/PTB — pin the tested version. httpx>=0.28 removed the
+# `proxies=` kwarg that openai<1.55 passes into its default httpx client, which
+# broke OpenAI() init. We pass our own http_client (bot/ai.py) so we're version-
+# safe regardless, but pinning keeps deploys deterministic.
+httpx==0.28.1
