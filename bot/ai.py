@@ -5,12 +5,19 @@ def _get_client():
     # Import openai lazily: importing this module (and its importers, e.g.
     # add_words) must not require the openai package — only actually generating
     # fields does. Keeps non-AI code paths (and their tests) dependency-free.
+    import httpx  # ships with openai
     from openai import OpenAI
 
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY is missing in .env")
-    return OpenAI(api_key=api_key)
+    # openai<1.55 builds its default httpx.Client with a `proxies=` kwarg, which
+    # httpx>=0.28 removed -> `Client.__init__() got an unexpected keyword argument
+    # 'proxies'` at client init (breaks every AI call). Passing our own http_client
+    # is the SDK-sanctioned path and bypasses that default-client construction
+    # entirely. No proxy is used for AI requests (the VF proxy is unrelated).
+    http_client = httpx.Client(timeout=httpx.Timeout(60.0, connect=10.0))
+    return OpenAI(api_key=api_key, http_client=http_client)
 
 
 def _get_model():
