@@ -11,6 +11,7 @@ import unittest
 from bot.verb_forms_parsing.de_parser import (
     detect_type_and_headword,
     headword_matches,
+    parse_noun_article_plural,
     parse_praesens_conjugation,
     parse_translations,
     parse_verb_forms,
@@ -135,6 +136,17 @@ class PraesensConjugationTest(unittest.TestCase):
     def test_no_conjugation_table_returns_empty(self):
         self.assertEqual(parse_praesens_conjugation(load("Haus_summary.html")), "")
         self.assertEqual(parse_praesens_conjugation(""), "")
+
+
+class NounArticlePluralTest(unittest.TestCase):
+    def test_haus(self):
+        r = parse_noun_article_plural(load("Haus_summary.html"))
+        self.assertEqual(r["article"], "das")
+        self.assertEqual(r["plural"], "Häuser")
+
+    def test_non_noun_page_is_empty(self):
+        r = parse_noun_article_plural(load("gehen_summary.html"))
+        self.assertEqual(r, {"article": "", "plural": ""})
 
 
 if __name__ == "__main__":

@@ -153,6 +153,28 @@ def parse_praesens_conjugation(conj_html):
     return parse_conjugation("\n".join(lines))
 
 
+def _plain_text(html):
+    """Whole page as tag-stripped, entity-decoded, whitespace-collapsed text."""
+    return re.sub(r"\s+", " ", _html.unescape(re.sub(r"<[^>]+>", " ", html or "")))
+
+
+def parse_noun_article_plural(summary_html):
+    """Noun article + plural from the .de summary prose.
+
+    - article: ``Der Artikel lautet „das Haus“`` -> ``das`` (lowercased).
+    - plural:  ``Nominativ Plural „Häuser“`` -> ``Häuser`` (kept capitalised).
+    Missing values -> ''. NOTE (spec #2 §10): multi-gender / multi-plural nouns
+    (two comma-joined values) are not covered yet — no such fixture to verify.
+    """
+    text = _plain_text(summary_html)
+    m_art = re.search(r"Der Artikel lautet\s*[„\"]\s*(der|die|das)\b", text, re.I)
+    m_pl = re.search(r"Nominativ Plural\s*[„\"]\s*([^„“”\"]+?)\s*[“”\"]", text)
+    return {
+        "article": m_art.group(1).lower() if m_art else "",
+        "plural": m_pl.group(1).strip() if m_pl else "",
+    }
+
+
 def headword_matches(headword, query):
     """True iff the page's headword equals the requested word (spec #2 guard).
 
