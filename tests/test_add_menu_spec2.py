@@ -13,7 +13,6 @@ from _telegram_stub import install
 install()
 
 import bot.handlers.add_words as AW  # noqa: E402
-from bot.app_config import SETTINGS_MENU  # noqa: E402
 from bot.common.lang import _user_interface_lang  # noqa: E402
 from bot.i18n import t  # noqa: E402
 from bot.labels import PARSE_VF_TEXT  # noqa: E402
@@ -84,14 +83,15 @@ class AddMenuRoutingTest(unittest.TestCase):
         state, _ = self._route("add_vf")
         self.assertEqual(state, VF_ADD_INPUT)
 
-    def test_vf_recheck_opens_vf_menu(self):
-        # VF recheck relocates the verbformen verify menu here (spec #2 2b):
-        # sets the vf_menu sub-mode and hands off to the SETTINGS_MENU router.
+    def test_vf_recheck_enters_recheck_input(self):
+        # VF recheck now starts the .de recheck flow (spec #2 step 6): asks for the
+        # word set and flags the recheck mode.
+        from bot.app_config import VF_ADD_INPUT
         upd = _FakeUpdate(t(self.lang, "vf_recheck"), OWNER)
         ctx = _Ctx()
         state = asyncio.run(AW.add_menu_choice(upd, ctx))
-        self.assertEqual(state, SETTINGS_MENU)
-        self.assertTrue(ctx.user_data.get("vf_menu"))
+        self.assertEqual(state, VF_ADD_INPUT)
+        self.assertTrue(ctx.user_data.get("vf_recheck"))
 
     def test_settings_menu_has_no_parse_vf(self):
         flat = [b for row in _settings_menu_keys(OWNER) for b in row]

@@ -30,7 +30,9 @@ from pathlib import Path
 #     translation overrides; all DEFAULT '').
 # 10 = spec #2 (+ vf_add_jobs, + vf_add_items: persisted VF-add batch job so a
 #      restart resumes the slow-drip parse instead of starting over).
-SCHEMA_VERSION = 10
+# 11 = spec #2 (+ vf_add_items.word_id: links a recheck item to the existing word
+#      it verifies, so the diff apply updates that word).
+SCHEMA_VERSION = 11
 
 # Tables whose row counts we snapshot before/after a migration (must not shrink).
 _COUNT_TABLES = (

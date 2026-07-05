@@ -24,10 +24,25 @@ from ..common.navigation import _action_key_from_text, _back_to_main_menu, _repl
 from ..common.settings import _current_topic_value
 from ..i18n import t
 from ..common.lang import _user_interface_lang
-from ..storage import add_word, set_word_conjugation
+from ..storage import (
+    add_word,
+    get_word_by_id,
+    list_words_for_vf_recheck,
+    reset_vf_checks,
+    set_word_conjugation,
+    update_word_fields,
+)
 from ..ui.keyboards import _add_menu_markup, _main_menu_markup
 from .job_runner import DELAY_RANGE, VF_ADD_TASKS, run_job
-from .job_store import active_jobs, create_job, get_job, job_counts, list_items, set_job_status
+from .job_store import (
+    active_jobs,
+    create_job,
+    create_recheck_job,
+    get_job,
+    job_counts,
+    list_items,
+    set_job_status,
+)
 from .vf_file import (
     build_review_document,
     parse_review_document,
@@ -163,22 +178,61 @@ async def _make_progress_cb(bot, chat_id, job_id):
     return on_progress
 
 
-async def start_vf_add_job(update: Update, context: ContextTypes.DEFAULT_TYPE, words):
-    """Create + launch a VF-add job from a word list; wire the live progress msg."""
-    user_id = update.effective_user.id
+async def _launch_job(update: Update, context: ContextTypes.DEFAULT_TYPE, job_id, count):
+    """Send the pre-start + live progress messages and start the background task."""
     chat_id = update.effective_chat.id
     db_path = get_db_path()
-    topic = _current_topic_value(user_id)
-    job_id = create_job(db_path, user_id, chat_id, topic, words)
-
-    await _reply_text_with_retry(update.message, prestart_text(len(words)))
+    await _reply_text_with_retry(update.message, prestart_text(count))
     text, kb = _render(db_path, job_id)
     msg = await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=kb)
     VF_ADD_UI[job_id] = {"chat_id": chat_id, "message_id": msg.message_id, "details": False}
-
     on_progress = await _make_progress_cb(context.bot, chat_id, job_id)
     VF_ADD_TASKS[job_id] = asyncio.create_task(run_job(db_path, job_id, on_progress=on_progress))
     return MENU
+
+
+async def start_vf_add_job(update: Update, context: ContextTypes.DEFAULT_TYPE, words):
+    """Create + launch a VF-add job from a word list."""
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    job_id = create_job(get_db_path(), user_id, chat_id, _current_topic_value(user_id), words)
+    return await _launch_job(update, context, job_id, len(words))
+
+
+async def _start_recheck(update: Update, context: ContextTypes.DEFAULT_TYPE, text):
+    """Create + launch a VF-recheck job over existing words ('all' or a list)."""
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    db_path = get_db_path()
+    context.user_data.pop("vf_recheck", None)
+    candidates = list_words_for_vf_recheck(db_path)  # (word_id, lookup, type)
+    if text.strip().lower() == "all":
+        pairs = [(lookup, wid) for wid, lookup, _t in candidates]
+    else:
+        wanted = {w.lower() for w in parse_word_list(text)}
+        pairs = [(lookup, wid) for wid, lookup, _t in candidates if lookup.lower() in wanted]
+    if not pairs:
+        await _reply_text_with_retry(
+            update.message,
+            "No matching existing words (verbs/nouns/adjectives) to recheck.",
+            reply_markup=_add_menu_markup(user_id),
+        )
+        return VF_ADD_INPUT
+    job_id = create_recheck_job(db_path, user_id, chat_id, pairs)
+    return await _launch_job(update, context, job_id, len(pairs))
+
+
+async def vf_recheck_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Entry from the Add submenu 'VF recheck' button: wipe stale checks, ask what to recheck."""
+    reset_vf_checks(get_db_path())  # old .com results are stale under the .de parser
+    context.user_data["vf_recheck"] = True
+    await _reply_text_with_retry(
+        update.message,
+        "🔁 Recheck existing words against verbformen. Send 'all' for every verb/noun/adjective, "
+        "or a list (one per line). Old check results were cleared.",
+        reply_markup=_add_menu_markup(update.effective_user.id),
+    )
+    return VF_ADD_INPUT
 
 
 async def resume_jobs(app):
@@ -221,7 +275,10 @@ async def vf_add_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = (update.message.text or "").strip()
     if _action_key_from_text(text, user_id) == "back":
+        context.user_data.pop("vf_recheck", None)
         return await _back_to_main_menu(update)
+    if context.user_data.get("vf_recheck"):
+        return await _start_recheck(update, context, text)
     words = parse_word_list(text)
     if not words:
         await _reply_text_with_retry(
@@ -267,26 +324,38 @@ def _apply_preview_text(entries, issues):
 
 
 def apply_batch(db_path, entries):
-    """Insert every entry; verbs also get their Präsens conjugation. Returns
-    (saved, duplicates, errors). A duplicate (ValueError from add_word) is skipped."""
-    saved = duplicates = errors = 0
+    """Apply a reviewed batch. A card with an existing ``id`` (recheck diff) updates
+    that word; otherwise it is inserted (add). Verbs also get their Präsens
+    conjugation. Returns (added, updated, duplicates, errors); a duplicate
+    (ValueError from add_word) is skipped."""
+    added = updated = duplicates = errors = 0
     for entry in entries:
+        conj = str(entry.get("conjugation_praesens", "")).strip()
+        wid = str(entry.get("id", "") or "").strip()
+        if wid and get_word_by_id(db_path, wid):
+            try:
+                update_word_fields(db_path, wid, entry)
+                if conj:
+                    set_word_conjugation(db_path, wid, conj)
+                updated += 1
+            except Exception:  # noqa: BLE001 - one bad row must not abort the batch
+                errors += 1
+            continue
         try:
             row = add_word(db_path, entry)
         except ValueError:
             duplicates += 1
             continue
-        except Exception:  # noqa: BLE001 - one bad row must not abort the batch
+        except Exception:  # noqa: BLE001
             errors += 1
             continue
-        conj = str(entry.get("conjugation_praesens", "")).strip()
         if row and conj:
             try:
                 set_word_conjugation(db_path, row["id"], conj)
             except Exception:
                 pass
-        saved += 1
-    return saved, duplicates, errors
+        added += 1
+    return added, updated, duplicates, errors
 
 
 async def _show_apply_preview(update, context, entries, issues):
@@ -347,10 +416,10 @@ async def vf_apply_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return MENU
     db_path = get_db_path()
     backup_db_with_event(db_path, get_dump_dir(), "vfadd_apply")  # tagged snapshot before writing
-    saved, dups, errors = apply_batch(db_path, entries)
+    added, updated, dups, errors = apply_batch(db_path, entries)
     await _reply_text_with_retry(
         update.message,
-        f"✅ VF apply done: {saved} added, {dups} duplicates, {errors} errors. (DB backed up first.)",
+        f"✅ VF apply done: {added} added, {updated} updated, {dups} duplicates, {errors} errors. (DB backed up first.)",
         reply_markup=_main_menu_markup(user_id),
     )
     return MENU

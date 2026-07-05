@@ -35,6 +35,25 @@ def create_job(db_path, user_id, chat_id, topic, words):
     return job_id
 
 
+def create_recheck_job(db_path, user_id, chat_id, words_with_ids):
+    """Create a recheck job over existing words. `words_with_ids` = list of
+    (lookup_word, word_id); each item carries word_id so the diff apply can update
+    that word. Returns the job id."""
+    init_db(db_path)
+    pairs = [(str(w).strip(), str(wid)) for w, wid in words_with_ids if str(w).strip()]
+    with _connect(db_path) as conn:
+        cur = conn.execute(
+            "INSERT INTO vf_add_jobs (user_id, chat_id, status, topic, total) VALUES (?, ?, 'running', '', ?)",
+            (int(user_id), int(chat_id), len(pairs)),
+        )
+        job_id = cur.lastrowid
+        conn.executemany(
+            "INSERT INTO vf_add_items (job_id, position, word, word_id) VALUES (?, ?, ?, ?)",
+            [(job_id, i, w, wid) for i, (w, wid) in enumerate(pairs)],
+        )
+    return job_id
+
+
 def get_job(db_path, job_id):
     with _connect(db_path) as conn:
         return _row_to_dict(conn.execute("SELECT * FROM vf_add_jobs WHERE id = ?", (job_id,)).fetchone())

@@ -639,6 +639,7 @@ def _ensure_schema(conn):
             job_id INTEGER NOT NULL,
             position INTEGER NOT NULL DEFAULT 0,
             word TEXT NOT NULL,
+            word_id TEXT NOT NULL DEFAULT '',
             status TEXT NOT NULL DEFAULT 'pending',
             result_json TEXT NOT NULL DEFAULT '',
             flags TEXT NOT NULL DEFAULT '',
@@ -648,6 +649,13 @@ def _ensure_schema(conn):
         )
         """
     )
+    # spec #2 (v11): word_id links a recheck item back to the existing word it verifies.
+    vf_item_cols = {
+        row["name"] if isinstance(row, sqlite3.Row) else row[1]
+        for row in conn.execute("PRAGMA table_info(vf_add_items)").fetchall()
+    }
+    if "word_id" not in vf_item_cols:
+        conn.execute("ALTER TABLE vf_add_items ADD COLUMN word_id TEXT NOT NULL DEFAULT ''")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_vf_add_items_job ON vf_add_items(job_id, status)")
 
     _repair_word_fk_tables(conn)
@@ -4834,6 +4842,32 @@ def list_vf_candidates(db_path, user_id, only_unchecked=True, limit=0):
             if limit and len(candidates) >= int(limit):
                 break
     return candidates
+
+
+def reset_vf_checks(db_path):
+    """Clear all stored verbformen check results (spec #2 recheck).
+
+    The old vf_checks rows (from the .com verify flow) are stale now that the .de
+    parser fills more columns — wipe them so a recheck starts clean.
+    """
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        conn.execute("DELETE FROM vf_checks")
+
+
+def list_words_for_vf_recheck(db_path):
+    """Existing words the .de parser can verify: (word_id, lookup, type) for
+    verbs/nouns/adjectives (lookup = infinitive for verbs, else german)."""
+    out = []
+    for entry in list_all_words(db_path):
+        wtype = _safe_text(entry.get("type", "")).strip().lower()
+        if wtype not in {"verb", "nomen", "adjektiv"}:
+            continue
+        lookup = entry.get("infinitive") if wtype == "verb" else entry.get("german")
+        lookup = _safe_text(lookup).strip()
+        if lookup:
+            out.append((entry.get("id"), lookup, wtype))
+    return out
 
 
 def save_vf_check_result(

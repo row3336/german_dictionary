@@ -67,8 +67,7 @@ from ..text_utils import russian_variants as _russian_variants
 from ..text_utils import try_parse_json as _try_parse_json
 from ..text_utils import type_label as _type_label
 from ..ui.formatting import _entry_translation, _format_word_card
-from ..verb_forms_parsing.add_flow import vf_add_prompt
-from ..verb_forms_parsing.handlers import _send_vf_menu
+from ..verb_forms_parsing.add_flow import vf_add_prompt, vf_recheck_prompt
 from ..ui.keyboards import (
     _add_input_markup,
     _add_keys,
@@ -909,10 +908,9 @@ async def add_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ADD_INPUT
 
     if action == "vf_recheck":
-        # VF recheck = the existing verbformen verify menu, relocated here from
-        # Settings (spec #2). Same vf_menu sub-mode handled by settings_menu_choice.
-        context.user_data["vf_menu"] = True
-        return await _send_vf_menu(update)
+        # VF recheck = the new .de recheck flow (spec #2 step 6): reset stale checks,
+        # ask for 'all' or a list, run the same background job, produce a diff file.
+        return await vf_recheck_prompt(update, context)
 
     if action == "add_vf":
         return await vf_add_prompt(update, context)

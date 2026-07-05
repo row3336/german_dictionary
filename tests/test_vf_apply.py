@@ -106,15 +106,15 @@ class ApplyTest(unittest.TestCase):
             {"type": "verb", "infinitive": "gehen", "russian": "идти", "topic": "1", "conjugation_praesens": GEHEN_CONJ},
             {"type": "nomen", "article": "das", "german": "Haus", "plural": "Häuser", "russian": "дом", "topic": "1"},
         ]
-        saved, dups, errors = AF.apply_batch(self.db, entries)
-        self.assertEqual((saved, dups, errors), (2, 0, 0))
+        added, updated, dups, errors = AF.apply_batch(self.db, entries)
+        self.assertEqual((added, updated, dups, errors), (2, 0, 0, 0))
         words = list_all_words(self.db)
         self.assertEqual(len(words), 2)
         verb = next(w for w in words if w.get("type") == "verb")
         self.assertEqual(_conjugation_of(self.db, verb["id"]), GEHEN_CONJ)
         # applying again -> both duplicates
-        saved2, dups2, _ = AF.apply_batch(self.db, entries)
-        self.assertEqual((saved2, dups2), (0, 2))
+        added2, updated2, dups2, _ = AF.apply_batch(self.db, entries)
+        self.assertEqual((added2, updated2, dups2), (0, 0, 2))
 
     def test_backup_with_event_creates_tagged_file(self):
         path = backup_db_with_event(self.db, self.dump, "vfadd_apply")
