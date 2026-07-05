@@ -615,6 +615,41 @@ def _ensure_schema(conn):
         SELECT DISTINCT trim(topic) FROM words WHERE trim(coalesce(topic, '')) != ''
         """
     )
+    # spec #2: persisted VF-add batch job (survives restart). A job holds the
+    # owner's word list; each item is fetched/parsed one at a time (slow-drip),
+    # partial results stored so a restart resumes instead of starting over.
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS vf_add_jobs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            chat_id INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'running',
+            topic TEXT NOT NULL DEFAULT '',
+            total INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS vf_add_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id INTEGER NOT NULL,
+            position INTEGER NOT NULL DEFAULT 0,
+            word TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            result_json TEXT NOT NULL DEFAULT '',
+            flags TEXT NOT NULL DEFAULT '',
+            error TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_vf_add_items_job ON vf_add_items(job_id, status)")
+
     _repair_word_fk_tables(conn)
     _ensure_indexes(conn)
 

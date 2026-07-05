@@ -27,7 +27,9 @@ from pathlib import Path
 #     + conjugation_progress table; columns DEFAULT '').
 # 9 = spec #7 (+ user_word_media.russian/ukrainian/english; per-user personal
 #     translation overrides; all DEFAULT '').
-SCHEMA_VERSION = 9
+# 10 = spec #2 (+ vf_add_jobs, + vf_add_items: persisted VF-add batch job so a
+#      restart resumes the slow-drip parse instead of starting over).
+SCHEMA_VERSION = 10
 
 # Tables whose row counts we snapshot before/after a migration (must not shrink).
 _COUNT_TABLES = (
