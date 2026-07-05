@@ -15,6 +15,8 @@ in the following sub-steps.
 import html as _html
 import re
 
+from ..common.conjugation import parse_conjugation
+
 # h1 phrasing -> our word type. Only verbs/nouns/adjectives get a dedicated .de
 # card; adverbs and function words (prepositions/conjunctions/particles) usually
 # land on a "Deutsche Wörter mit …" search page with no structured entry — those
@@ -117,6 +119,38 @@ def parse_verb_forms(summary_html):
         "prateritum": _clean_form(parts[1]) if len(parts) > 1 else "",
         "partizip2": _clean_form(parts[2]) if len(parts) > 2 else "",
     }
+
+
+# The indikativ Präsens table is the only <h2 class="wG">Präsens</h2> on the conj
+# page (Konjunktiv blocks are labelled "Konjunktiv I/II"). Its six rows map to the
+# canonical ТЗ#3 pronoun order below (site shows er/sie collapsed to "er"/"sie").
+_PRAESENS_H2 = '<h2 class="wG">Präsens</h2>'
+_CANON_PRONOUNS = ("ich", "du", "er/sie/es", "wir", "ihr", "sie/Sie")
+
+
+def parse_praesens_conjugation(conj_html):
+    """Canonical 6-line Präsens block from the conjugation page, or '' if absent.
+
+    Reads the indikativ Präsens table (6 ``<tr><td>pronoun</td><td>form</td></tr>``
+    rows), substitutes the canonical pronouns and runs the result through the
+    spec #3 validator (parse_conjugation) so the output matches every other
+    conjugation write path. Only Präsens — Präteritum is never parsed (spec #2 §4).
+    Raises ValueError (from parse_conjugation) if the extracted forms are not a
+    valid block, so the caller can flag that word.
+    """
+    html = conj_html or ""
+    idx = html.find(_PRAESENS_H2)
+    if idx == -1:
+        return ""
+    tm = re.search(r"<table>(.*?)</table>", html[idx:], re.S)
+    if not tm:
+        return ""
+    rows = re.findall(r"<tr><td>(.*?)</td><td>(.*?)</td></tr>", tm.group(1), re.S)
+    if len(rows) < 6:
+        return ""
+    forms = [_html.unescape(re.sub(r"<[^>]+>", "", cell)).strip() for _pron, cell in rows[:6]]
+    lines = [f"{pron} {form}" for pron, form in zip(_CANON_PRONOUNS, forms)]
+    return parse_conjugation("\n".join(lines))
 
 
 def headword_matches(headword, query):

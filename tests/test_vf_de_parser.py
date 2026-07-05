@@ -11,6 +11,7 @@ import unittest
 from bot.verb_forms_parsing.de_parser import (
     detect_type_and_headword,
     headword_matches,
+    parse_praesens_conjugation,
     parse_translations,
     parse_verb_forms,
 )
@@ -114,6 +115,26 @@ class VerbFormsTest(unittest.TestCase):
     def test_non_verb_page_is_empty(self):
         f = parse_verb_forms(load("Haus_summary.html"))
         self.assertEqual(f, {"prateritum": "", "partizip2": ""})
+
+
+class PraesensConjugationTest(unittest.TestCase):
+    def test_regular_verb_canonical_block(self):
+        block = parse_praesens_conjugation(load("gehen_conj.html"))
+        self.assertEqual(
+            block,
+            "ich gehe\ndu gehst\ner/sie/es geht\nwir gehen\nihr geht\nsie/Sie gehen",
+        )
+
+    def test_modal_verb_canonical_block(self):
+        block = parse_praesens_conjugation(load("können_conj.html"))
+        self.assertEqual(
+            block,
+            "ich kann\ndu kannst\ner/sie/es kann\nwir können\nihr könnt\nsie/Sie können",
+        )
+
+    def test_no_conjugation_table_returns_empty(self):
+        self.assertEqual(parse_praesens_conjugation(load("Haus_summary.html")), "")
+        self.assertEqual(parse_praesens_conjugation(""), "")
 
 
 if __name__ == "__main__":
