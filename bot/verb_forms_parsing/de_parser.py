@@ -233,3 +233,68 @@ def headword_matches(headword, query):
     lemma; the caller must not trust the page and should flag the row.
     """
     return bool(_norm(headword)) and _norm(headword) == _norm(query)
+
+
+def parse_de(summary_html, conj_html=None, query=None, topic=""):
+    """Assemble a full word card from .de HTML (spec #2 Step 1h).
+
+    Calls the per-field extractors by detected type and returns a dict in our
+    entry shape (as used by add_word / db_search) plus meta keys:
+      - ``_headword``: the lemma the page is actually about
+      - ``_query``: the requested word (if given)
+      - ``_flags``: list of issues for the owner review file — ``no_card`` (page
+        was a "Deutsche Wörter mit …" search result), ``headword_mismatch``
+        (query != page lemma, e.g. weil->weilen), ``conjugation_parse_error``.
+
+    Translations keep ALL meanings (owner trims in review), comma-joined.
+    Präteritum table is never parsed (spec #2 §4). Conjugation needs `conj_html`
+    (the linked /konjugation/ page) for verbs.
+    """
+    info = detect_type_and_headword(summary_html)
+    wtype = info["type"]
+    headword = info["headword"]
+    flags = []
+    if not info["has_entry"]:
+        flags.append("no_card")
+    if query is not None and headword and not headword_matches(headword, query):
+        flags.append("headword_mismatch")
+
+    tr = parse_translations(summary_html)
+    entry = {
+        "type": wtype,
+        "russian": ", ".join(tr["ru"]),
+        "ukrainian": ", ".join(tr["uk"]),
+        "english": ", ".join(tr["en"]),
+        "example": parse_examples(summary_html),
+        "topic": topic,
+    }
+
+    if wtype == "verb":
+        forms = parse_verb_forms(summary_html)
+        entry["infinitive"] = headword
+        entry["prateritum"] = forms["prateritum"]
+        entry["partizip2"] = forms["partizip2"]
+        try:
+            entry["conjugation_praesens"] = parse_praesens_conjugation(conj_html or "")
+        except ValueError:
+            entry["conjugation_praesens"] = ""
+            flags.append("conjugation_parse_error")
+    elif wtype == "nomen":
+        ap = parse_noun_article_plural(summary_html)
+        entry["article"] = ap["article"]
+        entry["german"] = headword
+        entry["plural"] = ap["plural"]
+    elif wtype == "adjektiv":
+        deg = parse_adjektiv_degrees(summary_html)
+        entry["german"] = headword
+        entry["komparativ"] = deg["komparativ"]
+        entry["superlativ"] = deg["superlativ"]
+    else:
+        # no dedicated card (search page) or an unrecognised type: keep what we
+        # have (word + any translations) for the owner to finish by hand.
+        entry["german"] = headword or (query or "")
+
+    entry["_headword"] = headword
+    entry["_query"] = query
+    entry["_flags"] = flags
+    return entry

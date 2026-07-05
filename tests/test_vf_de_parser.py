@@ -12,6 +12,7 @@ from bot.verb_forms_parsing.de_parser import (
     detect_type_and_headword,
     headword_matches,
     parse_adjektiv_degrees,
+    parse_de,
     parse_examples,
     parse_noun_article_plural,
     parse_praesens_conjugation,
@@ -186,6 +187,50 @@ class ExamplesTest(unittest.TestCase):
 
     def test_no_examples_section(self):
         self.assertEqual(parse_examples("<html><body>no examples</body></html>"), "")
+
+
+class ParseDeAssemblyTest(unittest.TestCase):
+    def test_verb_full_card(self):
+        e = parse_de(load("gehen_summary.html"), load("gehen_conj.html"), query="gehen")
+        self.assertEqual(e["type"], "verb")
+        self.assertEqual(e["infinitive"], "gehen")
+        self.assertEqual(e["prateritum"], "ging")
+        self.assertEqual(e["partizip2"], "gegangen")
+        self.assertEqual(
+            e["conjugation_praesens"],
+            "ich gehe\ndu gehst\ner/sie/es geht\nwir gehen\nihr geht\nsie/Sie gehen",
+        )
+        self.assertTrue(e["russian"].startswith("идти, "))  # all meanings kept
+        self.assertEqual(len(e["example"].split("\n")), 3)
+        self.assertEqual(e["_flags"], [])
+
+    def test_nomen_full_card(self):
+        e = parse_de(load("Haus_summary.html"), query="Haus")
+        self.assertEqual(e["type"], "nomen")
+        self.assertEqual(e["article"], "das")
+        self.assertEqual(e["german"], "Haus")
+        self.assertEqual(e["plural"], "Häuser")
+        self.assertIn("дом", e["russian"])
+        self.assertEqual(e["_flags"], [])
+
+    def test_adjektiv_full_card(self):
+        e = parse_de(load("schnell_summary.html"), query="schnell")
+        self.assertEqual(e["type"], "adjektiv")
+        self.assertEqual(e["german"], "schnell")
+        self.assertEqual(e["komparativ"], "schneller")
+        self.assertEqual(e["superlativ"], "am schnellsten")
+        self.assertEqual(e["_flags"], [])
+
+    def test_headword_mismatch_flagged(self):
+        e = parse_de(load("weil_summary.html"), query="weil")
+        self.assertEqual(e["_headword"], "weilen")
+        self.assertIn("headword_mismatch", e["_flags"])
+
+    def test_search_page_flagged_no_card(self):
+        e = parse_de(load("mit_summary.html"), query="mit")
+        self.assertIn("no_card", e["_flags"])
+        self.assertEqual(e["type"], "")
+        self.assertEqual(e["german"], "mit")
 
 
 if __name__ == "__main__":
