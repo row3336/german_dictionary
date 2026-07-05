@@ -86,6 +86,39 @@ def parse_translations(summary_html):
     return out
 
 
+def _clean_form(part_html):
+    """One stammformen part -> clean lowercase word.
+
+    Drops the audio <a> link and a leading auxiliary in its own <i>…</i> before
+    the participle <b> (``<i>ist</i><b>…gegangen</b>`` -> ``gegangen``). Tags are
+    stripped WITHOUT inserting spaces so a stem split across <b>/<i>/<u> tags
+    (``<i>ge</i>g<u>ang</u><i>en</i>``) merges back into one word.
+    """
+    s = re.sub(r"<a\b[^>]*>.*?</a>", "", part_html or "", flags=re.S).strip()
+    s = re.sub(r"^<i>[^<]*</i>\s*(?=<b)", "", s)  # leading auxiliary (ist/hat/…), space-separated
+    s = _html.unescape(re.sub(r"<[^>]+>", "", s))
+    return re.sub(r"[^A-Za-zÄÖÜäöüß -]+", "", s).strip().lower()
+
+
+def parse_verb_forms(summary_html):
+    """Verb Präteritum + Partizip II from the ``id="stammformen"`` line.
+
+    The line is three ``·``-separated parts: present (ignored), Präteritum,
+    auxiliary+Partizip II. Returns ``{"prateritum": ..., "partizip2": ...}``
+    (lowercased); missing/non-verb page -> both empty. Separate from the .com
+    ``_vf_parse_verb`` because the .de markup splits stems and the auxiliary
+    differently.
+    """
+    m = re.search(r'<p[^>]*id="stammformen"[^>]*>(.*?)</p>', summary_html or "", re.S)
+    if not m:
+        return {"prateritum": "", "partizip2": ""}
+    parts = m.group(1).split("·")
+    return {
+        "prateritum": _clean_form(parts[1]) if len(parts) > 1 else "",
+        "partizip2": _clean_form(parts[2]) if len(parts) > 2 else "",
+    }
+
+
 def headword_matches(headword, query):
     """True iff the page's headword equals the requested word (spec #2 guard).
 

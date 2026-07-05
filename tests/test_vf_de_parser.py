@@ -12,6 +12,7 @@ from bot.verb_forms_parsing.de_parser import (
     detect_type_and_headword,
     headword_matches,
     parse_translations,
+    parse_verb_forms,
 )
 
 FIX = os.path.join(os.path.dirname(__file__), "fixtures", "verbformen_de")
@@ -92,6 +93,27 @@ class TranslationsTest(unittest.TestCase):
     def test_missing_language_is_empty_list(self):
         t = parse_translations("<html><h1>Konjugation des Verbs x</h1></html>")
         self.assertEqual(t, {"ru": [], "uk": [], "en": []})
+
+
+class VerbFormsTest(unittest.TestCase):
+    def test_strong_verb(self):
+        f = parse_verb_forms(load("gehen_summary.html"))
+        self.assertEqual(f["prateritum"], "ging")
+        self.assertEqual(f["partizip2"], "gegangen")  # auxiliary 'ist' dropped
+
+    def test_modal_verb(self):
+        f = parse_verb_forms(load("können_summary.html"))
+        self.assertEqual(f["prateritum"], "konnte")
+        self.assertEqual(f["partizip2"], "gekonnt")
+
+    def test_weak_verb(self):
+        f = parse_verb_forms(load("weil_summary.html"))  # ?w=weil -> weilen
+        self.assertEqual(f["prateritum"], "weilte")
+        self.assertEqual(f["partizip2"], "geweilt")
+
+    def test_non_verb_page_is_empty(self):
+        f = parse_verb_forms(load("Haus_summary.html"))
+        self.assertEqual(f, {"prateritum": "", "partizip2": ""})
 
 
 if __name__ == "__main__":
