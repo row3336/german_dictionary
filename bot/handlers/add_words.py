@@ -67,6 +67,7 @@ from ..text_utils import russian_variants as _russian_variants
 from ..text_utils import try_parse_json as _try_parse_json
 from ..text_utils import type_label as _type_label
 from ..ui.formatting import _entry_translation, _format_word_card
+from ..verb_forms_parsing.handlers import _send_vf_menu
 from ..ui.keyboards import (
     _add_input_markup,
     _add_keys,
@@ -906,11 +907,16 @@ async def add_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return ADD_INPUT
 
-    if action in ("add_vf", "vf_recheck"):
-        label = "🌐 VF add" if action == "add_vf" else "🔁 VF recheck"
+    if action == "vf_recheck":
+        # VF recheck = the existing verbformen verify menu, relocated here from
+        # Settings (spec #2). Same vf_menu sub-mode handled by settings_menu_choice.
+        context.user_data["vf_menu"] = True
+        return await _send_vf_menu(update)
+
+    if action == "add_vf":
         await _reply_text_with_retry(
             update.message,
-            f"{label} — coming soon.",
+            "🌐 VF add — coming soon.",
             reply_markup=_add_menu_markup(user_id),
         )
         return ADD_MENU

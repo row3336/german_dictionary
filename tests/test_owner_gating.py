@@ -67,10 +67,11 @@ class OwnerGatingTest(unittest.TestCase):
         self.assertTrue(any("Add" in x or "Добав" in x or "Додат" in x for x in owner))
         self.assertFalse(any("Add" in x or "Добав" in x or "Додат" in x for x in guest))
 
-    def test_settings_menu_parsevf_dump_owner_only(self):
+    def test_settings_menu_dump_owner_only(self):
         owner = _flat(K._settings_menu_keys(OWNER))
         guest = _flat(K._settings_menu_keys(GUEST))
-        self.assertIn("parse_VF", owner)
+        # parse_VF moved out of Settings into the owner-only Add submenu (spec #2).
+        self.assertNotIn("parse_VF", owner)
         self.assertNotIn("parse_VF", guest)
         self.assertTrue(any("dump" in x for x in owner))
         self.assertFalse(any("dump" in x for x in guest))

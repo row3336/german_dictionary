@@ -13,9 +13,12 @@ from _telegram_stub import install
 install()
 
 import bot.handlers.add_words as AW  # noqa: E402
+from bot.app_config import SETTINGS_MENU  # noqa: E402
 from bot.common.lang import _user_interface_lang  # noqa: E402
 from bot.i18n import t  # noqa: E402
+from bot.labels import PARSE_VF_TEXT  # noqa: E402
 from bot.storage import init_db  # noqa: E402
+from bot.ui.keyboards import _settings_menu_keys  # noqa: E402
 
 OWNER = 777
 
@@ -53,15 +56,18 @@ class AddMenuRoutingTest(unittest.TestCase):
         self.addCleanup(lambda: os.unlink(self.db))
         init_db(self.db)
         self._old = os.environ.get("DB_PATH")
+        self._old_owner = os.environ.get("OWNER_ID")
         os.environ["DB_PATH"] = self.db
+        os.environ["OWNER_ID"] = str(OWNER)
         self.addCleanup(self._restore)
         self.lang = _user_interface_lang(OWNER)
 
     def _restore(self):
-        if self._old is None:
-            os.environ.pop("DB_PATH", None)
-        else:
-            os.environ["DB_PATH"] = self._old
+        for key, old in (("DB_PATH", self._old), ("OWNER_ID", self._old_owner)):
+            if old is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = old
 
     def _route(self, key):
         upd = _FakeUpdate(t(self.lang, key), OWNER)
@@ -76,9 +82,18 @@ class AddMenuRoutingTest(unittest.TestCase):
         state, _ = self._route("add_vf")
         self.assertEqual(state, AW.ADD_MENU)
 
-    def test_vf_recheck_stub_stays_in_menu(self):
-        state, _ = self._route("vf_recheck")
-        self.assertEqual(state, AW.ADD_MENU)
+    def test_vf_recheck_opens_vf_menu(self):
+        # VF recheck relocates the verbformen verify menu here (spec #2 2b):
+        # sets the vf_menu sub-mode and hands off to the SETTINGS_MENU router.
+        upd = _FakeUpdate(t(self.lang, "vf_recheck"), OWNER)
+        ctx = _Ctx()
+        state = asyncio.run(AW.add_menu_choice(upd, ctx))
+        self.assertEqual(state, SETTINGS_MENU)
+        self.assertTrue(ctx.user_data.get("vf_menu"))
+
+    def test_settings_menu_has_no_parse_vf(self):
+        flat = [b for row in _settings_menu_keys(OWNER) for b in row]
+        self.assertNotIn(PARSE_VF_TEXT, flat)
 
     def test_back_returns_to_main_menu(self):
         state, _ = self._route("back")

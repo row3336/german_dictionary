@@ -16,7 +16,6 @@ from ..app_config import (
 from ..common.lang import _quiz_dir_labels, _user_interface_lang
 from ..i18n import t
 from ..labels import (
-    PARSE_VF_TEXT,
     QUIZ_PL_SG_TEXT,
     SYNONYMS_TEXT,
 )
@@ -72,10 +71,9 @@ def _settings_menu_keys(user_id):
     """Settings menu. parse_VF and dump are owner-only (P3.2)."""
     lang = _user_interface_lang(user_id)
     owner = is_owner(user_id)
-    # Languages now live in their own submenu (P6.3): "language_sett".
-    first = [t(lang, "algo_settings"), PARSE_VF_TEXT, t(lang, "language_sett")] if owner \
-        else [t(lang, "algo_settings"), t(lang, "language_sett")]
-    rows = [first]
+    # Languages now live in their own submenu (P6.3): "language_sett". parse_VF moved
+    # to the add-flow submenu (spec #2): AI / VF add / VF recheck.
+    rows = [[t(lang, "algo_settings"), t(lang, "language_sett")]]
     # Owner reviews reports/feedback (review_menu); a guest submits feedback +
     # can support the project with Telegram Stars (P6.3/P6.4).
     rows.append([t(lang, "review_menu"), t(lang, "dump"), t(lang, "back")] if owner
