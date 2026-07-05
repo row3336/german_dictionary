@@ -43,28 +43,39 @@ def _mask_proxy(proxy_url):
 
 
 def _normalize_proxy_input(raw):
-    """Normalize proxy input to curl-compatible URL."""
+    """Normalize proxy input to a curl-compatible URL.
+
+    Accepts the compact ``host:port:user:pass`` / ``host:port`` format from proxy
+    providers. A bare value (no scheme) defaults to ``socks5`` (back-compat). To
+    use an http (or socks5h) proxy, prefix the scheme: ``http://host:port:user:pass``
+    -> ``http://user:pass@host:port``. A full URL with ``user:pass@host:port`` is
+    kept as-is.
+    """
     token = _safe_text(raw).strip()
     if not token:
         return ""
-    if "://" in token:
-        return token
-    # Support host:port:user:pass format from proxy providers.
+    scheme = "socks5"  # default for a bare host:port[:user:pass]
+    m = re.match(r"^(https?|socks5h?)://(.*)$", token, re.IGNORECASE)
+    if m:
+        scheme = m.group(1).lower()
+        rest = m.group(2)
+        if "@" in rest:  # already user:pass@host:port -> valid URL, keep it
+            return token
+        token = rest  # reparse the compact form below with the explicit scheme
+    elif "://" in token:
+        return token  # some other scheme already present -> keep as-is
     parts = token.split(":")
     if len(parts) >= 4 and parts[1].isdigit():
-        host = parts[0].strip()
-        port = parts[1].strip()
-        user = parts[2].strip()
+        host, port, user = parts[0].strip(), parts[1].strip(), parts[2].strip()
         password = ":".join(parts[3:]).strip()
         if host and port and user and password:
-            return f"socks5://{user}:{password}@{host}:{port}"
-    # Support host:port format (no auth), default to socks5.
+            return f"{scheme}://{user}:{password}@{host}:{port}"
     if len(parts) == 2 and parts[1].isdigit():
-        host = parts[0].strip()
-        port = parts[1].strip()
+        host, port = parts[0].strip(), parts[1].strip()
         if host and port:
-            return f"socks5://{host}:{port}"
-    return token
+            return f"{scheme}://{host}:{port}"
+    # unmatched: bare stays as-is (back-compat); explicit scheme is re-applied
+    return token if scheme == "socks5" else f"{scheme}://{token}"
 
 
 def _vf_parse_noun(html_text):
