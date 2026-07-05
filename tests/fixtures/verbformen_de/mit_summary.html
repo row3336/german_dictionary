@@ -1,0 +1,765 @@
+<!DOCTYPE html>
+<html lang="de" style="position: unset !important; overflow: auto !important; margin-top: 0 !important;">
+<head>
+<title>Deutsche Wörter mit „mit“ - Wörterbuch, Bedeutungen, Definition, Synonyme, Übersetzungen, Grammatik | Netzverb Wörterbuch</title>
+<meta name="description" content="Deutsche Wörter mit „mit“: Wörterbuch, Bedeutungen, Definition, Synonyme, Übersetzungen, Grammatik"/>
+<meta name="robots" content="noindex, follow" />
+<meta http-equiv='Content-Type' content='text/html; charset=UTF-8' />
+<meta name=viewport content="width=device-width, initial-scale=1.0">	
+<meta name="HandheldFriendly" content="true"/>
+<meta name="MobileOptimized" content="width"/><meta name="application-name" content="Netzverb Wörterbuch" />
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+<link rel="manifest" href="/site.webmanifest">
+<link rel="mask-icon" href="/safari-pinned-tab.svg" color="#000084">
+<meta name="msapplication-TileColor" content="#000084">
+<meta name="theme-color" content="#000084" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#00003c" media="(prefers-color-scheme: dark)">
+<script type="text/javascript"> const Rahmen = {}; (function() { function istauf(id) { const e = document.getElementById(id); const d = e.currentStyle ? e.currentStyle.display : getComputedStyle(e, null)?.display; return d !== "none"; } function display(e) { let t = e.tagName; if(t==="UL"||t==="DIV") return "block"; if(t==="TD") return "table-cell"; if(t==="TR") return "table-row"; return "inline"; } function aufzu(id, auf) { const elements = document.querySelectorAll('[id="' + id + '"]'); elements.forEach(function(e) { aufzuE(e, auf); }); const buttons = document.querySelectorAll('[id="' + id + 'Img"]'); buttons.forEach(function(b) { aufzuB(b, auf); }); } function aufzuE(e, auf) { e.style.display = auf ? display(e) : "none"; if (auf && e.onchange) e.onchange(undefined); } function aufzuB(b, auf) { const ba = b.getElementsByClassName("rAuf")[0]; if (ba) ba.style.display = auf ? display(ba) : "none"; const bz = b.getElementsByClassName("rZu")[0]; if (bz) bz.style.display = auf ? "none" : display(bz); } function setHeight(e) { e.style.height = ''; e.style.height = e.scrollHeight + 'px'; } Rahmen.alleaufzu = function(id, k) { const ia = istauf(id); const elements = document.getElementsByClassName(k); for (let i = 0; i < elements.length; i++) { aufzu(elements[i].id, !ia); } }; Rahmen.a = function(e, u) { document.location = u; e.preventDefault(); return false; }; Rahmen.auf = function(ids) { if(ids instanceof Array) { for (const id in ids) aufzu(ids[id], true); } else aufzu(ids, true); }; Rahmen.zu = function(ids) { if (Array.isArray(ids)) { for (const id of ids) { aufzu(id, false); } } else { aufzu(ids, false); } }; Rahmen.aufzu = function(ids) { if (Array.isArray(ids)) { const ia = istauf(ids[0]); for (const id of ids) { aufzu(id, !ia); } } else { aufzu(ids, !istauf(ids)); } }; Rahmen.breite = function() { return Math.max(document.documentElement.clientWidth, window.innerWidth || 0); }; Rahmen.resize = function(ev) { setHeight(ev.target); }; Rahmen.size = function(id) { setHeight(document.getElementById(id)); }; }).apply(Rahmen); const Eingabe = {}; (function() { function element(id) { return document.getElementById(id); } function sprung(e,l,s,x=null) { let i; const os = l.getElementsByClassName("rEinOpt"); let t = -1; for (i = 0; i<os.length; i++) { if(os[i].classList.contains("rEinOptAn")) t=i; } let p = t + s; if(p<0) p=os.length-1; if(p>os.length-1) p=0; for (i = 0; i<os.length; i++) { if(i===t) os[i].classList.remove("rEinOptAn"); if(i===p) { os[i].classList.add("rEinOptAn"); } } if(x && os[p]) { x.value = os[p].getAttribute("data-id"); x.removeAttribute('disabled'); } if(e && os[p]) { e.value=os[p].getAttribute("data-word"); e.setSelectionRange(0,e.value.length); } } this.zeige = function(ide,idl,v,idx=null) { let o; const e = element(ide); const l = element(idl); const x = idx==null?null:element(idx); let s = 0; const w = e.value; while(l.children.length>0) l.removeChild(l.children[0]); for(let i=0; i<v.length; i++) { if(!v[i]) continue; let ee,ll,xx; if(v[i] instanceof Array) { if(v[i].length <= 0) continue; ee=v[i][0]; ll=v[i].length >= 2 ? v[i][1] : ee=v[i][0]; xx=v[i].length >= 3 ? v[i][2] : null; } else { ee=v[i]; ll=v[i]; } o = document.createElement("div"); o.onmousedown=function(ev) { Eingabe.uebernahmeAttribute(xx,idx); Eingabe.uebernahme(ee,ide); }; o.classList.add("rEinOpt"); o.setAttribute("data-word", ee); o.setAttribute("data-id", xx); o.innerHTML = ll; l.appendChild(o); s++; } if(s<=0) {l.style.display = "none"; return;} e.setAttribute("w",w); l.style.display="inline"; }; this.an = function(ide,idl,fn,idx=null) { const e = element(ide); const w = e.value; setTimeout(function() { if(w!==e.value) return; idx==null ? fn(ide,idl,w) : fn(ide,idl,w,idx); },50); }; this.aus = function(ide, idl) { const e = element(ide); const l = element(idl); setTimeout(function() { if(document.activeElement === e || document.activeElement === l) return; l.style.display = "none"; },50); }; this.uebernahme = function(a,ide) { if (a===null) return; const e = element(ide); if(!e && !ide) return; e.value=a; e.removeAttribute('disabled'); e.focus(); if(e.form) e.form.submit(); }; this.uebernahmeAttribute = function(a, ide) { if (a===null) return; const e = element(ide); if(!e && !ide) return; e.value=a; e.removeAttribute('disabled'); }; this.uebernahmeWert = function(ev,ide,v) { const e = element(ide); if(!e && !ide) return; e.value=v; e.removeAttribute('disabled'); if(e.form) e.form.submit(); }; this.taste = function(ide, idl, event, idx=null) { const l = element(idl); const e = element(ide); const x = idx==null?null:element(idx); let keyCode = ('which' in event) ? event.which : event.keyCode; if(keyCode === 40) { sprung(e, l, 1,x); event.preventDefault(); } if(keyCode === 38) { sprung(e, l, -1,x); event.preventDefault(); } if(keyCode === 27) { l.style.display = "none"; } }; }).apply(Eingabe); const Hinweis = {}; (function() { this.weg = function(n) { Hinweis.schliessen(n); document.cookie="de.netzverb.rahmen.hinweis_"+n+"=none" + ";expires="+new Date(new Date().setFullYear(new Date().getFullYear() + 1)).toUTCString() + ";path=/"; }; this.schliessen = function(n) { const e = document.getElementById(n); e.style.display="none"; }; }).apply(Hinweis);const Ajax = {}; (function() { let kn, kv, kfa; function pr(p, n, v) { if(!n) return p; return (p ? p + "&" : "") + encodeURIComponent(n) + "=" + encodeURIComponent(v); } function prs(f, s) { let i; let p = pr(null, kn, kv); const is = f.getElementsByTagName("input"); for(i = 0; i<is.length; i++) if(!is[i].disabled && is[i].name && (is[i].type !== "submit" || is[i] === s)) if(is[i].type !== "radio" && is[i].type !== "checkbox" || is[i].checked) p = pr(p, is[i].name, is[i].value); const bs = f.getElementsByTagName("button"); for(i = 0; i<bs.length; i++) if(!bs[i].disabled && bs[i].name && bs[i].type === "submit" && bs[i] === s) p = pr(p, bs[i].name, bs[i].value); const tas = f.getElementsByTagName("textarea"); for(i = 0; i<tas.length; i++) if(!tas[i].disabled && tas[i].name) p = pr(p, tas[i].name, tas[i].value); const ss = f.getElementsByTagName("select"); for(i = 0; i<ss.length; i++) if(!ss[i].disabled && ss[i].name && ss[i].selectedIndex >= 0) p = pr(p, ss[i].name, ss[i].options[ss[i].selectedIndex].value); return p; } this.param = function (p, n, v) { return pr(p, n ,v); }; this.ersetze = function(e, id, h) { return this.submit(e, id, h); }; this.submit = function(e, id, h) { e.preventDefault(); let s; let f = e.currentTarget; if(f.tagName !== "FORM") { s = f; f = f.form; } const p = prs(f, s); let fa = f.action; if(s && s.formAction) fa = s.formAction; if(kfa) fa = kfa; this.post(fa, p, id, h); kn = null; kv = null; kfa = null; return false; }; this.submit2 = function(f, h) { const p = prs(f); let fa = f.action; this.post2(fa, p, h); kn = null; kv = null; kfa = null; return false; }; this.loadDefJs = function(id, async = true) { const placeholder = document.getElementById(id); if (!placeholder) return; const src = placeholder.getAttribute('about'); if (!src) return; placeholder.removeAttribute('id'); placeholder.removeAttribute('about'); Object.assign(placeholder, { async, type: 'text/javascript', src }); }; this.get = function(u, id, i, h) { const r = new XMLHttpRequest(); r.withCredentials = true; r.onload = function() { const d = document.getElementById(id); if(r.status === 200) { if(i) { d.innerHTML = r.responseText; } else { d.outerHTML = r.responseText; } } else { d.innerHTML = r.responseURL + " (" + r.status + ": " + r.statusText + ")"; } if(h) { h(); } }; r.open("GET", u, true); r.setRequestHeader('X-Requested-With', 'XMLHttpRequest');	 r.send(); return false; }; this.get2 = function(u, h) { const r = new XMLHttpRequest(); r.withCredentials = true; r.onload = function() { if(h) h(r); }; r.open("GET", u, true); r.setRequestHeader('X-Requested-With', 'XMLHttpRequest'); r.send(); return false; }; this.post = function(u, p, id, h) { const r = new XMLHttpRequest(); r.withCredentials = true; r.onload = function() { const d= document.getElementById(id); if(r.status === 200) { d.outerHTML = r.responseText; } else { d.innerHTML = r.responseURL + " (" + r.status + ": " + r.statusText + ")";	} if(h) h(); }; r.open("POST", u, true); r.setRequestHeader("Content-type", "application/x-www-form-urlencoded; charset=UTF-8"); r.setRequestHeader('X-Requested-With', 'XMLHttpRequest');		 r.send(p); return false; }; this.post2 = function(u, p, h) { const r = new XMLHttpRequest(); r.withCredentials = true; r.onload = function() { if(h) h(r); }; r.open("POST", u, true); r.setRequestHeader("Content-type", "application/x-www-form-urlencoded; charset=UTF-8"); r.setRequestHeader('X-Requested-With', 'XMLHttpRequest'); r.send(p); return false; }; this.aktion = function(x) { kn = 'aktion'; kv = x; }; this.klick = function(e) { kn = e.currentTarget.name; kv = e.currentTarget.value; kfa = null; if(e.currentTarget.formAction !== window.location.href) kfa = e.currentTarget.formAction; }; }).apply(Ajax);const Verbformen = {}; (function() { this.suchliste = function(ide,idl,w,idx=null) { const r = new XMLHttpRequest(); r.open("GET", "/suche/i/?w=" + encodeURI(w), true); r.setRequestHeader('X-Requested-With', 'XMLHttpRequest'); r.timeout = 500; r.onload = function (e) { if (r.readyState === 4 && r.status === 200) { Eingabe.zeige(ide,idl,JSON.parse(r.responseText),idx); } }; r.send(null); }; this.youtube = function(bid,yid) { const b = document.getElementById(bid); if(b.style.display === "none") return; const div = document.createElement("div"); div.innerHTML = "<img loading='lazy' src='/close.svg' onclick=\"this.parentNode.remove(); document.getElementById('" + bid + "').style.display = 'block';\"><iframe width='640' height='360' src='https://www.youtube-nocookie.com/embed/" + yid + "?autoplay=1' frameborder='0' allowfullscreen='allowfullscreen'></iframe>"; div.className = "vVidYt"; div.id = "vVidYtId"; b.parentNode.insertBefore(div,b); b.style.display = "none"; }; }).apply(Verbformen);</script><style type="text/css">.rEin {text-align:left;}.rEin input {width:100%;-webkit-appearance:textfield;border-radius:0;}.rEin input::-webkit-search-decoration,.rEin input[type="search"] {-webkit-appearance:searchfield;appearance:auto;}.rEinMn {background-color:#ffffff;display:none;position:absolute;border:none;border-top:solid 1px #aaaaaa;color:#666666;z-index:7;box-sizing:border-box;width:inherit;max-width:inherit;min-width:inherit;}.rNav .rEinMn {position:fixed;margin-top:2px;max-height:75%;overflow:scroll;overflow-y:auto;overflow-x:hidden;box-shadow:6px 6px 6px 1px rgba(0,0,0,0.5); }.rEinOpt {padding:1px 5px;font-size:1.22em;}.rEinOptAn {background-color:#000000;color:#ffffff;}.rNav .rEin input {height:32px;margin:0;border-radius:3px;}.rNav .rEin {margin:1px 5px 0 0;width:300px;max-width:calc(100vw - 230px); border:solid 2px rgba(255,255,255,0.6); border-radius:5px;}@media (prefers-color-scheme:dark){.rEinMn {background-color:#292a2c;color:#9aa0a6;}.rEinOptAn {background-color:#000000;color:#ffffff;}}html {scroll-behavior:smooth;text-size-adjust:100%;-webkit-text-size-adjust:100%;height:100.1%;}body {margin:0;padding:0;font-family:sans-serif;font-weight:400;color:#111111;fill:#111111;font-size:0.91em;line-height:1.25;}body>article {background-color:#eceaea;}body>nav>div,body>aside>div,body>article>div,body>footer>div {clear:both;padding:2px 8px;}@media (min-width:1058px){ body>nav>div,body>aside>div,body>article>div,body>footer>div {width:1042px;margin:0 auto;}}body,body>footer {background-color:#1e1e1e;}body>footer {color:#e0e0e0;font-size:0.9em;}body>footer a {color:#80bfff;}body>footer h1,body>footer h2 {color:#e0e0e0 !important;}body>nav {position:fixed;z-index:9999;font-size:1.2em;width:100%;max-height:100vh;box-shadow:0 3px 5px rgba(0,0,0,0.44); color:#aaaaaa;}body>nav a {color:#aaaaaa;}div.rKpfPlz {height:44px;}body>article>div {position:relative;}a {text-decoration:none;color:#12039c;}.rH {font-family:open sans condensed,open sans,sans-serif;}h1,h2,h3,h4,.rH1,.rH2,.rH3,.rH4 {margin-top:16px;margin-bottom:12px;font-family:sans-serif;letter-spacing:-1px;font-weight:bold;}h1,h2,.rH1,.rH2 {color:#000000;}a h1,a h2,a h3,a h4 {color:#111111 !important;}h1,.rH1 {font-size:1.5em;}h2,.rH2 {font-size:1.35em;}h3,.rH3 {font-size:1.2em;}h4,.rH4 {font-size:1.1em;}p,ul,ol,dl {margin:12px 0 16px 0;}p,li {-moz-hyphens:auto;-o-hyphens:auto;-webkit-hyphens:auto;-ms-hyphens:auto;hyphens:auto;}ul {list-style-type:disc;padding-left:12px;}mark {background-color:#d0d0d0;color:#111111;font-weight:inherit;}input,select,textarea {font-family:sans-serif;font-size:inherit;line-height:inherit;border:solid 1px #d0d0d0;outline:none;box-sizing:border-box;border-radius:0;-webkit-border-radius:0px;appearance:none;-moz-appearance:none;-webkit-appearance:none;}select.rKnpf {appearance:menulist-button;-moz-appearance:menulist;-webkit-appearance:menulist;height:29px;}select.rKnpf:invalid {color:#848484;}select.rKnpf:invalid option {color:#ffffff;}input[type='checkbox'] {appearance:checkbox;-moz-appearance:checkbox;-webkit-appearance:checkbox;}input[type='radio'] {appearance:radio;-moz-appearance:radio;-webkit-appearance:radio;} nav input,nav select,nav textarea {border:none;}.rMrgn {margin:0 10px 10px 0;}input[type=submit],.rKnpf {padding:5px 10px;margin:0 12px 12px 0;background-color:#000000;color:#ffffff;fill:#ffffff;border:none;}input[type=submit].rInf,.rInf.rKnpf {background-color:#d0d0d0;color:#ffffff;fill:#ffffff;}input[type=submit]:hover,.rKnpf:hover {box-shadow:0px 2px 5px 0px rgba(0,0,0,0.1), 0px 1px 10px 0px rgba(0,0,0,0.1)}input[type=submit].rRechts,.rKnpf.rRechts,.rMrgn.rRechts {margin:0 0 12px 12px;}.rIcn18x18 {padding:5px;font-size:0;}.rIcn18x18 svg {width:18px;height:18px;}textarea {overflow:hidden;}svg,img {vertical-align:baseline;margin:0;}img.rRechts {margin:4px 0 12px 12px;}img.rLinks {margin:4px 12px 12px 0;}button {line-height:inherit;background-color:transparent;padding:0;border:none;margin:0;font-size:inherit;font-family:inherit;color:inherit;border-radius:unset;-webkit-appearance:none;}table {border-spacing:0;border-collapse:collapse;}td,th {padding:0;vertical-align:top;}th a {color:inherit;}hr {border:none;border-bottom:solid 1px #cacaca;margin:0.75em 0;}hr.rInf {border-color:#b6b6b6;border-bottom-style:dashed;}hr.rDpl {margin:1.15em 0;padding-top:1px;}.rTrng {-moz-hyphens:auto;-o-hyphens:auto;-webkit-hyphens:auto;-ms-hyphens:auto;hyphens:auto;}.rKnpf,.rIn {box-sizing:border-box;display:inline-block;}.rKnpf {min-height:29px;min-width:29px;}.rDnb {position:absolute;left:100%;margin-left:8px;top:10px;background-color:transparent;}.rNav {height:36px;overflow:hidden;width:100%;padding:2px 0;}.rNav>* {height:36px;}.rMnRnd {margin-bottom:6px;}.rTab {display:table;}.rTab>div {display:table-cell;vertical-align:middle;}.r1Pxl {width:1px;}.r100Pro {width:100%;}.rLinks {float:left;}.rRechts {float:right;}.rDurch {text-decoration:line-through;}.rNobr {white-space:nowrap;}.r1Zeile {white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}.rClear {clear:both;}.rClrAft:after {content:"";display:table;clear:both;}.rClrBfr:before {content:"";display:table;clear:both;}.rClrRechts {clear:right;}.rClrLinks {clear:left;}.rDunkel {background-color:#000000;}.rHell {color:#f5f5f5;}.rZu {display:none;}.rAnkr {width:1px;height:56px;margin-top:-56px;float:left;display:block;}.rRel {position:relative;}.rAbs {position:absolute;}.rAuf {display:inline;}.rInl {display:inline;}.rFuss {margin:0 15px 15px 0;}.rLg {margin-right:8px;}.rAkz {color:#FF4081;}.rKnpf.rAkz {background-color:#FF4081;}.rLst {list-style-type:none;padding-left:0;padding-right:0;}.rLst li {text-indent:-15px;padding-left:15px;padding-right:0;}.rLst[dir="rtl"] li {text-indent:-15px;padding-left:0;padding-right:15px;}.rLst li::before {min-width:15px;float:left;}.rLst[dir="rtl"] li::before {float:right;}.rLstDash li::before {content:"–";}.rLstGt li::before {content:"»";}.rLstBl li::before {content:"•";}.rLstTxt li::before {content:attr(txt); }.rCntr {text-align:center;}.rInf,.rInf a,.rInf mark {color:#848484;fill:#c5c5c5;}.rInf img,.rInf svg {filter:grayscale(100%); }.rKln {font-size:0.9em;}.rMrk {background-color:#ff8bb3;}.rKln img,.rKln svg {zoom:85%;}.rGrs {font-size:1.1em;}/* deprecated */ .rKnObn {margin-top:0 !important;}/* deprecated */ .rKnUnt {margin-bottom:0 !important;}.rU0px {margin-bottom:0px !important;}.rU1px {margin-bottom:1px !important;}.rU3px {margin-bottom:3px !important;}.rU6px {margin-bottom:6px !important;}.rO0px {margin-top:0px !important;}.rO1px {margin-top:1px !important;}.rO3px {margin-top:3px !important;}.rNt::after {content:"*";color:#848484;font-size:0.65em;vertical-align:top;font-weight:normal;}.rNoSelect {-webkit-touch-callout:none;-webkit-user-select:none;-moz-user-select:none;-ms-user-select:none;user-select:none;}.rImg {border:solid 1px #d0d0d0;}.rDelay2s {animation-delay:2s;}.rFade {opacity:0;animation-name:fadeIn;animation-timing-function:ease;animation-fill-mode:forwards;}.rDuration1s {animation-duration:1s;}@keyframes fadeIn {from {opacity:0;} to   {opacity:1;} }@media (min-width:744px){h1,.rH1 {font-size:1.7em;}h2,.rH2 {font-size:1.4em;}article .rAbschnitt {margin-left:-314px;width:100%;float:left;}article .rAbschnitt>div {margin-left:314px;}article .rInfo {width:300px;float:right;}.rFuss {width:330px;}}@media (prefers-color-scheme:dark){body {color:#e1e1e1;fill:#e1e1e1;}mark {color:#e1e1e1;background-color:#3f3f3f;}body>article {background-color:#232323;}body,body>footer {background-color:#060606;}body>footer {color:#e0e0e0;}body>footer a {color:#b9d1ff;}a {color:#b9d1ff;}h1,h2,.rH1,.rH2 {color:#ffffff;}a h1,a h2,a h3,a h4 {color:#e1e1e1 !important;}input,select,textarea {background-color:#292a2c;border-color:#101112;color:#e1e1e1;}input[type=submit],.rKnpf {background-color:#000000;color:#e8eaed;fill:#e8eaed;}input[type=submit].rInf,.rInf.rKnpf {background-color:#1d1d1d;color:#626262;fill:#626262;}hr {border-color:#484848;}hr.rInf {border-color:#353535;}.rHell {color:#f5f5f5;}.rInf,.rInf a,.rInf mark {fill:#626262;}.rImg {border-color:#101112;}.rMrk {background-color:#973c5b;}}@media (min-width:1261px)and (max-width:1698px){ body>nav>div,body>aside>div,body>article>div,body>footer>div {margin-right:320px;}}@media (min-width:1261px)and (max-width:1378px){ body>nav>div,body>aside>div,body>article>div,body>footer>div {margin-right:320px;margin-left:0;}}.rBox {margin-bottom:16px;overflow:auto;margin-top:16px;}.rBox header h2 {margin-top:0;}.rBoxWht {background-color:#ffffff;border:solid 2px #d0d0d0;padding:0px 10px;}.rBoxWht textarea,.rBoxWht input,.rBoxWht select {background-color:#e9e9e9;}.rBoxWht input[type=submit],.rBoxWht .rKnpf {background-color:#000000;}.rBoxWht input[type=submit].rInf,.rBoxWht .rInf.rKnpf {background-color:#d0d0d0;}@media (prefers-color-scheme:dark){ .rBoxWht {background-color:#313131;border-color:#000000;}.rBoxWht textarea,.rBoxWht input,.rBoxWht select {background-color:#212121;}.rBoxWht input[type=submit].rInf,.rBoxWht .rInf.rKnpf {background-color:#272727;color:#626262;fill:#626262;}.rBoxWht hr {border-color:#1b1b1b;}.rBoxWht hr.rInf {border-color:#232323;}}.rHw {width:100%;padding:4px 0;background-color:#ffffff;color:#222222;border-bottom:solid 1px #d0d0d0;}.rHw svg {fill:#d0d0d0;}.rHwObn {position:relative;top:0px;}.rHwUnt {opacity:0.91;position:fixed;bottom:0px;z-index:8;box-shadow:1px 0px 2px 0px rgba(0,0,0,0.25); }.rHwUnt a {color:#80bfff;}.rHwBox>div {position:static;padding-right:10px;padding-left:13px;}.rHwBox+.rBox {margin-top:0;}.rHwFhlr svg,.rHwTpp svg,.rHwOk svg,.rHwNtrl svg {fill:#ffffff;fill-opacity:0.6;}.rHwFhlr {background-color:#d90000;color:#ffbfbf;border:none;}.rHwTpp {background-color:#aa5500;color:#ffcf9f;border:none;}.rHwOk {background-color:#008000;color:#a6ffa6;border:none;}.rHwNtrl {color:#e0e0e0;background-color:#111111;border:none;}@media (prefers-color-scheme:dark){ .rHw {background-color:#292a2c;color:#e8eaed;border-color:#101112;}.rHw svg {fill:#9aa0a6;}.rHwUnt a {color:#80bfff;}.rHwFhlr {background-color:#6a0000;color:#facfb4;}.rHwFhlr svg,.rHwTpp svg,.rHwOk svg,.rHwNtrl svg {fill:#ffffff;}.rHwTpp {background-color:#422100;color:#f5d99e;}.rHwOk {background-color:#003c00;color:#baf2b7;}.rHwNtrl {color:#e0e0e0;background-color:#111111;}}.rMn {margin:10px 0 0 auto;padding-top:8px;width:33%;border-top:solid 1px #9b9b9b;box-sizing:border-box;}.rMnOpt {padding-top:1px;}.rMnKat {color:#ffffff;}.rMnLnk {margin-left:10px;}.rMnOptn .rMnOptn {margin-left:22px;}@media (max-width:699px){.rMn {width:100%;}}nav.rKrml {margin:9px 0 8px 0;}nav.rKrml span {white-space:nowrap;}q {font-weight:bold;}q:before {content:none;}q:after {content:none;}q>b,q>b>mark {font-weight:inherit !important;}q>u,q>u>mark {text-decoration:none;}b>u {text-decoration:none;}b>i,q>i {font-style:normal;}b>u,q>b,q>b>mark,h2.wG,.rH2.wG {color:#a79065;}b.wG>u,q.wG>b,.wG q>b,q.wG>b>mark {color:#a79065;}b.wM>u,q.wM>b,.wM q>b,q.wM>b>mark {color:#6f8fa2;}b.wF>u,q.wF>b,.wF q>b,q.wF>b>mark {color:#b07b7b;}b.wN>u,q.wN>b,.wN q>b,q.wN>b>mark {color:#6e906e;}.wG b,b>i,q>u,q>u>mark,h2.wG,.rH2.wG {color:#c3850f;}b.wG>i,q.wG>u,.wG q>u,q.wG>u>mark,h2.wG,.rH2.wG {color:#c3850f;}b.wM>i,q.wM>u,.wM q>u,q.wM>u>mark,h2.wM,.rH2.wM {color:#0072b7;}b.wF>i,q.wF>u,.wF q>u,q.wF>u>mark,h2.wF,.rH2.wF {color:#d32f2f;}b.wN>i,q.wN>u,.wN q>u,q.wN>u>mark,h2.wN,.rH2.wN {color:#368732;}b>q,q>i,q>i>mark,h2.wG,.rH2.wG {color:#c3850f;}b.wG>q,q.wG>i,.wG q>i,q.wG>i>mark,h2.wG,.rH2.wG {color:#c3850f;}b.wM>q,q.wM>i,.wM q>i,q.wM>i>mark,h2.wM,.rH2.wM {color:#0072b7;}b.wF>q,q.wF>i,.wF q>i,q.wF>i>mark,h2.wF,.rH2.wF {color:#d32f2f;}b.wN>q,q.wN>i,.wN q>i,q.wN>i>mark,h2.wN,.rH2.wN {color:#368732;}.rKnpf b>u,.rKnpf q>b {color:#bbac9d;}.rKnpf b.wG>u,.rKnpf q.wG>b,.rKnpf .wG q>b {color:#bbac9d;}.rKnpf b.wM>u,.rKnpf q.wM>b,.rKnpf .wM q>b {color:#90a5b0;}.rKnpf b.wF>u,.rKnpf q.wF>b,.rKnpf .wF q>b {color:#c19999;}.rKnpf b.wN>u,.rKnpf q.wN>b,.rKnpf .wN q>b {color:#8ca08b;}.rKnpf b>i,.rKnpf q>u {color:#bbac9d;}.rKnpf b.wG>i,.rKnpf q.wG>u,.rKnpf .wG q>u {color:#bbac9d;}.rKnpf b.wM>i,.rKnpf q.wM>u,.rKnpf .wM q>u {color:#90a5b0;}.rKnpf b.wF>i,.rKnpf q.wF>u,.rKnpf .wF q>u {color:#c19999;}.rKnpf b.wN>i,.rKnpf q.wN>u,.rKnpf .wN q>u {color:#8ca08b;}.rKnpf b>q,.rKnpf q>i {color:#bbac9d;}.rKnpf b.wG>q,.rKnpf q.wG>i,.rKnpf .wG q>i {color:#bbac9d;}.rKnpf b.wM>q,.rKnpf q.wM>i,.rKnpf .wM q>i {color:#90a5b0;}.rKnpf b.wF>q,.rKnpf q.wF>i,.rKnpf .wF q>i {color:#c19999;}.rKnpf b.wN>q,.rKnpf q.wN>i,.rKnpf .wN q>i {color:#8ca08b;}.rInf q>b,.rInf q>u,.rInf q>b>mark,.rInf q>u>mark,.rInf q>mark {color:#848484;fill:#c5c5c5;}.wKnFmt q {font-weight:normal;}.wKnFmt q>b,.wKnFmt q>u {color:inherit;font-weight:normal !important;}s {color:#aaaaaa;text-decoration:none;}g,g a {color:#848484;fill:#c5c5c5;}.rInf b>u,.rInf b>i {color:#848484;fill:#c5c5c5;}@media (prefers-color-scheme:dark){b>u,q>b,q>b>mark,h2.wG,.rH2.wG {color:#bbac9d;}b.wG>u,q.wG>b,.wG q>b,q.wG>b>mark,h2.wG,.rH2.wG {color:#bbac9d;}b.wM>u,q.wM>b,.wM q>b,q.wM>b>mark,h2.wM,.rH2.wM {color:#90a5b0;}b.wF>u,q.wF>b,.wF q>b,q.wF>b>mark,h2.wF,.rH2.wF {color:#c19999;}b.wN>u,q.wN>b,.wN q>b,q.wN>b>mark,h2.wN,.rH2.wN {color:#8ca08b;}.wG b,b>i,q>u,q>u>mark,h2.wG,.rH2.wG {color:#d19554;}b.wG>i,q.wG>u,.wG q>u,q.wG>u>mark,h2.wG,.rH2.wG {color:#d19554;}b.wM>i,q.wM>u,.wM q>u,q.wM>u>mark,h2.wM,.rH2.wM {color:#4b98c2;}b.wF>i,q.wF>u,.wF q>u,q.wF>u>mark,h2.wF,.rH2.wF {color:#d75656;}b.wN>i,q.wN>u,.wN q>u,q.wN>u>mark,h2.wN,.rH2.wN {color:#649b62;}b>q,q>i,q>i>mark,h2.wG,.rH2.wG {color:#d19554;}b.wG>q,q.wG>i,.wG q>i,q.wG>i>mark,h2.wG,.rH2.wG {color:#d19554;}b.wM>q,q.wM>i,.wM q>i,q.wM>i>mark,h2.wM,.rH2.wM {color:#4b98c2;}b.wF>q,q.wF>i,.wF q>i,q.wF>i>mark,h2.wF,.rH2.wF {color:#d75656;}b.wN>q,q.wN>i,.wN q>i,q.wN>i>mark,h2.wN,.rH2.wN {color:#649b62;}.wKnFmt q>b,.wKnFmt q>u {color:inherit;}.rInf b>u,.rInf b>i,.rInf q>b,.rInf q>u,.rInf q>b>mark,.rInf q>u>mark,.rInf q>mark {color:#848484;fill:#626262;}}.kFrm select {border:none;background-color:transparent;}.kFrm textarea {width:100%;}.kBwrt {font-size:1.3em;}.kAn {color:#000000;}.kAus {color:#aaaaaa;}.kAnt {margin-left:5%;}.kLnk {white-space:nowrap;}@media (prefers-color-scheme:dark){.kAn {color:#dcdee4;}.kAus {color:#5e6064;}}.aArt {min-height:90px;}.aArtLng {min-height:90px;}.aNurMob {min-height:0 !important;}.aDnb {min-height:600px;min-width:300px;}.aInf {min-height:250px;}.aAnz {margin:8px 0;text-align:center;background-color:rgba(255,255,255,0.4); }@media (max-width:1000px){.aArt {min-height:250px;}.aArtLng {min-height:610px;}.aNurDsk {min-height:0 !important;}}@media (max-width:1260px){.aDnb {display:none;min-height:unset;min-width:unset;}}@media (prefers-color-scheme:dark){.aAnz {background-color:rgba(255,255,255,0.05); }}.bZrt {}.bKas {}.bEinLang {position:absolute;top:0;right:0;padding:6px 7px;}div.bEinMnLang {padding:0 12px;text-align:end;}div.rEin {position:relative;}div.rEin input {padding-right:25px;padding-left:2px;}.nCol {width:16px;height:16px;border-radius:50%;margin-right:5px;display:inline-block;}.nColC1 {background-color:#0072b7;}.nColC2 {background-color:#d32f2f;}.nColC3 {background-color:#368732;}.nColC4 {background-color:#5C5CE0;}.nColC5 {background-color:#c3850f;}.nColC6 {background-color:#E64D61;}.nColC7 {background-color:#b35cb3;}.nColC8 {background-color:#FAD64C;}.nColC9 {background-color:#91683C;}.nColTC1 {color:#0072b7 !important;}.nColTC2 {color:#d32f2f !important;}.nColTC3 {color:#368732 !important;}.nColTC4 {color:#5C5CE0 !important;}.nColTC5 {color:#c3850f !important;}.nColTC6 {color:#E64D61 !important;}.nColTC7 {color:#b35cb3 !important;}.nColTC8 {color:#FAD64C !important;}.nColTC9 {color:#91683C !important;}@media (prefers-color-scheme:dark){.nColC1 {background-color:#5998c5;}.nColC2 {background-color:#d75656;}.nColC3 {background-color:#649b62;}.nColC4 {background-color:#5C5CE0;}.nColC5 {background-color:#d19554;}.nColC6 {background-color:#E64D61;}.nColC7 {background-color:#cd8ccd;}.nColC8 {background-color:#FAD64C;}.nColC9 {background-color:#91683C;}.nColTC1 {color:#5998c5 !important;}.nColTC2 {color:#d75656 !important;}.nColTC3 {color:#649b62 !important;}.nColTC4 {color:#5C5CE0 !important;}.nColTC5 {color:#d19554 !important;}.nColTC6 {color:#E64D61 !important;}.nColTC7 {color:#cd8ccd !important;}.nColTC8 {color:#FAD64C !important;}.nColTC9 {color:#91683C !important;}}.rDunkel {background-color:#000084;}.rHch {background-color:#000084;}h1,h2 {color:#000084;}.rHell {color:#9999ce;}body>nav,body>nav a {color:#9999ce;}.rMn {border-color:#5050a4;}h4 {display:inline;}input[type=submit],.rKnpf,.rBoxWht input[type=submit],.rBoxWht .rKnpf {background-color:#000084;}.rEinOptAn {background-color:#000084;}.vLeg {font-size:0.9em;margin-top:8px;}.vFuss {width:280px;margin:0 15px 15px 0;}.rEin input,.rEin .rEinMnListe {font-size:1.22em;border:solid 1px #d0d0d0;}.rEin .rEinMnListe .rKln {font-size:0.66em;}dl.vNrn {list-style-type:none;margin-right:0;margin-left:0;}dl.vNrn dd,dl.vNrn dt {display:flex;margin:2px 0 2px 0;align-items:baseline;}dl.vNrn .vLng {min-width:23px;}.vAuswahl {display:inline-block;margin-bottom:10px;}.vAuswahl .rKnpf {margin:5px auto;}.vUnd,.vUnd b>u,.vUnd b>i {color:#aaaaaa;}			.vTxtTbl {overflow:auto;white-space:nowrap;}.vTxtTbl td,.vTxtTbl th {padding-right:8px;}.vBImg {max-height:80px;height:17vw;}.vArbBltt {display:inline-block;margin:0 10px 10px 0;}				.vArbBltt img {max-width:300px;height:80px;}				p.vGrnd,span.vGrnd {font-size:2.2em;}p.vStm {font-size:1.55em;margin-bottom:20px;}.vAnz iframe {display:block;margin:0 auto;}.vAnzVideo {min-height:168px;}@media (max-width:578px ){.vAnzVideo {width:300px;margin:0 auto;}}div.vBdEinBx {text-align:center;font-size:1.22em;margin-top:33px;margin-bottom:33px;}table.vBdEinTbl {margin:10px auto 0 auto;}div.vBdEin {width:500px;max-width:calc(100vw - 110px); border:solid 2px rgba(255,255,255,0.6); border-radius:5px;}img.vBdEin {vertical-align:bottom;padding:0 5px;}svg.vIcn {fill:#000084;}.vVidYt {position:relative;padding-bottom:56.25%;height:0;overflow:hidden;margin-bottom:20px;}.vVidYt img {position:absolute;top:0;right:0;z-index:99999;width:40px;height:40px;background-color:rgba(111,111,111,.5); }.vVidYt iframe,.vVidYt object,.vVidYt embed {position:absolute;top:0;left:0;width:100%;height:100%;}select.vCht {-webkit-appearance:none !important;appearance:none !important;-moz-appearance:none !important;background-size:18px;background-repeat:no-repeat;background-position:center;max-width:29px;text-indent:29px;}.rNav .rEin {width:auto;max-width:none;margin:0;}.rNav .rEinMn {margin-top:0;}table.vKpfEinTbl {margin:0 auto;max-width:500px;}table.vKpfEinTbl td.vEinSm {width:1%;}.vEinH {height:32px;vertical-align:middle;}div.vKpfTl {align-content:center;margin-right:10px;}@media (max-width:600px){div.vKpfTl {display:none;}}@media (prefers-color-scheme:dark){.rDunkel {background-color:#00002b;}.rHell {color:#9999aa;}.rHch {background-color:#000000;}h1,h2,.rH1,.rH2 {color:#ffffff;}a h1,a h2 {color:#ffffff;!important;}body>nav,body>nav a {color:#9999aa;}.rMn {border-color:#6f6f86;}input[type=submit],.rKnpf,.rBoxWht input[type=submit],.rBoxWht .rKnpf {background-color:#000000;}.rEinOptAn {background-color:#00003c;}.rEin input,.rEin .rEinMnListe {border-color:#101112;}.vUnd,.vUnd b>u,.vUnd b>i {color:#aaaaaa;}svg.vIcn {fill:#dcdee4;}}</style><style type="text/css">.vSuch {margin-right:-6px;margin-bottom:-6px;}.vSuchIdx {}.vSuchWrtr {display:flex;flex-direction:row;flex-wrap:wrap;align-items:stretch;}.vSuchWrt {max-width:400px;flex-basis:calc(33.3% - 12px); box-sizing:border-box;color:inherit;padding:5px;background-color:#ffffff;margin:0 12px 12px 0;border:solid 1px #d0d0d0;} 	.vSuchMhr {margin:0 4px 4px 0;flex-basis:295px;color:inherit;}@media (max-width:699px){ .vSuchWrt {flex-basis:calc(50% - 6px); }}@media (max-width:399px){ .vSuchWrt {flex-basis:100%;max-width:unset;} }@media (prefers-color-scheme:dark){.vSuchWrt {background-color:#292a2c;border-color:#101112;}}</style>
+<script type="text/javascript" data-cmp-ab="1" src="https://cdn.consentmanager.net/delivery/js/semiautomatic.min.js" data-cmp-cdid="660c4e9b12fc8" data-cmp-host="b.delivery.consentmanager.net" data-cmp-cdn="cdn.consentmanager.net" data-cmp-codesrc="0"></script>
+<script>var uuSymplr,allCookiesSymplr=document.cookie.split(";").map((e=>e.split("="))).reduce(((e,[i,o])=>({...e,[i.trim()]:decodeURIComponent(o)})),{});function createCookieSymplr(e,i){var o=e;if(void 0===(uuSymplr=allCookiesSymplr.uniqueUser)){let e=(Date.now()+window.navigator.userAgent+websiteSymplr).toString();uuSymplr=sha256(e),document.cookie=`uniqueUser=${uuSymplr};max-age=31536000;path=/;SameSite=Strict; Secure`}if(o){var u=allCookiesSymplr.uniqueUserLi;void 0===u&&(u=sha256(i),document.cookie=`uniqueUserLi=${u};max-age=31536000;path=/;SameSite=Strict; Secure`),uuSymplr=u}else document.cookie="uniqueUserLi=; max-age=0"}</script>
+<script defer src="https://cdns.symplr.de/verbformen.de/verbformen.js"></script>
+</head>
+<body>
+<div id="rkopf"></div>
+<nav class="rDunkel"><div>
+<div class="rNav">
+<div class="rRechts" id="rMnImg" onclick="Rahmen.aufzu(['rMn','rMnNav'])"><svg fill="#ffffff" fill-opacity="0.6" height="36" viewBox="0 0 24 24" width="36" xmlns="http://www.w3.org/2000/svg">
+<path class="rAuf" style="display: none;" d="m11.41 15.41 4.59-4.58 4.59 4.58 1.41-1.41-6-6l-6 6 1.41 1.41z"></path>
+<path class="rZu" style="display: inline;" d="m8 4.667h16v2h-16m0 4h16v2h-16m-2e-7 4h16v2h-16z"></path>
+</svg></div>
+<div class="rLinks rLg"><a href="/"><svg xmlns="http://www.w3.org/2000/svg" height="36" width="36" version="1.1" viewBox="0 20 320 320"><path d="M265 41.4L29 72.9 69.6 116l247 22z" fill="#3a3a3a"/><path d="M163 82.7L317 138l-52-96.9z" fill="#2d2d2d"/><path d="M265 41.4l-186 254 138 12 100-169z" fill="#d00"/><path d="M223 158L80 295l137 12z" fill="#c90000"/><path d="M226 94.2l-146 201 144-137z" fill="#d30000"/><path d="M4.65 132l74.6 163 138 12-50-161z" fill="#ffce00"/><path d="M217 308L79 295l-3.7-99z" fill="#ebba00"/><path d="M75.4 197l3.8 98L12 149z" fill="#f5c400"/><path d="M107 63l56 19.7 101-41.3z" fill="#333"/></svg></a></div>
+<div class="rLinks rHell vKpfTl">Netzverb Wörterbuch</div>
+<a class="rRechts" href="/user/login/"><svg fill="#ffffff" fill-opacity="0.6" height="36" viewBox="-5 0 25 25" width="36" xmlns="http://www.w3.org/2000/svg">
+<path d="M12,4A4,4 0 0,1 16,8A4,4 0 0,1 12,12A4,4 0 0,1 8,8A4,4 0 0,1 12,4M12,6A2,2 0 0,0 10,8A2,2 0 0,0 12,10A2,2 0 0,0 14,8A2,2 0 0,0 12,6M12,13C14.67,13 20,14.33 20,17V20H4V17C4,14.33 9.33,13 12,13M12,14.9C9.03,14.9 5.9,16.36 5.9,17V18.1H18.1V17C18.1,16.36 14.97,14.9 12,14.9Z"/>
+</svg>
+</a>
+<form class="vKpfEinFrm" id="vKpfEin" action="/">
+<table class="vKpfEinTbl">
+<tr>
+<td>
+<div class="rEin vKpfEin">
+<div class="bEinLang" id="x6c849Lang" onclick="Rahmen.aufzu('x6c849LangMn')">
+<img loading="lazy" alt="" src="/bedeutungenweb/de.svg" width="14" height="14">
+</div>
+<input autofocus="autofocus" onfocus="this.setSelectionRange(0, this.value.length)" id="x6c849" name="w" type="search" value="mit" placeholder="" title="" autocomplete="off" onkeydown="Eingabe.taste('x6c849','x6c849Liste', event,'x6c849Id')" oninput="Eingabe.an('x6c849','x6c849Liste',Verbformen.suchliste,'x6c849Id')" onblur="Eingabe.aus('x6c849','x6c849Liste')"><br>
+<script type="text/javascript"> window.addEventListener("pageshow", function () { if (Rahmen.breite() > 768) { const el = document.getElementById("x6c849"); if (el) { el.focus(); } } }); </script>
+<input id="x6c849Id" name="id" type="hidden" disabled>
+<div class="rEinMn bEinMnListe" id="x6c849Liste"></div>
+<div class="rZu rNoSelect rEinMn bEinMnLang" id="x6c849LangMn">
+<input id="x6c849Sl" name="sl" type="hidden" value="" disabled>
+<p>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Sl', 'de')" type="button">
+Zuerst Deutsch
+<img loading="lazy" alt="" src="/bedeutungenweb/de.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Sl', 'tr')" type="button">
+Zuerst Übersetzung
+<img loading="lazy" alt="" src="/bedeutungenweb/en.svg" width="14" height="14">
+</button>
+</p>
+<hr class="rInf">
+<input id="x6c849Tl" name="tl" type="hidden" value="en" disabled>
+<p>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'en')" type="button">
+Englisch
+<img loading="lazy" alt="" src="/bedeutungenweb/en.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'ru')" type="button">
+Russisch
+<img loading="lazy" alt="" src="/bedeutungenweb/ru.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'es')" type="button">
+Spanisch
+<img loading="lazy" alt="" src="/bedeutungenweb/es.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'fr')" type="button">
+Französisch
+<img loading="lazy" alt="" src="/bedeutungenweb/fr.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'tr')" type="button">
+Türkisch
+<img loading="lazy" alt="" src="/bedeutungenweb/tr.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'pt')" type="button">
+Portugiesisch
+<img loading="lazy" alt="" src="/bedeutungenweb/pt.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'it')" type="button">
+Italienisch
+<img loading="lazy" alt="" src="/bedeutungenweb/it.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'ro')" type="button">
+Rumänisch
+<img loading="lazy" alt="" src="/bedeutungenweb/ro.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'hu')" type="button">
+Ungarisch
+<img loading="lazy" alt="" src="/bedeutungenweb/hu.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'pl')" type="button">
+Polnisch
+<img loading="lazy" alt="" src="/bedeutungenweb/pl.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'el')" type="button">
+Griechisch
+<img loading="lazy" alt="" src="/bedeutungenweb/el.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'nl')" type="button">
+Niederländisch
+<img loading="lazy" alt="" src="/bedeutungenweb/nl.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'cs')" type="button">
+Tschechisch
+<img loading="lazy" alt="" src="/bedeutungenweb/cs.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'sv')" type="button">
+Schwedisch
+<img loading="lazy" alt="" src="/bedeutungenweb/sv.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'da')" type="button">
+Dänisch
+<img loading="lazy" alt="" src="/bedeutungenweb/da.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'ja')" type="button">
+Japanisch
+<img loading="lazy" alt="" src="/bedeutungenweb/ja.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'ca')" type="button">
+Katalanisch
+<img loading="lazy" alt="" src="/bedeutungenweb/ca.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'fi')" type="button">
+Finnisch
+<img loading="lazy" alt="" src="/bedeutungenweb/fi.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'he')" type="button">
+Hebräisch
+<img loading="lazy" alt="" src="/bedeutungenweb/he.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'no')" type="button">
+Norwegisch
+<img loading="lazy" alt="" src="/bedeutungenweb/no.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'eu')" type="button">
+Baskisch
+<img loading="lazy" alt="" src="/bedeutungenweb/eu.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'sr')" type="button">
+Serbisch
+<img loading="lazy" alt="" src="/bedeutungenweb/sr.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'mk')" type="button">
+Mazedonisch
+<img loading="lazy" alt="" src="/bedeutungenweb/mk.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'sl')" type="button">
+Slowenisch
+<img loading="lazy" alt="" src="/bedeutungenweb/sl.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'sk')" type="button">
+Slowakisch
+<img loading="lazy" alt="" src="/bedeutungenweb/sk.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'bs')" type="button">
+Bosnisch
+<img loading="lazy" alt="" src="/bedeutungenweb/bs.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'hr')" type="button">
+Kroatisch
+<img loading="lazy" alt="" src="/bedeutungenweb/hr.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'uk')" type="button">
+Ukrainisch
+<img loading="lazy" alt="" src="/bedeutungenweb/uk.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'bg')" type="button">
+Bulgarisch
+<img loading="lazy" alt="" src="/bedeutungenweb/bg.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'be')" type="button">
+Belorussisch
+<img loading="lazy" alt="" src="/bedeutungenweb/be.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'ar')" type="button">
+Arabisch
+<img loading="lazy" alt="" src="/bedeutungenweb/ar.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'fa')" type="button">
+Persisch
+<img loading="lazy" alt="" src="/bedeutungenweb/fa.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'ur')" type="button">
+Urdu
+<img loading="lazy" alt="" src="/bedeutungenweb/ur.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'id')" type="button">
+Indonesisch
+<img loading="lazy" alt="" src="/bedeutungenweb/id.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'vi')" type="button">
+Vietnamesisch
+<img loading="lazy" alt="" src="/bedeutungenweb/vi.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'uz')" type="button">
+Usbekisch
+<img loading="lazy" alt="" src="/bedeutungenweb/uz.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'hi')" type="button">
+Hindi
+<img loading="lazy" alt="" src="/bedeutungenweb/hi.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'zh')" type="button">
+Chinesisch
+<img loading="lazy" alt="" src="/bedeutungenweb/zh.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'th')" type="button">
+Thailändisch
+<img loading="lazy" alt="" src="/bedeutungenweb/th.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'ko')" type="button">
+Koreanisch
+<img loading="lazy" alt="" src="/bedeutungenweb/ko.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'az')" type="button">
+Aserbaidschanisch
+<img loading="lazy" alt="" src="/bedeutungenweb/az.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'ka')" type="button">
+Georgisch
+<img loading="lazy" alt="" src="/bedeutungenweb/ka.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'bn')" type="button">
+Bengalisch
+<img loading="lazy" alt="" src="/bedeutungenweb/bn.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'sq')" type="button">
+Albanisch
+<img loading="lazy" alt="" src="/bedeutungenweb/sq.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'mr')" type="button">
+Marathi
+<img loading="lazy" alt="" src="/bedeutungenweb/mr.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'ne')" type="button">
+Nepalesisch
+<img loading="lazy" alt="" src="/bedeutungenweb/ne.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'te')" type="button">
+Telugu
+<img loading="lazy" alt="" src="/bedeutungenweb/te.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'lv')" type="button">
+Lettisch
+<img loading="lazy" alt="" src="/bedeutungenweb/lv.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'ta')" type="button">
+Tamil
+<img loading="lazy" alt="" src="/bedeutungenweb/ta.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'et')" type="button">
+Estnisch
+<img loading="lazy" alt="" src="/bedeutungenweb/et.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'hy')" type="button">
+Armenisch
+<img loading="lazy" alt="" src="/bedeutungenweb/hy.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x6c849Tl', 'ku')" type="button">
+Kurdisch
+<img loading="lazy" alt="" src="/bedeutungenweb/ku.svg" width="14" height="14">
+</button>
+</p>
+</div>
+</div>
+<script>
+document.addEventListener('click', (event) => {
+const exEs = [document.getElementById('x6c849Lang'),document.getElementById('x6c849LangMn')];
+if (exEs.every(element => !element.contains(event.target))) Rahmen.zu('x6c849LangMn')
+});
+</script></td>
+<td class="vEinH vEinSm"><button class="vEinH" type="submit"><svg fill="#ffffff" fill-opacity="0.6" height="32" viewBox="-4 0 24 24" width="32" xmlns="http://www.w3.org/2000/svg">
+<path d="M20 16L14.5 21.5L13.08 20.09L16.17 17H10.5C6.91 17 4 14.09 4 10.5V4H6V10.5C6 13 8 15 10.5 15H16.17L13.09 11.91L14.5 10.5L20 16Z" ></path>
+</svg>
+</button></td>
+<td class="vEinH vEinSm"><button class="vEinH" type="submit" formaction="/suche/"><svg fill="#ffffff" fill-opacity="0.6" height="32" viewBox="-4 0 24 24" width="32" xmlns="http://www.w3.org/2000/svg">
+<path d="M9.5,3A6.5,6.5 0 0,1 16,9.5C16,11.11 15.41,12.59 14.44,13.73L14.71,14H15.5L20.5,19L19,20.5L14,15.5V14.71L13.73,14.44C12.59,15.41 11.11,16 9.5,16A6.5,6.5 0 0,1 3,9.5A6.5,6.5 0 0,1 9.5,3M9.5,5C7,5 5,7 5,9.5C5,12 7,14 9.5,14C12,14 14,12 14,9.5C14,7 12,5 9.5,5Z"></path>
+</svg>
+</button></td>
+</tr>
+</table>
+</form>
+</div>
+<div class="rClear"></div>
+<div class="rZu" id="rMn">
+<div class="rMn">
+<div class="rNoSelect" onClick="Rahmen.aufzu('rMnNav')">
+<span class="rMnKat">Navigation</span>
+<img src="/rahmen/mnwahl.svg" height="8" width="10" >
+</div>
+<div class="rZu" id="rMnNav">
+<div class="rMnOptn">
+<div class="rMnOpt">
+<a href="/sitemap.htm" >
+Sitemap
+</a>
+</div>
+<div class="rMnOpt">
+<a href="/" >
+Flexion
+</a>
+</div>
+<div class="rMnOpt">
+<a href="/konjugation/" >
+Konjugation
+</a>
+</div>
+<div class="rMnOptn">
+<div class="rMnOpt">
+<a href="/konjugation/" >
+Verben
+</a>
+</div>
+<div class="rMnOpt">
+<a href="/konjugation/beispiele/" >
+Beispiele
+</a>
+</div>
+<div class="rMnOpt">
+<a href="/konjugation/arbeitsblaetter-uebungen/" >
+Arbeitsblätter
+</a>
+</div></div>
+<div class="rMnOpt">
+<a href="/deklination/" >
+Deklination
+</a>
+</div>
+<div class="rMnOptn">
+<div class="rMnOpt">
+<a href="/deklination/substantive/" >
+Substantive
+</a>
+</div>
+<div class="rMnOpt">
+<a href="/deklination/adjektive/" >
+Adjektive
+</a>
+</div>
+<div class="rMnOpt">
+<a href="/deklination/pronomen/" >
+Pronomen
+</a>
+</div>
+<div class="rMnOpt">
+<a href="/deklination/artikel/" >
+Artikel
+</a>
+</div></div>
+<div class="rMnOpt">
+<a href="/suche/" >
+Suche
+</a>
+</div>
+<div class="rMnOpt">
+<a href="/mitmachen.htm" >
+Mitmachen
+</a>
+</div></div>
+</div>
+</div>
+<div class="rMn">
+<div class="rNoSelect" onClick="Rahmen.aufzu('vLng')">
+<span class="rMnKat">Sprache</span>: Deutsch
+<img src="/rahmen/mnwahl.svg" height="8" width="10" >
+</div>
+<div class="rZu" id="vLng">
+<div class="rMnOpt">
+<img src="/rahmen/mnan.svg" height="18" width="18">&nbsp;	
+<a href="https://www.verbformen.de/?w=mit" rel="nofollow">
+Deutsch
+</a>
+</div>
+<div class="rMnOpt">
+<img src="/rahmen/mnaus.svg" height="18" width="18">&nbsp;
+<a href="https://www.verbformen.com/?w=mit" rel="nofollow">
+English
+</a>
+</div>
+<div class="rMnOpt">
+<img src="/rahmen/mnaus.svg" height="18" width="18">&nbsp;
+<a href="https://www.verbformen.ru/?w=mit" rel="nofollow">
+Русский
+</a>
+</div>
+<div class="rMnOpt">
+<img src="/rahmen/mnaus.svg" height="18" width="18">&nbsp;
+<a href="https://www.verbformen.pt/?w=mit" rel="nofollow">
+Português
+</a>
+</div>
+<div class="rMnOpt">
+<img src="/rahmen/mnaus.svg" height="18" width="18">&nbsp;
+<a href="https://www.verbformen.es/?w=mit" rel="nofollow">
+Español
+</a>
+</div>
+<div class="rMnOpt">
+<img src="/rahmen/mnaus.svg" height="18" width="18">&nbsp;
+<a href="https://ar.verbformen.net/?w=mit" rel="nofollow">
+العربية
+</a>
+</div>
+<div class="rMnOpt">
+<img src="/rahmen/mnaus.svg" height="18" width="18">&nbsp;
+<a href="https://cs.verbformen.net/?w=mit" rel="nofollow">
+Čeština
+</a>
+</div>
+<div class="rMnOpt">
+<img src="/rahmen/mnaus.svg" height="18" width="18">&nbsp;
+<a href="https://fa.verbformen.net/?w=mit" rel="nofollow">
+فارسی
+</a>
+</div>
+<div class="rMnOpt">
+<img src="/rahmen/mnaus.svg" height="18" width="18">&nbsp;
+<a href="https://fr.verbformen.net/?w=mit" rel="nofollow">
+Français
+</a>
+</div>
+<div class="rMnOpt">
+<img src="/rahmen/mnaus.svg" height="18" width="18">&nbsp;
+<a href="https://id.verbformen.net/?w=mit" rel="nofollow">
+Bahasa Indonesia
+</a>
+</div>
+<div class="rMnOpt">
+<img src="/rahmen/mnaus.svg" height="18" width="18">&nbsp;
+<a href="https://tr.verbformen.net/?w=mit" rel="nofollow">
+Türkçe
+</a>
+</div>
+<div class="rMnOpt">
+<img src="/rahmen/mnaus.svg" height="18" width="18">&nbsp;
+<a href="https://www.verbformen.net/?w=mit" rel="nofollow">
+Українська
+</a>
+</div>
+<div class="rMnOpt">
+<img src="/rahmen/mnaus.svg" height="18" width="18">&nbsp;
+<a href="https://pl.verbformen.net/?w=mit" rel="nofollow">
+Polski
+</a>
+</div>
+<div class="rMnOpt">
+<img src="/rahmen/mnaus.svg" height="18" width="18">&nbsp;
+<a href="https://it.verbformen.net/?w=mit" rel="nofollow">
+Italiano
+</a>
+</div>
+<div class="rMnOpt">
+<img src="/rahmen/mnaus.svg" height="18" width="18">&nbsp;
+<a href="https://hu.verbformen.net/?w=mit" rel="nofollow">
+Magyar
+</a>
+</div>
+<div class="rMnOpt">
+<img src="/rahmen/mnaus.svg" height="18" width="18">&nbsp;
+<a href="https://nl.verbformen.net/?w=mit" rel="nofollow">
+Nederlands
+</a>
+</div>
+<div class="rMnOpt">
+<img src="/rahmen/mnaus.svg" height="18" width="18">&nbsp;
+<a href="https://sk.verbformen.net/?w=mit" rel="nofollow">
+Slovenčina
+</a>
+</div>
+<div class="rMnOpt">
+<img src="/rahmen/mnaus.svg" height="18" width="18">&nbsp;
+<a href="https://hi.verbformen.net/?w=mit" rel="nofollow">
+हिंदी
+</a>
+</div>
+<div class="rMnOpt">
+<img src="/rahmen/mnaus.svg" height="18" width="18">&nbsp;
+<a href="https://zh.verbformen.net/?w=mit" rel="nofollow">
+中文
+</a>
+</div>
+<div class="rMnOpt">
+<img src="/rahmen/mnaus.svg" height="18" width="18">&nbsp;
+<a href="https://ja.verbformen.net/?w=mit" rel="nofollow">
+日本語
+</a>
+</div>
+<div class="rMnOpt">
+<img src="/rahmen/mnaus.svg" height="18" width="18">&nbsp;
+<a href="https://bn.verbformen.net/?w=mit" rel="nofollow">
+বাংলা
+</a>
+</div>
+<div class="rMnOpt">
+<img src="/rahmen/mnaus.svg" height="18" width="18">&nbsp;
+<a href="https://uz.verbformen.net/?w=mit" rel="nofollow">
+O‘zbek tili
+</a>
+</div>
+</div>
+</div><div>
+<div class="rMn">
+<div>
+<span class="rMnKat">Teilen: </span>
+<a rel="nofollow" href="https://www.facebook.com/sharer/sharer.php?u=https%3A%2F%2Fwww.verbformen.de%2F%3Fw%3Dmit" title="Teilen"><svg fill="#ffffff" fill-opacity="0.6" height="26" viewBox="0 0 24 24" width="26" xmlns="http://www.w3.org/2000/svg">
+<path d="M17,2V2H17V6H15C14.31,6 14,6.81 14,7.5V10H14L17,10V14H14V22H10V14H7V10H10V6A4,4 0 0,1 14,2H17Z"></path>
+</svg></a>
+<a rel="nofollow" href="https://twitter.com/home?status=https%3A%2F%2Fwww.verbformen.de%2F%3Fw%3Dmit" title="Teilen"><svg fill="#ffffff" fill-opacity="0.6" height="26" viewBox="0 0 24 24" width="26" xmlns="http://www.w3.org/2000/svg">
+<path d="M22.46,6C21.69,6.35 20.86,6.58 20,6.69C20.88,6.16 21.56,5.32 21.88,4.31C21.05,4.81 20.13,5.16 19.16,5.36C18.37,4.5 17.26,4 16,4C13.65,4 11.73,5.92 11.73,8.29C11.73,8.63 11.77,8.96 11.84,9.27C8.28,9.09 5.11,7.38 3,4.79C2.63,5.42 2.42,6.16 2.42,6.94C2.42,8.43 3.17,9.75 4.33,10.5C3.62,10.5 2.96,10.3 2.38,10C2.38,10 2.38,10 2.38,10.03C2.38,12.11 3.86,13.85 5.82,14.24C5.46,14.34 5.08,14.39 4.69,14.39C4.42,14.39 4.15,14.36 3.89,14.31C4.43,16 6,17.26 7.89,17.29C6.43,18.45 4.58,19.13 2.56,19.13C2.22,19.13 1.88,19.11 1.54,19.07C3.44,20.29 5.7,21 8.12,21C16,21 20.33,14.46 20.33,8.79C20.33,8.6 20.33,8.42 20.32,8.23C21.16,7.63 21.88,6.87 22.46,6Z"></path>
+</svg></a>
+</div>
+</div>
+</div>
+<div class="rMnRnd rClear"></div>
+</div>
+</div></nav>
+<div class="rKpfPlz">&nbsp;</div>
+<aside class="rHw rHwObn" id="appsmartbanner3">
+<div>
+<div class="rRechts" onclick="Hinweis.weg('appsmartbanner3')">
+<svg height="22" viewBox="0 0 24 24" width="22" xmlns="http://www.w3.org/2000/svg">
+<path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"></path>
+</svg>
+</div>
+<table align="center"><tr><td>
+<a href="https://apps.apple.com/app/apple-store/id1638334347?pt=121451427&ct=Web%20Page%20Banner&mt=8" target="appstore">
+<img src="/bilder/apps/german_dictionary_app_mock.png" alt="Deutsches Wörterbuch App" width="87" height="87" style="padding: 0 15px 0 0;" class="rFade rDuration1s"/>
+</a>
+</td><td align="center"><a href="https://apps.apple.com/app/apple-store/id1638334347?pt=121451427&ct=Web%20Page%20Banner&mt=8" target="appstore">
+<span class="rH3 rAkz">Unsere Webseite als App.</span><br>
+<span class="rH3">Bequem für unterwegs.</span><br>
+<span class="rKln rInf">Im App Store –</span>
+<span style="color: #FD9401;">★★★★★</span>
+<span class="rKln rInf">4.9</span><br>
+<span style="font-size: 1.3em; color: #1C88F1;">Jetzt herunterladen</span>
+</a>
+</td></tr></table>
+</div>
+</aside>
+<article class=""><div>
+<nav class="rKrml rKln rInf">
+<a href="https://www.verbformen.de/"><span>Flexion</span></a>
+› 	
+<a href="https://www.verbformen.de/?w=mit"><span>'mit'</span></a>
+</nav><!-- Paging -->
+<a class="rKnpf rRechts rNoSelect" href="/suche/?w=mit&p=2"><svg fill="" class="kIcn" height="10" viewBox="6 6 12 12" width="10" xmlns="http://www.w3.org/2000/svg">
+<path d="M8.59,16.58L13.17,12L8.59,7.41L10,6L16,12L10,18L8.59,16.58Z"></path>
+</svg>
+</a>
+<a class="rKnpf rLinks" href="/?w=">
+<svg fill="" class="kIcn" height="10" viewBox="0 1 15 15" width="10" xmlns="http://www.w3.org/2000/svg">
+<path d="m15 7.6v1.95h-11.4l5.25 5.05-1.35 1.4-7.5-7.5 7.5-7.5 1.35 1.35-5.25 5.25z"></path>
+</svg></a>
+<form action="/suche/">
+<input type="hidden" name="w" value="mit"><select name="t" onchange="this.form.submit()" class="rKnpf rLinks" required>
+<option value="" selected disabled hidden>
+Wort</option>
+<option value="verb" >
+Verb</option>
+<option value="substantiv" >
+Substantiv</option>
+<option value="adjektiv" >
+Adjektiv</option>
+<option value="adverb" >
+Adverb</option>
+<option value="artikel" >
+Artikel</option>
+<option value="pronomen" >
+Pronomen</option>
+<option value="praeposition" >
+Präposition</option>
+<option value="konjunktion" >
+Konjunktion</option>
+<option value="partikel" >
+Partikel</option>
+</select>
+</form>
+<div id="vFltAufZuImg" class="rKnpf rNoSelect rLinks" onclick="Rahmen.aufzu('vFltAufZu')">
+<span class="rInf"><svg fill="" height="15" viewBox="4 0 16 23" width="14" xmlns="http://www.w3.org/2000/svg">
+<path style="display: none;" class="rAuf" d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"></path>
+<path style="display: inline;" class="rZu" d="M21 8H3V6H21V8M13.81 16H10V18H13.09C13.21 17.28 13.46 16.61 13.81 16M18 11H6V13H18V11M18 15V18H15V20H18V23H20V20H23V18H20V15H18Z"></path>
+</svg>
+</span>
+</div>
+<div id="vFltAufZu" class="rZu">
+<form action="/suche/">
+<input type="hidden" name="w" value="mit"><select name="l" onchange="this.form.submit()" class="rKnpf rLinks" required>
+<option value="" selected disabled hidden>
+Stufe</option>
+<option value="11" >
+A1</option>
+<option value="12" >
+A2</option>
+<option value="21" >
+B1</option>
+<option value="22" >
+B2</option>
+<option value="31" >
+C1</option>
+<option value="32" >
+C2</option>
+</select>
+</form><form action="/suche/">
+<input type="hidden" name="w" value="mit"><select name="i" onchange="this.form.submit()" class="rKnpf rLinks" required>
+<option value="" selected disabled hidden>
+Flexion</option>
+<option value="false" >
+Regelmaessig</option>
+<option value="true" >
+Unregelmaessig</option>
+</select>
+</form></div>
+<!-- Überschrift -->		
+<h1 class="rClear">Deutsche Wörter mit „mit“</h1>
+<div class="bTrf rClear">
+<hr class="rDpl">
+<p class="rKln rInf r1Zeile rU3px rO0px" onclick="Rahmen.a(event, 'https://www.verben.de/adverbien/mit.htm')">
+<span class="bZrt" title="Wortschatz Zertifikat A1">
+A1</span> ·
+<span title="Adverb">Adverb</span></p>
+<div id="vStckInfadverb:mit">
+<div id="vTrfKrzadverb:mit"><!-- Hauptformen -->
+<div class="rU6px rO0px" style="display: flex; align-items: center;" onclick="Rahmen.a(event, 'https://www.verben.de/adverbien/mit.htm')">
+<div><span style="font-size: 1.44em;"><q><mark>mit</mark></q></span><span style="font-size: 1.11em;"></span></div>
+<a class="rKnpf rNoSelect rKnUnt rKnObn" style="margin-left: 12px;" href="https://www.verben.de/adverbien/mit.htm">
+<svg fill="" class="kIcn" height="10" viewBox="0 1 15 15" width="10" xmlns="http://www.w3.org/2000/svg">
+<path d="m2.83 14.4-1.38-1.38 8.06-8.06-7.28 0.141-0.0354-1.94h10.6v10.6l-1.94-0.0354 0.0354-7.39z"></path>
+</svg></a>
+</div><!-- Stammformen -->
+<p class="r1Zeile rU3px rO0px" style="font-size: 1.11em;" onclick="Rahmen.a(event, 'https://www.verben.de/adverbien/mit.htm')">
+</p>
+<p class="r1Zeile rU6px rO0px" style="font-size: 1.11em;" onclick="Rahmen.aufzu(['vTrfLngadverb:mit']); Rahmen.aufzu('vTrfKrzadverb:mit')">
+<span  lang="en" >
+<img style="padding-bottom: 4px; vertical-align: middle" loading="lazy" alt="Englisch"
+src="/bedeutungenweb/en.svg" width="16" height="16">&nbsp;with, <span class="rInf">among</span>, <span class="rInf">together</span>, <span class="rInf">with others</span></span></span>
+</p>
+<p class="r1Zeile rInf rU3px rO0px" onclick="Rahmen.a(event, 'https://www.verben.de/adverbien/mit.htm')">
+/mɪt/
+</p>
+<p class="rNt r1Zeile rInf rU3px rO0px" onclick="Rahmen.a(event, 'https://www.verben.de/adverbien/mit.htm')">
+<i>wie andere, zusammen mit anderen; neben anderen, als eines/einige von mehreren</i>
+</p>
+</div>
+</div>
+</div>
+<div class="bTrf rClear">
+<hr class="rDpl">
+<p class="rKln rInf r1Zeile rU3px rO0px" onclick="Rahmen.a(event, 'https://www.verben.de/praepositionen/mit.htm')">
+<span class="bZrt" title="Wortschatz Zertifikat A1">
+A1</span> ·
+<span title="Präposition">Präposition</span> · <span title="Dativ">Dativ</span></p>
+<div id="vStckInfpraeposition:mit">
+<div id="vTrfKrzpraeposition:mit"><!-- Hauptformen -->
+<div class="rU6px rO0px" style="display: flex; align-items: center;" onclick="Rahmen.a(event, 'https://www.verben.de/praepositionen/mit.htm')">
+<div><span style="font-size: 1.44em;"><q><mark>mit</mark></q></span><span style="font-size: 1.11em;"></span></div>
+<a class="rKnpf rNoSelect rKnUnt rKnObn" style="margin-left: 12px;" href="https://www.verben.de/praepositionen/mit.htm">
+<svg fill="" class="kIcn" height="10" viewBox="0 1 15 15" width="10" xmlns="http://www.w3.org/2000/svg">
+<path d="m2.83 14.4-1.38-1.38 8.06-8.06-7.28 0.141-0.0354-1.94h10.6v10.6l-1.94-0.0354 0.0354-7.39z"></path>
+</svg></a>
+</div><!-- Stammformen -->
+<p class="r1Zeile rU3px rO0px" style="font-size: 1.11em;" onclick="Rahmen.a(event, 'https://www.verben.de/praepositionen/mit.htm')">
+</p>
+<p class="r1Zeile rU6px rO0px" style="font-size: 1.11em;" onclick="Rahmen.aufzu(['vTrfLngpraeposition:mit']); Rahmen.aufzu('vTrfKrzpraeposition:mit')">
+<span  lang="en" >
+<img style="padding-bottom: 4px; vertical-align: middle" loading="lazy" alt="Englisch"
+src="/bedeutungenweb/en.svg" width="16" height="16">&nbsp;with, against, together, by, by means of</span></span>
+</p>
+<p class="r1Zeile rInf rU3px rO0px" onclick="Rahmen.a(event, 'https://www.verben.de/praepositionen/mit.htm')">
+/mɪt/
+</p>
+<p class="rNt r1Zeile rInf rU3px rO0px" onclick="Rahmen.a(event, 'https://www.verben.de/praepositionen/mit.htm')">
+<i>etwas oder jemandem angeschlossen oder damit als gewisse Einheit verbunden; unter Ausnutzung, durch die Hilfe von etwas; inklusive, durch, gegen, neben</i>
+</p>
+<p class="rNt rInf wKnFmt r1Zeile rU3px rO0px">
+» Wir sind da <span >mit</span>
+der Seilbahn hochgefahren. <img loading="lazy" alt="Englisch"
+src="/bedeutungenweb/en.svg" width="13" height="13">&nbsp;We went up by cable car.</p>
+</div>
+</div>
+</div>
+<hr class="rDpl rClear">
+<div class="aAnz aArtLng vAnz rClear" style="margin: 0 auto 14px auto;">
+<div id="verbformen.de_lb_2">
+<div class="aArtLng rDelay2s rFade rDuration1s"><div style="background-image: url('/bilder/apps/german_dictionary_ad_1.png'); background-repeat: no-repeat; background-position: left center; display: flex; justify-content: end; align-items: end; background-size: auto 100%; max-width: 450px; text-align: right; margin: 0 auto; vertical-align: center; min-height: inherit;" onclick="window.open('https://netzverb-dictionary.app','appstore')">
+<span style="margin-right: 20px; margin-bottom: 15px; text-shadow: 1px 1px #00000080;">
+<span class="rH1" style="color: #FF4081">Unsere Webseite als App.</span><br>
+<span class="rH1" style="color: #aaaaaa">Bequem für unterwegs.</span><br>
+<span class="rH3" style="color: #FD9401;">★★★★★</span>
+<span class="rH3 rKln rInf">4.9</span><br>
+<a href="https://apps.apple.com/app/apple-store/id1638334347?pt=121451427&ct=Web%20Page%20Ad%20Blocker&mt=8" target="appstore"  onclick="event.stopPropagation()" ><img src="/bilder/apps/app-store-badge.png" height="44"></a>
+<a href="https://play.google.com/store/apps/details?id=de.verbformen.app&referrer=utm_source%3DWebPageAdBlocker%26utm_medium%3Dbanner%26utm_campaign%3Dadblocker" target="appstore" onclick="event.stopPropagation()" ><img src="/bilder/apps/google-play-badge.png" height="44"></a>
+<span>
+</div>
+</div>
+</div>  
+</div>
+<div class="rCntr" style="margin: 8px 0 8px 0;"><a href="/mitmachen.htm" class="rInf rKln">Werbung ausblenden</a></div><div class="bTrf rClear">
+<div id="vTrfLngverb:mitagierenImg" class="rInf rKnpf rRechts rClrRechts rNoSelect rU0px" onclick="Rahmen.aufzu(['vTrfLngverb:mitagieren']); Rahmen.aufzu('vTrfKrzverb:mitagieren');">
+<svg fill="" class="kIcn" height="12" viewBox="6 4 12 16" width="10" xmlns="http://www.w3.org/2000/svg">
+<path style="display: none;" class="rAuf" d="M15.41,16.58L10.83,12L15.41,7.41L14,6L8,12L14,18L15.41,16.58Z"></path>
+<path style="display: inline;" class="rZu" d="M12,16A2,2 0 0,1 14,18A2,2 0 0,1 12,20A2,2 0 0,1 10,18A2,2 0 0,1 12,16M12,10A2,2 0 0,1 14,12A2,2 0 0,1 12,14A2,2 0 0,1 10,12A2,2 0 0,1 12,10M12,4A2,2 0 0,1 14,6A2,2 0 0,1 12,8A2,2 0 0,1 10,6A2,2 0 0,1 12,4Z"></path>
+</svg></div>
+<hr class="rDpl
