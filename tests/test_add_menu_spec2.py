@@ -78,9 +78,11 @@ class AddMenuRoutingTest(unittest.TestCase):
         self.assertEqual(state, AW.ADD_INPUT)
         self.assertTrue(upd.message.replies)  # AI prompt sent
 
-    def test_vf_add_stub_stays_in_menu(self):
+    def test_vf_add_enters_input(self):
+        # add_vf now prompts for the word list (spec #2 3d), not a stub.
+        from bot.app_config import VF_ADD_INPUT
         state, _ = self._route("add_vf")
-        self.assertEqual(state, AW.ADD_MENU)
+        self.assertEqual(state, VF_ADD_INPUT)
 
     def test_vf_recheck_opens_vf_menu(self):
         # VF recheck relocates the verbformen verify menu here (spec #2 2b):

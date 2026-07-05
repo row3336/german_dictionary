@@ -36,6 +36,7 @@ from .app_config import (
     ADD_INPUT,
     ADD_MENU,
     ADD_PRECHECK,
+    VF_ADD_INPUT,
     ADD_PRECHECK_EDIT,
     ALGO_SETTINGS_CONFIRM,
     ALGO_SETTINGS_EDIT,
@@ -164,6 +165,7 @@ from .handlers.settings import (
 )
 from .handlers.feedback import feedback_input
 from .handlers.review import owner_review_menu_choice
+from .verb_forms_parsing.add_flow import vf_add_callback, vf_add_document, vf_add_input
 from .handlers.broadcast import (
     BROADCAST_MENU_CALLBACK,
     broadcast_confirm,
@@ -482,6 +484,10 @@ def main():
             DUMP_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, dump_menu_choice)],
             AUTO_DUMP_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, auto_dump_choice)],
             ADD_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_menu_choice)],
+            VF_ADD_INPUT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, vf_add_input),
+                MessageHandler(filters.Document.ALL, vf_add_document),
+            ],
             ADD_INPUT: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, add_input),
                 MessageHandler(filters.Document.ALL, add_document),
@@ -522,6 +528,8 @@ def main():
     app.add_handler(CallbackQueryHandler(stat_toggle_callback, pattern=r"^stat:"))
     # Global handler for the owner inbox — inline reports/feedback navigation (spec #5).
     app.add_handler(CallbackQueryHandler(owner_inbox_callback, pattern=r"^inb:"))
+    # spec #2: VF-add job controls (pause/resume/stop/details) on the progress msg.
+    app.add_handler(CallbackQueryHandler(vf_add_callback, pattern=r"^vfadd:"))
     # Telegram Stars donation (P6.4): pre-checkout approval + post-payment thanks.
     app.add_handler(PreCheckoutQueryHandler(precheckout_callback))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))

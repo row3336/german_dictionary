@@ -67,6 +67,7 @@ from ..text_utils import russian_variants as _russian_variants
 from ..text_utils import try_parse_json as _try_parse_json
 from ..text_utils import type_label as _type_label
 from ..ui.formatting import _entry_translation, _format_word_card
+from ..verb_forms_parsing.add_flow import vf_add_prompt
 from ..verb_forms_parsing.handlers import _send_vf_menu
 from ..ui.keyboards import (
     _add_input_markup,
@@ -914,12 +915,7 @@ async def add_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await _send_vf_menu(update)
 
     if action == "add_vf":
-        await _reply_text_with_retry(
-            update.message,
-            "🌐 VF add — coming soon.",
-            reply_markup=_add_menu_markup(user_id),
-        )
-        return ADD_MENU
+        return await vf_add_prompt(update, context)
 
     await _reply_text_with_retry(
         update.message,
