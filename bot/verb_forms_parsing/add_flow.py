@@ -21,7 +21,7 @@ from ..common.navigation import _action_key_from_text, _back_to_main_menu, _repl
 from ..common.settings import _current_topic_value
 from ..ui.keyboards import _add_menu_markup
 from .job_runner import DELAY_RANGE, VF_ADD_TASKS, run_job
-from .job_store import create_job, get_job, job_counts, list_items, set_job_status
+from .job_store import active_jobs, create_job, get_job, job_counts, list_items, set_job_status
 
 # Rough per-word estimates, shown with a "≈" so no false precision. Average of a
 # single summary fetch and a verb's summary+conjugation, plus the slow-drip delay.
@@ -157,6 +157,31 @@ async def start_vf_add_job(update: Update, context: ContextTypes.DEFAULT_TYPE, w
     on_progress = await _make_progress_cb(context.bot, chat_id, job_id)
     VF_ADD_TASKS[job_id] = asyncio.create_task(run_job(db_path, job_id, on_progress=on_progress))
     return MENU
+
+
+async def resume_jobs(app):
+    """After a restart, relaunch every running/paused job from its pending items.
+
+    Wired as the Application's post_init. The in-memory progress message id is lost
+    on restart, so we post a fresh progress message and continue from there; the
+    persisted item results mean no already-parsed word is re-fetched.
+    """
+    db_path = get_db_path()
+    for job in active_jobs(db_path):
+        jid = job["id"]
+        if jid in VF_ADD_TASKS:
+            continue
+        chat_id = job["chat_id"]
+        text, kb = _render(db_path, jid)
+        message_id = None
+        try:
+            msg = await app.bot.send_message(chat_id, f"↻ Resumed after restart.\n{text}", reply_markup=kb)
+            message_id = msg.message_id
+        except Exception:
+            pass
+        VF_ADD_UI[jid] = {"chat_id": chat_id, "message_id": message_id, "details": False}
+        on_progress = await _make_progress_cb(app.bot, chat_id, jid)
+        VF_ADD_TASKS[jid] = asyncio.create_task(run_job(db_path, jid, on_progress=on_progress))
 
 
 async def vf_add_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):

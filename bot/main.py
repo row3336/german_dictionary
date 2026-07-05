@@ -165,7 +165,12 @@ from .handlers.settings import (
 )
 from .handlers.feedback import feedback_input
 from .handlers.review import owner_review_menu_choice
-from .verb_forms_parsing.add_flow import vf_add_callback, vf_add_document, vf_add_input
+from .verb_forms_parsing.add_flow import (
+    resume_jobs,
+    vf_add_callback,
+    vf_add_document,
+    vf_add_input,
+)
 from .handlers.broadcast import (
     BROADCAST_MENU_CALLBACK,
     broadcast_confirm,
@@ -425,6 +430,7 @@ def main():
         .write_timeout(20)
         .pool_timeout(10)
         .connection_pool_size(8)
+        .post_init(resume_jobs)  # spec #2: resume any in-flight VF-add job after a restart
         .build()
     )
     app.add_error_handler(_on_error)
