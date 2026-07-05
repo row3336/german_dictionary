@@ -27,7 +27,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-from bot.common.conjugation import PRONOUNS, parse_conjugation
+from bot.common.conjugation import PRONOUNS, parse_conjugation, takes_praeteritum
 
 
 def block_to_text(block):
@@ -73,6 +73,10 @@ def build_updates(doc):
 
         if not ok:
             continue
+        # spec #3 invariant: Präteritum only for the closed list — drop it for any
+        # other verb even if the fill file carries one (mirrors set_word_conjugation).
+        if praeteritum and not takes_praeteritum(inf):
+            praeteritum = ""
         if not praesens and not praeteritum:
             empty += 1
             continue

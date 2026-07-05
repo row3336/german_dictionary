@@ -191,6 +191,26 @@ class SetConjugationTest(_DbCase):
         conn.close()
         self.assertEqual(praesens, "")
 
+    def test_praeteritum_only_for_closed_list(self):
+        # spec #3: Präteritum is stored only for the closed list. A non-closed verb
+        # gets its Präteritum force-blanked (Präsens is still kept); a closed-list
+        # verb keeps it. (GOOD is a valid canonical block; content is irrelevant here.)
+        self._add_verb("w1", "gehen")
+        set_word_conjugation(self.db, "w1", GOOD, GOOD)
+        self._add_verb("w2", "können")
+        set_word_conjugation(self.db, "w2", GOOD, GOOD)
+        conn = sqlite3.connect(self.db)
+        praes_open, praet_open = conn.execute(
+            "SELECT conjugation_praesens, conjugation_praeteritum FROM words WHERE id='w1'"
+        ).fetchone()
+        praet_closed = conn.execute(
+            "SELECT conjugation_praeteritum FROM words WHERE id='w2'"
+        ).fetchone()[0]
+        conn.close()
+        self.assertEqual(praet_open, "")     # gehen: Präteritum dropped
+        self.assertEqual(praes_open, GOOD)   # gehen: Präsens still stored
+        self.assertEqual(praet_closed, GOOD)  # können: Präteritum kept
+
 
 class CarouselSelectionTest(_DbCase):
     def test_eligibility_gates(self):
