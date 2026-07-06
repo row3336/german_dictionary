@@ -231,7 +231,7 @@ async def _start_clarify_fields(update: Update, context: ContextTypes.DEFAULT_TY
     )
     await _reply_text_with_retry(
         update.message,
-        "Choose edit action:",
+        t(_user_interface_lang(update.effective_user.id), "clarify_choose_action"),
         reply_markup=_clarify_screen(context, update.effective_user.id),
     )
     return ADD_EDIT
@@ -257,7 +257,7 @@ async def open_clarify_from_report(update: Update, context: ContextTypes.DEFAULT
         f"```text\n{_format_word_card(entry, 'Word from report:', user_id=user_id)}\n```",
         parse_mode="Markdown",
     )
-    await msg.reply_text("Choose edit action:", reply_markup=_clarify_screen(context, user_id))
+    await msg.reply_text(t(_user_interface_lang(user_id), "clarify_choose_action"), reply_markup=_clarify_screen(context, user_id))
     return ADD_EDIT
 
 
@@ -350,7 +350,7 @@ async def _resume_after_clarify(update: Update, context: ContextTypes.DEFAULT_TY
         context.user_data["edit_stage"] = "pick_field"
         await _reply_text_with_retry(
             update.message,
-            "Choose edit action:",
+            t(_user_interface_lang(update.effective_user.id), "clarify_choose_action"),
             reply_markup=_clarify_screen(context, update.effective_user.id),
         )
         return ADD_EDIT
@@ -382,7 +382,7 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
         entry_key = "quiz_edit_entry"
     entry = context.user_data.get(entry_key)
     if not entry:
-        await update.message.reply_text("No entry to edit.", reply_markup=_main_menu_markup(update.effective_user.id))
+        await update.message.reply_text(t(_user_interface_lang(update.effective_user.id), "clarify_no_entry"), reply_markup=_main_menu_markup(update.effective_user.id))
         return MENU
 
     stage = context.user_data.get("edit_stage", "pick_field")
@@ -393,7 +393,7 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
         if _action_key_from_text(text, update.effective_user.id) in ("back", "stop"):
             context.user_data["edit_stage"] = "pick_field"
             await _reply_text_with_retry(
-                update.message, "Choose edit action:",
+                update.message, t(_user_interface_lang(update.effective_user.id), "clarify_choose_action"),
                 reply_markup=_clarify_screen(context, update.effective_user.id),
             )
             return ADD_EDIT
@@ -416,7 +416,7 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
         if text.strip().lower() != "yes":
             context.user_data["edit_stage"] = "pick_field"
             await _reply_text_with_retry(
-                update.message, "Choose edit action:",
+                update.message, t(_user_interface_lang(update.effective_user.id), "clarify_choose_action"),
                 reply_markup=_clarify_screen(context, update.effective_user.id),
             )
             return ADD_EDIT
@@ -563,7 +563,7 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
             )
         else:
             await update.message.reply_text(
-                f"Enter new value for {field}:",
+                t(_user_interface_lang(update.effective_user.id), "clarify_enter_value").format(field=field),
                 reply_markup=ReplyKeyboardMarkup([[t(_user_interface_lang(update.effective_user.id), "back"), t(_user_interface_lang(update.effective_user.id), "stop")]], resize_keyboard=True),
             )
         return ADD_EDIT

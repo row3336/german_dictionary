@@ -88,8 +88,13 @@ class QuizI18nTest(unittest.TestCase):
                 "session_words_count", "no_due_words", "no_due_pl_sg", "no_due_nouns",
                 "input_err_fixed", "input_err_nothing", "added_to_learning", "nothing_to_send",
                 "answer_correct", "answer_wrong", "topic_filter_banner",
+                "clarify_choose_action", "clarify_no_entry", "clarify_enter_value",
             ):
                 self.assertIn(key, TEXTS[lang], f"{lang}/{key}")
+        # clarify_enter_value carries a {field} placeholder in every language
+        for lang in ("en", "ru", "uk"):
+            self.assertIn("{field}", TEXTS[lang]["clarify_enter_value"])
+        self.assertEqual(TEXTS["ru"]["clarify_choose_action"], "Выберите действие:")
         self.assertEqual(
             TEXTS["ru"]["session_words_count"],
             "слов за сессию = {count} (верных: {correct}, неверных: {wrong})",
