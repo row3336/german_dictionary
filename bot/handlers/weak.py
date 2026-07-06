@@ -393,7 +393,7 @@ async def _send_article_weak_prompt(update: Update, context: ContextTypes.DEFAUL
             await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
         await _reply_text_with_retry(
             update.message,
-            "No weak article words.",
+            t(_user_interface_lang(update.effective_user.id), "no_weak_form_words").format(form="artikel"),
             reply_markup=ReplyKeyboardMarkup(_ru_de_menu_keys(update.effective_user.id), resize_keyboard=True),
         )
         return QUIZ_RU_DE_MENU
@@ -421,7 +421,7 @@ async def _send_plural_weak_prompt(update: Update, context: ContextTypes.DEFAULT
             await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
         await _reply_text_with_retry(
             update.message,
-            "No weak plural words.",
+            t(_user_interface_lang(update.effective_user.id), "no_weak_form_words").format(form="plural"),
             reply_markup=ReplyKeyboardMarkup(_ru_de_menu_keys(update.effective_user.id), resize_keyboard=True),
         )
         return QUIZ_RU_DE_MENU
@@ -451,7 +451,7 @@ async def _send_prateritum_weak_prompt(update: Update, context: ContextTypes.DEF
         lang = _user_interface_lang(update.effective_user.id)
         await _reply_text_with_retry(
             update.message,
-            "No weak prateritum words.",
+            t(_user_interface_lang(update.effective_user.id), "no_weak_form_words").format(form="präteritum"),
             reply_markup=ReplyKeyboardMarkup([[t(lang, "weak_prateritum_mode"), t(lang, "weak_partizip2_mode")], [t(lang, "back")]], resize_keyboard=True),
         )
         return QUIZ_VERB_WEAK_MENU
@@ -480,7 +480,7 @@ async def _send_partizip2_weak_prompt(update: Update, context: ContextTypes.DEFA
         lang = _user_interface_lang(update.effective_user.id)
         await _reply_text_with_retry(
             update.message,
-            "No weak partizip2 words.",
+            t(_user_interface_lang(update.effective_user.id), "no_weak_form_words").format(form="partizip2"),
             reply_markup=ReplyKeyboardMarkup([[t(lang, "weak_prateritum_mode"), t(lang, "weak_partizip2_mode")], [t(lang, "back")]], resize_keyboard=True),
         )
         return QUIZ_VERB_WEAK_MENU

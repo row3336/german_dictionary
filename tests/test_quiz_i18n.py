@@ -89,8 +89,15 @@ class QuizI18nTest(unittest.TestCase):
                 "input_err_fixed", "input_err_nothing", "added_to_learning", "nothing_to_send",
                 "answer_correct", "answer_wrong", "topic_filter_banner",
                 "clarify_choose_action", "clarify_no_entry", "clarify_enter_value",
+                "no_weak_form_words",
             ):
                 self.assertIn(key, TEXTS[lang], f"{lang}/{key}")
+        # form names (artikel/plural/präteritum/partizip2) stay the same token in
+        # every language — never cyrillized (owner decision).
+        for lang in ("en", "ru", "uk"):
+            msg = TEXTS[lang]["no_weak_form_words"].format(form="partizip2")
+            self.assertIn("partizip2", msg)
+            self.assertNotIn("партицип", msg)
         # clarify_enter_value carries a {field} placeholder in every language
         for lang in ("en", "ru", "uk"):
             self.assertIn("{field}", TEXTS[lang]["clarify_enter_value"])
