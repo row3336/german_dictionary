@@ -98,6 +98,57 @@ class JobRunnerTest(unittest.TestCase):
         c = JS.job_counts(self.db, jid)
         self.assertEqual((c["done"], c["pending"]), (1, 1))  # first done, second left pending
 
+    def test_transient_proxy_error_retries_then_succeeds(self):
+        # http=0 (proxy/transport) is transient -> retried, then parses on attempt 2
+        jid = JS.create_job(self.db, 7, 100, "t", ["gehen"])
+        calls = {"n": 0}
+
+        def fetcher(word):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("summary fetch failed (http=0) for 'gehen'")
+            return load("gehen_summary.html"), load("gehen_conj.html")
+
+        drips = {"n": 0}
+
+        async def delay():
+            drips["n"] += 1
+
+        status = self._run(jid, fetcher=fetcher, delay=delay)
+        self.assertEqual(status, "done")
+        c = JS.job_counts(self.db, jid)
+        self.assertEqual((c["done"], c["error"]), (1, 0))
+        self.assertEqual(calls["n"], 2)          # retried once
+        self.assertGreaterEqual(drips["n"], 1)   # slow-drip waited before the retry
+
+    def test_transient_retries_exhausted_marks_error(self):
+        # a persistently failing transient error gives up after fetch_retries
+        jid = JS.create_job(self.db, 7, 100, "t", ["gehen"])
+        calls = {"n": 0}
+
+        def fetcher(word):
+            calls["n"] += 1
+            raise RuntimeError("summary fetch failed (http=0) for 'gehen'")
+
+        status = self._run(jid, fetcher=fetcher, fetch_retries=2)
+        self.assertEqual(status, "done")            # job itself completes
+        self.assertEqual(calls["n"], 3)             # 1 initial + 2 retries
+        self.assertEqual(JS.job_counts(self.db, jid)["error"], 1)
+
+    def test_404_is_not_retried(self):
+        # a real 404 (word absent) must fail fast, no wasted retries
+        jid = JS.create_job(self.db, 7, 100, "t", ["nixgibtsnicht"])
+        calls = {"n": 0}
+
+        def fetcher(word):
+            calls["n"] += 1
+            raise RuntimeError("summary fetch failed (http=404) for 'nixgibtsnicht'")
+
+        status = self._run(jid, fetcher=fetcher)
+        self.assertEqual(status, "done")
+        self.assertEqual(calls["n"], 1)             # no retry on 404
+        self.assertEqual(JS.job_counts(self.db, jid)["error"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

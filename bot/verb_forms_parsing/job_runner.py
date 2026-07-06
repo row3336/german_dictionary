@@ -25,6 +25,18 @@ from .job_store import (
 DELAY_RANGE = (20, 50)  # seconds between site requests (owner's slow-drip rule)
 BAN_STREAK_LIMIT = 10   # consecutive fetch errors -> emergency stop (possible ban)
 PAUSE_POLL_SEC = 3      # how often a paused job re-checks its status
+FETCH_RETRIES = 2       # extra attempts for a transient (proxy/5xx) fetch failure
+
+# HTTP codes worth another attempt: 0 = proxy/transport error (the flaky-proxy
+# case), plus throttle/5xx. A real 404 (word genuinely absent) is NOT retried.
+_RETRYABLE_HTTP = (0, 429, 500, 502, 503, 504)
+
+
+def _is_retryable_fetch_error(exc):
+    """True for a transient fetch failure (proxy/network/throttle/5xx) that a
+    retry may fix; False for a definitive 404 or a non-fetch error."""
+    msg = str(exc)
+    return any(f"http={code}" in msg for code in _RETRYABLE_HTTP)
 
 # job_id -> asyncio.Task, so the UI can tell whether a job is already running.
 VF_ADD_TASKS = {}
@@ -48,11 +60,14 @@ async def run_job(
     delay=None,
     on_progress=None,
     ban_limit=BAN_STREAK_LIMIT,
+    fetch_retries=FETCH_RETRIES,
 ):
     """Run job `job_id` to a terminal status; returns that status.
 
     - fetcher(word) -> (summary_html, conj_html), run in a thread; raises on a
-      failed fetch (item recorded as 'error').
+      failed fetch. A transient failure (proxy/5xx, see `_is_retryable_fetch_error`)
+      is retried up to `fetch_retries` times (slow-drip between attempts) before
+      the item is recorded as 'error'; a real 404 fails on the first try.
     - delay: async callable awaited between items (defaults to random 20-50s).
     - on_progress(job, counts, done): optional async callback for the UI.
     """
@@ -81,14 +96,23 @@ async def run_job(
             return "done"
 
         word = item["word"]
-        try:
-            summary, conj = await asyncio.to_thread(fetcher, word)
-            entry = parse_de(summary, conj, query=word, topic=job["topic"])
-            save_item_result(db_path, item["id"], "done", result=entry, flags=",".join(entry.get("_flags") or []))
-            ban_streak = 0
-        except Exception as exc:  # noqa: BLE001 - one bad word must not kill the batch
-            save_item_result(db_path, item["id"], "error", error=str(exc)[:300])
-            ban_streak += 1
+        attempt = 0
+        while True:
+            try:
+                summary, conj = await asyncio.to_thread(fetcher, word)
+                entry = parse_de(summary, conj, query=word, topic=job["topic"])
+                save_item_result(db_path, item["id"], "done", result=entry, flags=",".join(entry.get("_flags") or []))
+                ban_streak = 0
+                break
+            except Exception as exc:  # noqa: BLE001 - one bad word must not kill the batch
+                if attempt < fetch_retries and _is_retryable_fetch_error(exc):
+                    attempt += 1
+                    await delay()  # slow-drip before retrying a transient fetch failure
+                    continue
+                suffix = f" (after {attempt} retr{'y' if attempt == 1 else 'ies'})" if attempt else ""
+                save_item_result(db_path, item["id"], "error", error=str(exc)[:280] + suffix)
+                ban_streak += 1
+                break
 
         if on_progress:
             await on_progress(get_job(db_path, job_id), job_counts(db_path, job_id), done=False)
