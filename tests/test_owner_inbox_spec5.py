@@ -212,5 +212,25 @@ class InboxCallbackTest(unittest.TestCase):
         self.assertTrue(upd.callback_query.answers and upd.callback_query.answers[0][1])  # alert
 
 
+class InboxOpenWiringTest(unittest.TestCase):
+    """bug #3 fix: the inb:open handler must be present in EVERY conversation state,
+    so '🔧 open word' works while the owner is mid-conversation (not only idle)."""
+
+    def test_with_inbox_open_injects_handler_into_every_state(self):
+        # robust to fake-telegram stubbing used elsewhere in the suite: don't
+        # introspect the handler class, just verify each state gained exactly one
+        # handler and it's the same shared instance across all states.
+        from bot.main import _with_inbox_open
+
+        states = {"MENU": [object()], "REVIEW": [], "QUIZ": [object(), object()]}
+        before = {k: len(v) for k, v in states.items()}
+        out = _with_inbox_open(states)
+        self.assertIs(out, states)  # mutated in place
+        for name, handlers in out.items():
+            self.assertEqual(len(handlers), before[name] + 1, f"state {name} not injected")
+        added = [handlers[-1] for handlers in out.values()]
+        self.assertEqual(len({id(h) for h in added}), 1, "same inb:open handler in every state")
+
+
 if __name__ == "__main__":
     unittest.main()

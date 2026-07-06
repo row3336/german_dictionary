@@ -408,6 +408,18 @@ def _prepare_storage():
     cleanup_transaction_logs(db_path, days=7)
 
 
+def _with_inbox_open(states):
+    """bug #3: the "🔧 open word" inbox button (`inb:open:`) must fire while the
+    owner is mid-conversation too, not only when idle via the entry_point. So add
+    the same handler into every conversation state. `allow_reentry` is NOT usable
+    (the rescue entry_point would then swallow all text), hence the per-state inject.
+    Mutates and returns the states dict."""
+    handler = CallbackQueryHandler(open_report_word, pattern=r"^inb:open:")
+    for state_handlers in states.values():
+        state_handlers.append(handler)
+    return states
+
+
 def main():
     """Handle main."""
     load_dotenv()
@@ -462,7 +474,7 @@ def main():
             # LAST so /start and the start button match first.
             MessageHandler(filters.TEXT & ~filters.COMMAND, rescue_handler),
         ],
-        states={
+        states=_with_inbox_open({
             MENU: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, menu_choice),
                 MessageHandler(filters.Document.ALL, vf_review_document),  # spec #2: apply an edited VF review file
@@ -527,7 +539,7 @@ def main():
             SYN_REMOVE_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, synonyms_remove_input)],
             SYN_AUTO_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, synonyms_auto_confirm)],
             SYN_CLEAR_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, synonyms_clear_confirm)],
-        },
+        }),
         fallbacks=[CommandHandler("start", start), CommandHandler("undo", undo_steps)],
     )
 

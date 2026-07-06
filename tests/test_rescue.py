@@ -168,7 +168,7 @@ class RescueRegistrationTest(unittest.TestCase):
 
         src = inspect.getsource(M.main)
         ep_open = src.index("entry_points=[")
-        states_open = src.index("states={", ep_open)
+        states_open = src.index("states=", ep_open)
         conv_added = src.index("app.add_handler(conv)", states_open)
         rescue = "MessageHandler(filters.TEXT & ~filters.COMMAND, rescue_handler)"
 
