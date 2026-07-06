@@ -251,6 +251,38 @@ class _Ctx:
         self.bot = _Bot()
 
 
+class DbSearchPrepKeyboardTest(unittest.TestCase):
+    """bug #26: a preposition opened from db_search must offer preposition_type/
+    case_type on the FIRST clarify screen — mirrors the db_search.py:558 call-site
+    (`_clarify_fields_markup("quiz", ..., in_search=True, is_prep=_is_prep_entry(entry))`)."""
+
+    def _flat(self, markup):
+        rows = getattr(markup, "keyboard", None) or getattr(markup, "rows", None) or []
+        return [getattr(b, "text", b) for row in rows for b in row]
+
+    def test_prep_first_screen_has_prep_buttons(self):
+        old = os.environ.get("OWNER_ID")
+        os.environ["OWNER_ID"] = str(OWNER)
+        try:
+            from bot.handlers.clarify_fields import _is_prep_entry
+            from bot.ui.keyboards import _clarify_fields_markup
+
+            prep = self._flat(_clarify_fields_markup(
+                "quiz", OWNER, in_search=True, is_prep=_is_prep_entry(_prep())))
+            self.assertIn("preposition_type", prep)
+            self.assertIn("case_type", prep)
+
+            non_prep = self._flat(_clarify_fields_markup(
+                "quiz", OWNER, in_search=True,
+                is_prep=_is_prep_entry({"type": "nomen", "german": "Haus"})))
+            self.assertNotIn("preposition_type", non_prep)
+        finally:
+            if old is None:
+                os.environ.pop("OWNER_ID", None)
+            else:
+                os.environ["OWNER_ID"] = old
+
+
 class ClarifyCascadeTest(_DBTest):
     def setUp(self):
         super().setUp()

@@ -553,9 +553,14 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["edit_return_state"] = DB_SEARCH_VIEW
     # P6: the card is one screen now (fields + report + send-to-learning); hand the
     # conversation to the clarify (ADD_EDIT) handler directly.
+    # bug #26: pass is_prep so a preposition opened from db_search gets its
+    # preposition_type/case_type buttons on the FIRST screen too (spec #1), matching
+    # the quiz path — otherwise they only appeared after a re-render via _clarify_screen.
+    from .clarify_fields import _is_prep_entry
+
     await update.message.reply_text(
         "Choose action:",
-        reply_markup=_clarify_fields_markup("quiz", user_id, in_search=True),
+        reply_markup=_clarify_fields_markup("quiz", user_id, in_search=True, is_prep=_is_prep_entry(entry)),
     )
     return ADD_EDIT
 
