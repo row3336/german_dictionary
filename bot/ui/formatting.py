@@ -189,6 +189,15 @@ def _format_word_card(entry, title="Word card:", user_id=None):
         f"russian: {entry.get('russian', '') or '-'}",
         f"ukrainian: {entry.get('ukrainian', '') or '-'}",
         f"english: {entry.get('english', '') or '-'}",
+    ]
+    # spec #7 / bug #25: a guest's personal translation (their dict_lang override,
+    # set by apply_user_word_media above) — shown only when set, so the card CONFIRMS
+    # it took (the base russian/ukrainian/english stay the shared dictionary). User-
+    # writable → escape like image/example. Owner cards never carry my_translation.
+    personal = str(entry.get("my_translation", "") or "").strip()
+    if personal:
+        lines.append(f"my_translation: {_md_escape(personal)}")
+    lines += [
         # Personal image/example are user-writable (P4) → escape so they can't break
         # out of the ```code``` block they're rendered in (P8 hardening).
         f"image: {_md_escape(entry.get('image', '')) or '-'}",

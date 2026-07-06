@@ -154,6 +154,30 @@ class Spec7Test(unittest.TestCase):
         owner_btns = _flat(_clarify_fields_markup("quiz", OWNER))
         self.assertNotIn(t("en", "my_translation"), owner_btns)  # owner edits shared dict, no personal
 
+    # --- bug #25: the word card must SHOW the guest's personal translation --------
+    def test_card_shows_personal_translation_when_set(self):
+        from bot.ui.formatting import _format_word_card
+
+        entry = self._base_entry()
+        entry["my_translation"] = "мій-переклад"
+        card = _format_word_card(entry, user_id=None)  # entry already overlaid
+        self.assertIn("my_translation: мій-переклад", card)
+
+    def test_card_hides_personal_translation_when_unset(self):
+        from bot.ui.formatting import _format_word_card
+
+        card = _format_word_card(self._base_entry(), user_id=None)
+        self.assertNotIn("my_translation:", card)
+
+    def test_card_escapes_personal_translation(self):
+        from bot.ui.formatting import _format_word_card
+
+        entry = self._base_entry()
+        entry["my_translation"] = "```x``` *b*"
+        card = _format_word_card(entry, user_id=None)
+        self.assertIn("my_translation:", card)
+        self.assertNotIn("```x```", card)  # backticks escaped, can't break the code block
+
 
 if __name__ == "__main__":
     unittest.main()
