@@ -185,9 +185,14 @@ def _topic_filter_label(user_id):
 
 
 def _topic_filter_banner(user_id):
-    """Handle topic filter banner."""
+    """Handle topic filter banner (localized #15). 'all'/topic ids stay as-is —
+    they're filter keywords the user can also type (see topic_filter_hint)."""
+    from ..i18n import t
+    from .lang import _user_interface_lang
+
     label = _topic_filter_label(user_id)
-    return f"Topic filter:\n\n🟥 *{_md_escape(label)}* 🟥"
+    heading = t(_user_interface_lang(user_id), "topic_filter_banner")
+    return f"{heading}\n\n🟥 *{_md_escape(label)}* 🟥"
 
 
 def _current_topic_value(user_id):

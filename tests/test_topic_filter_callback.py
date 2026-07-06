@@ -21,7 +21,7 @@ from bot.app_config import (  # noqa: E402
     TESTS_MENU,
     TOPIC_FILTER_EDIT,
 )
-from bot.common.settings import _topic_filter_value  # noqa: E402
+from bot.common.settings import _topic_filter_banner, _topic_filter_value  # noqa: E402
 from bot.handlers.settings import topic_filter_edit  # noqa: E402
 from bot.storage import (  # noqa: E402
     init_db,
@@ -211,6 +211,18 @@ class TopicFilterTextFallbackTest(unittest.TestCase):
             self.assertEqual(state, expected, f"back from {return_to}")
             # back must not change the stored filter
             self.assertEqual(_topic_filter_value(U1), "01")
+
+    def test_topic_filter_banner_localized(self):
+        # #15: the quiz banner heading "Topic filter:" must be localized for ru/uk
+        from bot.i18n import t
+
+        for uid, lang in ((U1, "ru"), (U2, "uk"), (303, "en")):
+            register_or_update_user(self.db, uid, f"u{uid}", "U")
+            set_user_interface_lang(self.db, uid, lang)
+            banner = _topic_filter_banner(uid)
+            self.assertTrue(banner.startswith(t(lang, "topic_filter_banner")), f"{lang}: {banner!r}")
+        self.assertNotIn("Topic filter:", _topic_filter_banner(U1))  # no raw EN for ru
+        self.assertNotIn("Topic filter:", _topic_filter_banner(U2))  # no raw EN for uk
 
 
 if __name__ == "__main__":
