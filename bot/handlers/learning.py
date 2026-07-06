@@ -457,7 +457,7 @@ async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         intervals_seconds=_learning_schedule_seconds(get_db_path(), user_id),
     )
     _log_transaction(user_id, "learning:answer", snapshot)
-    feedback = _format_feedback_ru_de(entry, ok)
+    feedback = _format_feedback_ru_de(entry, ok, lang=_user_interface_lang(user_id))
     if result.get("completed"):
         feedback = f"{feedback}\n\nLearning done ✅, sent to fsrs"
     context.user_data.pop("learning_mix_queue", None)

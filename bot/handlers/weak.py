@@ -176,7 +176,7 @@ async def quiz_article_weak(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _log_transaction(update.effective_user.id, "quiz:weak_article", snapshot)
         if not ok:
             _enqueue_weak_drill(context, "weak_article", entry.get("id"), update.effective_user.id)
-    feedback = _format_feedback_article(entry, ok, _user_dict_lang(update.effective_user.id))
+    feedback = _format_feedback_article(entry, ok, _user_dict_lang(update.effective_user.id), lang=_user_interface_lang(update.effective_user.id))
     return await _send_article_weak_prompt(update, context, feedback)
 
 
@@ -227,7 +227,7 @@ async def quiz_plural_weak(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _log_transaction(update.effective_user.id, "quiz:weak_plural", snapshot)
         if not ok:
             _enqueue_weak_drill(context, "weak_plural", entry.get("id"), update.effective_user.id)
-    feedback = _format_feedback_plural_weak(entry, ok)
+    feedback = _format_feedback_plural_weak(entry, ok, lang=_user_interface_lang(update.effective_user.id))
     return await _send_plural_weak_prompt(update, context, feedback)
 
 
@@ -278,7 +278,7 @@ async def quiz_prateritum_weak(update: Update, context: ContextTypes.DEFAULT_TYP
         _log_transaction(update.effective_user.id, "quiz:weak_prateritum", snapshot)
         if not ok:
             _enqueue_weak_drill(context, "weak_prateritum", entry.get("id"), update.effective_user.id)
-    feedback = _format_feedback_prateritum_weak(entry, ok)
+    feedback = _format_feedback_prateritum_weak(entry, ok, lang=_user_interface_lang(update.effective_user.id))
     return await _send_prateritum_weak_prompt(update, context, feedback)
 
 
@@ -329,7 +329,7 @@ async def quiz_partizip2_weak(update: Update, context: ContextTypes.DEFAULT_TYPE
         _log_transaction(update.effective_user.id, "quiz:weak_partizip2", snapshot)
         if not ok:
             _enqueue_weak_drill(context, "weak_partizip2", entry.get("id"), update.effective_user.id)
-    feedback = _format_feedback_partizip2_weak(entry, ok)
+    feedback = _format_feedback_partizip2_weak(entry, ok, lang=_user_interface_lang(update.effective_user.id))
     return await _send_partizip2_weak_prompt(update, context, feedback)
 
 

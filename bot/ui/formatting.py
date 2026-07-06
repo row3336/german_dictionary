@@ -5,6 +5,7 @@ Leaf module: depends only on text_utils/storage/app_config (no handler back-refs
 
 from ..app_config import get_db_path
 from ..common.conjugation import format_conjugation_block
+from ..i18n import t
 from ..storage import apply_user_word_media, get_word_study_status
 from ..text_utils import cap_plural as _cap_plural
 from ..text_utils import cap_word as _cap_word
@@ -127,14 +128,14 @@ def _article_with_emoji(text):
     return ", ".join(out)
 
 
-def _status_text(ok):
-    """Neutral monochrome status markers."""
-    return "Correct ⚪" if ok else "Wrong ⚫"
+def _status_text(ok, lang="en"):
+    """Neutral monochrome status markers, localized (#15). lang defaults to en."""
+    return t(lang, "answer_correct") if ok else t(lang, "answer_wrong")
 
 
-def _weak_status(ok):
+def _weak_status(ok, lang="en"):
     """Handle weak status."""
-    return _status_text(ok)
+    return _status_text(ok, lang)
 
 
 def _nomen_with_edge_emoji(article_text, noun_text):
@@ -324,9 +325,9 @@ def _format_pl_sg_question(entry):
     return f">>    die {_md_escape(plural)} -> singular?"
 
 
-def _format_feedback_pl_sg(entry, ok):
+def _format_feedback_pl_sg(entry, ok, lang="en"):
     """Handle format feedback plural->singular."""
-    status = _status_text(ok)
+    status = _status_text(ok, lang)
     lines = [f"{status} >>>     {_md_escape(_nomen_with_edge_emoji(entry.get('article', ''), entry.get('german', '')))}"]
     _append_hint_lines(lines, entry, ok)
     return "\n".join(lines)
@@ -337,9 +338,9 @@ def _format_article_question(entry):
     return f">>     {_md_escape(_cap_word(entry.get('german', '')))} ?"
 
 
-def _format_feedback_ru_de(entry, ok):
+def _format_feedback_ru_de(entry, ok, lang="en"):
     """Handle format feedback ru de."""
-    status = _status_text(ok)
+    status = _status_text(ok, lang)
     word_type = entry.get("type", "")
     article = _article_with_emoji(entry.get("article", "")) if word_type == "nomen" else str(entry.get("article", "")).strip()
     if word_type == "nomen":
@@ -418,16 +419,16 @@ def _format_learning_preview_prompt(entry, dict_lang):
     return "\n".join(lines)
 
 
-def _format_feedback_de_ru(entry, ok, dict_lang, user_id=None):
+def _format_feedback_de_ru(entry, ok, dict_lang, user_id=None, lang="en"):
     """Handle format feedback de ru."""
-    status = _status_text(ok)
+    status = _status_text(ok, lang)
     # image/example are shown with the question now (_format_de_ru_question), not here.
     return f"{status} >>>     *{_md_escape(_low_word(_entry_translation(entry, dict_lang)))}*"
 
 
-def _format_feedback_article(entry, ok, dict_lang):
+def _format_feedback_article(entry, ok, dict_lang, lang="en"):
     """Handle format feedback article."""
-    status = _status_text(ok)
+    status = _status_text(ok, lang)
     plural = _cap_plural(entry.get("plural", ""))
     headline = f"{status} >>>     {_md_escape(_nomen_with_edge_emoji(entry.get('article', ''), entry.get('german', '')))}"
     lines = [headline.strip()]
@@ -438,11 +439,11 @@ def _format_feedback_article(entry, ok, dict_lang):
     return "\n".join(lines)
 
 
-def _format_feedback_plural_weak(entry, ok):
+def _format_feedback_plural_weak(entry, ok, lang="en"):
     """Handle format feedback plural weak."""
     wrapped = _nomen_with_edge_emoji(entry.get("article", ""), entry.get("german", ""))
     plural = _cap_plural(entry.get("plural", ""))
-    headline = f"{_weak_status(ok)} >>>     {_md_escape(wrapped)}"
+    headline = f"{_weak_status(ok, lang)} >>>     {_md_escape(wrapped)}"
     lines = [headline]
     if plural:
         lines.extend(["", f"_pl. die {_md_escape(plural)}_"])
@@ -450,11 +451,11 @@ def _format_feedback_plural_weak(entry, ok):
     return "\n".join(lines)
 
 
-def _format_feedback_prateritum_weak(entry, ok):
+def _format_feedback_prateritum_weak(entry, ok, lang="en"):
     """Handle format feedback prateritum weak."""
     infinitive = _low_word(entry.get("infinitive", ""))
     pr = _low_word(entry.get("prateritum", ""))
-    headline = f"{_weak_status(ok)} >>>     {_md_escape(infinitive)}"
+    headline = f"{_weak_status(ok, lang)} >>>     {_md_escape(infinitive)}"
     lines = [headline]
     if pr:
         lines.extend(["", f"_{_md_escape(pr)}_"])
@@ -462,11 +463,11 @@ def _format_feedback_prateritum_weak(entry, ok):
     return "\n".join(lines)
 
 
-def _format_feedback_partizip2_weak(entry, ok):
+def _format_feedback_partizip2_weak(entry, ok, lang="en"):
     """Handle format feedback partizip2 weak."""
     infinitive = _low_word(entry.get("infinitive", ""))
     p2 = _expected_partizip2(entry)
-    headline = f"{_weak_status(ok)} >>>     {_md_escape(infinitive)}"
+    headline = f"{_weak_status(ok, lang)} >>>     {_md_escape(infinitive)}"
     lines = [headline]
     if p2:
         lines.extend(["", f"_{_md_escape(p2)}_"])

@@ -578,7 +578,7 @@ async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _bump_session_result(context, mode, ok)
     await _apply_answer_reaction(update, context, ok)
 
-    feedback = _format_feedback_ru_de(entry, ok)
+    feedback = _format_feedback_ru_de(entry, ok, lang=_user_interface_lang(update.effective_user.id))
     return await _send_ru_de_prompt(update, context, feedback)
 
 
@@ -641,7 +641,7 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _bump_session_result(context, mode, ok)
     await _apply_answer_reaction(update, context, ok)
 
-    feedback = _format_feedback_de_ru(entry, ok, _user_dict_lang(update.effective_user.id), update.effective_user.id)
+    feedback = _format_feedback_de_ru(entry, ok, _user_dict_lang(update.effective_user.id), update.effective_user.id, lang=_user_interface_lang(update.effective_user.id))
     return await _send_de_ru_prompt(update, context, feedback)
 
 
@@ -706,7 +706,7 @@ async def quiz_pl_sg(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _set_retry_since_last(context, mode, _retry_since_last(context, mode) + 1)
     _bump_session_result(context, mode, ok)
     await _apply_answer_reaction(update, context, ok)
-    feedback = _format_feedback_pl_sg(entry, ok)
+    feedback = _format_feedback_pl_sg(entry, ok, lang=_user_interface_lang(update.effective_user.id))
     return await _send_pl_sg_prompt(update, context, feedback)
 
 
@@ -744,5 +744,5 @@ async def quiz_article(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _bump_session_result(context, mode, ok)
     await _apply_answer_reaction(update, context, ok)
 
-    feedback = _format_feedback_article(entry, ok, _user_dict_lang(update.effective_user.id))
+    feedback = _format_feedback_article(entry, ok, _user_dict_lang(update.effective_user.id), lang=_user_interface_lang(update.effective_user.id))
     return await _send_article_prompt(update, context, feedback)

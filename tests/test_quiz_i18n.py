@@ -87,6 +87,7 @@ class QuizI18nTest(unittest.TestCase):
             for key in (
                 "session_words_count", "no_due_words", "no_due_pl_sg", "no_due_nouns",
                 "input_err_fixed", "input_err_nothing", "added_to_learning", "nothing_to_send",
+                "answer_correct", "answer_wrong", "topic_filter_banner",
             ):
                 self.assertIn(key, TEXTS[lang], f"{lang}/{key}")
         self.assertEqual(
@@ -94,6 +95,18 @@ class QuizI18nTest(unittest.TestCase):
             "слов за сессию = {count} (верных: {correct}, неверных: {wrong})",
         )
         self.assertEqual(TEXTS["ru"]["no_due_words"], "Нет слов к повтору. Добавьте ещё или дождитесь срока.")
+
+    def test_feedback_status_localized(self):
+        # #15 step 2: "Correct ⚪"/"Wrong ⚫" localized by interface lang (default en).
+        from bot.ui.formatting import _format_feedback_ru_de, _status_text
+
+        e = {"type": "verb", "infinitive": "gehen"}
+        self.assertIn("Верно ⚪", _format_feedback_ru_de(e, True, lang="ru"))
+        self.assertIn("Неверно ⚫", _format_feedback_ru_de(e, False, lang="ru"))
+        self.assertIn("Вірно ⚪", _format_feedback_ru_de(e, True, lang="uk"))
+        self.assertIn("Correct ⚪", _format_feedback_ru_de(e, True))  # default en unchanged
+        self.assertEqual(_status_text(True, "ru"), "Верно ⚪")
+        self.assertEqual(_status_text(False, "uk"), "Невірно ⚫")
 
     def test_ru_de_no_due_words_localized_for_ru_guest(self):
         update = _Update(GUEST)
