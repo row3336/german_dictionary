@@ -69,7 +69,7 @@ def _load_info_text(lang="en"):
             return path.read_text(encoding="utf-8").strip()
         except OSError:
             pass
-    return "Info file not found."
+    return t(lang, "info_not_found")
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -167,7 +167,7 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if action == "info":
         chunks = _split_text_chunks(_load_info_text(_user_interface_lang(user_id)))
         if not chunks:
-            await update.message.reply_text("Info is empty.", reply_markup=_main_menu_markup(user_id))
+            await update.message.reply_text(t(_user_interface_lang(user_id), "info_empty"), reply_markup=_main_menu_markup(user_id))
             return MENU
         for idx, chunk in enumerate(chunks):
             markup = _main_menu_markup(user_id) if idx == len(chunks) - 1 else None

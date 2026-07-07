@@ -53,6 +53,8 @@ _NEW_KEYS = (
     "settings_enter_number",
     "settings_range_1_100",
     "settings_min_1",
+    "info_empty",  # step 8: last guest-facing leftovers on the Info button
+    "info_not_found",
 )
 
 
@@ -192,6 +194,17 @@ class SettingsI18nTest(unittest.TestCase):
         up = _Update(GUEST, "zzz-not-a-button")
         _run(M.tests_menu_choice(up, _Ctx()))
         self.assertEqual(up.message.calls[-1][0], TEXTS["ru"]["settings_use_tests_buttons"])
+
+    # ---- step 8: Info button fallbacks (no info file in a fresh test DB) ----
+
+    def test_info_not_found_localized(self):
+        from bot.storage import set_user_status
+        set_user_status(self.db, GUEST, "approved")
+        up = _Update(GUEST, TEXTS["ru"]["info"])
+        _run(M.menu_choice(up, _Ctx()))
+        # fresh DB has no info_*.md file -> localized "not found", never raw English
+        self.assertIn(TEXTS["ru"]["info_not_found"], self._texts(up))
+        self.assertNotIn("Info file not found.", self._texts(up))
 
 
 if __name__ == "__main__":
