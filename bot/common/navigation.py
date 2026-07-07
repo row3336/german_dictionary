@@ -56,6 +56,7 @@ def _action_key_from_text(text, user_id):
         ("algo_settings", "algo_settings"),
         ("topic_filter", "topic_filter"),
         ("conjugation", "conjugation"),
+        ("conjugation_dice", "conjugation_dice"),
         ("fsrs_sett", "fsrs_sett"),
         ("weak_sett", "weak_sett"),
         ("learning_sett", "learning_sett"),

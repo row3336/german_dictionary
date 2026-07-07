@@ -11,10 +11,30 @@ Rendering (aligned monospace card) lives alongside in this module; the DB only
 ever holds clean lines, never alignment or markup.
 """
 
+import random
+
 # Canonical pronoun order. Each is a single whitespace-free token (the slashes
 # in "er/sie/es" / "sie/Sie" are intentional — they are NOT word separators), so
 # a stored line splits cleanly into (pronoun, form) on the first space.
 PRONOUNS = ("ich", "du", "er/sie/es", "wir", "ihr", "sie/Sie")
+
+# Personal pronouns offered by the 🎲 dice drill (spec: active recall — a pronoun
+# pops up and the user recites the verb form from memory). Same six persons as
+# PRONOUNS but with the "Sie/sie" spelling the owner asked the dice to show.
+DICE_PRONOUNS = ("ich", "du", "er/sie/es", "wir", "ihr", "Sie/sie")
+
+
+def pick_dice_pronoun(previous=None):
+    """Return a random dice pronoun, avoiding an immediate repeat of ``previous``.
+
+    With a single distinct choice this still terminates (the candidate pool is
+    only narrowed when more than one pronoun exists), so it never loops forever.
+    """
+    choices = [p for p in DICE_PRONOUNS if p != previous] or list(DICE_PRONOUNS)
+    return random.choice(choices)
+
+# Placeholder shown in place of a hidden conjugated form (Feature B "hide forms").
+_MASK = "***"
 
 # Präteritum is only stored for a closed set of verbs (spec #3): the six modals
 # plus werden/sein/haben. Matched by infinitive; no schema flag needed.
@@ -84,13 +104,17 @@ def is_valid_conjugation(text):
 _PRONOUN_PAD = max(len(p) for p in PRONOUNS) + 1
 
 
-def format_conjugation_block(stored_text):
+def format_conjugation_block(stored_text, mask=False):
     """Render a stored block as vertically aligned plain text (no markup).
 
     Pronouns are left-padded to a fixed column so the forms line up; the DB holds
     only clean lines, so this alignment is applied purely at render time. Returns
     '' for an empty block. Tolerant of already-canonical DB text (does not
     re-validate — writes are validated by parse_conjugation).
+
+    With ``mask=True`` every conjugated FORM is replaced by ``***`` while the
+    pronoun column and alignment stay intact (Feature B "hide forms" — lets the
+    user recite from memory). Empty forms stay empty so line count is preserved.
     """
     out = []
     for line in str(stored_text or "").splitlines():
@@ -100,5 +124,7 @@ def format_conjugation_block(stored_text):
         parts = line.split(None, 1)
         pronoun = parts[0]
         form = parts[1] if len(parts) > 1 else ""
+        if mask and form:
+            form = _MASK
         out.append(f"{pronoun.ljust(_PRONOUN_PAD)}{form}")
     return "\n".join(out)

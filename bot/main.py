@@ -141,7 +141,7 @@ from .handlers.learning import (
     learning_menu_choice,
     learning_quiz,
 )
-from .handlers.conjugation import conjugation_input
+from .handlers.conjugation import conjugation_card_callback, conjugation_input
 from .handlers.add_words import (
     add_clarify,
     add_confirm,
@@ -548,6 +548,8 @@ def main():
     app.add_handler(CallbackQueryHandler(access_decision_callback, pattern=r"^access:"))
     # Global handler for the topic-filter inline toggle buttons (spec #8).
     app.add_handler(CallbackQueryHandler(topic_filter_toggle_callback, pattern=r"^topicf:"))
+    # Global handler for the conjugation card's inline "hide forms" toggle (Feature B).
+    app.add_handler(CallbackQueryHandler(conjugation_card_callback, pattern=r"^conj:"))
     # Global handler for the "menu" button attached to owner broadcasts (spec #12).
     app.add_handler(
         CallbackQueryHandler(broadcast_menu_callback, pattern=f"^{BROADCAST_MENU_CALLBACK}$")

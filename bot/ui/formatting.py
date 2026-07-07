@@ -212,7 +212,7 @@ def _format_word_card(entry, title="Word card:", user_id=None):
     return "\n".join(lines)
 
 
-def _format_conjugation_card(entry, dict_lang):
+def _format_conjugation_card(entry, dict_lang, mask=False):
     """spec #3 (variant A): conjugation drill card.
 
     Line 1: ``word — translation`` (translation by the user's dict_lang). Then the
@@ -221,6 +221,9 @@ def _format_conjugation_card(entry, dict_lang):
     — Telegram forbids formatting inside ```pre```. Pronouns are plain (owner
     decision 2026-07-02: no italic, no unicode-italic hack). Blocks are pre-aligned
     by format_conjugation_block; wrapped here in ```text so forms stay monospaced.
+
+    With ``mask=True`` (Feature B "hide forms") every conjugated form renders as
+    ``***`` with the pronoun column intact, so the user can recite from memory.
     """
     word = str(entry.get("german") or entry.get("infinitive") or "").strip()
     translation = _entry_translation(entry, dict_lang)
@@ -228,10 +231,10 @@ def _format_conjugation_card(entry, dict_lang):
     if translation:
         header += f" — {_md_escape(translation)}"
     parts = [header]
-    praesens = format_conjugation_block(entry.get("conjugation_praesens", ""))
+    praesens = format_conjugation_block(entry.get("conjugation_praesens", ""), mask=mask)
     if praesens:
         parts.append(f"_Präsens_\n```text\n{praesens}\n```")
-    praeteritum = format_conjugation_block(entry.get("conjugation_praeteritum", ""))
+    praeteritum = format_conjugation_block(entry.get("conjugation_praeteritum", ""), mask=mask)
     if praeteritum:
         parts.append(f"_Präteritum_\n```text\n{praeteritum}\n```")
     return "\n\n".join(parts)
