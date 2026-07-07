@@ -287,7 +287,7 @@ async def _ask_interface_language(update: Update):
     # (a brand-new onboarding user has none yet -> English).
     lang = _user_interface_lang(update.effective_user.id)
     await update.message.reply_text(
-        t(lang, "choose_interface_lang"),
+        t(lang, "choose_ui_lang"),
         reply_markup=ReplyKeyboardMarkup([interface_choices()], resize_keyboard=True),
     )
     return SELECT_UI_LANG
@@ -344,7 +344,7 @@ async def select_ui_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
     interface_lang = parse_interface_choice(update.message.text.strip())
     if not interface_lang:
         await update.message.reply_text(
-            t(_user_interface_lang(user_id), "choose_interface_lang"),
+            t(_user_interface_lang(user_id), "choose_ui_lang"),
             reply_markup=ReplyKeyboardMarkup([interface_choices()], resize_keyboard=True),
         )
         return SELECT_UI_LANG

@@ -38,7 +38,7 @@ from bot.storage import (  # noqa: E402
 OWNER, GUEST = 999, 111
 
 _NEW_KEYS = (
-    "choose_interface_lang",
+    "choose_ui_lang",
     "settings_reset_periodicity_confirm",
     "settings_algo_reset_done",
     "settings_periodicity_reset_done",
@@ -121,7 +121,7 @@ class SettingsI18nTest(unittest.TestCase):
     def test_ask_interface_language_localized(self):
         update = _Update(GUEST)
         _run(S._ask_interface_language(update))
-        self.assertEqual(update.message.calls[-1][0], TEXTS["ru"]["choose_interface_lang"])
+        self.assertEqual(update.message.calls[-1][0], TEXTS["ru"]["choose_ui_lang"])
 
     # ---- 7a: reset confirm / done / cancel / fallback ----
 
