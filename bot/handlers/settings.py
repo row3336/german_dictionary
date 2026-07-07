@@ -282,8 +282,12 @@ def _run_unit_tests_report():
 
 async def _ask_interface_language(update: Update):
     """Handle ask interface language."""
+    # Shown before the user has picked a language: use their current interface
+    # lang if any (existing ru/uk user re-picking from Settings), else the default
+    # (a brand-new onboarding user has none yet -> English).
+    lang = _user_interface_lang(update.effective_user.id)
     await update.message.reply_text(
-        "Choose interface language:",
+        t(lang, "choose_interface_lang"),
         reply_markup=ReplyKeyboardMarkup([interface_choices()], resize_keyboard=True),
     )
     return SELECT_UI_LANG
@@ -340,7 +344,7 @@ async def select_ui_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
     interface_lang = parse_interface_choice(update.message.text.strip())
     if not interface_lang:
         await update.message.reply_text(
-            "Choose interface language:",
+            t(_user_interface_lang(user_id), "choose_interface_lang"),
             reply_markup=ReplyKeyboardMarkup([interface_choices()], resize_keyboard=True),
         )
         return SELECT_UI_LANG
@@ -421,7 +425,7 @@ async def algo_settings_menu_choice(update: Update, context: ContextTypes.DEFAUL
     if text == t(lang, "reset_periodicity"):
         context.user_data["algo_setting_edit"] = "reset_periodicity"
         await update.message.reply_text(
-            'Type "yes" to reset periodicity:',
+            t(lang, "settings_reset_periodicity_confirm"),
             reply_markup=_settings_edit_back_markup(user_id),
         )
         return ALGO_SETTINGS_CONFIRM
@@ -443,11 +447,11 @@ async def algo_settings_menu_choice(update: Update, context: ContextTypes.DEFAUL
                 LEARNING_READY_QUORUM_KEY,
             ],
         )
-        await update.message.reply_text("✅ Algo settings reset to default.")
+        await update.message.reply_text(t(lang, "settings_algo_reset_done"))
         return await _send_algo_settings_menu(update, user_id)
 
     await update.message.reply_text(
-        "Use algo settings buttons.",
+        t(lang, "settings_use_algo_buttons"),
         reply_markup=ReplyKeyboardMarkup(_algo_settings_menu_keys(user_id), resize_keyboard=True),
     )
     return ALGO_SETTINGS_MENU
@@ -467,7 +471,7 @@ async def fsrs_settings_menu_choice(update: Update, context: ContextTypes.DEFAUL
         context.user_data["algo_setting_edit"] = SESSION_RETRY_GAP_KEY
         context.user_data["algo_edit_return"] = "fsrs"
         await update.message.reply_text(
-            "Enter ses.rtr_gap (number of FSRS questions between retries):",
+            t(lang, "clarify_enter_value").format(field=t(lang, "ses_rtr_gap")),
             reply_markup=_settings_edit_back_markup(user_id),
         )
         return ALGO_SETTINGS_EDIT
@@ -476,7 +480,7 @@ async def fsrs_settings_menu_choice(update: Update, context: ContextTypes.DEFAUL
         context.user_data["algo_setting_edit"] = SESSION_RETRY_IT_KEY
         context.user_data["algo_edit_return"] = "fsrs"
         await update.message.reply_text(
-            "Enter ses.rtr_it (retry repetitions per word):",
+            t(lang, "clarify_enter_value").format(field=t(lang, "ses_rtr_it")),
             reply_markup=_settings_edit_back_markup(user_id),
         )
         return ALGO_SETTINGS_EDIT
@@ -498,7 +502,7 @@ async def drill_settings_menu_choice(update: Update, context: ContextTypes.DEFAU
         context.user_data["algo_setting_edit"] = WEAK_DRILL_GAP_KEY
         context.user_data["algo_edit_return"] = "drill"
         await update.message.reply_text(
-            "Enter weak.drill_gap (normal weak questions between drill repeats):",
+            t(lang, "clarify_enter_value").format(field=t(lang, "weak_drill_gap")),
             reply_markup=_settings_edit_back_markup(user_id),
         )
         return ALGO_SETTINGS_EDIT
@@ -507,13 +511,13 @@ async def drill_settings_menu_choice(update: Update, context: ContextTypes.DEFAU
         context.user_data["algo_setting_edit"] = WEAK_DRILL_REPEATS_KEY
         context.user_data["algo_edit_return"] = "drill"
         await update.message.reply_text(
-            "Enter weak.drill_repeats (total weak shows per word in session):",
+            t(lang, "clarify_enter_value").format(field=t(lang, "weak_drill_repeats")),
             reply_markup=_settings_edit_back_markup(user_id),
         )
         return ALGO_SETTINGS_EDIT
 
     await update.message.reply_text(
-        "Use drill settings buttons.",
+        t(lang, "settings_use_drill_buttons"),
         reply_markup=ReplyKeyboardMarkup(_drill_settings_menu_keys(user_id), resize_keyboard=True),
     )
     return DRILL_SETTINGS_MENU
@@ -530,33 +534,33 @@ async def learning_settings_menu_choice(update: Update, context: ContextTypes.DE
     if text == t(lang, "learning_daily_qty"):
         context.user_data["algo_setting_edit"] = LEARNING_DAILY_QTY_KEY
         context.user_data["algo_edit_return"] = "learning"
-        await update.message.reply_text("Enter learning.daily_qty:", reply_markup=_settings_edit_back_markup(user_id))
+        await update.message.reply_text(t(lang, "clarify_enter_value").format(field=t(lang, "learning_daily_qty")), reply_markup=_settings_edit_back_markup(user_id))
         return ALGO_SETTINGS_EDIT
     if text == t(lang, "learning_intervals"):
         context.user_data["algo_setting_edit"] = LEARNING_INTERVALS_KEY
         context.user_data["algo_edit_return"] = "learning"
         await update.message.reply_text(
-            "Enter learning.intervals_sec as comma-separated seconds (example: 30,120,600,3600):",
+            t(lang, "clarify_enter_value").format(field=t(lang, "learning_intervals")),
             reply_markup=_settings_edit_back_markup(user_id),
         )
         return ALGO_SETTINGS_EDIT
     if text == t(lang, "learning_reminder_interval"):
         context.user_data["algo_setting_edit"] = LEARNING_REMINDER_INTERVAL_KEY
         context.user_data["algo_edit_return"] = "learning"
-        await update.message.reply_text("Enter learning.reminder_interval_sec:", reply_markup=_settings_edit_back_markup(user_id))
+        await update.message.reply_text(t(lang, "clarify_enter_value").format(field=t(lang, "learning_reminder_interval")), reply_markup=_settings_edit_back_markup(user_id))
         return ALGO_SETTINGS_EDIT
     if text == t(lang, "learning_reminder_cooldown"):
         context.user_data["algo_setting_edit"] = LEARNING_REMINDER_COOLDOWN_KEY
         context.user_data["algo_edit_return"] = "learning"
-        await update.message.reply_text("Enter learning.reminder_cooldown_sec:", reply_markup=_settings_edit_back_markup(user_id))
+        await update.message.reply_text(t(lang, "clarify_enter_value").format(field=t(lang, "learning_reminder_cooldown")), reply_markup=_settings_edit_back_markup(user_id))
         return ALGO_SETTINGS_EDIT
     if text == t(lang, "learning_ready_quorum"):
         context.user_data["algo_setting_edit"] = LEARNING_READY_QUORUM_KEY
         context.user_data["algo_edit_return"] = "learning"
-        await update.message.reply_text("Enter learning.ready_quorum_pct (1-100):", reply_markup=_settings_edit_back_markup(user_id))
+        await update.message.reply_text(t(lang, "clarify_enter_value").format(field=t(lang, "learning_ready_quorum")), reply_markup=_settings_edit_back_markup(user_id))
         return ALGO_SETTINGS_EDIT
     await update.message.reply_text(
-        "Use learning settings buttons.",
+        t(lang, "settings_use_learning_buttons"),
         reply_markup=ReplyKeyboardMarkup(_learning_settings_menu_keys(user_id), resize_keyboard=True),
     )
     return LEARNING_SETTINGS_MENU
@@ -601,7 +605,7 @@ async def algo_settings_edit(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if key == LEARNING_INTERVALS_KEY:
         values = _parse_learning_intervals(text)
         if not values:
-            await update.message.reply_text("Enter comma-separated seconds, for example: 30,120,600")
+            await update.message.reply_text(t(_user_interface_lang(user_id), "settings_enter_csv_seconds"))
             return ALGO_SETTINGS_EDIT
         # all study settings (algo/drill/learning) are now per-user (P2.4d)
         set_user_setting(get_db_path(), user_id, key, ",".join(str(v) for v in values))
@@ -609,14 +613,14 @@ async def algo_settings_edit(update: Update, context: ContextTypes.DEFAULT_TYPE)
         try:
             value = int(text)
         except ValueError:
-            await update.message.reply_text("Enter a number.")
+            await update.message.reply_text(t(_user_interface_lang(user_id), "settings_enter_number"))
             return ALGO_SETTINGS_EDIT
         if key == LEARNING_READY_QUORUM_KEY:
             if value < 1 or value > 100:
-                await update.message.reply_text("Value must be in range 1..100.")
+                await update.message.reply_text(t(_user_interface_lang(user_id), "settings_range_1_100"))
                 return ALGO_SETTINGS_EDIT
         elif value < 1:
-            await update.message.reply_text("Value must be >= 1.")
+            await update.message.reply_text(t(_user_interface_lang(user_id), "settings_min_1"))
             return ALGO_SETTINGS_EDIT
         # all study settings (algo/drill/learning) are now per-user (P2.4d)
         set_user_setting(get_db_path(), user_id, key, str(value))
@@ -637,10 +641,10 @@ async def algo_settings_confirm(update: Update, context: ContextTypes.DEFAULT_TY
     user_id = update.effective_user.id
     if text == "yes":
         reset_periodicity(get_db_path(), user_id)
-        await update.message.reply_text("✅ Periodicity reset.")
+        await update.message.reply_text(t(_user_interface_lang(user_id), "settings_periodicity_reset_done"))
         return await _send_algo_settings_menu(update, user_id)
 
-    await update.message.reply_text("Canceled.")
+    await update.message.reply_text(t(_user_interface_lang(user_id), "settings_canceled"))
     return await _send_algo_settings_menu(update, user_id)
 
 
@@ -653,7 +657,7 @@ async def topic_filter_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return_to = context.user_data.pop("topic_return", "")
         if return_to == "add_queue":
             await update.message.reply_text(
-                "Topic selection canceled. Send a word or list.",
+                t(lang, "settings_topic_selection_canceled"),
                 reply_markup=ReplyKeyboardMarkup(_add_keys(user_id), resize_keyboard=True),
             )
             context.user_data.pop("pending_add_queue", None)
@@ -917,7 +921,7 @@ async def settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
         return await _send_vf_menu(update, "Use parse_VF buttons.")
 
     await update.message.reply_text(
-        "Use settings buttons.",
+        t(_user_interface_lang(user_id), "settings_use_buttons"),
         reply_markup=ReplyKeyboardMarkup(_settings_menu_keys(user_id), resize_keyboard=True),
     )
     return SETTINGS_MENU

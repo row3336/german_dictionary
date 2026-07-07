@@ -234,7 +234,7 @@ async def tests_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await send_topic_filter_screen(update, context, user_id, "tests_menu")
 
     await update.message.reply_text(
-        "Use tests menu buttons.",
+        t(_user_interface_lang(user_id), "settings_use_tests_buttons"),
         reply_markup=ReplyKeyboardMarkup(_tests_menu_keys(user_id), resize_keyboard=True),
     )
     return TESTS_MENU
