@@ -334,7 +334,7 @@ def _format_weak_form_line(entry):
 
 async def _send_db_search_prompt(update: Update, user_id, prefix_text=None):
     """Handle send db search prompt."""
-    text = "Send a word to search in DB:"
+    text = t(_user_interface_lang(user_id), "search_prompt")
     if prefix_text:
         text = f"{prefix_text}\n\n{text}"
     await update.message.reply_text(text, reply_markup=_db_search_markup(user_id))
@@ -351,7 +351,7 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("db_search_topic_pick", None)
         context.user_data.pop("db_search_type_pick", None)
         if in_words_lists:
-            await update.message.reply_text("words_lists:", reply_markup=_db_search_words_lists_markup(user_id))
+            await update.message.reply_text(t(_user_interface_lang(user_id), "words_lists"), reply_markup=_db_search_words_lists_markup(user_id))
             return DB_SEARCH
         return await _send_db_search_prompt(update, user_id, None)
     if action == "back":
@@ -365,12 +365,12 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get("db_search_topic_pick"):
         markup, topics = _db_search_topic_markup(user_id)
         if text not in topics:
-            await update.message.reply_text("Choose topic:", reply_markup=markup)
+            await update.message.reply_text(t(_user_interface_lang(user_id), "choose_topic"), reply_markup=markup)
             return DB_SEARCH
         context.user_data.pop("db_search_weak_ids", None)
         entries = list_words_by_topic(get_db_path(), text)
         if not entries:
-            await update.message.reply_text(f"No words in topic {text}.", reply_markup=markup)
+            await update.message.reply_text(t(_user_interface_lang(user_id), "no_words_in_topic").format(topic=text), reply_markup=markup)
             return DB_SEARCH
         lines = [f"topic {text}: {len(entries)} words", ""]
         lines.extend(_format_topic_words_line(entry) for entry in entries)
@@ -387,12 +387,12 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         markup, types = _db_search_type_markup(user_id)
         chosen = text.strip().lower()
         if chosen not in types:
-            await update.message.reply_text("Choose type:", reply_markup=markup)
+            await update.message.reply_text(t(_user_interface_lang(user_id), "choose_type"), reply_markup=markup)
             return DB_SEARCH
         context.user_data.pop("db_search_weak_ids", None)
         entries = [x for x in list_all_words(get_db_path()) if (x.get("type") or "").strip().lower() == chosen]
         if not entries:
-            await update.message.reply_text(f"No {chosen} words.", reply_markup=markup)
+            await update.message.reply_text(t(_user_interface_lang(user_id), "no_type_words").format(type=chosen), reply_markup=markup)
             return DB_SEARCH
         lines = [f"{chosen}: {len(entries)} words", ""]
         lines.extend(_format_topic_words_line(entry) for entry in entries)
@@ -410,7 +410,7 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("db_search_weak_ids", None)
         entries = list_learning_queue_words(get_db_path(), user_id=user_id)
         if not entries:
-            return await _send_db_search_prompt(update, user_id, "No new queued words for learning.")
+            return await _send_db_search_prompt(update, user_id, t(_user_interface_lang(user_id), "no_queued_learning"))
         lines = [f"learning queue: {len(entries)} words", ""]
         lines.extend(_format_topic_learning_line(entry) for entry in entries)
         chunks = _split_text_chunks("\n".join(lines))
@@ -438,14 +438,14 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
             )
         context.user_data.pop("db_search_weak_ids", None)
-        return await _send_db_search_prompt(update, user_id, f"Added to learning: {added}")
+        return await _send_db_search_prompt(update, user_id, t(_user_interface_lang(user_id), "added_to_learning_n").format(added=added))
     if action == "db_search_matches":
         context.user_data.pop("db_search_topic_pick", None)
         context.user_data.pop("db_search_weak_ids", None)
         entries = list_all_words(get_db_path())
         blocks = _list_match_pairs(entries, _user_dict_lang(user_id))
         if not blocks:
-            return await _send_db_search_prompt(update, user_id, "No matches found.")
+            return await _send_db_search_prompt(update, user_id, t(_user_interface_lang(user_id), "no_matches_found"))
         chunks = _split_text_chunks("\n\n".join(blocks))
         for idx, chunk in enumerate(chunks):
             markup = _db_search_markup(user_id) if idx == len(chunks) - 1 else None
@@ -467,7 +467,7 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if sg and pl and sg == pl:
                 entries.append(row)
         if not entries:
-            return await _send_db_search_prompt(update, user_id, "No plural==singular words found.")
+            return await _send_db_search_prompt(update, user_id, t(_user_interface_lang(user_id), "no_plural_singular"))
         lines = [f"plural_match: {len(entries)}", ""]
         for e in entries:
             article = (e.get("article") or "").strip()
@@ -502,27 +502,27 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return DB_SEARCH
     if action == "db_search_topic_words":
         context.user_data["db_search_words_lists_menu"] = True
-        await update.message.reply_text("words_lists:", reply_markup=_db_search_words_lists_markup(user_id))
+        await update.message.reply_text(t(_user_interface_lang(user_id), "words_lists"), reply_markup=_db_search_words_lists_markup(user_id))
         return DB_SEARCH
     if action == "db_search_topics_lists":
         context.user_data.pop("db_search_weak_ids", None)
         context.user_data["db_search_words_lists_menu"] = True
         markup, topics = _db_search_topic_markup(user_id)
         if not topics:
-            await update.message.reply_text("No topics found in DB.", reply_markup=_db_search_words_lists_markup(user_id))
+            await update.message.reply_text(t(_user_interface_lang(user_id), "no_topics_in_db"), reply_markup=_db_search_words_lists_markup(user_id))
             return DB_SEARCH
         context.user_data["db_search_topic_pick"] = True
-        await update.message.reply_text("Choose topic:", reply_markup=markup)
+        await update.message.reply_text(t(_user_interface_lang(user_id), "choose_topic"), reply_markup=markup)
         return DB_SEARCH
     if action == "db_search_type_lists":
         context.user_data.pop("db_search_weak_ids", None)
         context.user_data["db_search_words_lists_menu"] = True
         markup, types = _db_search_type_markup(user_id)
         if not types:
-            await update.message.reply_text("No words found in DB.", reply_markup=_db_search_words_lists_markup(user_id))
+            await update.message.reply_text(t(_user_interface_lang(user_id), "no_words_in_db"), reply_markup=_db_search_words_lists_markup(user_id))
             return DB_SEARCH
         context.user_data["db_search_type_pick"] = True
-        await update.message.reply_text("Choose type:", reply_markup=markup)
+        await update.message.reply_text(t(_user_interface_lang(user_id), "choose_type"), reply_markup=markup)
         return DB_SEARCH
     context.user_data.pop("db_search_topic_pick", None)
     context.user_data.pop("db_search_type_pick", None)
@@ -530,7 +530,7 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop("db_search_weak_ids", None)
     entry = _select_db_search_primary(text)
     if not entry:
-        return await _send_db_search_prompt(update, user_id, "Not found.")
+        return await _send_db_search_prompt(update, user_id, t(_user_interface_lang(user_id), "not_found"))
     phrase_matches = _find_phrase_side_matches(text, entry)
     await update.message.reply_text(
         f"```text\n{_format_word_card(entry, title='Word card:', user_id=user_id)}\n```",
@@ -559,7 +559,7 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from .clarify_fields import _is_prep_entry
 
     await update.message.reply_text(
-        "Choose action:",
+        t(_user_interface_lang(user_id), "clarify_choose_action"),
         reply_markup=_clarify_fields_markup("quiz", user_id, in_search=True, is_prep=_is_prep_entry(entry)),
     )
     return ADD_EDIT
