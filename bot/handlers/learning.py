@@ -245,7 +245,7 @@ async def _learning_add_words(update: Update, context: ContextTypes.DEFAULT_TYPE
     if need <= 0:
         await _reply_text_with_retry(
             update.message,
-            f"Learning batch is full: {active_count}/{daily_qty}.",
+            t(_user_interface_lang(user_id), "learning_batch_full").format(active=active_count, daily=daily_qty),
             reply_markup=ReplyKeyboardMarkup(_learning_menu_keys(user_id), resize_keyboard=True),
         )
         return LEARNING_MENU
@@ -253,7 +253,7 @@ async def _learning_add_words(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not picked:
         await _reply_text_with_retry(
             update.message,
-            "No new words available for learning.",
+            t(_user_interface_lang(user_id), "learning_no_new"),
             reply_markup=ReplyKeyboardMarkup(_learning_menu_keys(user_id), resize_keyboard=True),
         )
         return LEARNING_MENU
@@ -267,7 +267,7 @@ async def _learning_add_words(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
     await _reply_text_with_retry(
         update.message,
-        f"Added for learning: {added}\nStart learning session for first cycle preview.",
+        t(_user_interface_lang(user_id), "learning_added").format(added=added),
         reply_markup=ReplyKeyboardMarkup(_learning_menu_keys(user_id), resize_keyboard=True),
     )
     return LEARNING_MENU
@@ -309,10 +309,9 @@ async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TY
             # spec #8: the selected topics hold no words at all (vs. nothing due now)
             empty_text = t(_user_interface_lang(user_id), "topic_no_words_learning")
         else:
-            empty_text = (
-                f"No due learning words right now.\nnext_due = "
-                f"{_format_eta_from_iso(learning_status_snapshot(get_db_path(), user_id, _learning_ready_quorum(get_db_path(), user_id)).get('next_due'))}"
-            )
+            eta = _format_eta_from_iso(learning_status_snapshot(get_db_path(), user_id, _learning_ready_quorum(get_db_path(), user_id)).get("next_due"))
+            # sentence localized; "next_due = <eta>" kept as EN technical readout (matches menu diagnostic block)
+            empty_text = f"{t(_user_interface_lang(user_id), 'learning_no_due')}\nnext_due = {eta}"
         await _reply_text_with_retry(
             update.message,
             empty_text,
@@ -366,7 +365,7 @@ async def learning_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
         context.user_data.pop("learning_mix_queue", None)
         await _reply_text_with_retry(
             update.message,
-            "Learning session reset. Words returned to new.",
+            t(_user_interface_lang(user_id), "learning_session_reset"),
             reply_markup=ReplyKeyboardMarkup(_learning_menu_keys(user_id), resize_keyboard=True),
         )
         return LEARNING_MENU
@@ -375,7 +374,7 @@ async def learning_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
         return await _send_learning_prompt(update, context, None)
     await _reply_text_with_retry(
         update.message,
-        "Use learning menu buttons.",
+        t(_user_interface_lang(user_id), "learning_use_menu_buttons"),
         reply_markup=ReplyKeyboardMarkup(_learning_menu_keys(user_id), resize_keyboard=True),
     )
     return LEARNING_MENU
@@ -403,7 +402,7 @@ async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
             snapshot = _capture_transaction_snapshot(user_id, entry.get("id"), ["learning"])
             learning_skip_word(get_db_path(), user_id=user_id, word_id=entry.get("id"))
             _log_transaction(user_id, "learning:skip", snapshot)
-            return await _send_learning_prompt(update, context, "Skipped for learning.")
+            return await _send_learning_prompt(update, context, t(_user_interface_lang(user_id), "learning_skipped"))
         if action == "learning_next":
             snapshot = _capture_transaction_snapshot(user_id, entry.get("id"), ["learning"])
             learning_mark_preview_next(
@@ -413,17 +412,18 @@ async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 first_interval_seconds=_learning_schedule_seconds(get_db_path(), user_id)[0],
             )
             _log_transaction(user_id, "learning:preview_next", snapshot)
-            return await _send_learning_prompt(update, context, "Saved. Next preview word.")
+            return await _send_learning_prompt(update, context, t(_user_interface_lang(user_id), "learning_saved_next"))
         await _reply_text_with_retry(
             update.message,
-            "Use next/skip/back.",
+            t(_user_interface_lang(user_id), "learning_use_next_skip_back"),
             reply_markup=ReplyKeyboardMarkup([[t(_user_interface_lang(user_id), "learning_next"), t(_user_interface_lang(user_id), "learning_skip")], [t(_user_interface_lang(user_id), "back")]], resize_keyboard=True),
         )
         return LEARNING_QUIZ
 
     if action == "input_err":
         applied = _apply_input_err_learning(update, context)
-        prefix = "✅ Fixed previous answer." if applied else "Nothing to fix."
+        lang = _user_interface_lang(user_id)
+        prefix = t(lang, "input_err_fixed") if applied else t(lang, "input_err_nothing")
         context.user_data.pop("learning_mix_queue", None)
         return await _send_learning_prompt(update, context, prefix, force_entry=context.user_data.get("quiz_entry"))
 
@@ -432,7 +432,7 @@ async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         learning_skip_word(get_db_path(), user_id=user_id, word_id=entry.get("id"))
         _log_transaction(user_id, "learning:skip", snapshot)
         context.user_data.pop("learning_mix_queue", None)
-        return await _send_learning_prompt(update, context, "Skipped for learning.")
+        return await _send_learning_prompt(update, context, t(_user_interface_lang(user_id), "learning_skipped"))
 
     if text == I_DONT_KNOW_TEXT:
         ok = False

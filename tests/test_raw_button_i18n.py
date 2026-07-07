@@ -152,7 +152,9 @@ class RawButtonI18nTest(unittest.TestCase):
         state = _run(L.learning_quiz(update, ctx))
         self.assertEqual(state, LEARNING_QUIZ)
         last_text = update.message.calls[-1][0]
-        self.assertIn("Nothing to fix.", last_text)  # no prior wrong answer logged -> "nothing to fix", not a quiz score
+        # ru guest -> localized "Nothing to fix." (input_err now routed through t(lang, ...) in learning.py)
+        self.assertIn(TEXTS["ru"]["input_err_nothing"], last_text)
+        self.assertNotIn("Nothing to fix.", last_text)
 
 
 if __name__ == "__main__":
