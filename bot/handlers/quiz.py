@@ -7,6 +7,8 @@ to avoid an import cycle; they move here-adjacent as learning/flags/edit are
 extracted in later steps.
 """
 
+import re
+
 from telegram import ReplyKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
@@ -181,13 +183,18 @@ async def _apply_input_err(update, context, mode):
 # --- answer checking (Ru>De strict) ---
 
 def _split_answer_parts(text):
-    """Handle split answer parts."""
+    """Split a multi-field answer (nomen: article/noun/plural, verb: infinitive/
+    prateritum/partizip2) into its fields.
+
+    Commas, periods and whitespace are all treated as interchangeable separators:
+    users routinely add stray punctuation — a comma or period after a space or
+    right before the plural (e.g. "die Bankverbindung, Bankverbindungen") — and
+    the answer must still parse into the same fields and validate correctly.
+    """
     raw = str(text or "").strip()
     if not raw:
         return []
-    if "," in raw:
-        return [p.strip() for p in raw.split(",") if p.strip()]
-    return [p.strip() for p in raw.split() if p.strip()]
+    return [p for p in re.split(r"[,.\s]+", raw) if p]
 
 
 def _normalize_plural_value(value):
@@ -271,7 +278,8 @@ def _check_ru_de_strict(entry, answer_text):
             "prateritum": prateritum_provided and prateritum_in == _normalize_answer(entry.get("prateritum", "")),
         }
 
-    answer = _normalize_answer(answer_text)
+    # single-field answer (adjective/adverb/…): tolerate stray commas/periods too.
+    answer = _normalize_answer(re.sub(r"[,.]+", " ", answer_text))
     expected_values = []
     for cand in synonyms:
         if (cand.get("type") or "").strip().lower() == "verb":
