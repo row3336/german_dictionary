@@ -26,12 +26,22 @@ def _who(item):
 
 
 def _clickable(item):
-    """Markdown link to a user's profile (works even without a @username).
+    """Clickable reference to a user for owner-facing lists (legacy Markdown).
 
-    The label is escaped and stripped of link-breaking chars so a crafted
-    username/first_name can't break out of the Markdown link (P8 hardening).
-    Shared with owner_stats (clickable user names).
+    With a @username: return the plain @handle — Telegram auto-links a @mention
+    on its own, and it needs no Markdown escaping. A wrapped link label would run
+    the username through md_escape (backslash-escaping, MarkdownV2 style) which
+    legacy Markdown renders literally, leaking '@a\\_b'. Usernames are [A-Za-z0-9_]
+    only, so nothing can break out of the message.
+
+    Without a username: fall back to a tg://user?id profile link built from the
+    escaped, []()-stripped first name (a crafted first_name can't break out —
+    P8 hardening). Such links are best-effort: Telegram only makes them tappable
+    for a username-less user the recipient's client can already resolve.
     """
+    username = (item.get("username") or "").strip().lstrip("@")
+    if username:
+        return "@" + username
     label = md_escape(_who(item))
     for ch in "[]()":
         label = label.replace(ch, "")

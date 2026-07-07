@@ -153,9 +153,24 @@ class FormatUsersTextTest(unittest.TestCase):
         conn.close()
         log_quiz_event(self.db, user_id=U1, word_id="w1", mode="ru_de", is_correct=True)
         text = OS._format_users_text("en")
+        # a user WITH a @username renders as a plain @handle (Telegram auto-links
+        # it) — no wrapped tg:// link, so no backslash leaks under legacy Markdown
         self.assertIn("@alice", text)
-        self.assertIn(f"tg://user?id={U1}", text)
+        self.assertNotIn(f"tg://user?id={U1}", text)
         self.assertIn("— 1 (0)", text)
+
+    def test_username_with_underscore_has_no_backslash(self):
+        register_or_update_user(self.db, U1, "Row_xyz2", "Aleksey")
+        set_user_status(self.db, U1, "approved")
+        text = OS._format_users_text("en")
+        self.assertIn("@Row_xyz2", text)
+        self.assertNotIn("\\_", text)  # the bug: legacy Markdown showed '@Row\\_xyz2'
+
+    def test_username_less_user_falls_back_to_tg_link(self):
+        register_or_update_user(self.db, U1, "", "Тамта")
+        set_user_status(self.db, U1, "approved")
+        text = OS._format_users_text("en")
+        self.assertIn(f"[Тамта](tg://user?id={U1})", text)
 
 
 class OwnerStatKeyboardTest(unittest.TestCase):
