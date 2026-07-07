@@ -80,13 +80,18 @@ class _Msg:
 
 
 class _Bot:
-    """Records edit_message_text calls (the dice edit-in-place path)."""
+    """Records edit_message_text (dice edit-in-place) and edit_message_reply_markup
+    (stripping a worked-through card's inline button) calls."""
 
     def __init__(self):
         self.edits = []  # list of (message_id, text)
+        self.markup_edits = []  # list of (message_id, reply_markup)
 
     async def edit_message_text(self, chat_id=None, message_id=None, text=None, **kw):
         self.edits.append((message_id, text))
+
+    async def edit_message_reply_markup(self, chat_id=None, message_id=None, reply_markup=None, **kw):
+        self.markup_edits.append((message_id, reply_markup))
 
 
 class _Update:
@@ -292,6 +297,25 @@ class HideToggleTest(_Base):
         _run(conjugation_card_callback(cb, ctx))
         self.assertEqual(cb.callback_query.message.edits, [])
         self.assertEqual(cb.callback_query.answered, 1)
+
+    def test_next_strips_previous_card_button(self):
+        # owner #4: advancing must REMOVE the inline button from the worked-through
+        # card, not just make it a no-op — only the current card stays interactive.
+        self._add_eligible_verb("w1", "gehen")
+        self._add_eligible_verb("w2", "sein")
+        ctx = _Ctx()
+        first_mid = self._start_and_card_mid(ctx)
+        _run(conjugation_input(_Update("далее", GUEST), ctx))
+        self.assertIn((first_mid, None), ctx.bot.markup_edits)  # button stripped
+        entries = ctx.user_data["conjugation_card_entries"]
+        self.assertNotIn(first_mid, entries)  # old card no longer toggle-able
+
+    def test_stop_strips_current_card_button(self):
+        self._add_eligible_verb("w1", "gehen")
+        ctx = _Ctx()
+        mid = self._start_and_card_mid(ctx)
+        _run(conjugation_input(_Update("стоп", GUEST), ctx))
+        self.assertIn((mid, None), ctx.bot.markup_edits)
 
 
 class RoutingTest(_Base):

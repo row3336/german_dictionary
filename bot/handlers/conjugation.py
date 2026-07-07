@@ -85,9 +85,27 @@ def _reset_dice(context):
     context.user_data.pop(_DICE_LAST, None)
 
 
+async def _strip_card_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Remove the inline hide toggle from the previous card(s): once the carousel
+    advances (or the drill ends) the worked-through card must lose its button, so
+    only the card currently on screen stays interactive (owner, 2026-07-07)."""
+    entries = context.user_data.get(_CARD_ENTRIES) or {}
+    for mid in entries:
+        if mid is None:
+            continue
+        try:
+            await context.bot.edit_message_reply_markup(
+                chat_id=update.effective_chat.id, message_id=mid, reply_markup=None
+            )
+        except Exception:
+            # Message gone/already stripped/unchanged — nothing to clean up.
+            logger.debug("stripping stale conjugation card button failed", exc_info=True)
+
+
 async def _show_card(update: Update, context: ContextTypes.DEFAULT_TYPE, entry):
     """Render the current verb's card (with the inline hide toggle) and remember it."""
     user_id = update.effective_user.id
+    await _strip_card_buttons(update, context)  # the previous card loses its toggle
     context.user_data[_CURRENT_ID] = entry.get("id")
     _reset_dice(context)
     sent = await _reply_text_with_retry(
@@ -97,13 +115,15 @@ async def _show_card(update: Update, context: ContextTypes.DEFAULT_TYPE, entry):
         reply_markup=_hide_markup(user_id, masked=False),
     )
     mid = getattr(sent, "message_id", None)
-    # Only the current card is toggle-able; taps on an older, stale card fall through.
+    # Only the current card is toggle-able: previous cards had their button stripped
+    # above, and the callback still no-ops on any message not in this dict (defense).
     context.user_data[_CARD_ENTRIES] = {mid: entry} if mid is not None else {}
 
 
 async def _leave_with_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Report "this session: N" and return to the tests menu."""
     user_id = update.effective_user.id
+    await _strip_card_buttons(update, context)  # last card loses its toggle on the way out
     count = context.user_data.pop(_SESSION_COUNT, 0)
     context.user_data.pop(_CURRENT_ID, None)
     context.user_data.pop(_CARD_ENTRIES, None)
