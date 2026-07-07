@@ -3555,7 +3555,32 @@ def log_quiz_event(db_path, user_id, word_id, mode, is_correct, review_stage_sna
         )
 
 
- 
+def mark_last_quiz_event_correct(db_path, user_id, word_id, mode):
+    """Flip the most recent quiz_event for (user, word, mode) to correct in place.
+
+    Used by input_err: the last answer was a typo, not a real miss. Updating the
+    existing event (instead of appending a new correct one) means the daily/weekly
+    first-touch retention counts that word as correct — a later appended event
+    would be ignored because the report keys off the first answer of the day.
+    Returns True if a row was updated."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        cur = conn.execute(
+            """
+            UPDATE quiz_events
+            SET is_correct = 1
+            WHERE id = (
+                SELECT id FROM quiz_events
+                WHERE user_id = ? AND word_id = ? AND mode = ?
+                ORDER BY id DESC
+                LIMIT 1
+            )
+            """,
+            (int(user_id), _safe_text(word_id), _safe_text(mode)),
+        )
+        return cur.rowcount > 0
+
+
 def list_words_for_translations_backfill(db_path, limit=0):
     """Handle list words for translations backfill."""
     init_db(db_path)

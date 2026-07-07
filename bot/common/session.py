@@ -77,11 +77,30 @@ def _session_count(context, mode):
     return 0
 
 
-def _bump_session_result(context, mode, ok):
-    """Tally one more correct/wrong answer for `mode` this session (spec #9 summary)."""
+def _bump_session_result(context, mode, ok, is_retry=False):
+    """Tally one correct/wrong RESULT PER WORD for `mode` this session (spec #9
+    summary). Only the first answer to a word counts — in-session FSRS retries are
+    NOT re-tallied — so correct+wrong always equals the number of distinct words
+    seen ('session words'), matching the daily/weekly first-touch report."""
+    if is_retry:
+        return
     _ensure_session_mode(context, mode)
     key = _session_correct_key(mode) if ok else _session_wrong_key(mode)
     context.user_data[key] = int(context.user_data.get(key) or 0) + 1
+
+
+def _flip_session_result_to_correct(context, mode):
+    """input_err correction: the last first-touch answer was a typo, not a real
+    miss — move it from the wrong tally to the correct tally so the session summary
+    treats it as correct (mirrors the report fix)."""
+    _ensure_session_mode(context, mode)
+    wrong_key = _session_wrong_key(mode)
+    wrong = int(context.user_data.get(wrong_key) or 0)
+    if wrong <= 0:
+        return
+    context.user_data[wrong_key] = wrong - 1
+    correct_key = _session_correct_key(mode)
+    context.user_data[correct_key] = int(context.user_data.get(correct_key) or 0) + 1
 
 
 def _session_correct_count(context, mode):

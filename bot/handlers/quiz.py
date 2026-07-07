@@ -29,6 +29,7 @@ from ..common.settings import _topic_filter_for_query
 from ..common.session import (
     _bump_answer_streak,
     _bump_session_result,
+    _flip_session_result_to_correct,
     _force_take_retry_entry,
     _mark_session_word,
     _maybe_take_retry_entry,
@@ -53,6 +54,7 @@ from ..storage import (
     count_words_for_topics,
     get_synonym_group,
     log_quiz_event,
+    mark_last_quiz_event_correct,
     set_progress,
     update_form_stats,
     update_progress,
@@ -170,7 +172,13 @@ async def _apply_input_err(update, context, mode):
         quality=5,
         interval_divisor=_interval_divisor_for_mode(update.effective_user.id, mode),
     )
-    log_quiz_event(get_db_path(), user_id=update.effective_user.id, word_id=last_entry.get("id"), mode=mode, is_correct=True)
+    # Flip the just-logged wrong event to correct IN PLACE (not a new appended
+    # event): the daily/weekly first-touch report keys off the first answer, so an
+    # appended correct would be ignored — input_err (a typo, not a real miss) must
+    # actually count as correct in the reports.
+    mark_last_quiz_event_correct(get_db_path(), update.effective_user.id, last_entry.get("id"), mode)
+    # Mirror it in the in-session summary: move this word from wrong to correct.
+    _flip_session_result_to_correct(context, mode)
     _log_transaction(update.effective_user.id, f"input_err:{mode}", snapshot)
     _remove_from_retry(context, mode, last_entry.get("id"))
     _set_retry_since_last(context, mode, _retry_since_last(context, mode) + 1)
@@ -583,7 +591,7 @@ async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _register_retry_result(context, mode, entry.get("id"), ok, is_retry, update.effective_user.id)
     if not is_retry and ok:
         _set_retry_since_last(context, mode, _retry_since_last(context, mode) + 1)
-    _bump_session_result(context, mode, ok)
+    _bump_session_result(context, mode, ok, is_retry)
     await _apply_answer_reaction(update, context, ok)
 
     feedback = _format_feedback_ru_de(entry, ok, lang=_user_interface_lang(update.effective_user.id))
@@ -646,7 +654,7 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _register_retry_result(context, mode, entry.get("id"), ok, is_retry, update.effective_user.id)
     if not is_retry and ok:
         _set_retry_since_last(context, mode, _retry_since_last(context, mode) + 1)
-    _bump_session_result(context, mode, ok)
+    _bump_session_result(context, mode, ok, is_retry)
     await _apply_answer_reaction(update, context, ok)
 
     feedback = _format_feedback_de_ru(entry, ok, _user_dict_lang(update.effective_user.id), update.effective_user.id, lang=_user_interface_lang(update.effective_user.id))
@@ -712,7 +720,7 @@ async def quiz_pl_sg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _register_retry_result(context, mode, entry.get("id"), ok, is_retry, update.effective_user.id)
     if not is_retry and ok:
         _set_retry_since_last(context, mode, _retry_since_last(context, mode) + 1)
-    _bump_session_result(context, mode, ok)
+    _bump_session_result(context, mode, ok, is_retry)
     await _apply_answer_reaction(update, context, ok)
     feedback = _format_feedback_pl_sg(entry, ok, lang=_user_interface_lang(update.effective_user.id))
     return await _send_pl_sg_prompt(update, context, feedback)
@@ -749,7 +757,7 @@ async def quiz_article(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _register_retry_result(context, mode, entry.get("id"), ok, is_retry, update.effective_user.id)
     if not is_retry:
         _set_retry_since_last(context, mode, _retry_since_last(context, mode) + 1)
-    _bump_session_result(context, mode, ok)
+    _bump_session_result(context, mode, ok, is_retry)
     await _apply_answer_reaction(update, context, ok)
 
     feedback = _format_feedback_article(entry, ok, _user_dict_lang(update.effective_user.id), lang=_user_interface_lang(update.effective_user.id))
