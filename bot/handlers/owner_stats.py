@@ -19,8 +19,10 @@ STAT_CALLBACK_PREFIX = "stat"
 
 
 def _format_progress_text(user_id):
-    """Per-user progress code-block content (spec #11: 'progress' view — the
-    screen as it exists today, untouched)."""
+    """Per-user progress code-block content (spec #11: 'progress' view). Labels are
+    localized to the user's interface language; the German word-type names at the
+    end and the direction tokens (Ru>De/…) stay as-is (owner decision 2026-07-07)."""
+    lang = _user_interface_lang(user_id)
     stats = get_statistics_snapshot(get_db_path(), user_id=user_id, mode=_mode_l1_de(user_id))
     word_types = stats.get("word_types") or {}
     db_path = get_db_path()
@@ -31,58 +33,58 @@ def _format_progress_text(user_id):
         select_due(db_path, user_id=user_id, mode=_mode_de_l1(user_id), exclude_correct_today=True)
     )
     lines = [
-        f"bot version = v{APP_VERSION}",
+        f"{t(lang, 'stat_bot_version')} = v{APP_VERSION}",
         "",
-        f"fsrs_ru_de_due = {fsrs_ru_de_due}",
-        f"fsrs_de_ru_due = {fsrs_de_ru_due}",
+        f"{t(lang, 'stat_fsrs_ru_de_due')} = {fsrs_ru_de_due}",
+        f"{t(lang, 'stat_fsrs_de_ru_due')} = {fsrs_de_ru_due}",
         "",
-        f"today complete fsrs Ru > De = {stats['today_complete_fsrs_ru_de']}",
-        f"today complete fsrs De > Ru = {stats['today_complete_fsrs_de_ru']}",
-        f"today complete pl > sing = {stats.get('today_complete_pl_sg', 0)}",
+        f"{t(lang, 'stat_today_fsrs_ru_de')} = {stats['today_complete_fsrs_ru_de']}",
+        f"{t(lang, 'stat_today_fsrs_de_ru')} = {stats['today_complete_fsrs_de_ru']}",
+        f"{t(lang, 'stat_today_pl_sg')} = {stats.get('today_complete_pl_sg', 0)}",
         "",
-        f"today complete weak article = {stats['today_complete_weak_article']}",
-        f"today complete weak plural = {stats['today_complete_weak_plural']}",
-        f"today complete weak partizip2 = {stats['today_complete_weak_partizip2']}",
-        f"today complete weak preteritum = {stats['today_complete_weak_prateritum']}",
+        f"{t(lang, 'stat_today_weak_article')} = {stats['today_complete_weak_article']}",
+        f"{t(lang, 'stat_today_weak_plural')} = {stats['today_complete_weak_plural']}",
+        f"{t(lang, 'stat_today_weak_partizip2')} = {stats['today_complete_weak_partizip2']}",
+        f"{t(lang, 'stat_today_weak_prateritum')} = {stats['today_complete_weak_prateritum']}",
         "",
-        f"5+ correct streak = {stats.get('streak_5p', 0)}",
-        f"4 correct streak = {stats.get('streak_4', 0)}",
-        f"3 correct streak = {stats.get('streak_3', stats.get('streak_3p', 0))}",
-        f"2 correct streak = {stats.get('streak_2', 0)}",
-        f"1 correct = {stats.get('streak_1', 0)}",
-        f"wrong fsrs = {stats.get('wrong_fsrs', 0)}",
+        f"{t(lang, 'stat_streak_5p')} = {stats.get('streak_5p', 0)}",
+        f"{t(lang, 'stat_streak_4')} = {stats.get('streak_4', 0)}",
+        f"{t(lang, 'stat_streak_3')} = {stats.get('streak_3', stats.get('streak_3p', 0))}",
+        f"{t(lang, 'stat_streak_2')} = {stats.get('streak_2', 0)}",
+        f"{t(lang, 'stat_streak_1')} = {stats.get('streak_1', 0)}",
+        f"{t(lang, 'stat_wrong_fsrs')} = {stats.get('wrong_fsrs', 0)}",
         "",
         (
-            f"weak article = {stats['weak_article']} "
+            f"{t(lang, 'stat_weak_article')} = {stats['weak_article']} "
             f"({stats['weak_article_stage1']}) "
             f"({stats['weak_article_stage2']}) "
             f"({stats['weak_article_stage3']})"
         ),
         (
-            f"weak plural = {stats['weak_plural']} "
+            f"{t(lang, 'stat_weak_plural')} = {stats['weak_plural']} "
             f"({stats['weak_plural_stage1']}) "
             f"({stats['weak_plural_stage2']}) "
             f"({stats['weak_plural_stage3']})"
         ),
         (
-            f"weak partizip2 = {stats['weak_partizip2']} "
+            f"{t(lang, 'stat_weak_partizip2')} = {stats['weak_partizip2']} "
             f"({stats['weak_partizip2_stage1']}) "
             f"({stats['weak_partizip2_stage2']}) "
             f"({stats['weak_partizip2_stage3']})"
         ),
         (
-            f"weak preterium = {stats['weak_prateritum']} "
+            f"{t(lang, 'stat_weak_prateritum')} = {stats['weak_prateritum']} "
             f"({stats['weak_prateritum_stage1']}) "
             f"({stats['weak_prateritum_stage2']}) "
             f"({stats['weak_prateritum_stage3']})"
         ),
         "",
-        f"words in dict = {stats['total_words']}",
-        f"never touched = {stats['never_answered']}",
-        f"words weekly = +{stats['weekly_words']}",
-        f"learning weekly = {stats.get('learning_weekly', 0)}",
+        f"{t(lang, 'stat_words_in_dict')} = {stats['total_words']}",
+        f"{t(lang, 'stat_never_touched')} = {stats['never_answered']}",
+        f"{t(lang, 'stat_words_weekly')} = +{stats['weekly_words']}",
+        f"{t(lang, 'stat_learning_weekly')} = {stats.get('learning_weekly', 0)}",
         "",
-        "word types:",
+        t(lang, "stat_word_types"),
         *[f"{k} = {word_types[k]}" for k in sorted(word_types.keys())],
     ]
     return "\n".join(lines)
