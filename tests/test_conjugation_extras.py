@@ -70,6 +70,7 @@ class _Msg:
         self.text = text
         self.replies = []
         self.markups = []
+        self.deleted = False
 
     async def reply_text(self, text, **kw):
         self.replies.append(text)
@@ -78,14 +79,25 @@ class _Msg:
         _Msg._next_id += 1
         return _SentMessage(mid, text)
 
+    async def delete(self):
+        self.deleted = True
+
 
 class _Bot:
-    """Records edit_message_text (dice edit-in-place) and edit_message_reply_markup
-    (stripping a worked-through card's inline button) calls."""
+    """Records send_message (dice message sent by the bot), edit_message_text (dice
+    edit-in-place) and edit_message_reply_markup (stripping a worked-through card's
+    inline button) calls."""
 
     def __init__(self):
+        self.sent = []  # list of (chat_id, text)
         self.edits = []  # list of (message_id, text)
         self.markup_edits = []  # list of (message_id, reply_markup)
+
+    async def send_message(self, chat_id=None, text=None, **kw):
+        self.sent.append((chat_id, text))
+        mid = _Msg._next_id
+        _Msg._next_id += 1
+        return _SentMessage(mid, text)
 
     async def edit_message_text(self, chat_id=None, message_id=None, text=None, **kw):
         self.edits.append((message_id, text))
@@ -183,6 +195,14 @@ class DicePickTest(unittest.TestCase):
             for _ in range(50):
                 self.assertNotEqual(pick_dice_pronoun(prev), prev)
 
+    def test_no_repeat_within_three_shows(self):
+        # excluding the last two shown => no pronoun repeats within any 3-window
+        recent = []
+        for _ in range(300):
+            p = pick_dice_pronoun(recent[-2:])
+            self.assertNotIn(p, recent[-2:])
+            recent = (recent + [p])[-2:]
+
     def test_dice_pronoun_set(self):
         self.assertEqual(
             DICE_PRONOUNS, ("ich", "du", "er/sie/es", "wir", "ihr", "Sie/sie")
@@ -209,38 +229,39 @@ class MaskRenderTest(unittest.TestCase):
 
 
 class DiceHandlerTest(_Base):
-    def test_second_press_edits_same_message(self):
+    DICE = t("ru", "conjugation_dice")  # the reply-keyboard label, e.g. "🎲 кубик"
+
+    def test_tap_deletes_message_then_sends_then_edits(self):
         self._add_eligible_verb("w1", "gehen")
         ctx = _Ctx()
         _run(start_conjugation(_Update("", GUEST), ctx))
 
-        dice = "🎲"
-        u1 = _Update(dice, GUEST)
+        u1 = _Update(self.DICE, GUEST)
         state = _run(conjugation_input(u1, ctx))
         self.assertEqual(state, CONJUGATION_MENU)
-        # first press SENDS a new message, no edits yet
-        self.assertEqual(len(u1.message.replies), 1)
+        self.assertTrue(u1.message.deleted)  # the tap-message is deleted (no scroll/animation)
+        # first press SENDS one dice message via the bot, no edits yet
+        self.assertEqual(len(ctx.bot.sent), 1)
         self.assertEqual(ctx.bot.edits, [])
         first_mid = ctx.user_data["conjugation_dice_msg_id"]
         self.assertIsNotNone(first_mid)
 
-        u2 = _Update(dice, GUEST)
+        u2 = _Update(self.DICE, GUEST)
         _run(conjugation_input(u2, ctx))
-        # second press EDITS the stored message and does NOT send a new one
-        self.assertEqual(u2.message.replies, [])
+        self.assertTrue(u2.message.deleted)
+        # second press EDITS the same message, does NOT send a new one
+        self.assertEqual(len(ctx.bot.sent), 1)
         self.assertEqual(len(ctx.bot.edits), 1)
         edited_mid, _ = ctx.bot.edits[0]
         self.assertEqual(edited_mid, first_mid)
-        # stored id unchanged (still the same live message)
         self.assertEqual(ctx.user_data["conjugation_dice_msg_id"], first_mid)
 
     def test_dice_message_shows_a_pronoun(self):
         self._add_eligible_verb("w1", "gehen")
         ctx = _Ctx()
         _run(start_conjugation(_Update("", GUEST), ctx))
-        u = _Update("🎲", GUEST)
-        _run(conjugation_input(u, ctx))
-        shown = u.message.replies[0]
+        _run(conjugation_input(_Update(self.DICE, GUEST), ctx))
+        shown = ctx.bot.sent[-1][1]
         self.assertTrue(any(p in shown for p in DICE_PRONOUNS))
 
     def test_next_card_resets_dice(self):
@@ -248,7 +269,7 @@ class DiceHandlerTest(_Base):
         self._add_eligible_verb("w2", "sein")
         ctx = _Ctx()
         _run(start_conjugation(_Update("", GUEST), ctx))
-        _run(conjugation_input(_Update("🎲", GUEST), ctx))
+        _run(conjugation_input(_Update(self.DICE, GUEST), ctx))
         self.assertIsNotNone(ctx.user_data.get("conjugation_dice_msg_id"))
         _run(conjugation_input(_Update("далее", GUEST), ctx))
         # advancing forgets the live dice message so the next roll starts fresh
@@ -323,7 +344,9 @@ class RoutingTest(_Base):
         for lang in ("ru", "uk", "en"):
             set_user_interface_lang(self.db, GUEST, lang)
             label = t(lang, "conjugation_dice")
-            self.assertEqual(label, "🎲")
+            # a die + a word, never a bare "🎲" (a lone dice emoji would animate)
+            self.assertIn("🎲", label)
+            self.assertNotEqual(label, "🎲")
             self.assertEqual(_action_key_from_text(label, GUEST), "conjugation_dice")
 
     def test_hide_show_labels_localized_no_raw_english(self):

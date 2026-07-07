@@ -142,7 +142,7 @@ class CarouselFlowTest(_Base):
         state = _run(start_conjugation(upd, ctx))
         self.assertEqual(state, CONJUGATION_MENU)
         # A primer message carries the persistent carousel keyboard; the card follows.
-        self.assertEqual(_kb_texts(upd.message.markups[0]), ["далее", "🎲", "стоп"])
+        self.assertEqual(_kb_texts(upd.message.markups[0]), ["далее", "🎲 кубик", "стоп"])
         self.assertIn("*gehen* — идти", upd.message.replies[1])
 
     def test_next_counts_current_and_advances(self):

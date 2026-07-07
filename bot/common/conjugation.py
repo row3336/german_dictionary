@@ -24,13 +24,18 @@ PRONOUNS = ("ich", "du", "er/sie/es", "wir", "ihr", "sie/Sie")
 DICE_PRONOUNS = ("ich", "du", "er/sie/es", "wir", "ihr", "Sie/sie")
 
 
-def pick_dice_pronoun(previous=None):
-    """Return a random dice pronoun, avoiding an immediate repeat of ``previous``.
+def pick_dice_pronoun(recent=None):
+    """Return a random dice pronoun, excluding the recently shown ones.
 
-    With a single distinct choice this still terminates (the candidate pool is
-    only narrowed when more than one pronoun exists), so it never loops forever.
+    Pass the last two shown pronouns (`recent`): excluding both guarantees a
+    pronoun never repeats more than once per 3 shows, so all six get covered
+    without a near-immediate repeat. Accepts a single pronoun or an iterable.
+    Falls back to the full set if exclusion would empty the pool.
     """
-    choices = [p for p in DICE_PRONOUNS if p != previous] or list(DICE_PRONOUNS)
+    if isinstance(recent, str):
+        recent = (recent,)
+    recent = set(recent or ())
+    choices = [p for p in DICE_PRONOUNS if p not in recent] or list(DICE_PRONOUNS)
     return random.choice(choices)
 
 # Placeholder shown in place of a hidden conjugated form (Feature B "hide forms").
