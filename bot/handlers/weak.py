@@ -141,7 +141,8 @@ async def quiz_article_weak(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await _stop_with_summary(update, context, "weak_article")
     if _action_key_from_text(text, update.effective_user.id) == "input_err":
         applied = _apply_input_err_weak(update, context, "article")
-        prefix = "✅ Fixed previous answer." if applied else "Nothing to fix."
+        lang = _user_interface_lang(update.effective_user.id)
+        prefix = t(lang, "input_err_fixed") if applied else t(lang, "input_err_nothing")
         return await _send_article_weak_prompt(update, context, prefix, force_entry=context.user_data.get("quiz_entry"))
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_ARTICLE_WEAK)
@@ -190,7 +191,8 @@ async def quiz_plural_weak(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await _stop_with_summary(update, context, "weak_plural")
     if _action_key_from_text(text, update.effective_user.id) == "input_err":
         applied = _apply_input_err_weak(update, context, "plural")
-        prefix = "✅ Fixed previous answer." if applied else "Nothing to fix."
+        lang = _user_interface_lang(update.effective_user.id)
+        prefix = t(lang, "input_err_fixed") if applied else t(lang, "input_err_nothing")
         return await _send_plural_weak_prompt(update, context, prefix, force_entry=context.user_data.get("quiz_entry"))
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_PLURAL_WEAK)
@@ -241,7 +243,8 @@ async def quiz_prateritum_weak(update: Update, context: ContextTypes.DEFAULT_TYP
         return await _stop_with_summary(update, context, "weak_prateritum")
     if _action_key_from_text(text, update.effective_user.id) == "input_err":
         applied = _apply_input_err_weak(update, context, "prateritum")
-        prefix = "✅ Fixed previous answer." if applied else "Nothing to fix."
+        lang = _user_interface_lang(update.effective_user.id)
+        prefix = t(lang, "input_err_fixed") if applied else t(lang, "input_err_nothing")
         return await _send_prateritum_weak_prompt(update, context, prefix, force_entry=context.user_data.get("quiz_entry"))
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_PRATERITUM_WEAK)
@@ -292,7 +295,8 @@ async def quiz_partizip2_weak(update: Update, context: ContextTypes.DEFAULT_TYPE
         return await _stop_with_summary(update, context, "weak_partizip2")
     if _action_key_from_text(text, update.effective_user.id) == "input_err":
         applied = _apply_input_err_weak(update, context, "partizip2")
-        prefix = "✅ Fixed previous answer." if applied else "Nothing to fix."
+        lang = _user_interface_lang(update.effective_user.id)
+        prefix = t(lang, "input_err_fixed") if applied else t(lang, "input_err_nothing")
         return await _send_partizip2_weak_prompt(update, context, prefix, force_entry=context.user_data.get("quiz_entry"))
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_PARTIZIP2_WEAK)
