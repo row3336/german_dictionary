@@ -21,8 +21,9 @@ if "dotenv" not in sys.modules:
     _d.load_dotenv = lambda *a, **k: False
     sys.modules["dotenv"] = _d
 
-from bot.app_config import QUIZ_VERB_WEAK_MENU  # noqa: E402
+from bot.app_config import QUIZ_RU_DE_MENU, QUIZ_VERB_WEAK_MENU  # noqa: E402
 from bot.handlers import weak as W  # noqa: E402
+from bot.handlers.menu import quiz_ru_de_menu_choice  # noqa: E402
 from bot.i18n import TEXTS, t  # noqa: E402
 from bot.storage import init_db, register_or_update_user, set_user_interface_lang  # noqa: E402
 
@@ -75,11 +76,33 @@ class WeakI18nTest(unittest.TestCase):
             else:
                 os.environ[k] = v
 
-    def test_i18n_table_has_weak_use_mode_buttons(self):
+    def test_i18n_table_has_weak_keys(self):
         for lang in ("en", "ru", "uk"):
-            self.assertIn("weak_use_mode_buttons", TEXTS[lang], lang)
-        self.assertNotEqual(TEXTS["ru"]["weak_use_mode_buttons"], TEXTS["en"]["weak_use_mode_buttons"])
-        self.assertNotEqual(TEXTS["uk"]["weak_use_mode_buttons"], TEXTS["en"]["weak_use_mode_buttons"])
+            for key in ("weak_use_mode_buttons", "weak_choose_verb_mode", "quiz_use_menu_buttons"):
+                self.assertIn(key, TEXTS[lang], f"{lang}/{key}")
+        for key in ("weak_use_mode_buttons", "weak_choose_verb_mode", "quiz_use_menu_buttons"):
+            self.assertNotEqual(TEXTS["ru"][key], TEXTS["en"][key], key)
+            self.assertNotEqual(TEXTS["uk"][key], TEXTS["en"][key], key)
+
+    def test_weak_verb_menu_header_localized_ru(self):
+        # Lang>De menu -> "Слабые формы глагола" opens the verb submenu with a
+        # localized header (was hardcoded "Choose verb weak mode:").
+        set_user_interface_lang(self.db, GUEST, "ru")
+        update = _Update(GUEST, t("ru", "weak_verb_mode"))
+        state = _run(quiz_ru_de_menu_choice(update, _Ctx()))
+        self.assertEqual(state, QUIZ_VERB_WEAK_MENU)
+        self.assertEqual(update.message.calls[0][0], t("ru", "weak_choose_verb_mode"))
+        self.assertNotIn("Choose verb weak mode", update.message.calls[0][0])
+
+    def test_lang_de_menu_invalid_input_localized_ru(self):
+        # Junk in the Lang>De menu -> localized "use the menu buttons" (was hardcoded
+        # "Use Ru > De menu buttons.", which also wrongly hardcoded the direction).
+        set_user_interface_lang(self.db, GUEST, "ru")
+        update = _Update(GUEST, "zzz-not-a-menu-button")
+        state = _run(quiz_ru_de_menu_choice(update, _Ctx()))
+        self.assertEqual(state, QUIZ_RU_DE_MENU)
+        self.assertEqual(update.message.calls[0][0], t("ru", "quiz_use_menu_buttons"))
+        self.assertNotIn("Ru > De menu buttons", update.message.calls[0][0])
 
     def _invalid_submenu_reply(self, lang):
         set_user_interface_lang(self.db, GUEST, lang)

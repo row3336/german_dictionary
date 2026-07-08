@@ -270,12 +270,12 @@ async def quiz_ru_de_menu_choice(update: Update, context: ContextTypes.DEFAULT_T
     if action == "weak_verb":
         lang = _user_interface_lang(user_id)
         await update.message.reply_text(
-            "Choose verb weak mode:",
+            t(lang, "weak_choose_verb_mode"),
             reply_markup=ReplyKeyboardMarkup([[t(lang, "weak_prateritum_mode"), t(lang, "weak_partizip2_mode")], [t(lang, "back")]], resize_keyboard=True),
         )
         return QUIZ_VERB_WEAK_MENU
     await update.message.reply_text(
-        "Use Ru > De menu buttons.",
+        t(_user_interface_lang(user_id), "quiz_use_menu_buttons"),
         reply_markup=ReplyKeyboardMarkup(_ru_de_menu_keys(user_id), resize_keyboard=True),
     )
     return QUIZ_RU_DE_MENU
