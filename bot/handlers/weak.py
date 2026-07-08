@@ -123,11 +123,13 @@ async def quiz_verb_weak_menu_choice(update: Update, context: ContextTypes.DEFAU
         _reset_weak_drill_state(context, "weak_partizip2")
         _reset_session(context, "weak_partizip2")
         return await _send_partizip2_weak_prompt(update, context, None)
-        await _reply_text_with_retry(
-            update.message,
-            "Use verb weak mode buttons.",
-            reply_markup=ReplyKeyboardMarkup([[t(lang, "weak_prateritum_mode"), t(lang, "weak_partizip2_mode")], [t(lang, "back")]], resize_keyboard=True),
-        )
+    # Invalid input in the submenu: re-show the buttons (was dead code nested under
+    # the weak_partizip2 branch, so it never fired — and the text was hardcoded EN).
+    await _reply_text_with_retry(
+        update.message,
+        t(lang, "weak_use_mode_buttons"),
+        reply_markup=ReplyKeyboardMarkup([[t(lang, "weak_prateritum_mode"), t(lang, "weak_partizip2_mode")], [t(lang, "back")]], resize_keyboard=True),
+    )
     return QUIZ_VERB_WEAK_MENU
 
 
