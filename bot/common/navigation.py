@@ -135,8 +135,15 @@ def _clear_last_answer(context):
     context.user_data.pop("last_answered_message_id", None)
 
 
-async def _back_to_main_menu(update: Update):
-    """Handle back to main menu."""
+async def _back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE = None):
+    """Handle back to main menu. When `context` is given, clears the same transient
+    quiz/drill state as `_back_to_tests` (used when exiting a card straight to the
+    main menu, e.g. a report-opened clarify card — bug #25)."""
+    if context is not None:
+        _reset_retry_state(context)
+        _reset_fsrs_cycle_state(context)
+        _reset_weak_drill_state(context)
+        _clear_last_answer(context)
     user_id = update.effective_user.id
     await update.message.reply_text(
         t(_user_interface_lang(user_id), "main_menu"),

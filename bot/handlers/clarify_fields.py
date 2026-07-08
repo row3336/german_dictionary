@@ -35,7 +35,7 @@ from ..app_config import (
     is_owner,
 )
 from ..common.lang import _user_dict_lang, _user_interface_lang
-from ..common.navigation import _action_key_from_text, _back_to_tests, _reply_text_with_retry
+from ..common.navigation import _action_key_from_text, _back_to_main_menu, _back_to_tests, _reply_text_with_retry
 from ..handlers.quiz import (
     _send_article_prompt,
     _send_de_ru_prompt,
@@ -224,6 +224,7 @@ async def _start_clarify_fields(update: Update, context: ContextTypes.DEFAULT_TY
     context.user_data["quiz_edit_entry"] = entry
     context.user_data["edit_stage"] = "pick_field"
     context.user_data["edit_return_state"] = return_state
+    context.user_data.pop("clarify_from_report", None)  # this card has a quiz/tests origin
     await _reply_text_with_retry(
         update.message,
         f"```text\n{_format_word_card(entry, title, user_id=update.effective_user.id)}\n```",
@@ -251,6 +252,10 @@ async def open_clarify_from_report(update: Update, context: ContextTypes.DEFAULT
     context.user_data["edit_stage"] = "pick_field"
     context.user_data.pop("edit_return_state", None)
     context.user_data.pop("quiz_entry", None)
+    # bug #25: the owner reached this card from the reports inbox (Settings > reports
+    # or the digest), not from a quiz/tests screen. Mark it so the card's exit
+    # returns to the MAIN menu instead of dumping into the unrelated tests menu.
+    context.user_data["clarify_from_report"] = True
     user_id = update.effective_user.id
     msg = update.callback_query.message
     await msg.reply_text(
@@ -259,6 +264,15 @@ async def open_clarify_from_report(update: Update, context: ContextTypes.DEFAULT
     )
     await msg.reply_text(t(_user_interface_lang(user_id), "clarify_choose_action"), reply_markup=_clarify_screen(context, user_id))
     return ADD_EDIT
+
+
+async def _exit_clarify(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Where a clarify card lands on exit. A report-opened card (bug #25) has no
+    quiz/tests origin — the owner came from the reports inbox — so it returns to the
+    MAIN menu; every other clarify flow returns to the tests menu."""
+    if context.user_data.pop("clarify_from_report", None):
+        return await _back_to_main_menu(update, context)
+    return await _back_to_tests(update, context)
 
 
 async def _resume_after_clarify(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text, state_override=None):
@@ -276,7 +290,7 @@ async def _resume_after_clarify(update: Update, context: ContextTypes.DEFAULT_TY
         context.user_data.pop("quiz_edit_entry", None)
     entry = context.user_data.get("quiz_entry")
     if not entry:
-        return await _back_to_tests(update, context)
+        return await _exit_clarify(update, context)
 
     if state == QUIZ_RU_DE:
         text = _format_ru_question(entry, _user_dict_lang(update.effective_user.id))
@@ -449,7 +463,7 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
             return await _send_partizip2_weak_prompt(update, context, prefix)
         if state == DB_SEARCH_VIEW:
             return await _send_db_search_prompt(update, update.effective_user.id, prefix)
-        return await _back_to_tests(update, context)
+        return await _exit_clarify(update, context)
 
     if _action_key_from_text(text, update.effective_user.id) == "back":
         context.user_data.pop("prep_cascade", None)  # spec #1: back abandons the cascade
