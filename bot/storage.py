@@ -1682,9 +1682,18 @@ def restore_user_word_state(db_path, snapshot):
     progress_rows = snapshot.get("progress") or {}
     event_counts = snapshot.get("event_counts") or {}
     with _connect(db_path) as conn:
+        # progress/form_stats/learning_items all FK-reference words(id) ON DELETE
+        # CASCADE. If the word was deleted after the snapshot was taken, its child
+        # rows were cascade-removed and re-inserting them would raise
+        # "FOREIGN KEY constraint failed". There is nothing meaningful left to
+        # restore, so skip the INSERTs (the DELETE branches stay harmless no-ops).
+        word_exists = bool(word_id) and conn.execute(
+            "SELECT 1 FROM words WHERE id = ?", (word_id,)
+        ).fetchone() is not None
+
         for mode in modes:
             row = progress_rows.get(mode)
-            if row:
+            if row and word_exists:
                 conn.execute(
                     """
                     INSERT INTO progress (user_id, word_id, mode, interval, repetitions, ease, due, updated_at)
@@ -1714,7 +1723,7 @@ def restore_user_word_state(db_path, snapshot):
                 )
 
         fs_row = snapshot.get("form_stats")
-        if fs_row:
+        if fs_row and word_exists:
             cols = [c for c in fs_row.keys()]
             placeholders = ",".join("?" for _ in cols)
             update_cols = ",".join(f"{c}=excluded.{c}" for c in cols if c not in {"user_id", "word_id"})
@@ -1733,7 +1742,13 @@ def restore_user_word_state(db_path, snapshot):
             )
 
         li_row = snapshot.get("learning_item")
-        if li_row:
+        # learning_items additionally FK-references learning_batches(id) ON DELETE
+        # CASCADE, so its parent batch must also still exist to re-insert the row.
+        batch_id = _safe_text(li_row.get("batch_id")) if li_row else ""
+        batch_exists = bool(batch_id) and conn.execute(
+            "SELECT 1 FROM learning_batches WHERE id = ?", (batch_id,)
+        ).fetchone() is not None
+        if li_row and word_exists and batch_exists:
             cols = [c for c in li_row.keys()]
             placeholders = ",".join("?" for _ in cols)
             update_cols = ",".join(f"{c}=excluded.{c}" for c in cols if c not in {"user_id", "word_id"})
@@ -1778,7 +1793,9 @@ def restore_user_word_state(db_path, snapshot):
                         f"DELETE FROM quiz_events WHERE id IN ({placeholders})",
                         tuple(int(r["id"]) for r in ids),
                     )
-    return True
+    # False when the parent word is gone: nothing meaningful was restored (its
+    # child rows were cascade-deleted and cannot be re-created).
+    return word_exists
 
 
 def add_transaction_log(db_path, user_id, action, payload):

@@ -130,6 +130,27 @@ class UndoGateTest(unittest.TestCase):
         self.assertEqual(len(list_transaction_logs(self.db, user_id=OWNER, limit=10)), 1)
         self.assertEqual(self._guest_start_calls, [])  # gate let the guest through
 
+    def test_failed_restore_still_consumes_log(self):
+        """A raising restore must not brick /undo: the entry is still deleted so
+        repeated presses can't loop forever on the same poisoned snapshot."""
+        register_or_update_user(self.db, GUEST, "g", "G")
+        set_user_status(self.db, GUEST, "approved")
+        self._log_a_step(GUEST)
+
+        orig = M.restore_user_word_state
+
+        def _boom(*a, **k):
+            raise RuntimeError("FOREIGN KEY constraint failed")
+
+        M.restore_user_word_state = _boom
+        try:
+            _run(M.undo_steps(_Update(GUEST), _Ctx()))  # must not raise
+        finally:
+            M.restore_user_word_state = orig
+
+        # Log consumed despite the failure -> next /undo won't re-hit it.
+        self.assertEqual(list_transaction_logs(self.db, user_id=GUEST, limit=10), [])
+
     def test_non_approved_routed_to_guest_start_no_undo(self):
         register_or_update_user(self.db, PENDING, "p", "P")  # stays pending
         self._log_a_step(PENDING)

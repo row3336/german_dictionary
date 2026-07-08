@@ -7,6 +7,7 @@ from bot.storage import (
     add_word,
     add_transaction_log,
     delete_transaction_logs,
+    delete_word,
     init_db,
     list_transaction_logs,
     log_quiz_event,
@@ -68,6 +69,28 @@ class TransactionLogTests(unittest.TestCase):
             ).fetchone()[0]
         self.assertEqual(p_cnt, 0)
         self.assertEqual(e_cnt, 0)
+
+    def test_restore_after_word_deleted_no_fk_error(self):
+        """Regression: word deleted after snapshot -> restore must not raise
+        'FOREIGN KEY constraint failed' and must leave no orphan child rows."""
+        db_path = _mk_db()
+        self.addCleanup(lambda: os.unlink(db_path))
+        init_db(db_path)
+        entry = _add_noun(db_path)
+        # snapshot captures a real progress row for the word...
+        update_progress(db_path, user_id=1, word_id=entry["id"], mode="ru_de", quality=2)
+        snap = snapshot_user_word_state(db_path, user_id=1, word_id=entry["id"], modes=["ru_de"])
+        self.assertIsNotNone(snap["progress"]["ru_de"])
+        # ...then the word itself is deleted (cascade removes its progress) before undo.
+        delete_word(db_path, entry["id"])
+        # restore must not raise; nothing meaningful is restored for a vanished word.
+        restored = restore_user_word_state(db_path, snap)
+        self.assertFalse(restored)
+        with sqlite3.connect(db_path) as conn:
+            cnt = conn.execute(
+                "SELECT COUNT(*) FROM progress WHERE word_id = ?", (entry["id"],)
+            ).fetchone()[0]
+        self.assertEqual(cnt, 0)
 
     def test_add_list_delete_transaction_logs(self):
         db_path = _mk_db()

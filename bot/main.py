@@ -261,8 +261,14 @@ async def undo_steps(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for item in logs:
         payload = item.get("payload") or {}
         snapshot = payload.get("snapshot")
-        if restore_user_word_state(get_db_path(), snapshot):
-            restored += 1
+        # A failed restore must NOT abort the whole /undo: the entry is still
+        # marked processed (deleted below) so a single bad snapshot can't jam the
+        # transaction log and brick /undo forever on repeated presses.
+        try:
+            if restore_user_word_state(get_db_path(), snapshot):
+                restored += 1
+        except Exception:
+            logger.exception("undo: failed to restore snapshot for log id=%s", item.get("id"))
         processed_ids.append(int(item.get("id")))
     if processed_ids:
         delete_transaction_logs(get_db_path(), user_id=user_id, ids=processed_ids)
