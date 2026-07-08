@@ -1,9 +1,10 @@
 """Statistics screen (_format_progress_text) is localized for ru/uk users.
 
 The screen (shown to everyone via the 'Statistics' button) used to render every
-label in English. Labels now go through t(); the German word-type names at the
-end and the direction tokens (Ru>De / De>Ru / pl>sg) stay as-is (owner decision
-2026-07-07).
+label in English. Labels now go through t(); the FSRS direction tokens follow the
+user's dictionary language (Ru>De / Ua>De / En>De), and the today-FSRS counters
+read the user's own quiz mode (not a hardcoded ru_de). German word-type names at
+the end stay as-is.
 """
 
 import os
@@ -17,7 +18,15 @@ install()
 
 from bot.handlers.owner_stats import _format_progress_text  # noqa: E402
 from bot.i18n import TEXTS  # noqa: E402
-from bot.storage import add_word, init_db, register_or_update_user, set_user_interface_lang  # noqa: E402
+from bot.storage import (  # noqa: E402
+    add_word,
+    get_statistics_snapshot,
+    init_db,
+    log_quiz_event,
+    register_or_update_user,
+    set_user_dict_lang,
+    set_user_interface_lang,
+)
 
 GUEST = 111
 
@@ -64,11 +73,33 @@ class StatsI18nTest(unittest.TestCase):
         for raw in ("words in dict", "never touched", "word types:", "wrong fsrs", "5+ correct streak"):
             self.assertNotIn(raw, text)
 
-    def test_german_types_and_directions_preserved(self):
+    def test_directions_follow_dict_language(self):
+        # bug (parallel to #24): FSRS direction tokens must reflect the user's
+        # dictionary language, not a hardcoded Ru>De.
         set_user_interface_lang(self.db, GUEST, "ru")
+        set_user_dict_lang(self.db, GUEST, "uk")
         text = _format_progress_text(GUEST)
-        self.assertIn("verb = ", text)   # German type name kept as-is
-        self.assertIn("Ru>De", text)     # direction token kept as-is
+        self.assertIn("verb = ", text)      # German type name kept as-is
+        self.assertIn("Ua > De", text)      # direction follows dict language
+        self.assertIn("De > Ua", text)
+        self.assertNotIn("Ru>De", text)
+        self.assertNotIn("Ru > De", text)
+
+    def test_today_fsrs_counts_user_mode_not_hardcoded_ru_de(self):
+        # bug: today-FSRS counters were hardcoded to ru_de/de_ru, so a uk/en-dict
+        # user always saw 0. They must count the user's own modes (uk_de/de_uk).
+        set_user_dict_lang(self.db, GUEST, "uk")
+        conn = sqlite3.connect(self.db)
+        conn.execute("INSERT INTO words (id, type, german, russian) VALUES ('w1','nomen','Haus','дом')")
+        conn.execute("INSERT INTO words (id, type, german, russian) VALUES ('w2','nomen','Buch','книга')")
+        conn.commit()
+        conn.close()
+        log_quiz_event(self.db, user_id=GUEST, word_id="w1", mode="uk_de", is_correct=True)
+        log_quiz_event(self.db, user_id=GUEST, word_id="w2", mode="de_uk", is_correct=True)
+        # a stray ru_de event must NOT leak into this user's uk counters
+        snap = get_statistics_snapshot(self.db, user_id=GUEST, mode="uk_de")
+        self.assertEqual(snap["today_complete_fsrs_ru_de"], 1)  # uk_de row
+        self.assertEqual(snap["today_complete_fsrs_de_ru"], 1)  # de_uk row
 
     def test_english_user_unchanged(self):
         set_user_interface_lang(self.db, GUEST, "en")

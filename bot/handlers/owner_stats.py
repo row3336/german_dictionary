@@ -10,7 +10,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from ..app_config import APP_VERSION, get_db_path, is_owner
-from ..common.lang import _mode_de_l1, _mode_l1_de, _user_interface_lang
+from ..common.lang import _mode_de_l1, _mode_l1_de, _quiz_dir_labels, _user_interface_lang
 from ..i18n import t
 from ..storage import get_statistics_snapshot, list_user_activity, select_due
 from .review import _clickable
@@ -20,9 +20,11 @@ STAT_CALLBACK_PREFIX = "stat"
 
 def _format_progress_text(user_id):
     """Per-user progress code-block content (spec #11: 'progress' view). Labels are
-    localized to the user's interface language; the German word-type names at the
-    end and the direction tokens (Ru>De/…) stay as-is (owner decision 2026-07-07)."""
+    localized to the user's interface language; the FSRS direction tokens follow the
+    user's DICTIONARY language (Ru>De / Ua>De / En>De, via _quiz_dir_labels), and the
+    German word-type names at the end stay as-is."""
     lang = _user_interface_lang(user_id)
+    l1_de_dir, de_l1_dir = _quiz_dir_labels(user_id)
     stats = get_statistics_snapshot(get_db_path(), user_id=user_id, mode=_mode_l1_de(user_id))
     word_types = stats.get("word_types") or {}
     db_path = get_db_path()
@@ -35,11 +37,11 @@ def _format_progress_text(user_id):
     lines = [
         f"{t(lang, 'stat_bot_version')} = v{APP_VERSION}",
         "",
-        f"{t(lang, 'stat_fsrs_ru_de_due')} = {fsrs_ru_de_due}",
-        f"{t(lang, 'stat_fsrs_de_ru_due')} = {fsrs_de_ru_due}",
+        f"{t(lang, 'stat_fsrs_due').format(dir=l1_de_dir)} = {fsrs_ru_de_due}",
+        f"{t(lang, 'stat_fsrs_due').format(dir=de_l1_dir)} = {fsrs_de_ru_due}",
         "",
-        f"{t(lang, 'stat_today_fsrs_ru_de')} = {stats['today_complete_fsrs_ru_de']}",
-        f"{t(lang, 'stat_today_fsrs_de_ru')} = {stats['today_complete_fsrs_de_ru']}",
+        f"{t(lang, 'stat_today_fsrs').format(dir=l1_de_dir)} = {stats['today_complete_fsrs_ru_de']}",
+        f"{t(lang, 'stat_today_fsrs').format(dir=de_l1_dir)} = {stats['today_complete_fsrs_de_ru']}",
         f"{t(lang, 'stat_today_pl_sg')} = {stats.get('today_complete_pl_sg', 0)}",
         "",
         f"{t(lang, 'stat_today_weak_article')} = {stats['today_complete_weak_article']}",

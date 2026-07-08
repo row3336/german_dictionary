@@ -1315,8 +1315,13 @@ def get_statistics_snapshot(db_path, user_id, mode):
             ).fetchone()
             return int((row["cnt"] if row else 0) or 0)
 
-        today_complete_fsrs_ru_de = _today_mode_count("ru_de")
-        today_complete_fsrs_de_ru = _today_mode_count("de_ru")
+        # Count today's FSRS events for the user's OWN quiz direction, not a
+        # hardcoded ru_de/de_ru: a uk/en-dictionary user answers under uk_de/de_uk
+        # etc., so hardcoding ru_de would always show 0 for them. `mode` is the
+        # user's L1>De mode (e.g. "uk_de"); derive the De>L1 mode from it.
+        de_l1_mode = "de_" + mode[:-3] if mode.endswith("_de") else mode
+        today_complete_fsrs_ru_de = _today_mode_count(mode)
+        today_complete_fsrs_de_ru = _today_mode_count(de_l1_mode)
         today_complete_pl_sg = _today_mode_prefix_count("pl_sg_")
         today_complete_weak_article = _today_mode_count("weak_article")
         today_complete_weak_plural = _today_mode_count("weak_plural")
