@@ -161,7 +161,7 @@ async def _send_algo_settings_menu(update: Update, user_id):
         [
             f"{t(lang, 'algo_settings')}:",
             f"{t(lang, 'topic_filter')} = {_topic_filter_value(user_id)}",
-            f"topics = {topics_line}",
+            f"{t(lang, 'algo_topics_label')} = {topics_line}",
         ]
     )
     await update.message.reply_text(

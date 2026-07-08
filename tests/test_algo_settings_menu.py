@@ -19,6 +19,7 @@ from bot.app_config import (  # noqa: E402
 )
 from bot.common.navigation import _action_key_from_text  # noqa: E402
 from bot.handlers.settings import (  # noqa: E402
+    _send_algo_settings_menu,
     algo_settings_edit,
     algo_settings_menu_choice,
     fsrs_settings_menu_choice,
@@ -112,6 +113,18 @@ class AlgoSettingsMenuTest(unittest.TestCase):
 
     def test_en_submenu_label_is_raw_key(self):
         self.assertEqual(TEXTS["en"]["algo_settings"], "algo_sett")
+
+    def test_root_topics_label_localized(self):
+        # #15: the algo-root "topics = ..." line prefix used to be hardcoded English.
+        for lang in ("en", "ru", "uk"):
+            self.assertIn("algo_topics_label", TEXTS[lang], lang)
+        self.assertEqual(TEXTS["ru"]["algo_topics_label"], "темы")
+        set_user_interface_lang(self.db, GUEST, "ru")
+        upd = _Update("", GUEST)
+        _run(_send_algo_settings_menu(upd, GUEST))
+        root_text = upd.message.replies[0]
+        self.assertIn(f"{t('ru', 'algo_topics_label')} =", root_text)
+        self.assertNotIn("topics =", root_text)
 
     # --- action routing ---------------------------------------------------
     def test_action_mapping_all_langs(self):
