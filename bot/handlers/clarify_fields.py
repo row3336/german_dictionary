@@ -460,10 +460,13 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
                 if context.user_data.get("edit_return_state") == DB_SEARCH_VIEW:
                     context.user_data.pop("quiz_edit_entry", None)
                     return await _send_db_search_prompt(update, update.effective_user.id, None)
-                return await _resume_after_clarify(update, context, "❌ Edit canceled.")
+                return await _resume_after_clarify(
+                    update, context,
+                    t(_user_interface_lang(update.effective_user.id), "clarify_edit_canceled"),
+                )
             context.user_data["edit_stage"] = "pick_field"
             await update.message.reply_text(
-                "Choose field to edit:",
+                t(_user_interface_lang(update.effective_user.id), "clarify_choose_field"),
                 reply_markup=_clarify_screen(context, update.effective_user.id),
             )
             return ADD_EDIT
@@ -472,7 +475,7 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
             return await _show_ai_preview(update, entry)
         context.user_data["edit_stage"] = "pick_field"
         await update.message.reply_text(
-            "Choose field to edit:",
+            t(_user_interface_lang(update.effective_user.id), "clarify_choose_field"),
             reply_markup=_clarify_screen(context, update.effective_user.id),
         )
         return ADD_EDIT
@@ -484,7 +487,7 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
         context.user_data.pop("edit_field", None)
         context.user_data.pop("prep_cascade", None)
         await update.message.reply_text(
-            "Choose field to edit:",
+            t(_user_interface_lang(update.effective_user.id), "clarify_choose_field"),
             reply_markup=_clarify_screen(context, update.effective_user.id),
         )
         return ADD_EDIT
@@ -496,7 +499,8 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
             if _action_key_from_text(text, uid) == "send_learn":
                 added = _send_entry_to_learning(update, context, entry_key="quiz_edit_entry")
                 state = context.user_data.get("edit_return_state")
-                prefix = "✅ Added to learning." if added else "Nothing to send."
+                lang = _user_interface_lang(uid)
+                prefix = t(lang, "added_to_learning") if added else t(lang, "nothing_to_send")
                 if state == DB_SEARCH_VIEW:
                     return await _send_db_search_prompt(update, uid, prefix)
                 return await _resume_after_clarify(update, context, prefix)
@@ -533,7 +537,7 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         if field not in allowed_fields:
             await update.message.reply_text(
-                "Use field buttons.",
+                t(_user_interface_lang(update.effective_user.id), "clarify_use_field_buttons"),
                 reply_markup=_clarify_screen(context, update.effective_user.id),
             )
             return ADD_EDIT
@@ -572,7 +576,7 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
     if not field:
         context.user_data["edit_stage"] = "pick_field"
         await update.message.reply_text(
-            "Choose field to edit:",
+            t(_user_interface_lang(update.effective_user.id), "clarify_choose_field"),
             reply_markup=_clarify_screen(context, update.effective_user.id),
         )
         return ADD_EDIT
