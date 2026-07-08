@@ -17,7 +17,7 @@ from ..app_config import (
     LEARNING_REMINDER_JOB_NAME,
     get_db_path,
 )
-from ..common.lang import _mode_l1_de, _user_interface_lang
+from ..common.lang import _mode_l1_de, _quiz_dir_labels, _user_interface_lang
 from ..common.outbound import SendStats, send_to_user
 from ..common.settings import (
     _learning_ready_quorum,
@@ -121,7 +121,11 @@ async def _fsrs_afternoon_reminder_job(context: ContextTypes.DEFAULT_TYPE):
             # words become due later this evening we still want to remind once.
             continue
         lang = _user_interface_lang(user_id)
-        text = t(lang, "reminder_fsrs_due").format(total=total)
+        # bug #24: show the quiz direction by the user's dictionary language
+        # (Ru>De / Uk>De / En>De), not a hardcoded "L1>De" literal.
+        text = t(lang, "reminder_fsrs_due").format(
+            total=total, dir=_quiz_dir_labels(user_id)[0],
+        )
         result = await send_to_user(
             context.bot, user_id, text, "fsrs_reminder", stats=send_stats,
         )

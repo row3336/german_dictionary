@@ -56,6 +56,7 @@ class FsrsBroadcastTest(unittest.TestCase):
             "fsrs_due_forecast": R.fsrs_due_forecast,
             "_user_interface_lang": R._user_interface_lang,
             "_mode_l1_de": R._mode_l1_de,
+            "_quiz_dir_labels": R._quiz_dir_labels,
         }
         self.addCleanup(self._restore_globals)
         # Pass the Berlin-hour gate regardless of wall clock.
@@ -66,6 +67,9 @@ class FsrsBroadcastTest(unittest.TestCase):
         self._lang = {U1: "ru", U2: "en", U3: "uk"}
         R._user_interface_lang = lambda uid: self._lang[uid]
         R._mode_l1_de = lambda uid: "ru_de"
+        # bug #24: direction label follows the user's dictionary language.
+        self._dir = {U1: "Ru > De", U2: "En > De", U3: "Uk > De"}
+        R._quiz_dir_labels = lambda uid: (self._dir[uid], f"De > {self._dir[uid].split(' > ')[0]}")
 
     def _restore_env(self):
         for k, v in self._old_env.items():
@@ -91,6 +95,17 @@ class FsrsBroadcastTest(unittest.TestCase):
         self.assertIn("Очередь", sent[U1])  # ru
         self.assertIn("3", sent[U3])
         self.assertIn("Черга", sent[U3])    # uk
+
+    def test_direction_by_user_dict_lang_not_hardcoded(self):
+        # bug #24: the reminder shows Ru>De / Uk>De (user's dict direction),
+        # never the old hardcoded "L1>De" literal.
+        bot = _FakeBot()
+        _run(R._fsrs_afternoon_reminder_job(_Ctx(bot)))
+        sent = dict(bot.sent)
+        self.assertIn("Ru > De", sent[U1])
+        self.assertIn("Uk > De", sent[U3])
+        for text in sent.values():
+            self.assertNotIn("L1>De", text)
 
     def test_dedup_no_resend_same_day(self):
         bot = _FakeBot()
