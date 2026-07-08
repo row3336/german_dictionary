@@ -62,6 +62,36 @@ class NomenValidationTest(unittest.TestCase):
         self.assertFalse(self._ok("die Kontoverbindung, Kontoverbindungen"))  # wrong noun
 
 
+VERB = {"type": "verb", "infinitive": "kreuzen", "prateritum": "kreuzte", "partizip2": "gekreuzt"}
+
+
+class VerbValidationTest(unittest.TestCase):
+    """Verb answers must tolerate comma/period-without-space just like nomen
+    (checked live on the alpha bot). A valid verb answer starts with the
+    infinitive: 3 parts = infinitive/prateritum/partizip2, 2 parts =
+    infinitive/partizip2 (prateritum skipped)."""
+
+    def _ok(self, answer):
+        ok, _ = _check_ru_de_strict(VERB, answer)
+        return ok
+
+    def test_no_space_punctuation_valid(self):
+        for raw in (
+            "kreuzen kreuzte gekreuzt",     # spaces
+            "kreuzen,kreuzte,gekreuzt",     # commas, no space
+            "kreuzen.kreuzte.gekreuzt",     # periods, no space
+            "kreuzen,gekreuzt",             # short (inf + partizip2), no space
+            "kreuzen ,, kreuzte .. gekreuzt",  # messy noise
+        ):
+            self.assertTrue(self._ok(raw), raw)
+
+    def test_missing_infinitive_rejected(self):
+        # "kreuzte,gekreuzt" (the two past forms, no infinitive) is read as
+        # [infinitive=kreuzte, partizip2=gekreuzt] -> wrong. NOT a no-space issue:
+        # the infinitive is simply absent.
+        self.assertFalse(self._ok("kreuzte,gekreuzt"))
+
+
 class GeneralAnswerPunctuationTest(unittest.TestCase):
     def test_trailing_punctuation_tolerated(self):
         entry = {"type": "adjektiv", "german": "schnell"}
