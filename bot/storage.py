@@ -1,5 +1,6 @@
 import math
 import json
+import random
 import sqlite3
 import uuid
 from contextlib import contextmanager
@@ -2860,8 +2861,52 @@ def learning_active_count(db_path, user_id, batch_id=None):
     return int(row["cnt"] or 0) if row else 0
 
 
-def learning_pick_new_words(db_path, user_id, limit, topics=None):
-    """Handle learning pick new words."""
+def _mix_by_topic_proportional(entries, limit):
+    """Interleave candidate words across topics proportionally to bucket size.
+
+    Weighted round-robin: each step picks a topic at random with probability
+    proportional to how many words that topic still has, avoiding two picks from
+    the same topic back-to-back when another topic is available. In-topic order
+    is preserved (later-round show randomization is a separate concern handled by
+    the show layer, see handlers/learning.py:_pick_learning_due_entry). A single
+    topic (or a single distinct topic among candidates) simply yields that
+    topic's words in order — no division, no special case.
+    """
+    buckets = {}
+    for entry in entries:
+        topic = str(entry.get("topic") or "").strip() or "-"
+        buckets.setdefault(topic, []).append(entry)
+    mixed = []
+    last_topic = None
+    while len(mixed) < limit:
+        candidates = [(topic, values) for topic, values in buckets.items() if values]
+        if not candidates:
+            break
+        pool = candidates
+        if last_topic and len(candidates) > 1:
+            alt = [(topic, values) for topic, values in candidates if topic != last_topic]
+            if alt:
+                pool = alt
+        topics = [topic for topic, _ in pool]
+        weights = [len(values) for _, values in pool]
+        chosen = random.choices(topics, weights=weights, k=1)[0]
+        mixed.append(buckets[chosen].pop(0))
+        last_topic = chosen
+    return mixed
+
+
+def learning_pick_new_words(db_path, user_id, limit, topics=None, mix=False):
+    """Pick new (never-seen, not-yet-in-learning) words to enqueue for learning.
+
+    This is the *selection* layer for the learning queue — the only place mix
+    mode acts. Mix mode never reorders the running queue's shows (that rule is
+    static, see handlers/learning.py:_pick_learning_due_entry); it only shapes
+    which words get drawn into the queue from the selected topic filter(s):
+      - mix OFF: words taken in their natural (added) order across the filter;
+      - mix ON: words drawn proportionally from each topic present, so a
+        multi-topic filter yields a balanced mix (weighted by queue size).
+    A single selected topic degrades to plain in-order selection from it.
+    """
     init_db(db_path)
     if int(limit) <= 0:
         return []
@@ -2888,12 +2933,14 @@ def learning_pick_new_words(db_path, user_id, limit, topics=None):
                 WHERE li.user_id = ? AND li.word_id = w.id
               )
             {where_topics}
-            ORDER BY RANDOM()
-            LIMIT ?
+            ORDER BY w.created_at ASC, w.id ASC
             """.format(where_topics=where_topics),
-            (*params, int(limit)),
+            (*params,),
         ).fetchall()
-    return [_row_to_entry(row) for row in rows]
+    entries = [_row_to_entry(row) for row in rows]
+    if not mix:
+        return entries[: int(limit)]
+    return _mix_by_topic_proportional(entries, int(limit))
 
 
 def learning_add_words(db_path, user_id, words, batch_id, first_delay_seconds):

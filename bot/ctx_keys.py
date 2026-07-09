@@ -48,12 +48,11 @@ LAST_WEAK_ANSWERED_FIELD = "last_weak_answered_field"
 LAST_WEAK_ANSWERED_OK = "last_weak_answered_ok"
 
 # learning
-LEARNING_MIX_QUEUE = "learning_mix_queue"
+LEARNING_RECENT_IDS = "learning_recent_ids"  # last shown word ids, for later-round show spacing
 LEARNING_PREVIEW_MODE = "learning_preview_mode"
 LAST_LEARNING_ENTRY_ID = "last_learning_entry_id"
 LAST_LEARNING_OK = "last_learning_ok"
 LAST_LEARNING_PREV_STEP = "last_learning_prev_step"
-LAST_LEARNING_PROMPT_WORD_ID = "last_learning_prompt_word_id"
 
 # edit fields
 EDIT_FIELD = "edit_field"

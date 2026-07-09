@@ -39,7 +39,6 @@ from ..storage import (
     learning_add_words,
     learning_apply_input_err,
     learning_due_entries,
-    learning_due_entry,
     learning_get_or_create_batch,
     learning_mark_preview_next,
     learning_pick_new_words,
@@ -85,55 +84,50 @@ def _format_eta_from_iso(next_due_iso):
     return f"{seconds}s"
 
 
-def _build_learning_topic_mix_queue(entries):
-    """Build weighted mixed queue by topic."""
-    buckets = {}
-    for entry in entries:
-        topic = str(entry.get("topic") or "").strip() or "-"
-        buckets.setdefault(topic, []).append(entry)
-    for values in buckets.values():
-        random.shuffle(values)
-    mixed = []
-    last_topic = None
-    while True:
-        candidates = [(topic, values) for topic, values in buckets.items() if values]
-        if not candidates:
-            break
-        topic_pool = candidates
-        if last_topic and len(candidates) > 1:
-            alt = [(topic, values) for topic, values in candidates if topic != last_topic]
-            if alt:
-                topic_pool = alt
-        topics = [topic for topic, _ in topic_pool]
-        weights = [len(values) for _, values in topic_pool]
-        selected_topic = random.choices(topics, weights=weights, k=1)[0]
-        mixed.append(buckets[selected_topic].pop(0))
-        last_topic = selected_topic
-    return mixed
+# A word must not reappear within this many consecutive shows (>= once per three).
+_LEARNING_RECENT_SHOWS = 2
 
 
-def _pick_learning_due_entry(context, user_id, exclude_word_id=None):
-    """Pick next due learning entry with optional topic-mix mode."""
-    if not _learning_mix_mode_enabled(user_id):
-        return learning_due_entry(get_db_path(), user_id=user_id, exclude_word_id=exclude_word_id)
-    queue_key = "learning_mix_queue"
-    queue = context.user_data.get(queue_key)
-    if not isinstance(queue, list) or not queue:
-        due_entries = learning_due_entries(get_db_path(), user_id=user_id, exclude_word_id=exclude_word_id)
-        if not due_entries and exclude_word_id:
-            due_entries = learning_due_entries(get_db_path(), user_id=user_id, exclude_word_id=None)
-        queue = _build_learning_topic_mix_queue(due_entries)
-        context.user_data[queue_key] = queue
-    while queue:
-        entry = queue.pop(0)
-        wid = entry.get("id")
-        if exclude_word_id and wid == exclude_word_id:
-            continue
-        if not wid:
-            continue
-        return entry
-    context.user_data.pop(queue_key, None)
-    return None
+def _pick_learning_due_entry(context, user_id):
+    """Pick the next word to show in the running learning queue.
+
+    STATIC show rule — identical whether or not mix mode is on (mix only shapes
+    which words enter the queue, never their show order; see storage.py:
+    learning_pick_new_words):
+      - first round (freshly previewed, step_index == 0): strict preview order
+        (words as they were reviewed, i.e. created_at ASC from the query);
+      - later rounds (step_index > 0): random, but a word is not shown again
+        within the last two shows — at most once per three consecutive shows.
+    Recent shows are tracked in context ("learning_recent_ids"); when the pool is
+    too small to honour the spacing, it relaxes as far as needed.
+    """
+    due_entries = learning_due_entries(get_db_path(), user_id=user_id)
+    if not due_entries:
+        return None
+    recent = context.user_data.get("learning_recent_ids") or []
+    last_shown = recent[-1] if recent else None
+
+    first_round = [entry for entry in due_entries if int(entry.get("learning_step") or 0) == 0]
+    if first_round:
+        # already ordered by created_at ASC (preview order) in the query
+        for entry in first_round:
+            if entry.get("id") != last_shown:
+                return entry
+        return first_round[0]
+
+    pool = [entry for entry in due_entries if entry.get("id") not in recent]
+    if not pool:
+        pool = [entry for entry in due_entries if entry.get("id") != last_shown] or due_entries
+    return random.choice(pool)
+
+
+def _note_learning_shown(context, word_id):
+    """Record a shown word for the later-round spacing window (keep last N ids)."""
+    if not word_id:
+        return
+    recent = context.user_data.get("learning_recent_ids") or []
+    recent.append(word_id)
+    context.user_data["learning_recent_ids"] = recent[-_LEARNING_RECENT_SHOWS:]
 
 
 def _send_entry_to_learning(update: Update, context: ContextTypes.DEFAULT_TYPE, entry_key="quiz_entry"):
@@ -249,7 +243,13 @@ async def _learning_add_words(update: Update, context: ContextTypes.DEFAULT_TYPE
             reply_markup=ReplyKeyboardMarkup(_learning_menu_keys(user_id), resize_keyboard=True),
         )
         return LEARNING_MENU
-    picked = learning_pick_new_words(db_path, user_id=user_id, limit=need, topics=_topic_filter_for_query(user_id))
+    picked = learning_pick_new_words(
+        db_path,
+        user_id=user_id,
+        limit=need,
+        topics=_topic_filter_for_query(user_id),
+        mix=_learning_mix_mode_enabled(user_id),
+    )
     if not picked:
         await _reply_text_with_retry(
             update.message,
@@ -295,14 +295,12 @@ async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return LEARNING_QUIZ
 
-    last_learning_word_id = context.user_data.get("last_learning_prompt_word_id")
     entry = force_entry
     if not entry:
-        entry = _pick_learning_due_entry(context, user_id, exclude_word_id=last_learning_word_id)
+        entry = _pick_learning_due_entry(context, user_id)
     if not entry:
         context.user_data["learning_preview_mode"] = False
-        context.user_data.pop("last_learning_prompt_word_id", None)
-        context.user_data.pop("learning_mix_queue", None)
+        context.user_data.pop("learning_recent_ids", None)
         if prefix_text:
             await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
         if count_words_for_topics(get_db_path(), _topic_filter_for_query(user_id)) == 0:
@@ -324,7 +322,7 @@ async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TY
     entry = apply_user_word_media(get_db_path(), user_id, entry)  # personal media (P4)
     context.user_data["quiz_entry"] = entry
     context.user_data["learning_preview_mode"] = False
-    context.user_data["last_learning_prompt_word_id"] = entry.get("id")
+    _note_learning_shown(context, entry.get("id"))
     prompt_text = _format_ru_question(entry, _user_dict_lang(user_id))
     if prefix_text:
         prompt_text = f"{prefix_text}\n\n{prompt_text}"
@@ -357,12 +355,13 @@ async def learning_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
     if action == "learning_mix_mode":
         enabled = _learning_mix_mode_enabled(user_id)
         _set_learning_mix_mode(user_id, not enabled)
-        context.user_data.pop("learning_mix_queue", None)
+        # Mix only shapes which words enter the queue on the next add — toggling
+        # it mid-session must not disturb the current show order/spacing state.
         await _reply_text_with_retry(update.message, f"{t(_user_interface_lang(user_id), 'learning_mix_mode')} = {'ON' if not enabled else 'OFF'}")
         return await _send_learning_menu(update, user_id)
     if action == "learning_reset":
         learning_reset_session(get_db_path(), user_id=user_id)
-        context.user_data.pop("learning_mix_queue", None)
+        context.user_data.pop("learning_recent_ids", None)
         await _reply_text_with_retry(
             update.message,
             t(_user_interface_lang(user_id), "learning_session_reset"),
@@ -370,7 +369,7 @@ async def learning_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         return LEARNING_MENU
     if action == "learning_start":
-        context.user_data.pop("learning_mix_queue", None)
+        context.user_data.pop("learning_recent_ids", None)
         return await _send_learning_prompt(update, context, None)
     await _reply_text_with_retry(
         update.message,
@@ -424,14 +423,12 @@ async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         applied = _apply_input_err_learning(update, context)
         lang = _user_interface_lang(user_id)
         prefix = t(lang, "input_err_fixed") if applied else t(lang, "input_err_nothing")
-        context.user_data.pop("learning_mix_queue", None)
         return await _send_learning_prompt(update, context, prefix, force_entry=context.user_data.get("quiz_entry"))
 
     if action == "learning_skip":
         snapshot = _capture_transaction_snapshot(user_id, entry.get("id"), ["learning"])
         learning_skip_word(get_db_path(), user_id=user_id, word_id=entry.get("id"))
         _log_transaction(user_id, "learning:skip", snapshot)
-        context.user_data.pop("learning_mix_queue", None)
         return await _send_learning_prompt(update, context, t(_user_interface_lang(user_id), "learning_skipped"))
 
     if text == I_DONT_KNOW_TEXT:
@@ -460,5 +457,4 @@ async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     feedback = _format_feedback_ru_de(entry, ok, lang=_user_interface_lang(user_id))
     if result.get("completed"):
         feedback = f"{feedback}\n\nLearning done ✅, sent to fsrs"
-    context.user_data.pop("learning_mix_queue", None)
     return await _send_learning_prompt(update, context, feedback)
