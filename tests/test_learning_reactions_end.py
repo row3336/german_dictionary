@@ -1,12 +1,15 @@
-"""Learning reactions (👍/👎) + end-of-session closing message.
+"""Learning 👍/👎 reactions + the plain end-of-queue service message.
 
 * Learning answers get a flat 👍 (correct) / 👎 (wrong) reaction on the user's
   message (same contract as FSRS quizzes, no streak escalation); the answer
   message id is remembered so input_err can lift the 👎.
-* When the whole session clears into FSRS, the trailing feedback and the
-  "queue empty" line are merged into ONE closing message carrying the 🔥 effect
-  (FSRS-style), so nothing follows to knock the effect off. When words are still
-  pending (not due yet), no effect and the next_due readout is shown instead.
+* When the running queue has nothing to show now, the trailing feedback (Markdown)
+  and the plain service tail are sent as TWO SEPARATE messages. The tail carries
+  'next_due', whose underscore would open an unterminated italic entity under
+  parse_mode='Markdown' — so the tail MUST be sent plain. Regression guard: the
+  merged-Markdown closing message crashed live with "Can't parse entities".
+* Empty queue on entry (nothing previewed, nothing due) must not enter the quiz
+  state at all — it stays in the learning menu with the service message.
 """
 import asyncio
 import os
@@ -16,8 +19,15 @@ import types
 import unittest
 import warnings
 
-from bot.app_config import FIRE_MESSAGE_EFFECT_ID
-from bot.handlers.learning import _apply_learning_reaction, _send_learning_prompt
+from bot.app_config import LEARNING_MENU, LEARNING_QUIZ
+from bot.common.lang import _user_interface_lang
+from bot.handlers.learning import (
+    _apply_learning_reaction,
+    _learning_empty_text,
+    _send_learning_prompt,
+    learning_menu_choice,
+)
+from bot.i18n import t
 from bot.storage import (
     add_word,
     init_db,
@@ -32,6 +42,32 @@ GUEST = 111
 THUMBS_UP, THUMBS_DOWN = "\U0001F44D", "\U0001F44E"
 
 
+def _markdown_entities_valid(text):
+    """Faithful-enough check of Telegram legacy Markdown entity balance.
+
+    Catches exactly what crashed live: a lone (unterminated) or empty `*`, `_`
+    or `` ` `` entity. Honours backslash escaping. Returns True when every
+    delimiter pairs up and no pair is empty.
+    """
+    for delim in ("*", "_", "`"):
+        positions = []
+        i = 0
+        while i < len(text):
+            ch = text[i]
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == delim:
+                positions.append(i)
+            i += 1
+        if len(positions) % 2 != 0:
+            return False  # lone/unterminated entity — the live crash
+        for open_idx, close_idx in zip(positions[0::2], positions[1::2]):
+            if close_idx == open_idx + 1:
+                return False  # empty entity, e.g. **
+    return True
+
+
 class _Bot:
     def __init__(self, raise_always=False):
         self.reactions = []
@@ -44,8 +80,9 @@ class _Bot:
 
 
 class _Msg:
-    def __init__(self, message_id=1):
+    def __init__(self, message_id=1, text=""):
         self.message_id = message_id
+        self.text = text
         self.calls = []
 
     async def reply_text(self, text, **kw):
@@ -54,8 +91,8 @@ class _Msg:
 
 
 class _Update:
-    def __init__(self, uid, message_id=1):
-        self.message = _Msg(message_id)
+    def __init__(self, uid, message_id=1, text=""):
+        self.message = _Msg(message_id, text)
         self.effective_user = types.SimpleNamespace(id=uid, username="u", first_name="U")
         self.effective_chat = types.SimpleNamespace(id=uid)
 
@@ -90,7 +127,7 @@ class LearningAnswerReactionTest(unittest.TestCase):
         _run(_apply_learning_reaction(update, ctx, True))  # must not raise
 
 
-class LearningEndOfSessionTest(unittest.TestCase):
+class _LearningDbTest(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.NamedTemporaryFile(delete=False)
         tmp.close()
@@ -124,27 +161,68 @@ class LearningEndOfSessionTest(unittest.TestCase):
                 (status, next_due, GUEST, self._word["id"]),
             )
 
-    def test_session_cleared_merges_feedback_and_fires(self):
-        # one word, now completed -> active_count 0, completed_count 1 -> fire + merge
+
+class LearningEndOfQueueTest(_LearningDbTest):
+    def test_cleared_session_sends_feedback_then_plain_tail_no_fire(self):
+        # one word completed -> nothing active/due. Feedback (Markdown) and the
+        # service tail go as TWO messages; no 🔥 effect, no merge.
         self._enqueue(status="completed", next_due="2000-01-01T00:00:00Z")
         update = _Update(GUEST)
         ctx = _Ctx()
-        _run(_send_learning_prompt(update, ctx, "feedback ✅ Learning done ✅, sent to fsrs"))
-        self.assertEqual(len(update.message.calls), 1)  # merged into ONE message
-        text, kw = update.message.calls[0]
-        self.assertIn("feedback ✅", text)                # trailing feedback merged in
-        self.assertNotIn("next_due", text)                # no pending readout on completion
-        self.assertEqual(kw.get("message_effect_id"), FIRE_MESSAGE_EFFECT_ID)
+        state = _run(_send_learning_prompt(update, ctx, "feedback *ok*"))
+        self.assertEqual(state, LEARNING_QUIZ)
+        self.assertEqual(len(update.message.calls), 2)  # feedback + tail, separate
+        (fb_text, fb_kw), (tail_text, tail_kw) = update.message.calls
+        self.assertEqual(fb_text, "feedback *ok*")
+        self.assertEqual(fb_kw.get("parse_mode"), "Markdown")   # feedback keeps Markdown
+        self.assertNotIn("message_effect_id", tail_kw)          # no fire
+        self.assertNotIn("message_effect_id", fb_kw)
+        # completion -> no next_due readout (nothing pending)
+        self.assertNotIn("next_due", tail_text)
 
-    def test_words_still_pending_no_fire_shows_next_due(self):
-        # one word still active but not due yet -> come-back-later, no effect
+    def test_pending_tail_carries_next_due_and_is_plain_not_markdown(self):
+        # one word still active but not due -> come-back-later readout. This is the
+        # exact message that crashed live: 'next_due' under parse_mode='Markdown'.
         self._enqueue(status="active", next_due="2099-01-01T00:00:00Z")
         update = _Update(GUEST)
         ctx = _Ctx()
         _run(_send_learning_prompt(update, ctx, "feedback"))
+        tail_text, tail_kw = update.message.calls[-1]
+        self.assertIn("next_due", tail_text)
+        # REGRESSION GUARD: the tail must NOT be sent as Markdown (its underscore
+        # would be an unterminated entity -> BadRequest "Can't parse entities").
+        self.assertNotEqual(tail_kw.get("parse_mode"), "Markdown")
+
+    def test_every_markdown_message_is_entity_balanced(self):
+        # Whatever we send with parse_mode='Markdown' must be valid legacy Markdown.
+        self._enqueue(status="active", next_due="2099-01-01T00:00:00Z")
+        update = _Update(GUEST)
+        ctx = _Ctx()
+        _run(_send_learning_prompt(update, ctx, "feedback *bold* _it_"))
+        for text, kw in update.message.calls:
+            if kw.get("parse_mode") == "Markdown":
+                self.assertTrue(_markdown_entities_valid(text), f"unbalanced Markdown: {text!r}")
+
+    def test_empty_text_would_break_under_markdown(self):
+        # Documents WHY the tail is plain: the service text itself is invalid Markdown.
+        self._enqueue(status="active", next_due="2099-01-01T00:00:00Z")
+        self.assertIn("next_due", _learning_empty_text(GUEST))
+        self.assertFalse(_markdown_entities_valid(_learning_empty_text(GUEST)))
+
+
+class LearningEmptyEntryTest(_LearningDbTest):
+    def test_start_on_empty_queue_stays_in_menu(self):
+        # Nothing previewed, nothing due -> pressing "learning session" must NOT
+        # enter the quiz state; it stays in the menu with the service message.
+        lang = _user_interface_lang(GUEST)
+        update = _Update(GUEST, text=t(lang, "learning_start"))
+        ctx = _Ctx()
+        state = _run(learning_menu_choice(update, ctx))
+        self.assertEqual(state, LEARNING_MENU)
         self.assertEqual(len(update.message.calls), 1)
         text, kw = update.message.calls[0]
-        self.assertIn("next_due", text)
+        self.assertIn(t(lang, "learning_no_due").rstrip("."), text)
+        self.assertNotEqual(kw.get("parse_mode"), "Markdown")
         self.assertNotIn("message_effect_id", kw)
 
 

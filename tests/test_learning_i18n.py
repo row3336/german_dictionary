@@ -11,6 +11,7 @@ on-screen technical readout, like the word card) — not asserted here.
 
 import asyncio
 import os
+import sqlite3
 import tempfile
 import unittest
 
@@ -151,14 +152,24 @@ class LearningI18nTest(unittest.TestCase):
         self.assertEqual(last, TEXTS["ru"]["learning_use_menu_buttons"])
 
     def test_no_due_sentence_localized_next_due_kept(self):
-        # a word exists in DB (topics non-empty) but none is due in learning
-        self._add_word()
+        # a word is queued but NOT due yet -> localized "no due" sentence + the
+        # English "next_due =" readout (shown only when there's a real ETA).
+        word = self._add_word()
+        batch_id = learning_get_or_create_batch(self.db, user_id=GUEST, daily_qty=20)
+        learning_add_words(self.db, user_id=GUEST, words=[word], batch_id=batch_id, first_delay_seconds=0)
+        with sqlite3.connect(self.db) as conn:
+            conn.execute(
+                "UPDATE learning_items SET preview_done=1, next_due='2099-01-01T00:00:00Z' WHERE user_id=? AND word_id=?",
+                (GUEST, word["id"]),
+            )
         update = _Update(GUEST)
         _run(L._send_learning_prompt(update, _Ctx(), None))
         last = update.message.calls[-1][0]
         self.assertIn(TEXTS["ru"]["learning_no_due"], last)
         self.assertNotIn("No due learning words", last)
         self.assertIn("next_due =", last)  # technical readout stays English
+        # the plain 'next_due' tail must never be sent as Markdown (underscore crash)
+        self.assertNotEqual(update.message.calls[-1][1].get("parse_mode"), "Markdown")
 
     def test_preview_skip_localized(self):
         word = self._add_word_in_preview()

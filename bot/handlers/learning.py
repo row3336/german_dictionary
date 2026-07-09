@@ -1,9 +1,9 @@
 """Learning mode: the learning menu, the preview/quiz flow, the static show
 order (first round in preview order, later rounds random with spacing) plus the
-separate topic-mix word selection, 👍/👎 answer reactions, the end-of-session
-closing message (🔥 when the batch clears into FSRS), batch top-up, input-err
-correction, and the helper that pushes a quiz entry into the learning batch
-(used by quiz / clarify_fields / db_search).
+separate topic-mix word selection, 👍/👎 answer reactions, the plain
+end-of-queue service message, batch top-up, input-err correction, and the helper
+that pushes a quiz entry into the learning batch (used by quiz / clarify_fields /
+db_search).
 """
 
 import random
@@ -13,7 +13,6 @@ from telegram import ReplyKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from ..app_config import (
-    FIRE_MESSAGE_EFFECT_ID,
     I_DONT_KNOW_TEXT,
     LEARNING_MENU,
     LEARNING_QUIZ,
@@ -86,6 +85,28 @@ def _format_eta_from_iso(next_due_iso):
     if minutes > 0:
         return f"{minutes}m {seconds}s"
     return f"{seconds}s"
+
+
+def _learning_empty_text(user_id):
+    """Service message when the running queue has nothing to show now.
+
+    Distinguishes 'the selected topics hold no words at all' (spec #8) from
+    'words exist but nothing is due yet' — in the latter case the next-due ETA is
+    appended, but only when it is a real future time (skip the '-'/'now' filler).
+
+    NOTE: this text is plain (it contains 'next_due', whose underscore would open
+    an unterminated italic entity under parse_mode='Markdown'). It must never be
+    sent with parse_mode='Markdown'.
+    """
+    if count_words_for_topics(get_db_path(), _topic_filter_for_query(user_id)) == 0:
+        return t(_user_interface_lang(user_id), "topic_no_words_learning")
+    snapshot = learning_status_snapshot(get_db_path(), user_id, _learning_ready_quorum(get_db_path(), user_id))
+    base = t(_user_interface_lang(user_id), "learning_no_due")
+    eta = _format_eta_from_iso(snapshot.get("next_due"))
+    if eta in ("-", "now"):
+        return base
+    # "next_due = <eta>" kept as EN technical readout (matches the menu diagnostic block)
+    return f"{base}\nnext_due = {eta}"
 
 
 # A word must not reappear within this many consecutive shows (>= once per three).
@@ -314,32 +335,17 @@ async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TY
     if not entry:
         context.user_data["learning_preview_mode"] = False
         context.user_data.pop("learning_recent_ids", None)
-        effect_id = None
-        if count_words_for_topics(get_db_path(), _topic_filter_for_query(user_id)) == 0:
-            # spec #8: the selected topics hold no words at all (vs. nothing due now)
-            empty_text = t(_user_interface_lang(user_id), "topic_no_words_learning")
-        else:
-            snapshot = learning_status_snapshot(get_db_path(), user_id, _learning_ready_quorum(get_db_path(), user_id))
-            if snapshot.get("active_count", 0) == 0 and snapshot.get("completed_count", 0) > 0:
-                # The whole session just cleared into FSRS — celebrate 🔥. No next_due
-                # line here: nothing is pending anymore.
-                empty_text = t(_user_interface_lang(user_id), "learning_no_due")
-                effect_id = FIRE_MESSAGE_EFFECT_ID
-            else:
-                eta = _format_eta_from_iso(snapshot.get("next_due"))
-                # sentence localized; "next_due = <eta>" kept as EN technical readout (matches menu diagnostic block)
-                empty_text = f"{t(_user_interface_lang(user_id), 'learning_no_due')}\nnext_due = {eta}"
-        # Merge the trailing feedback (e.g. the last answer's "…✅ Learning done ✅,
-        # sent to fsrs") into this single closing message, FSRS-style — one message
-        # so the 🔥 effect lands on it and nothing follows to knock it off.
-        text = f"{prefix_text}\n\n{empty_text}" if prefix_text else empty_text
-        reply_kwargs = {
-            "reply_markup": ReplyKeyboardMarkup([[t(_user_interface_lang(user_id), "back")]], resize_keyboard=True),
-            "parse_mode": "Markdown",
-        }
-        if effect_id:
-            reply_kwargs["message_effect_id"] = effect_id
-        await _reply_text_with_retry(update.message, text, **reply_kwargs)
+        # Send the trailing feedback (Markdown) and the plain service tail as two
+        # separate messages: the tail carries 'next_due', whose underscore would
+        # break parse_mode='Markdown' (unterminated entity). Keep them apart so the
+        # word feedback still renders while the tail stays plain and crash-proof.
+        if prefix_text:
+            await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
+        await _reply_text_with_retry(
+            update.message,
+            _learning_empty_text(user_id),
+            reply_markup=ReplyKeyboardMarkup([[t(_user_interface_lang(user_id), "back")]], resize_keyboard=True),
+        )
         return LEARNING_QUIZ
     entry = apply_user_word_media(get_db_path(), user_id, entry)  # personal media (P4)
     context.user_data["quiz_entry"] = entry
@@ -392,6 +398,18 @@ async def learning_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
         return LEARNING_MENU
     if action == "learning_start":
         context.user_data.pop("learning_recent_ids", None)
+        # Empty queue: nothing previewed and nothing due -> don't enter the session
+        # (no lone Back button, no 🔥). Just show the service message and stay in the
+        # menu, where the "add for learning" button is already in reach.
+        has_preview = learning_preview_entry(get_db_path(), user_id=user_id) is not None
+        has_due = bool(learning_due_entries(get_db_path(), user_id=user_id))
+        if not has_preview and not has_due:
+            await _reply_text_with_retry(
+                update.message,
+                _learning_empty_text(user_id),
+                reply_markup=ReplyKeyboardMarkup(_learning_menu_keys(user_id), resize_keyboard=True),
+            )
+            return LEARNING_MENU
         return await _send_learning_prompt(update, context, None)
     await _reply_text_with_retry(
         update.message,
