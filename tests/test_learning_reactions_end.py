@@ -26,6 +26,7 @@ from bot.handlers.learning import (
     _learning_empty_text,
     _send_learning_prompt,
     learning_menu_choice,
+    learning_quiz,
 )
 from bot.i18n import t
 from bot.storage import (
@@ -152,14 +153,22 @@ class _LearningDbTest(unittest.TestCase):
             else:
                 os.environ[k] = v
 
-    def _enqueue(self, status, next_due):
+    def _enqueue(self, status, next_due, step_index=0):
         batch_id = learning_get_or_create_batch(self.db, user_id=GUEST, daily_qty=10)
         learning_add_words(self.db, user_id=GUEST, words=[self._word], batch_id=batch_id, first_delay_seconds=0)
         with sqlite3.connect(self.db) as conn:
             conn.execute(
-                "UPDATE learning_items SET status=?, preview_done=1, next_due=? WHERE user_id=? AND word_id=?",
-                (status, next_due, GUEST, self._word["id"]),
+                "UPDATE learning_items SET status=?, preview_done=1, next_due=?, step_index=? WHERE user_id=? AND word_id=?",
+                (status, next_due, step_index, GUEST, self._word["id"]),
             )
+
+    def _item(self):
+        with sqlite3.connect(self.db) as conn:
+            row = conn.execute(
+                "SELECT step_index, next_due, status FROM learning_items WHERE user_id=? AND word_id=?",
+                (GUEST, self._word["id"]),
+            ).fetchone()
+        return {"step": int(row[0]), "next_due": row[1], "status": row[2]}
 
 
 class LearningEndOfQueueTest(_LearningDbTest):
@@ -208,6 +217,57 @@ class LearningEndOfQueueTest(_LearningDbTest):
         self._enqueue(status="active", next_due="2099-01-01T00:00:00Z")
         self.assertIn("next_due", _learning_empty_text(GUEST))
         self.assertFalse(_markdown_entities_valid(_learning_empty_text(GUEST)))
+
+
+class LearningInputErrTest(_LearningDbTest):
+    def test_input_err_on_last_word_advances_once_and_ends_cycle(self):
+        # last word at an interval step (3), wrong answer -> reset to step 0 (+0s)
+        # -> re-asked. Pressing input_err must correct it (advance 3 -> 4) and END
+        # the cycle (nothing else due), NOT re-show it (which would advance again).
+        lang = _user_interface_lang(GUEST)
+        self._enqueue(status="active", next_due="2000-01-01T00:00:00Z", step_index=3)
+        update = _Update(GUEST)
+        ctx = _Ctx()
+        # show the due word (quiz_entry carries learning_step = 3)
+        _run(_send_learning_prompt(update, ctx, None))
+        self.assertEqual(int(ctx.user_data["quiz_entry"].get("learning_step")), 3)
+
+        # answer WRONG -> reset to step 0, re-asked
+        update.message.text = "zzz-wrong"
+        update.message.calls.clear()
+        _run(learning_quiz(update, ctx))
+        self.assertEqual(self._item()["step"], 0)
+        self.assertEqual(ctx.user_data["last_learning_prev_step"], 3)
+
+        # press input_err -> corrected as if right from step 3 -> step 4 (future),
+        # cycle ends with the service message, word NOT re-asked
+        update.message.text = t(lang, "input_err")
+        update.message.calls.clear()
+        _run(learning_quiz(update, ctx))
+        item = self._item()
+        self.assertEqual(item["step"], 4)                 # advanced once (3 -> 4), no double
+        self.assertGreater(item["next_due"], "2026")      # rescheduled into the future, not due
+        joined = "\n".join(c[0] for c in update.message.calls)
+        self.assertIn(t(lang, "learning_no_due"), joined)  # "nothing to repeat" — cycle ended
+
+    def test_second_input_err_is_a_noop(self):
+        # guard against double-advance via repeated input_err presses
+        lang = _user_interface_lang(GUEST)
+        self._enqueue(status="active", next_due="2000-01-01T00:00:00Z", step_index=3)
+        update = _Update(GUEST)
+        ctx = _Ctx()
+        _run(_send_learning_prompt(update, ctx, None))
+        update.message.text = "zzz-wrong"
+        _run(learning_quiz(update, ctx))
+        update.message.text = t(lang, "input_err")
+        _run(learning_quiz(update, ctx))
+        self.assertEqual(self._item()["step"], 4)
+        # second press: nothing to fix
+        update.message.calls.clear()
+        _run(learning_quiz(update, ctx))
+        self.assertEqual(self._item()["step"], 4)          # unchanged
+        joined = "\n".join(c[0] for c in update.message.calls)
+        self.assertIn(t(lang, "input_err_nothing"), joined)
 
 
 class LearningEmptyEntryTest(_LearningDbTest):

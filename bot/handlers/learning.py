@@ -466,7 +466,13 @@ async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if applied:
             # lift the 👎 from the corrected answer message; no new reaction is set
             await _set_reaction(context, user_id, context.user_data.get("last_learning_answer_message_id"), [])
-        return await _send_learning_prompt(update, context, prefix, force_entry=context.user_data.get("quiz_entry"))
+        # Don't re-show the corrected word: learning_apply_input_err already advanced
+        # it one step (as if answered correctly from its pre-wrong step), so re-asking
+        # would let it advance AGAIN and overtake the queue. Move on to whatever is due
+        # now instead — on the last word this ends the cycle ("nothing to repeat").
+        # (Warm-up steps are 0s, so a still-due word is picked up naturally by the
+        # normal show layer; only the interval phase changes.)
+        return await _send_learning_prompt(update, context, prefix)
 
     if action == "learning_skip":
         snapshot = _capture_transaction_snapshot(user_id, entry.get("id"), ["learning"])
