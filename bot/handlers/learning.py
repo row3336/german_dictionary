@@ -1,6 +1,9 @@
-"""Learning mode: the learning menu, the preview/quiz flow, the topic-mix due
-queue, batch top-up, input-err correction, and the helper that pushes a quiz
-entry into the learning batch (used by quiz / clarify_fields / db_search).
+"""Learning mode: the learning menu, the preview/quiz flow, the static show
+order (first round in preview order, later rounds random with spacing) plus the
+separate topic-mix word selection, 👍/👎 answer reactions, the end-of-session
+closing message (🔥 when the batch clears into FSRS), batch top-up, input-err
+correction, and the helper that pushes a quiz entry into the learning batch
+(used by quiz / clarify_fields / db_search).
 """
 
 import random
@@ -10,6 +13,7 @@ from telegram import ReplyKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from ..app_config import (
+    FIRE_MESSAGE_EFFECT_ID,
     I_DONT_KNOW_TEXT,
     LEARNING_MENU,
     LEARNING_QUIZ,
@@ -29,7 +33,7 @@ from ..common.settings import (
     _topic_filter_for_query,
 )
 from ..common.txlog import _capture_transaction_snapshot, _log_transaction
-from ..handlers.quiz import _check_ru_de_strict
+from ..handlers.quiz import _check_ru_de_strict, _set_reaction
 from ..i18n import t
 from ..storage import (
     apply_user_word_media,
@@ -128,6 +132,15 @@ def _note_learning_shown(context, word_id):
     recent = context.user_data.get("learning_recent_ids") or []
     recent.append(word_id)
     context.user_data["learning_recent_ids"] = recent[-_LEARNING_RECENT_SHOWS:]
+
+
+async def _apply_learning_reaction(update, context, ok):
+    """React to the learning answer message: 👍 correct, 👎 wrong. Flat — no streak
+    escalation — mirroring the FSRS quiz reaction contract. Best-effort. The
+    message id is remembered so an input_err correction can lift the 👎 later."""
+    context.user_data["last_learning_answer_message_id"] = update.message.message_id
+    emoji = "\U0001F44D" if ok else "\U0001F44E"  # 👍 / 👎
+    await _set_reaction(context, update.effective_user.id, update.message.message_id, [emoji])
 
 
 def _send_entry_to_learning(update: Update, context: ContextTypes.DEFAULT_TYPE, entry_key="quiz_entry"):
@@ -301,23 +314,32 @@ async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TY
     if not entry:
         context.user_data["learning_preview_mode"] = False
         context.user_data.pop("learning_recent_ids", None)
-        if prefix_text:
-            await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
+        effect_id = None
         if count_words_for_topics(get_db_path(), _topic_filter_for_query(user_id)) == 0:
             # spec #8: the selected topics hold no words at all (vs. nothing due now)
             empty_text = t(_user_interface_lang(user_id), "topic_no_words_learning")
         else:
-            eta = _format_eta_from_iso(learning_status_snapshot(get_db_path(), user_id, _learning_ready_quorum(get_db_path(), user_id)).get("next_due"))
-            # sentence localized; "next_due = <eta>" kept as EN technical readout (matches menu diagnostic block)
-            empty_text = f"{t(_user_interface_lang(user_id), 'learning_no_due')}\nnext_due = {eta}"
-        await _reply_text_with_retry(
-            update.message,
-            empty_text,
-            reply_markup=ReplyKeyboardMarkup(
-                [[t(_user_interface_lang(user_id), "back")]],
-                resize_keyboard=True,
-            ),
-        )
+            snapshot = learning_status_snapshot(get_db_path(), user_id, _learning_ready_quorum(get_db_path(), user_id))
+            if snapshot.get("active_count", 0) == 0 and snapshot.get("completed_count", 0) > 0:
+                # The whole session just cleared into FSRS — celebrate 🔥. No next_due
+                # line here: nothing is pending anymore.
+                empty_text = t(_user_interface_lang(user_id), "learning_no_due")
+                effect_id = FIRE_MESSAGE_EFFECT_ID
+            else:
+                eta = _format_eta_from_iso(snapshot.get("next_due"))
+                # sentence localized; "next_due = <eta>" kept as EN technical readout (matches menu diagnostic block)
+                empty_text = f"{t(_user_interface_lang(user_id), 'learning_no_due')}\nnext_due = {eta}"
+        # Merge the trailing feedback (e.g. the last answer's "…✅ Learning done ✅,
+        # sent to fsrs") into this single closing message, FSRS-style — one message
+        # so the 🔥 effect lands on it and nothing follows to knock it off.
+        text = f"{prefix_text}\n\n{empty_text}" if prefix_text else empty_text
+        reply_kwargs = {
+            "reply_markup": ReplyKeyboardMarkup([[t(_user_interface_lang(user_id), "back")]], resize_keyboard=True),
+            "parse_mode": "Markdown",
+        }
+        if effect_id:
+            reply_kwargs["message_effect_id"] = effect_id
+        await _reply_text_with_retry(update.message, text, **reply_kwargs)
         return LEARNING_QUIZ
     entry = apply_user_word_media(get_db_path(), user_id, entry)  # personal media (P4)
     context.user_data["quiz_entry"] = entry
@@ -423,6 +445,9 @@ async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         applied = _apply_input_err_learning(update, context)
         lang = _user_interface_lang(user_id)
         prefix = t(lang, "input_err_fixed") if applied else t(lang, "input_err_nothing")
+        if applied:
+            # lift the 👎 from the corrected answer message; no new reaction is set
+            await _set_reaction(context, user_id, context.user_data.get("last_learning_answer_message_id"), [])
         return await _send_learning_prompt(update, context, prefix, force_entry=context.user_data.get("quiz_entry"))
 
     if action == "learning_skip":
@@ -438,6 +463,7 @@ async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["last_learning_entry_id"] = entry.get("id")
     context.user_data["last_learning_ok"] = bool(ok)
     context.user_data["last_learning_prev_step"] = int(entry.get("learning_step") or 0)
+    await _apply_learning_reaction(update, context, ok)
     log_quiz_event(
         get_db_path(),
         user_id=user_id,

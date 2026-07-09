@@ -271,16 +271,21 @@ class QuizHandlerReactionWiringTest(unittest.TestCase):
         self.assertIn((GUEST, 57, [THUMBS_UP]), ctx.bot.reactions)
 
 
-# --- negative: weak/learning modules never call the reactions API -------------
+# --- negative: weak never reacts; learning DOES (added 2026-07-09) -------------
 
-class WeakLearningNoReactionsTest(unittest.TestCase):
-    def test_weak_and_learning_source_never_calls_set_message_reaction(self):
-        import bot.handlers.learning as L
+class WeakNoReactionsTest(unittest.TestCase):
+    def test_weak_source_never_calls_the_reactions_api(self):
         import bot.handlers.weak as W
 
-        for mod in (W, L):
-            src = inspect.getsource(mod)
-            self.assertNotIn("set_message_reaction", src, f"{mod.__name__} must not send reactions (spec #9)")
+        src = inspect.getsource(W)
+        self.assertNotIn("set_message_reaction", src, "weak must not send reactions (spec #9)")
+        self.assertNotIn("_set_reaction", src, "weak must not send reactions (spec #9)")
+
+    def test_learning_does_react(self):
+        # Learning gained 👍/👎 reactions on 2026-07-09 (same contract as FSRS).
+        import bot.handlers.learning as L
+
+        self.assertIn("_set_reaction", inspect.getsource(L))
 
 
 if __name__ == "__main__":
