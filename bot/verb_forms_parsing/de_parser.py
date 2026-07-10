@@ -49,6 +49,17 @@ def _norm(word):
     return re.sub(r"\s+", " ", str(word or "").strip().lower())
 
 
+# Combining stress accents dictionaries put on vowels (grave/acute). Stored words
+# must be plain text, so these are dropped from translations. Only these two marks
+# are removed — precomposed umlauts (ü/ö/ä) and ё are single codepoints, untouched.
+_STRESS_MARKS = str.maketrans("", "", "\u0300\u0301")  # combining grave + acute
+
+
+def _strip_stress(text):
+    """Drop stress accents (мгнове́ние -> мгновение); leaves umlauts/ё intact."""
+    return str(text or "").translate(_STRESS_MARKS)
+
+
 def detect_type_and_headword(summary_html):
     """From a .de summary page return {type, headword, has_entry}.
 
@@ -90,7 +101,15 @@ def parse_translations(summary_html):
             continue
         text = _html.unescape(re.sub(r"<[^>]+>", " ", m.group(1)))
         text = re.sub(r"\s+", " ", text).strip()
-        out[lang] = [p.strip().lower() for p in text.split(",") if p.strip()]
+        seen, meanings = set(), []
+        for p in text.split(","):
+            p = _strip_stress(p.strip().lower())
+            # stripping stress can collapse distinct spellings (здание / зда́ние) into
+            # the same word -> keep first occurrence only, order preserved
+            if p and p not in seen:
+                seen.add(p)
+                meanings.append(p)
+        out[lang] = meanings
     return out
 
 

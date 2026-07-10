@@ -100,6 +100,19 @@ class TranslationsTest(unittest.TestCase):
         t = parse_translations("<html><h1>Konjugation des Verbs x</h1></html>")
         self.assertEqual(t, {"ru": [], "uk": [], "en": []})
 
+    def test_stress_accents_stripped_and_deduped(self):
+        # dict translations mark stress with a combining acute (U+0301); stored
+        # words must be plain text, and stripping must not create visible dupes
+        t = parse_translations(load("Haus_summary.html"))
+        self.assertTrue(all("́" not in v and "̀" not in v for v in t["ru"]))
+        self.assertIn("здание", t["ru"])          # зда́ние -> здание
+        self.assertEqual(t["ru"].count("здание"), 1)  # collapsed with the plain spelling
+
+    def test_stress_strip_leaves_umlauts(self):
+        from bot.verb_forms_parsing.de_parser import _strip_stress
+        self.assertEqual(_strip_stress("Häuser grün größe"), "Häuser grün größe")
+        self.assertEqual(_strip_stress("мгнове́ние"), "мгновение")
+
 
 class VerbFormsTest(unittest.TestCase):
     def test_strong_verb(self):
