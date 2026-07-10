@@ -285,5 +285,45 @@ class ParseDeAssemblyTest(unittest.TestCase):
         self.assertEqual(e["german"], "mit")
 
 
+class TypeHintTest(unittest.TestCase):
+    """[type] hint routing/gating (spec #2): function words parse from their
+    verben.de type page; a homonym card is rejected by the hint."""
+
+    def test_detect_recognises_function_word_pages(self):
+        # verben.de type pages use "Definition <gen. type> <word>" h1s
+        self.assertEqual(
+            detect_type_and_headword(load("aus_praeposition_summary.html")),
+            {"type": "praeposition", "headword": "aus", "has_entry": True},
+        )
+
+    def test_preposition_page_full_card(self):
+        e = parse_de(load("aus_praeposition_summary.html"), query="aus", type_hint="praeposition")
+        self.assertEqual(e["type"], "praeposition")
+        self.assertEqual(e["german"], "aus")
+        self.assertEqual(e["cefr_level"], "A1")
+        self.assertIn("из", e["russian"])
+        self.assertIn("out of", e["english"])
+        self.assertEqual(e["_flags"], [])  # no mismatch: page matches the hint
+
+    def test_hint_matching_detected_type_no_flag(self):
+        # a nomen hint on a real noun page agrees -> parses normally, no flag
+        e = parse_de(load("Haus_summary.html"), query="Haus", type_hint="nomen")
+        self.assertEqual(e["type"], "nomen")
+        self.assertEqual(e["article"], "das")
+        self.assertEqual(e["_flags"], [])
+
+    def test_homonym_card_rejected_by_hint(self):
+        # ?w=aus would land on the noun "das Aus"; the praeposition hint must not
+        # adopt that wrong-sense card — flag it and emit nothing to overwrite with
+        noun = '<html><h1>Definition des Substantivs Aus</h1><dd lang="en">end</dd></html>'
+        e = parse_de(noun, query="aus", type_hint="praeposition")
+        self.assertIn("type_mismatch", e["_flags"])
+        self.assertEqual(e["type"], "praeposition")   # hint wins over detected nomen
+        self.assertEqual(e["german"], "aus")          # query, not the homonym "Aus"
+        self.assertEqual(e["russian"], "")            # wrong-sense content dropped
+        self.assertEqual(e["english"], "")
+        self.assertEqual(e["cefr_level"], "")
+
+
 if __name__ == "__main__":
     unittest.main()

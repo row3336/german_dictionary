@@ -18,38 +18,57 @@ def _row_to_dict(row):
     return dict(row) if row is not None else None
 
 
+def _split_word_hint(item):
+    """Normalize a job word into (word, type_hint). Accepts a bare string or a
+    (word, type_hint) pair, so old callers passing plain strings still work."""
+    if isinstance(item, (tuple, list)):
+        word = str(item[0]).strip()
+        hint = str(item[1]).strip().lower() if len(item) > 1 else ""
+        return word, hint
+    return str(item).strip(), ""
+
+
 def create_job(db_path, user_id, chat_id, topic, words):
-    """Create a job for `words` (list of raw query strings) and return its id."""
+    """Create a job and return its id. `words` is a list of query strings or of
+    (word, type_hint) pairs — the hint routes function words to their type page."""
     init_db(db_path)
-    words = [str(w).strip() for w in words if str(w).strip()]
+    pairs = [wh for wh in (_split_word_hint(w) for w in words) if wh[0]]
     with _connect(db_path) as conn:
         cur = conn.execute(
             "INSERT INTO vf_add_jobs (user_id, chat_id, status, topic, total) VALUES (?, ?, 'running', ?, ?)",
-            (int(user_id), int(chat_id), str(topic or ""), len(words)),
+            (int(user_id), int(chat_id), str(topic or ""), len(pairs)),
         )
         job_id = cur.lastrowid
         conn.executemany(
-            "INSERT INTO vf_add_items (job_id, position, word) VALUES (?, ?, ?)",
-            [(job_id, i, w) for i, w in enumerate(words)],
+            "INSERT INTO vf_add_items (job_id, position, word, type_hint) VALUES (?, ?, ?, ?)",
+            [(job_id, i, w, h) for i, (w, h) in enumerate(pairs)],
         )
     return job_id
 
 
 def create_recheck_job(db_path, user_id, chat_id, words_with_ids):
     """Create a recheck job over existing words. `words_with_ids` = list of
-    (lookup_word, word_id); each item carries word_id so the diff apply can update
-    that word. Returns the job id."""
+    (lookup_word, word_id) or (lookup_word, word_id, type_hint); word_id links the
+    diff apply back to the word, type_hint routes the lookup by the word's type.
+    Returns the job id."""
     init_db(db_path)
-    pairs = [(str(w).strip(), str(wid)) for w, wid in words_with_ids if str(w).strip()]
+    rows = []
+    for rec in words_with_ids:
+        word = str(rec[0]).strip()
+        if not word:
+            continue
+        wid = str(rec[1])
+        hint = str(rec[2]).strip().lower() if len(rec) > 2 else ""
+        rows.append((word, wid, hint))
     with _connect(db_path) as conn:
         cur = conn.execute(
             "INSERT INTO vf_add_jobs (user_id, chat_id, status, topic, total) VALUES (?, ?, 'running', '', ?)",
-            (int(user_id), int(chat_id), len(pairs)),
+            (int(user_id), int(chat_id), len(rows)),
         )
         job_id = cur.lastrowid
         conn.executemany(
-            "INSERT INTO vf_add_items (job_id, position, word, word_id) VALUES (?, ?, ?, ?)",
-            [(job_id, i, w, wid) for i, (w, wid) in enumerate(pairs)],
+            "INSERT INTO vf_add_items (job_id, position, word, word_id, type_hint) VALUES (?, ?, ?, ?, ?)",
+            [(job_id, i, w, wid, h) for i, (w, wid, h) in enumerate(rows)],
         )
     return job_id
 

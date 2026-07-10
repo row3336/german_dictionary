@@ -608,6 +608,7 @@ def _ensure_schema(conn):
             position INTEGER NOT NULL DEFAULT 0,
             word TEXT NOT NULL,
             word_id TEXT NOT NULL DEFAULT '',
+            type_hint TEXT NOT NULL DEFAULT '',
             status TEXT NOT NULL DEFAULT 'pending',
             result_json TEXT NOT NULL DEFAULT '',
             flags TEXT NOT NULL DEFAULT '',
@@ -624,6 +625,10 @@ def _ensure_schema(conn):
     }
     if "word_id" not in vf_item_cols:
         conn.execute("ALTER TABLE vf_add_items ADD COLUMN word_id TEXT NOT NULL DEFAULT ''")
+    # spec #2: type_hint carries the caller's known word type (owner's [type] on add,
+    # existing word's type on recheck) so a lookup routes to the right type page.
+    if "type_hint" not in vf_item_cols:
+        conn.execute("ALTER TABLE vf_add_items ADD COLUMN type_hint TEXT NOT NULL DEFAULT ''")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_vf_add_items_job ON vf_add_items(job_id, status)")
 
     _repair_word_fk_tables(conn)

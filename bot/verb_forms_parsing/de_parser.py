@@ -27,6 +27,10 @@ _H1_TYPE_MARKERS = (
     ("des Verbs", "verb"),
     ("des Substantivs", "nomen"),
     ("des Adjektivs", "adjektiv"),
+    # verben.de type pages (function words) — same "Definition <gen. type> <word>" h1
+    ("der Präposition", "praeposition"),
+    ("des Adverbs", "adverb"),
+    ("der Konjunktion", "konjunktion"),
 )
 
 _QUOTE_CHARS = " „“”\"'»«"
@@ -303,7 +307,7 @@ def headword_matches(headword, query):
     return bool(_norm(headword)) and _norm(headword) == _norm(query)
 
 
-def parse_de(summary_html, conj_html=None, query=None, topic=""):
+def parse_de(summary_html, conj_html=None, query=None, topic="", type_hint=None):
     """Assemble a full word card from .de HTML (spec #2 Step 1h).
 
     Calls the per-field extractors by detected type and returns a dict in our
@@ -312,14 +316,20 @@ def parse_de(summary_html, conj_html=None, query=None, topic=""):
       - ``_query``: the requested word (if given)
       - ``_flags``: list of issues for the owner review file — ``no_card`` (page
         was a "Deutsche Wörter mit …" search result), ``headword_mismatch``
-        (query != page lemma, e.g. weil->weilen), ``conjugation_parse_error``.
+        (query != page lemma, e.g. weil->weilen), ``conjugation_parse_error``,
+        ``type_mismatch`` (owner/DB `type_hint` disagrees with the fetched card).
+
+    `type_hint` (a DB word type) is the caller's known type — the owner's `[type]`
+    on add or the existing word's type on recheck. It disambiguates function words
+    whose verbformen `?w=` search hits a homonym card: the hint wins over a
+    conflicting detected type and no wrong-sense structural data is adopted.
 
     Translations keep ALL meanings (owner trims in review), comma-joined.
     Präteritum table is never parsed (spec #2 §4). Conjugation needs `conj_html`
     (the linked /konjugation/ page) for verbs.
     """
     info = detect_type_and_headword(summary_html)
-    wtype = info["type"]
+    detected = info["type"]
     headword = info["headword"]
     flags = []
     if not info["has_entry"]:
@@ -327,18 +337,35 @@ def parse_de(summary_html, conj_html=None, query=None, topic=""):
     if query is not None and headword and not headword_matches(headword, query):
         flags.append("headword_mismatch")
 
-    tr = parse_translations(summary_html)
+    # The hint (owner/DB) is authoritative: on a real conflict with the fetched
+    # card (a homonym slipped through) trust the hint and skip that card's
+    # structural fields, rather than overwriting a preposition with "das Aus".
+    hint = str(type_hint or "").strip().lower() or None
+    wtype = detected
+    if hint:
+        if detected and detected != hint:
+            flags.append("type_mismatch")
+        wtype = hint
+
+    # On a type mismatch the page is a different word-sense (a homonym), so every
+    # field on it — translations, level, example — is wrong for our word. Emit
+    # nothing but the type/word; the owner fills it by hand and apply keeps the
+    # existing card intact.
+    mismatch = "type_mismatch" in flags
+    tr = {"ru": [], "uk": [], "en": []} if mismatch else parse_translations(summary_html)
     entry = {
         "type": wtype,
         "russian": ", ".join(tr["ru"]),
         "ukrainian": ", ".join(tr["uk"]),
         "english": ", ".join(tr["en"]),
-        "example": parse_examples(summary_html),
-        "cefr_level": parse_word_level(summary_html),  # A1..C2, type-independent
+        "example": "" if mismatch else parse_examples(summary_html),
+        "cefr_level": "" if mismatch else parse_word_level(summary_html),  # A1..C2, type-independent
         "topic": topic,
     }
 
-    if wtype == "verb":
+    if mismatch:
+        entry["german"] = query or headword
+    elif wtype == "verb":
         forms = parse_verb_forms(summary_html)
         entry["infinitive"] = headword
         entry["prateritum"] = forms["prateritum"]

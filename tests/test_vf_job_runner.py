@@ -37,7 +37,7 @@ class JobRunnerTest(unittest.TestCase):
         jid = JS.create_job(self.db, 7, 100, "05 Essen", ["gehen", "Haus"])
         progress = []
 
-        def fetcher(word):
+        def fetcher(word, type_hint=""):
             conj = load("gehen_conj.html") if word == "gehen" else ""
             return load(f"{word}_summary.html"), conj
 
@@ -58,7 +58,7 @@ class JobRunnerTest(unittest.TestCase):
     def test_ban_streak_emergency_stop(self):
         jid = JS.create_job(self.db, 7, 100, "t", ["a", "b", "c", "d", "e"])
 
-        def fetcher(word):
+        def fetcher(word, type_hint=""):
             raise RuntimeError("boom")
 
         status = self._run(jid, fetcher=fetcher, ban_limit=3)
@@ -70,7 +70,7 @@ class JobRunnerTest(unittest.TestCase):
     def test_stopped_job_does_nothing(self):
         jid = JS.create_job(self.db, 7, 100, "t", ["gehen", "Haus"])
         JS.set_job_status(self.db, jid, "stopped")
-        status = self._run(jid, fetcher=lambda w: ("", ""))
+        status = self._run(jid, fetcher=lambda w, h="": ("", ""))
         self.assertEqual(status, "stopped")
         self.assertEqual(JS.job_counts(self.db, jid)["pending"], 2)
 
@@ -83,13 +83,13 @@ class JobRunnerTest(unittest.TestCase):
         async def on_progress(job, counts, done):
             seen.append(done)
 
-        self._run(jid, fetcher=lambda w: ("", ""), on_progress=on_progress)
+        self._run(jid, fetcher=lambda w, h="": ("", ""), on_progress=on_progress)
         self.assertEqual(seen, [True])
 
     def test_stop_takes_effect_next_iteration(self):
         jid = JS.create_job(self.db, 7, 100, "t", ["gehen", "Haus"])
 
-        def fetcher(word):
+        def fetcher(word, type_hint=""):
             JS.set_job_status(self.db, jid, "stopped")  # stop requested during first word
             return load("gehen_summary.html"), ""
 
@@ -103,7 +103,7 @@ class JobRunnerTest(unittest.TestCase):
         jid = JS.create_job(self.db, 7, 100, "t", ["gehen"])
         calls = {"n": 0}
 
-        def fetcher(word):
+        def fetcher(word, type_hint=""):
             calls["n"] += 1
             if calls["n"] == 1:
                 raise RuntimeError("summary fetch failed (http=0) for 'gehen'")
@@ -126,7 +126,7 @@ class JobRunnerTest(unittest.TestCase):
         jid = JS.create_job(self.db, 7, 100, "t", ["gehen"])
         calls = {"n": 0}
 
-        def fetcher(word):
+        def fetcher(word, type_hint=""):
             calls["n"] += 1
             raise RuntimeError("summary fetch failed (http=0) for 'gehen'")
 
@@ -140,7 +140,7 @@ class JobRunnerTest(unittest.TestCase):
         jid = JS.create_job(self.db, 7, 100, "t", ["nixgibtsnicht"])
         calls = {"n": 0}
 
-        def fetcher(word):
+        def fetcher(word, type_hint=""):
             calls["n"] += 1
             raise RuntimeError("summary fetch failed (http=404) for 'nixgibtsnicht'")
 

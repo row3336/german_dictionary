@@ -62,9 +62,11 @@ class _FakeCbUpdate:
 
 class PureHelpersTest(unittest.TestCase):
     def test_parse_word_list(self):
+        # bare words -> no hint; a valid [type] is captured (case-insensitive);
+        # an unknown [type] is dropped as no hint (word kept).
         self.assertEqual(
-            AF.parse_word_list("gehen\n  Haus  \nvon [Praeposition]\n\n"),
-            ["gehen", "Haus", "von"],
+            AF.parse_word_list("gehen\n  Haus  \nvon [Praeposition]\naus [xyz]\n\n"),
+            [("gehen", ""), ("Haus", ""), ("von", "praeposition"), ("aus", "")],
         )
 
     def test_estimates_scale_with_count(self):

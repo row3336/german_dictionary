@@ -21,6 +21,25 @@ class UrlTest(unittest.TestCase):
     def test_summary_url_umlaut_encoded(self):
         self.assertIn("%C3%B6", F.summary_url("können"))  # ö -> %C3%B6
 
+    def test_summary_url_card_type_hint_uses_verbformen(self):
+        # nomen/verb/adjektiv keep the verbformen ?w= summary (richer extractors)
+        self.assertEqual(F.summary_url("Haus", "nomen"), "https://www.verbformen.de/?w=Haus")
+        self.assertEqual(F.summary_url("gehen", "verb"), "https://www.verbformen.de/?w=gehen")
+
+    def test_summary_url_function_word_hint_uses_verben_type_page(self):
+        # prepositions/adverbs/conjunctions route to the verben.de type page so a
+        # noun homonym (das Aus) does not hijack the ?w= search
+        self.assertEqual(F.summary_url("aus", "praeposition"), "https://www.verben.de/praepositionen/aus.htm")
+        self.assertEqual(F.summary_url("wieder", "adverb"), "https://www.verben.de/adverbien/wieder.htm")
+        self.assertEqual(F.summary_url("und", "konjunktion"), "https://www.verben.de/konjunktionen/und.htm")
+        # case-insensitive hint
+        self.assertEqual(F.summary_url("aus", "Praeposition"), "https://www.verben.de/praepositionen/aus.htm")
+
+    def test_summary_url_unmapped_hint_falls_back(self):
+        # a hint without a type page (or none) falls back to the ?w= search
+        self.assertEqual(F.summary_url("doch", "partikel"), "https://www.verbformen.de/?w=doch")
+        self.assertEqual(F.summary_url("aus", ""), "https://www.verbformen.de/?w=aus")
+
     def test_conjugation_url_from_verb_summary(self):
         url = F.conjugation_url(load("gehen_summary.html"))
         self.assertIn("/konjugation/", url)

@@ -53,6 +53,42 @@ class VfAddJobStoreTest(unittest.TestCase):
         self.assertEqual(items[0]["result"]["infinitive"], "gehen")  # JSON round-trips
         self.assertEqual(items[1]["error"], "fetch failed")
 
+    def test_type_hint_column_added_to_legacy_items_table(self):
+        # a pre-type_hint vf_add_items table gains the column on init_db, add-only,
+        # without touching existing rows
+        conn = sqlite3.connect(self.db)
+        conn.execute("DROP TABLE vf_add_items")
+        conn.execute(
+            "CREATE TABLE vf_add_items (id INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER NOT NULL, "
+            "position INTEGER NOT NULL DEFAULT 0, word TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', "
+            "result_json TEXT NOT NULL DEFAULT '', flags TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '')"
+        )
+        conn.execute("INSERT INTO vf_add_items (job_id, position, word) VALUES (1, 0, 'legacy')")
+        conn.commit()
+        conn.close()
+        init_db(self.db)  # re-run migration
+        conn = sqlite3.connect(self.db)
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(vf_add_items)")}
+        row = conn.execute("SELECT word, type_hint FROM vf_add_items WHERE word='legacy'").fetchone()
+        conn.close()
+        self.assertIn("type_hint", cols)
+        self.assertEqual(row, ("legacy", ""))  # old row preserved, hint defaults ''
+
+    def test_create_job_stores_type_hint_pairs(self):
+        # words may be bare strings (no hint) or (word, type_hint) pairs
+        jid = JS.create_job(self.db, 7, 100, "t", [("aus", "praeposition"), "Haus"])
+        items = {it["word"]: it for it in JS.list_items(self.db, jid)}
+        self.assertEqual(items["aus"]["type_hint"], "praeposition")
+        self.assertEqual(items["Haus"]["type_hint"], "")  # bare string -> no hint
+
+    def test_create_recheck_job_carries_type_hint(self):
+        # recheck triples (lookup, word_id, type) persist the type as the hint
+        jid = JS.create_recheck_job(self.db, 7, 100, [("aus", "w1", "praeposition"), ("Haus", "w2")])
+        items = {it["word"]: it for it in JS.list_items(self.db, jid)}
+        self.assertEqual(items["aus"]["type_hint"], "praeposition")
+        self.assertEqual(items["aus"]["word_id"], "w1")
+        self.assertEqual(items["Haus"]["type_hint"], "")  # 2-tuple still works
+
     def test_status_and_active_jobs(self):
         jid = JS.create_job(self.db, 7, 100, "t", ["gehen"])
         self.assertEqual([j["id"] for j in JS.active_jobs(self.db)], [jid])

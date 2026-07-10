@@ -47,9 +47,9 @@ def _blocking_drip():
     time.sleep(random.randint(*DELAY_RANGE))
 
 
-def _default_fetcher(word):
+def _default_fetcher(word, type_hint=""):
     """Fetch a word's pages with a slow-drip pause between summary/conjugation."""
-    return fetch_word_pages(word, pause=_blocking_drip)
+    return fetch_word_pages(word, pause=_blocking_drip, type_hint=type_hint)
 
 
 async def run_job(
@@ -64,7 +64,7 @@ async def run_job(
 ):
     """Run job `job_id` to a terminal status; returns that status.
 
-    - fetcher(word) -> (summary_html, conj_html), run in a thread; raises on a
+    - fetcher(word, type_hint) -> (summary_html, conj_html), run in a thread; raises on a
       failed fetch. A transient failure (proxy/5xx, see `_is_retryable_fetch_error`)
       is retried up to `fetch_retries` times (slow-drip between attempts) before
       the item is recorded as 'error'; a real 404 fails on the first try.
@@ -96,11 +96,12 @@ async def run_job(
             return "done"
 
         word = item["word"]
+        type_hint = item.get("type_hint") or ""
         attempt = 0
         while True:
             try:
-                summary, conj = await asyncio.to_thread(fetcher, word)
-                entry = parse_de(summary, conj, query=word, topic=job["topic"])
+                summary, conj = await asyncio.to_thread(fetcher, word, type_hint)
+                entry = parse_de(summary, conj, query=word, topic=job["topic"], type_hint=type_hint)
                 save_item_result(db_path, item["id"], "done", result=entry, flags=",".join(entry.get("_flags") or []))
                 ban_streak = 0
                 break

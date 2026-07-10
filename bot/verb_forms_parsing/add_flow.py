@@ -62,13 +62,29 @@ VF_ADD_UI = {}
 CALLBACK_STATUS = {"pause": "paused", "resume": "running", "stop": "stopped"}
 
 
+# DB word types the owner may pin with a trailing [type]; anything else is treated
+# as part of the word. A pinned type routes the lookup (function words -> their
+# verben.de type page) and gates the parse against a homonym card.
+VALID_TYPE_HINTS = frozenset(
+    {"nomen", "verb", "adjektiv", "adverb", "praeposition", "konjunktion", "partikel", "pronomen", "phrase"}
+)
+
+
 def parse_word_list(text):
-    """Split an owner word list into clean query strings (drop a trailing [type])."""
+    """Split an owner word list into (word, type_hint) pairs.
+
+    A trailing ``[type]`` pins the word's type (e.g. ``aus [praeposition]``); an
+    unknown/typo type in brackets is left as '' (no hint). Returned pairs feed
+    create_job, which stores the hint per item."""
     out = []
     for line in str(text or "").splitlines():
+        m = re.search(r"\[([a-zA-Z_]+)\]\s*$", line)
+        hint = m.group(1).strip().lower() if m else ""
+        if hint not in VALID_TYPE_HINTS:
+            hint = ""
         word = re.sub(r"\s*\[[a-zA-Z_]+\]\s*$", "", line).strip()
         if word:
-            out.append(word)
+            out.append((word, hint))
     return out
 
 
@@ -207,10 +223,10 @@ async def _start_recheck(update: Update, context: ContextTypes.DEFAULT_TYPE, tex
     context.user_data.pop("vf_recheck", None)
     candidates = list_words_for_vf_recheck(db_path)  # (word_id, lookup, type)
     if text.strip().lower() == "all":
-        pairs = [(lookup, wid) for wid, lookup, _t in candidates]
+        pairs = [(lookup, wid, _t) for wid, lookup, _t in candidates]
     else:
-        wanted = {w.lower() for w in parse_word_list(text)}
-        pairs = [(lookup, wid) for wid, lookup, _t in candidates if lookup.lower() in wanted]
+        wanted = {w.lower() for w, _h in parse_word_list(text)}
+        pairs = [(lookup, wid, _t) for wid, lookup, _t in candidates if lookup.lower() in wanted]
     if not pairs:
         await _reply_text_with_retry(
             update.message,
