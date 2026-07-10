@@ -81,12 +81,39 @@ class RecheckTest(unittest.TestCase):
         self.addCleanup(lambda: os.environ.__setitem__("DB_PATH", self._old) if self._old else os.environ.pop("DB_PATH", None))
         self.gehen = add_word(self.db, {"type": "verb", "infinitive": "gehen", "russian": "идти", "topic": "1"})["id"]
         self.haus = add_word(self.db, {"type": "nomen", "article": "das", "german": "Haus", "russian": "дом", "topic": "1"})["id"]
-        add_word(self.db, {"type": "praeposition", "german": "mit", "russian": "с", "topic": "1"})
+        self.mit = add_word(self.db, {
+            "type": "praeposition", "german": "mit", "russian": "с", "topic": "1",
+            "preposition_type": "modal", "case_type": "dativ",
+        })["id"]
+        add_word(self.db, {"type": "phrase", "german": "guten Tag", "russian": "добрый день", "topic": "1"})
 
-    def test_list_words_for_recheck_filters_types(self):
+    def test_list_words_for_recheck_all_types_except_phrase(self):
         cand = list_words_for_vf_recheck(self.db)
         lookups = {lookup for _wid, lookup, _t in cand}
-        self.assertEqual(lookups, {"gehen", "Haus"})  # praeposition excluded
+        # every type is a candidate now (incl. the preposition); phrase excluded
+        self.assertEqual(lookups, {"gehen", "Haus", "mit"})
+        types = {lookup: t for _wid, lookup, t in cand}
+        self.assertEqual(types["mit"], "praeposition")  # type carried -> routes lookup
+
+    def test_apply_preserves_preposition_only_fields(self):
+        # a recheck of a preposition must NOT wipe preposition_type/case_type — VF
+        # (verben.de) never emits them, so the apply entry omits them and the
+        # storage layer leaves the existing values intact
+        import json
+        jid = JS.create_recheck_job(self.db, 7, 100, [("mit", self.mit, "praeposition")])
+        item = JS.list_items(self.db, jid)[0]
+        JS.save_item_result(
+            self.db, item["id"], "done",
+            result={"type": "praeposition", "german": "mit", "russian": "с, вместе с",
+                    "_headword": "mit", "_flags": []},  # no preposition_type/case_type
+        )
+        doc = build_review_document(self.db, jid)
+        entries, _issues = parse_review_document(json.dumps(doc))
+        AF.apply_batch(self.db, entries)
+        w = get_word_by_id(self.db, self.mit)
+        self.assertEqual(w["russian"], "с, вместе с")     # translation updated
+        self.assertEqual(w["preposition_type"], "modal")  # preserved
+        self.assertEqual(w["case_type"], "dativ")          # preserved
 
     def test_reset_vf_checks(self):
         save_vf_check_result(self.db, 7, self.gehen, "verb", "gehen", status="match")
@@ -140,7 +167,7 @@ class RecheckTest(unittest.TestCase):
         jobs = JS.active_jobs(self.db) or []
         self.assertTrue(jobs)
         jid = jobs[0]["id"]
-        self.assertEqual(JS.job_counts(self.db, jid)["total"], 2)
+        self.assertEqual(JS.job_counts(self.db, jid)["total"], 3)  # gehen/Haus/mit; phrase excluded
         self.assertIn(jid, AF.VF_ADD_TASKS)
 
 

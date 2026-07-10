@@ -230,7 +230,7 @@ async def _start_recheck(update: Update, context: ContextTypes.DEFAULT_TYPE, tex
     if not pairs:
         await _reply_text_with_retry(
             update.message,
-            "No matching existing words (verbs/nouns/adjectives) to recheck.",
+            "No matching existing words to recheck.",
             reply_markup=_add_menu_markup(user_id),
         )
         return VF_ADD_INPUT
@@ -244,7 +244,7 @@ async def vf_recheck_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["vf_recheck"] = True
     await _reply_text_with_retry(
         update.message,
-        "🔁 Recheck existing words against verbformen. Send 'all' for every verb/noun/adjective, "
+        "🔁 Recheck existing words against verbformen. Send 'all' for every word (except phrases), "
         "or a list (one per line). Old check results were cleared.",
         reply_markup=_add_menu_markup(update.effective_user.id),
     )
