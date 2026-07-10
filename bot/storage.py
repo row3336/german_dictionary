@@ -265,6 +265,7 @@ def init_db(db_path):
                 image TEXT NOT NULL DEFAULT '',
                 example TEXT NOT NULL DEFAULT '',
                 topic TEXT NOT NULL DEFAULT '1',
+                cefr_level TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -529,46 +530,6 @@ def _ensure_schema(conn):
         row["name"] if isinstance(row, sqlite3.Row) else row[1]
         for row in conn.execute("PRAGMA table_info(words)").fetchall()
     }
-    if "cefr_level" in word_cols:
-        conn.execute("PRAGMA foreign_keys = OFF")
-        conn.executescript(
-            """
-            CREATE TABLE words_new (
-                id TEXT PRIMARY KEY,
-                type TEXT NOT NULL,
-                article TEXT NOT NULL DEFAULT '',
-                german TEXT NOT NULL DEFAULT '',
-                plural TEXT NOT NULL DEFAULT '',
-                infinitive TEXT NOT NULL DEFAULT '',
-                prateritum TEXT NOT NULL DEFAULT '',
-                partizip2 TEXT NOT NULL DEFAULT '',
-                komparativ TEXT NOT NULL DEFAULT '',
-                superlativ TEXT NOT NULL DEFAULT '',
-                russian TEXT NOT NULL DEFAULT '',
-                ukrainian TEXT NOT NULL DEFAULT '',
-                english TEXT NOT NULL DEFAULT '',
-                image TEXT NOT NULL DEFAULT '',
-                example TEXT NOT NULL DEFAULT '',
-                topic TEXT NOT NULL DEFAULT '1',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-            INSERT INTO words_new (
-                id, type, article, german, plural, infinitive, prateritum, partizip2, komparativ, superlativ,
-                russian, ukrainian, english, image, example, topic, created_at
-            )
-            SELECT
-                id, type, article, german, plural, infinitive, prateritum, partizip2, '', '',
-                russian, ukrainian, english, '', '', '1', created_at
-            FROM words;
-            DROP TABLE words;
-            ALTER TABLE words_new RENAME TO words;
-            """
-        )
-        conn.execute("PRAGMA foreign_keys = ON")
-        word_cols = {
-            row["name"] if isinstance(row, sqlite3.Row) else row[1]
-            for row in conn.execute("PRAGMA table_info(words)").fetchall()
-        }
     if "ukrainian" not in word_cols:
         conn.execute("ALTER TABLE words ADD COLUMN ukrainian TEXT NOT NULL DEFAULT ''")
     if "english" not in word_cols:
@@ -602,6 +563,12 @@ def _ensure_schema(conn):
         conn.execute("ALTER TABLE words ADD COLUMN conjugation_praesens TEXT NOT NULL DEFAULT ''")
     if "conjugation_praeteritum" not in word_cols:
         conn.execute("ALTER TABLE words ADD COLUMN conjugation_praeteritum TEXT NOT NULL DEFAULT ''")
+    # v11 -> v12: per-word CEFR level (A1..C2), parsed from verbformen.de. Additive,
+    # DEFAULT '' so every existing row (unknown level) and an older/rolled-back build
+    # stay valid; the value is a controlled vocabulary (CEFR_LEVELS) validated on
+    # write. Feeds the level-aware topic filters (chosen levels -> eligible words).
+    if "cefr_level" not in word_cols:
+        conn.execute("ALTER TABLE words ADD COLUMN cefr_level TEXT NOT NULL DEFAULT ''")
     conn.execute("UPDATE words SET topic = '1' WHERE trim(coalesce(topic, '')) = ''")
     # spec #8: topics registry. Defensive create (mirrors vf_checks above) + idempotent
     # seed of every DISTINCT topic in use, with empty description. INSERT OR IGNORE keeps
@@ -851,6 +818,7 @@ def _row_to_entry(row):
         "case_type": row["case_type"] if "case_type" in row.keys() else "",
         "conjugation_praesens": row["conjugation_praesens"] if "conjugation_praesens" in row.keys() else "",
         "conjugation_praeteritum": row["conjugation_praeteritum"] if "conjugation_praeteritum" in row.keys() else "",
+        "cefr_level": row["cefr_level"] if "cefr_level" in row.keys() else "",
     }
     if "seen_count" in row.keys():
         entry["seen_count"] = int(row["seen_count"] or 0)
@@ -2497,6 +2465,16 @@ def _dedupe_entry(conn, entry):
         raise ValueError("Already in database.")
 
 
+def _safe_cefr_level(value):
+    """Normalize a CEFR level to the controlled vocabulary or '' (unknown/invalid).
+
+    Uppercased so 'a1' -> 'A1'; anything outside CEFR_LEVELS becomes '' rather than
+    being stored as free text (defense in depth behind the VF parser's own guard).
+    """
+    level = _safe_text(value).strip().upper()
+    return level if level in CEFR_LEVELS else ""
+
+
 def _normalize_word_entry_for_storage(entry):
     """Normalize word casing before storing."""
     result = dict(entry)
@@ -2538,8 +2516,8 @@ def add_word(db_path, entry):
             """
             INSERT INTO words (
                 id, type, article, german, plural, infinitive, prateritum, partizip2, komparativ, superlativ,
-                russian, ukrainian, english, image, example, topic, preposition_type, case_type, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                russian, ukrainian, english, image, example, topic, preposition_type, case_type, cefr_level, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             """,
             (
                 entry["id"],
@@ -2560,6 +2538,7 @@ def add_word(db_path, entry):
                 _safe_text(entry.get("topic", "1")) or "1",
                 _safe_text(entry.get("preposition_type", "")),
                 _safe_text(entry.get("case_type", "")),
+                _safe_cefr_level(entry.get("cefr_level", "")),
             ),
         )
     return entry
@@ -3709,6 +3688,7 @@ def update_word_fields(db_path, word_id, fields):
         "topic",
         "preposition_type",
         "case_type",
+        "cefr_level",
     }
     init_db(db_path)
     with _connect(db_path) as conn:
@@ -3731,6 +3711,9 @@ def update_word_fields(db_path, word_id, fields):
             if normalized and normalized not in allowed_vocab:
                 continue
             values[key] = normalized
+            continue
+        if key == "cefr_level":
+            values[key] = _safe_cefr_level(value)
             continue
         values[key] = _safe_text(value)
     if not values:
@@ -4250,7 +4233,7 @@ def get_word_by_id(db_path, word_id):
         row = conn.execute(
             """
             SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian
-            , ukrainian, english, image, example, topic, preposition_type, case_type
+            , ukrainian, english, image, example, topic, preposition_type, case_type, cefr_level
             FROM words
             WHERE id = ?
             LIMIT 1

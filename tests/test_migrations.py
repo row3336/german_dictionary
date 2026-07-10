@@ -657,5 +657,68 @@ class UserWordMediaTranslationMigrationTest(unittest.TestCase):
         self.assertTrue({"russian", "ukrainian", "english"} <= _schema(db)["user_word_media"])
 
 
+class CefrLevelColumnMigrationTest(unittest.TestCase):
+    """word-level CEFR — v11 -> v12 adds words.cefr_level (ADD-only, DEFAULT '')."""
+
+    def _seed_v11(self, d):
+        db = os.path.join(d, "words.db")
+        init_db(db)  # full current schema, then peel the v12 column back off
+        conn = sqlite3.connect(db)
+        conn.executescript(
+            """
+            INSERT INTO words (id, type, german, russian, topic)
+                VALUES ('w1', 'nomen', 'Haus', 'дом', '1');
+            INSERT INTO words (id, type, german, russian, topic)
+                VALUES ('w2', 'verb', 'gehen', 'идти', '1');
+            ALTER TABLE words DROP COLUMN cefr_level;
+            """
+        )
+        conn.commit()
+        conn.close()
+        set_user_version(db, 11)
+        self.assertNotIn("cefr_level", _schema(db)["words"])
+        return db
+
+    def test_v11_to_v12_adds_cefr_level_keeps_data(self):
+        d = tempfile.mkdtemp()
+        db = self._seed_v11(d)
+
+        report = apply_migrations_safely(db, os.path.join(d, "backups"))
+
+        self.assertTrue(report["migrated"])
+        self.assertEqual(report["from_version"], 11)
+        self.assertEqual(report["to_version"], SCHEMA_VERSION)
+        self.assertGreaterEqual(SCHEMA_VERSION, 12)
+        self.assertIn("cefr_level", _schema(db)["words"])
+        self.assertTrue(report["healthcheck"]["ok"])
+        self.assertEqual(get_user_version(db), SCHEMA_VERSION)
+
+        conn = sqlite3.connect(db)
+        try:
+            rows = conn.execute("SELECT id, cefr_level FROM words ORDER BY id").fetchall()
+            count = conn.execute("SELECT COUNT(*) FROM words").fetchone()[0]
+        finally:
+            conn.close()
+        # existing rows default to '' (unknown level); nothing lost
+        self.assertEqual(rows, [("w1", ""), ("w2", "")])
+        self.assertEqual(count, 2)
+
+    def test_backup_and_idempotent(self):
+        d = tempfile.mkdtemp()
+        db = self._seed_v11(d)
+        report = apply_migrations_safely(db, os.path.join(d, "backups"))
+        self.assertIsNotNone(report["backup"])
+        self.assertTrue(os.path.exists(report["backup"]))
+        report2 = apply_migrations_safely(db, os.path.join(d, "backups"))
+        self.assertFalse(report2["migrated"])
+        self.assertTrue(report2["healthcheck"]["ok"])
+
+    def test_fresh_db_has_cefr_level_column(self):
+        d = tempfile.mkdtemp()
+        db = os.path.join(d, "words.db")
+        apply_migrations_safely(db, os.path.join(d, "backups"))
+        self.assertIn("cefr_level", _schema(db)["words"])
+
+
 if __name__ == "__main__":
     unittest.main()

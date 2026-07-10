@@ -16,7 +16,7 @@ from .job_store import get_job, list_items
 # Fields compared current-vs-VF in a recheck diff (conjugation compared separately).
 _DIFF_FIELDS = (
     "type", "article", "german", "plural", "infinitive", "prateritum", "partizip2",
-    "komparativ", "superlativ", "russian", "ukrainian", "english", "example",
+    "komparativ", "superlativ", "russian", "ukrainian", "english", "example", "cefr_level",
 )
 
 INSTRUCTIONS = (

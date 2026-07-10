@@ -32,7 +32,9 @@ from pathlib import Path
 #      restart resumes the slow-drip parse instead of starting over).
 # 11 = spec #2 (+ vf_add_items.word_id: links a recheck item to the existing word
 #      it verifies, so the diff apply updates that word).
-SCHEMA_VERSION = 11
+# 12 = word-level CEFR (+ words.cefr_level, DEFAULT ''): per-word A1..C2 parsed from
+#      verbformen.de, feeding the level-aware topic filters.
+SCHEMA_VERSION = 12
 
 # Tables whose row counts we snapshot before/after a migration (must not shrink).
 _COUNT_TABLES = (

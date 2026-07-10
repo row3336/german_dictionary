@@ -27,7 +27,7 @@ class VfAddJobStoreTest(unittest.TestCase):
     def test_migration_creates_tables_and_bumps_version(self):
         self.assertIn("vf_add_jobs", self._tables())
         self.assertIn("vf_add_items", self._tables())
-        self.assertEqual(SCHEMA_VERSION, 11)
+        self.assertEqual(SCHEMA_VERSION, 12)
 
     def test_create_job_and_counts(self):
         jid = JS.create_job(self.db, user_id=7, chat_id=100, topic="05 Essen", words=["gehen", "Haus", "", "  "])

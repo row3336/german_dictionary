@@ -16,6 +16,7 @@ import html as _html
 import re
 from urllib.parse import unquote
 
+from ..app_config import CEFR_LEVELS
 from ..common.conjugation import parse_conjugation
 
 # h1 phrasing -> our word type. Only verbs/nouns/adjectives get a dedicated .de
@@ -159,21 +160,59 @@ def _plain_text(html):
     return re.sub(r"\s+", " ", _html.unescape(re.sub(r"<[^>]+>", " ", html or "")))
 
 
-def parse_noun_article_plural(summary_html):
-    """Noun article + plural from the .de summary prose.
+def _multi_join(values):
+    """De-duplicate (case-insensitively, order-preserving) and comma-join.
 
-    - article: ``Der Artikel lautet „das Haus“`` -> ``das`` (lowercased).
-    - plural:  ``Nominativ Plural „Häuser“`` -> ``Häuser`` (kept capitalised).
-    Missing values -> ''. NOTE (spec #2 §10): multi-gender / multi-plural nouns
-    (two comma-joined values) are not covered yet — no such fixture to verify.
+    The whole codebase stores a noun's several articles/plurals comma-separated
+    (``der, das`` · ``Pizzas, Pizzen`` — see text_utils.split_plural_forms and
+    ui.formatting._article_variants), so every multi-value we emit is normalised
+    to that one canonical separator regardless of how the site wrote it.
+    """
+    out, seen = [], set()
+    for v in values:
+        v = str(v or "").strip()
+        key = v.lower()
+        if v and key not in seen:
+            seen.add(key)
+            out.append(v)
+    return ", ".join(out)
+
+
+def _extra_article_variants(summary_html, noun):
+    """Alternate articles of a multi-gender noun, from the JSON-LD nav links.
+
+    A multi-gender noun (``der/das/die Joghurt``) cross-links its gender variants
+    as ``"name":"das Joghurt"`` SiteNavigationElement entries; a single-gender
+    noun has none. Only variants whose noun equals the headword are kept (so a
+    compound like ``der Joghurtbecher`` in the same list is ignored).
+    """
+    if not noun:
+        return []
+    out = []
+    for art, name in re.findall(r'"name":"(der|die|das)\s+([^"]+)"', summary_html or ""):
+        if _norm(name) == _norm(noun):
+            out.append(art.lower())
+    return out
+
+
+def parse_noun_article_plural(summary_html):
+    """Noun article(s) + plural(s) from the .de summary.
+
+    - article: ``Der Artikel lautet „das Haus“`` -> ``das``. A multi-gender noun
+      (``der Joghurt`` + JSON-LD ``das/die Joghurt`` nav links) yields every
+      article, primary first, comma-joined: ``der, das, die``.
+    - plural:  ``Nominativ Plural „Häuser“`` -> ``Häuser`` (capitalisation kept);
+      a multi-plural noun (``Pizzas/Pizzen``) is normalised to ``Pizzas, Pizzen``.
+    Missing values -> ''.
     """
     text = _plain_text(summary_html)
-    m_art = re.search(r"Der Artikel lautet\s*[„\"]\s*(der|die|das)\b", text, re.I)
+    m_art = re.search(r"Der Artikel lautet\s*[„\"]\s*(der|die|das)\s+([^„“”\"]+?)\s*[“”\"]", text, re.I)
+    primary = m_art.group(1).lower() if m_art else ""
+    noun = m_art.group(2).strip() if m_art else ""
+    article = _multi_join([primary] + _extra_article_variants(summary_html, noun)) if primary else ""
     m_pl = re.search(r"Nominativ Plural\s*[„\"]\s*([^„“”\"]+?)\s*[“”\"]", text)
-    return {
-        "article": m_art.group(1).lower() if m_art else "",
-        "plural": m_pl.group(1).strip() if m_pl else "",
-    }
+    plural = _multi_join(re.split(r"[,/]", m_pl.group(1))) if m_pl else ""
+    return {"article": article, "plural": plural}
 
 
 def parse_adjektiv_degrees(summary_html):
@@ -226,6 +265,35 @@ def parse_examples(summary_html, limit=3):
     return "\n".join(out)
 
 
+# The word's CEFR level rides on a badge next to the headword:
+#   <span class="bZrt" title="Wortschatz Zertifikat A1"> A1</span>
+# This badge is present on EVERY card type (verbs/nouns/adjectives AND adverbs),
+# unlike the prose "gehört zum Wortschatz auf A1-Niveau" which only nouns/verbs
+# carry — so the badge is the primary source. The FIRST badge on the page belongs
+# to the headword; on a "Deutsche Wörter mit …" search page (no dedicated card)
+# later badges are related words, so first-match is still the right pick.
+_LEVEL_BADGE_RE = re.compile(
+    r'title="Wortschatz Zertifikat\s+(%s)"' % "|".join(CEFR_LEVELS)
+)
+_LEVEL_PROSE_RE = re.compile(
+    r"Wortschatz auf\s+(%s)-Niveau" % "|".join(CEFR_LEVELS)
+)
+
+
+def parse_word_level(summary_html):
+    """The headword's CEFR level (``A1``…``C2``) from the .de summary, or '' if absent.
+
+    Primary source is the first ``Wortschatz Zertifikat`` badge (present on all
+    card types). Falls back to the ``… auf X-Niveau`` prose (nouns/verbs only) so
+    a page that ever drops the badge still yields a level. Returns uppercase.
+    """
+    m = _LEVEL_BADGE_RE.search(summary_html or "")
+    if m:
+        return m.group(1).upper()
+    m = _LEVEL_PROSE_RE.search(_plain_text(summary_html))
+    return m.group(1).upper() if m else ""
+
+
 def headword_matches(headword, query):
     """True iff the page's headword equals the requested word (spec #2 guard).
 
@@ -266,6 +334,7 @@ def parse_de(summary_html, conj_html=None, query=None, topic=""):
         "ukrainian": ", ".join(tr["uk"]),
         "english": ", ".join(tr["en"]),
         "example": parse_examples(summary_html),
+        "cefr_level": parse_word_level(summary_html),  # A1..C2, type-independent
         "topic": topic,
     }
 

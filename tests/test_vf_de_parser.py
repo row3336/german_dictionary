@@ -18,6 +18,7 @@ from bot.verb_forms_parsing.de_parser import (
     parse_praesens_conjugation,
     parse_translations,
     parse_verb_forms,
+    parse_word_level,
 )
 
 FIX = os.path.join(os.path.dirname(__file__), "fixtures", "verbformen_de")
@@ -147,9 +148,47 @@ class NounArticlePluralTest(unittest.TestCase):
         self.assertEqual(r["article"], "das")
         self.assertEqual(r["plural"], "Häuser")
 
+    def test_multi_gender_article(self):
+        # Joghurt: primary "der Joghurt" + JSON-LD nav "das/die Joghurt" -> all
+        # articles, primary first, comma-joined (canonical multi-value separator).
+        r = parse_noun_article_plural(load("Joghurt_summary.html"))
+        self.assertEqual(r["article"], "der, das, die")
+        self.assertEqual(r["plural"], "Joghurts")
+
+    def test_multi_plural_forms(self):
+        # Pizza: "Nominativ Plural „Pizzas/Pizzen“" -> both forms, slash normalised
+        # to the canonical comma separator (split_plural_forms already reads both).
+        r = parse_noun_article_plural(load("Pizza_summary.html"))
+        self.assertEqual(r["article"], "die")
+        self.assertEqual(r["plural"], "Pizzas, Pizzen")
+
     def test_non_noun_page_is_empty(self):
         r = parse_noun_article_plural(load("gehen_summary.html"))
         self.assertEqual(r, {"article": "", "plural": ""})
+
+
+class WordLevelTest(unittest.TestCase):
+    def test_badge_on_every_card_type(self):
+        # The "Wortschatz Zertifikat" badge is present on nouns, verbs AND
+        # adjectives/adverbs (unlike the noun/verb-only prose), so it is the source.
+        self.assertEqual(parse_word_level(load("Haus_summary.html")), "A1")
+        self.assertEqual(parse_word_level(load("gehen_summary.html")), "A1")
+        self.assertEqual(parse_word_level(load("schnell_summary.html")), "A1")
+        self.assertEqual(parse_word_level(load("Joghurt_summary.html")), "C1")
+
+    def test_first_badge_is_the_headword(self):
+        # weil -> weilen (archaic) is C2; the mismatch page still yields its level.
+        self.assertEqual(parse_word_level(load("weil_summary.html")), "C2")
+
+    def test_prose_fallback_when_no_badge(self):
+        # A page that dropped the badge still yields a level via the "auf X-Niveau"
+        # prose (nouns/verbs carry it).
+        html = 'Das Wort „Test“ gehört zum Wortschatz auf B2-Niveau.'
+        self.assertEqual(parse_word_level(html), "B2")
+
+    def test_missing_level_is_empty(self):
+        self.assertEqual(parse_word_level("<html><body>nothing</body></html>"), "")
+        self.assertEqual(parse_word_level(""), "")
 
 
 class AdjektivDegreesTest(unittest.TestCase):
@@ -210,8 +249,21 @@ class ParseDeAssemblyTest(unittest.TestCase):
         self.assertEqual(e["article"], "das")
         self.assertEqual(e["german"], "Haus")
         self.assertEqual(e["plural"], "Häuser")
+        self.assertEqual(e["cefr_level"], "A1")
         self.assertIn("дом", e["russian"])
         self.assertEqual(e["_flags"], [])
+
+    def test_multi_gender_noun_card(self):
+        e = parse_de(load("Joghurt_summary.html"), query="Joghurt")
+        self.assertEqual(e["type"], "nomen")
+        self.assertEqual(e["article"], "der, das, die")
+        self.assertEqual(e["cefr_level"], "C1")
+        self.assertEqual(e["_flags"], [])
+
+    def test_level_present_on_every_type(self):
+        for name, q in (("gehen", "gehen"), ("schnell", "schnell")):
+            e = parse_de(load(f"{name}_summary.html"), query=q)
+            self.assertEqual(e["cefr_level"], "A1", name)
 
     def test_adjektiv_full_card(self):
         e = parse_de(load("schnell_summary.html"), query="schnell")
