@@ -70,6 +70,18 @@ VALID_TYPE_HINTS = frozenset(
 )
 
 
+_ARTICLES = frozenset({"der", "die", "das"})
+
+
+def _split_article(word):
+    """Split a typed noun into (article, lemma); ('', word) if no leading article.
+    Used by recheck to match 'der Dialog' against the stored lemma 'Dialog'."""
+    parts = str(word or "").split()
+    if len(parts) == 2 and parts[0].lower() in _ARTICLES:
+        return parts[0].lower(), parts[1]
+    return "", str(word or "").strip()
+
+
 def parse_word_list(text):
     """Split an owner word list into (word, type_hint) pairs.
 
@@ -221,12 +233,22 @@ async def _start_recheck(update: Update, context: ContextTypes.DEFAULT_TYPE, tex
     chat_id = update.effective_chat.id
     db_path = get_db_path()
     context.user_data.pop("vf_recheck", None)
-    candidates = list_words_for_vf_recheck(db_path)  # (word_id, lookup, type)
+    candidates = list_words_for_vf_recheck(db_path)  # (word_id, lookup, type, article)
     if text.strip().lower() == "all":
-        pairs = [(lookup, wid, _t) for wid, lookup, _t in candidates]
+        pairs = [(lookup, wid, _t) for wid, lookup, _t, _a in candidates]
     else:
-        wanted = {w.lower() for w, _h in parse_word_list(text)}
-        pairs = [(lookup, wid, _t) for wid, lookup, _t in candidates if lookup.lower() in wanted]
+        # A noun may be typed bare ("Dialog") or with its article ("der Dialog").
+        # Bare lemma matches on the lemma alone; a typed article must equal the
+        # word's DB article (any gender for a multi-gender "der, das") — a wrong
+        # article is left out so the owner notices their slip.
+        typed = [_split_article(w) for w, _h in parse_word_list(text)]
+        pairs = []
+        for wid, lookup, wtype, article in candidates:
+            db_arts = {a.strip().lower() for a in article.split(",") if a.strip()}
+            for art, lemma in typed:
+                if lemma.lower() == lookup.lower() and (not art or art in db_arts):
+                    pairs.append((lookup, wid, wtype))
+                    break
     if not pairs:
         await _reply_text_with_retry(
             update.message,

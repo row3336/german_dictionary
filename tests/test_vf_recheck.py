@@ -89,11 +89,37 @@ class RecheckTest(unittest.TestCase):
 
     def test_list_words_for_recheck_all_types_except_phrase(self):
         cand = list_words_for_vf_recheck(self.db)
-        lookups = {lookup for _wid, lookup, _t in cand}
+        lookups = {lookup for _wid, lookup, _t, _a in cand}
         # every type is a candidate now (incl. the preposition); phrase excluded
         self.assertEqual(lookups, {"gehen", "Haus", "mit"})
-        types = {lookup: t for _wid, lookup, t in cand}
-        self.assertEqual(types["mit"], "praeposition")  # type carried -> routes lookup
+        by_lookup = {lookup: (t, a) for _wid, lookup, t, a in cand}
+        self.assertEqual(by_lookup["mit"], ("praeposition", ""))  # type carried, no article
+        self.assertEqual(by_lookup["Haus"], ("nomen", "das"))     # noun article carried
+
+    def _launch_recheck(self, text):
+        real = AF.run_job
+        AF.run_job = _fake_run
+        self.addCleanup(lambda: setattr(AF, "run_job", real))
+        AF.VF_ADD_TASKS.clear()
+        self.addCleanup(AF.VF_ADD_TASKS.clear)
+        ctx = _Ctx()
+        ctx.user_data["vf_recheck"] = True
+        up = _FakeUpdate(text=text)
+        asyncio.run(AF._start_recheck(up, ctx, text))
+        jobs = JS.active_jobs(self.db)
+        words = {it["word"] for it in JS.list_items(self.db, jobs[0]["id"])} if jobs else None
+        return words, up.message.replies
+
+    def test_recheck_matches_bare_and_correct_article(self):
+        # 'das Haus' (article matches DB) and bare 'Haus'/'mit' all resolve
+        words, _ = self._launch_recheck("das Haus\nmit\nHaus")
+        self.assertEqual(words, {"Haus", "mit"})
+
+    def test_recheck_skips_wrong_article(self):
+        # DB has 'das Haus'; typing the wrong article must NOT match (owner notices)
+        words, replies = self._launch_recheck("der Haus")
+        self.assertIsNone(words)  # no candidate matched -> no job created
+        self.assertTrue(any("No matching" in r for r in replies))
 
     def test_apply_preserves_preposition_only_fields(self):
         # a recheck of a preposition must NOT wipe preposition_type/case_type — VF

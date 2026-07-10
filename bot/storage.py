@@ -4938,11 +4938,12 @@ def reset_vf_checks(db_path):
 
 
 def list_words_for_vf_recheck(db_path):
-    """Existing words to re-verify against the .de parser: (word_id, lookup, type)
-    for every type EXCEPT ``phrase`` (multi-word, no single dictionary page). The
-    type is carried so the recheck lookup routes by it — function words go to their
-    verben.de type page instead of a homonym card. lookup = infinitive for verbs,
-    else german."""
+    """Existing words to re-verify against the .de parser:
+    (word_id, lookup, type, article) for every type EXCEPT ``phrase`` (multi-word,
+    no single dictionary page). The type is carried so the recheck lookup routes by
+    it — function words go to their verben.de type page instead of a homonym card.
+    lookup = infinitive for verbs, else german; article is '' for non-nouns (used
+    by the recheck UI to match an owner who typed the noun with its article)."""
     out = []
     for entry in list_all_words(db_path):
         wtype = _safe_text(entry.get("type", "")).strip().lower()
@@ -4951,7 +4952,7 @@ def list_words_for_vf_recheck(db_path):
         lookup = entry.get("infinitive") if wtype == "verb" else entry.get("german")
         lookup = _safe_text(lookup).strip()
         if lookup:
-            out.append((entry.get("id"), lookup, wtype))
+            out.append((entry.get("id"), lookup, wtype, _safe_text(entry.get("article", "")).strip()))
     return out
 
 
