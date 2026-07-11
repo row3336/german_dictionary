@@ -182,7 +182,8 @@ def _clarify_fields_markup(source, user_id=None, in_search=False, is_prep=False)
         return ReplyKeyboardMarkup(rows, resize_keyboard=True)
     if source == "quiz" and user_id is not None and not is_owner(user_id):
         # spec #7: guest also gets a personal-translation edit button (their dict_lang).
-        rows = [["image", "example"], [t(lang, "my_translation"), t(lang, "report_card")]]
+        # add_int (spec #15/T5) pushes the guest's OWN progress — safe to offer.
+        rows = [["image", "example", "add_int"], [t(lang, "my_translation"), t(lang, "report_card")]]
         rows.append([t(lang, "send_learn"), BACK_TEXT] if in_search else [BACK_TEXT])
         return ReplyKeyboardMarkup(rows, resize_keyboard=True)
     if source == "quiz":
@@ -192,7 +193,7 @@ def _clarify_fields_markup(source, user_id=None, in_search=False, is_prep=False)
             ["ru", "ukr", "de", SYNONYMS_TEXT],
             ["article", "plural", "type", "infinitive"],
             ["prateritum", "partizip2", "komparativ", "superlativ"],
-            ["image", "example"],
+            ["image", "example", "add_int"],
         ]
         if is_prep:
             # spec #1: preposition-only fields, so the owner can (re)set the category

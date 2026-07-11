@@ -2703,6 +2703,40 @@ def update_fsrs(srs, quality, today=None, interval_divisor=1.0):
     }
 
 
+def simulate_fsrs_advance(srs, n, today=None, interval_divisor=1.0):
+    """N consecutive perfect answers (quality=5) applied to `srs` WITHOUT writing.
+
+    The add_int card action (spec #15 / T5): the owner/user pushes a word's next
+    show further out exactly as if they had answered it right n times in a row —
+    same growth curve, no shortcut math."""
+    result = dict(srs) if srs else default_srs(today)
+    for _ in range(max(0, int(n))):
+        result = update_fsrs(result, 5, today=today, interval_divisor=interval_divisor)
+    return result
+
+
+def get_progress(db_path, user_id, word_id, mode):
+    """Current SRS state for (user, word, mode); default_srs() when absent."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT interval, repetitions, ease, due
+            FROM progress
+            WHERE user_id = ? AND word_id = ? AND mode = ?
+            """,
+            (int(user_id), word_id, mode),
+        ).fetchone()
+    if not row:
+        return default_srs()
+    return {
+        "interval": int(row["interval"]),
+        "repetitions": int(row["repetitions"]),
+        "ease": float(row["ease"]),
+        "due": row["due"],
+    }
+
+
 def update_progress(db_path, user_id, word_id, mode, quality, interval_divisor=1.0):
     """Handle update progress."""
     init_db(db_path)

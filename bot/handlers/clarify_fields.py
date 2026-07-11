@@ -34,22 +34,27 @@ from ..app_config import (
     get_db_path,
     is_owner,
 )
-from ..common.lang import _user_dict_lang, _user_interface_lang
+from ..common.lang import _mode_de_l1, _mode_l1_de, _quiz_dir_labels, _user_dict_lang, _user_interface_lang
 from ..common.navigation import _action_key_from_text, _back_to_main_menu, _back_to_tests, _reply_text_with_retry
+from ..common.txlog import _capture_transaction_snapshot, _log_transaction
 from ..handlers.quiz import (
+    _interval_divisor_for_mode,
     _send_article_prompt,
     _send_de_ru_prompt,
     _send_pl_sg_prompt,
     _send_ru_de_prompt,
 )
 from ..i18n import t
-from ..labels import SYNONYMS_TEXT
+from ..labels import SYN_CONFIRM_TEXT, SYNONYMS_TEXT
 from ..storage import (
     add_error_report,
     delete_word,
+    get_progress,
     normalize_word_entry,
+    set_progress,
     set_user_word_media,
     set_user_word_translation,
+    simulate_fsrs_advance,
     update_word_fields,
 )
 from ..text_utils import type_label as _type_label
@@ -466,6 +471,78 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
             return await _send_db_search_prompt(update, update.effective_user.id, prefix)
         return await _exit_clarify(update, context)
 
+    # --- add_int (spec #15 / T5): push the word's next show further out, as if
+    # answered correctly n times in a row. Stages: pick mode -> enter n (3..7) ->
+    # preview next due -> Confirm. Undo-able via the transaction log.
+    if stage == "add_int_mode":
+        uid = update.effective_user.id
+        lang = _user_interface_lang(uid)
+        l1_de_label, de_l1_label = _quiz_dir_labels(uid)
+        if text == l1_de_label:
+            context.user_data["add_int_mode"] = _mode_l1_de(uid)
+        elif text == de_l1_label:
+            context.user_data["add_int_mode"] = _mode_de_l1(uid)
+        else:
+            # anything unexpected (incl. back) cancels to the card
+            context.user_data["edit_stage"] = "pick_field"
+            await update.message.reply_text(
+                t(lang, "clarify_choose_action"), reply_markup=_clarify_screen(context, uid)
+            )
+            return ADD_EDIT
+        context.user_data["edit_stage"] = "add_int_n"
+        await update.message.reply_text(
+            t(lang, "add_int_pick_n"),
+            reply_markup=ReplyKeyboardMarkup([["3", "4", "5", "6", "7"], [t(lang, "back")]], resize_keyboard=True),
+        )
+        return ADD_EDIT
+
+    if stage == "add_int_n":
+        uid = update.effective_user.id
+        lang = _user_interface_lang(uid)
+        if _action_key_from_text(text, uid) == "back":
+            context.user_data.pop("add_int_mode", None)
+            context.user_data["edit_stage"] = "pick_field"
+            await update.message.reply_text(
+                t(lang, "clarify_choose_action"), reply_markup=_clarify_screen(context, uid)
+            )
+            return ADD_EDIT
+        try:
+            n = int(text.strip())
+        except (TypeError, ValueError):
+            n = None
+        if n is None or not 3 <= n <= 7:
+            await update.message.reply_text(
+                t(lang, "add_int_bad_n"),
+                reply_markup=ReplyKeyboardMarkup([["3", "4", "5", "6", "7"], [t(lang, "back")]], resize_keyboard=True),
+            )
+            return ADD_EDIT
+        mode = context.user_data.get("add_int_mode")
+        srs = get_progress(get_db_path(), uid, entry.get("id"), mode)
+        preview = simulate_fsrs_advance(srs, n, interval_divisor=_interval_divisor_for_mode(uid, mode))
+        context.user_data["add_int_preview"] = preview
+        context.user_data["edit_stage"] = "add_int_confirm"
+        await update.message.reply_text(
+            t(lang, "add_int_preview").format(due=preview["due"], interval=preview["interval"]),
+            reply_markup=ReplyKeyboardMarkup([[SYN_CONFIRM_TEXT], [t(lang, "back")]], resize_keyboard=True),
+        )
+        return ADD_EDIT
+
+    if stage == "add_int_confirm":
+        uid = update.effective_user.id
+        lang = _user_interface_lang(uid)
+        mode = context.user_data.pop("add_int_mode", None)
+        preview = context.user_data.pop("add_int_preview", None)
+        context.user_data["edit_stage"] = "pick_field"
+        if text == SYN_CONFIRM_TEXT and mode and preview:
+            snapshot = _capture_transaction_snapshot(uid, entry.get("id"), [mode])
+            set_progress(get_db_path(), uid, entry.get("id"), mode, preview)
+            _log_transaction(uid, f"add_int:{mode}", snapshot)
+            note = t(lang, "add_int_done").format(due=preview["due"])
+        else:
+            note = t(lang, "clarify_choose_action")  # anything else cancels, no write
+        await update.message.reply_text(note, reply_markup=_clarify_screen(context, uid))
+        return ADD_EDIT
+
     if _action_key_from_text(text, update.effective_user.id) == "back":
         context.user_data.pop("prep_cascade", None)  # spec #1: back abandons the cascade
         if source == "quiz":
@@ -511,6 +588,16 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
         if source == "quiz":
             # P6: card actions now live on the unified field screen (no root menu).
             uid = update.effective_user.id
+            if text.strip().lower() == "add_int":
+                # spec #15 (T5): owner AND guest — each pushes their own progress.
+                lang = _user_interface_lang(uid)
+                l1_de_label, de_l1_label = _quiz_dir_labels(uid)
+                context.user_data["edit_stage"] = "add_int_mode"
+                await update.message.reply_text(
+                    t(lang, "add_int_pick_mode"),
+                    reply_markup=ReplyKeyboardMarkup([[l1_de_label, de_l1_label], [t(lang, "back")]], resize_keyboard=True),
+                )
+                return ADD_EDIT
             if _action_key_from_text(text, uid) == "send_learn":
                 added = _send_entry_to_learning(update, context, entry_key="quiz_edit_entry")
                 state = context.user_data.get("edit_return_state")
