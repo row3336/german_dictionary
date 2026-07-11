@@ -4157,6 +4157,17 @@ def get_synonym_group(db_path, word_id):
     return [_row_to_entry(x) for x in rows]
 
 
+def map_synonym_group_ids(db_path):
+    """word_id -> group_id for every synonym-linked word, in one query.
+
+    Feeds the db_search matches list (T3): grouping by synonym group needs the
+    ids for ALL words at once — per-word lookups would be a query per row."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        rows = conn.execute("SELECT word_id, group_id FROM word_synonyms").fetchall()
+    return {row["word_id"]: int(row["group_id"]) for row in rows}
+
+
 def get_synonym_group_id(db_path, word_id):
     """Handle get synonym group id."""
     wid = _safe_text(word_id)

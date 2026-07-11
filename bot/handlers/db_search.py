@@ -14,7 +14,7 @@ from ..common.topics import sorted_topics
 from ..i18n import t
 from ..storage import (
     _safe_text,
-    get_synonym_group_id,
+    map_synonym_group_ids,
     learning_add_word_by_id,
     learning_get_or_create_batch,
     list_all_words,
@@ -265,8 +265,12 @@ def _list_match_pairs(entries, dict_lang):
     """Handle list match pairs."""
     if not entries:
         return []
+    # One query for all group ids: grouping criterion #3 (below) and the
+    # "✅ linked" tag both need them for every entry.
+    syn_groups = map_synonym_group_ids(get_db_path())
     by_base = {}
     by_translation = {}
+    by_syn_group = {}
     for entry in entries:
         entry_type = _low_word(entry.get("type", ""))
         if entry_type == "verb":
@@ -290,6 +294,12 @@ def _list_match_pairs(entries, dict_lang):
         translation = _normalize_lookup_text(_entry_translation(entry, dict_lang))
         if translation:
             by_translation.setdefault(("translation", translation), []).append(entry)
+        # T3: manually linked synonyms (senden/schicken) share neither spelling
+        # nor translation text, so the two criteria above never surface them —
+        # the synonym group itself is a third grouping criterion.
+        gid = syn_groups.get(entry.get("id"))
+        if gid:
+            by_syn_group.setdefault(gid, []).append(entry)
 
     groups = []
     for group in by_base.values():
@@ -298,23 +308,26 @@ def _list_match_pairs(entries, dict_lang):
     for group in by_translation.values():
         if len(group) > 1:
             groups.append(group)
+    for group in by_syn_group.values():
+        if len(group) > 1:
+            groups.append(group)
 
     blocks = []
-    group_cache = {}
+    seen_pairs = set()
     for group in groups:
         for idx in range(0, len(group), 2):
             pair = group[idx:idx + 2]
             if len(pair) < 2:
                 continue
+            # The same pair can qualify by translation AND by synonym group —
+            # show it once.
+            pair_key = frozenset((pair[0].get("id"), pair[1].get("id")))
+            if pair_key in seen_pairs:
+                continue
+            seen_pairs.add(pair_key)
             lines = [_format_match_line(pair[0], dict_lang), _format_match_line(pair[1], dict_lang)]
-            gid_a = group_cache.get(pair[0].get("id"))
-            if gid_a is None:
-                gid_a = get_synonym_group_id(get_db_path(), pair[0].get("id"))
-                group_cache[pair[0].get("id")] = gid_a
-            gid_b = group_cache.get(pair[1].get("id"))
-            if gid_b is None:
-                gid_b = get_synonym_group_id(get_db_path(), pair[1].get("id"))
-                group_cache[pair[1].get("id")] = gid_b
+            gid_a = syn_groups.get(pair[0].get("id"))
+            gid_b = syn_groups.get(pair[1].get("id"))
             if gid_a and gid_b and gid_a == gid_b:
                 lines.append("✅ linked")
             blocks.append("\n".join(lines))
