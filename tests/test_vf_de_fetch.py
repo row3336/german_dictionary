@@ -93,6 +93,55 @@ class FetchWordPagesTest(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             F.fetch_word_pages("gehen", proxy="")
 
+    def test_conjugation_fetch_is_retried_until_it_lands(self):
+        # Owner rule (11.07): no half-parsed words — a flaky rotating-proxy exit
+        # must not leave the verb without its conjugation page.
+        calls, paused = [], []
+
+        def fake(url, proxy=None, timeout_sec=40):
+            calls.append(url)
+            if "konjugation" in url:
+                # two dead exits, third attempt lands
+                if len([u for u in calls if "konjugation" in u]) < 3:
+                    return False, 0, ""
+                return True, 200, "<conj-html>"
+            return True, 200, load("gehen_summary.html")
+
+        F.fetch_url = fake
+        summary, conj = F.fetch_word_pages("gehen", proxy="", pause=lambda: paused.append(1))
+        self.assertEqual(conj, "<conj-html>")
+        self.assertEqual(len([u for u in calls if "konjugation" in u]), 3)
+        # paused between the pair AND before each retry
+        self.assertEqual(len(paused), 3)
+
+    def test_conjugation_gives_up_after_attempts(self):
+        calls = []
+
+        def fake(url, proxy=None, timeout_sec=40):
+            calls.append(url)
+            if "konjugation" in url:
+                return False, 0, ""
+            return True, 200, load("gehen_summary.html")
+
+        F.fetch_url = fake
+        _summary, conj = F.fetch_word_pages("gehen", proxy="")
+        self.assertEqual(conj, "")  # flagged later as conjugation_missing (#29)
+        self.assertEqual(len([u for u in calls if "konjugation" in u]), 3)
+
+    def test_summary_is_retried_too(self):
+        calls = []
+
+        def fake(url, proxy=None, timeout_sec=40):
+            calls.append(url)
+            if len(calls) == 1:
+                return False, 0, ""  # first exit dead
+            return True, 200, load("Haus_summary.html")
+
+        F.fetch_url = fake
+        summary, _conj = F.fetch_word_pages("Haus", proxy="")
+        self.assertIn("Haus", summary)
+        self.assertEqual(len(calls), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

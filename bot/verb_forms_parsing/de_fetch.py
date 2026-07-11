@@ -158,18 +158,39 @@ def test_proxy(proxy=None, timeout_sec=20):
     return 200 <= code < 400, code
 
 
+# Attempts per page. The rotating proxy exits a NEW ip per request and some
+# exits are simply dead (live runs 11.07: fliegen's and gehen's conjugation
+# pages each died once), so a retry lands on a fresh ip and usually succeeds.
+# Half-parsed words are not acceptable (owner rule); the slow-drip pause runs
+# before each retry to stay polite.
+_FETCH_ATTEMPTS = 3
+
+
+def _fetch_page_with_retry(url, proxy, timeout_sec, pause=None):
+    """fetch_url with up to _FETCH_ATTEMPTS tries, pausing before each retry."""
+    ok, code, html = fetch_url(url, proxy, timeout_sec)
+    for _ in range(_FETCH_ATTEMPTS - 1):
+        if ok:
+            break
+        if pause:
+            pause()
+        ok, code, html = fetch_url(url, proxy, timeout_sec)
+    return ok, code, html
+
+
 def fetch_word_pages(word, proxy=None, timeout_sec=40, pause=None, type_hint=None):
     """Fetch a word's summary and (if linked) conjugation page.
 
     Returns (summary_html, conj_html); conj_html is '' when there is no linked
-    conjugation page. Raises RuntimeError if the summary fetch fails, so the
-    runner marks the item as an error. `pause` (a no-arg callable) is invoked
-    between the two HTTP requests so the runner can enforce the slow-drip delay.
-    `type_hint` routes function words to their verben.de type page (see
-    summary_url); function-word pages have no conjugation link, so conj stays ''.
+    conjugation page. Raises RuntimeError if the summary fetch fails (after
+    retries), so the runner marks the item as an error. `pause` (a no-arg
+    callable) is invoked between HTTP requests — including before each retry —
+    so the runner's slow-drip delay is honored. `type_hint` routes function
+    words to their verben.de type page (see summary_url); function-word pages
+    have no conjugation link, so conj stays ''.
     """
     proxy = configured_proxy() if proxy is None else proxy
-    ok, code, summary = fetch_url(summary_url(word, type_hint), proxy, timeout_sec)
+    ok, code, summary = _fetch_page_with_retry(summary_url(word, type_hint), proxy, timeout_sec, pause)
     if not ok:
         raise RuntimeError(f"summary fetch failed (http={code}) for {word!r}")
     conj = ""
@@ -177,6 +198,6 @@ def fetch_word_pages(word, proxy=None, timeout_sec=40, pause=None, type_hint=Non
     if curl:
         if pause:
             pause()
-        c_ok, _c_code, c_html = fetch_url(curl, proxy, timeout_sec)
+        c_ok, _c_code, c_html = _fetch_page_with_retry(curl, proxy, timeout_sec, pause)
         conj = c_html if c_ok else ""
     return summary, conj
