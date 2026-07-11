@@ -70,8 +70,10 @@ class OwnerGatingTest(unittest.TestCase):
     def test_settings_menu_dump_owner_only(self):
         owner = _flat(K._settings_menu_keys(OWNER))
         guest = _flat(K._settings_menu_keys(GUEST))
-        # parse_VF moved out of Settings into the owner-only Add submenu (spec #2).
-        self.assertNotIn("parse_VF", owner)
+        # bug #27: parse_VF (proxy mini-menu) needs a visible OWNER entry — the
+        # parsing itself lives in the Add submenu, but the proxy settings would
+        # otherwise be reachable only by typing the command.
+        self.assertIn("parse_VF", owner)
         self.assertNotIn("parse_VF", guest)
         self.assertTrue(any("dump" in x for x in owner))
         self.assertFalse(any("dump" in x for x in guest))

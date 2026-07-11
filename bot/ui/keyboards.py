@@ -16,6 +16,7 @@ from ..app_config import (
 from ..common.lang import _quiz_dir_labels, _user_interface_lang
 from ..i18n import t
 from ..labels import (
+    PARSE_VF_TEXT,
     QUIZ_PL_SG_TEXT,
     SYNONYMS_TEXT,
 )
@@ -76,8 +77,14 @@ def _settings_menu_keys(user_id):
     rows = [[t(lang, "algo_settings"), t(lang, "language_sett")]]
     # Owner reviews reports/feedback (review_menu); a guest submits feedback +
     # can support the project with Telegram Stars (P6.3/P6.4).
-    rows.append([t(lang, "review_menu"), t(lang, "dump"), t(lang, "back")] if owner
-                else [t(lang, "feedback_btn"), t(lang, "support_project"), t(lang, "back")])
+    # parse_VF (bug #27): the proxy mini-menu needs a visible owner entry — the
+    # old button was dropped when VF parsing moved to the add menu, leaving the
+    # proxy settings reachable only by typing "parse_VF".
+    if owner:
+        rows.append([t(lang, "review_menu"), t(lang, "dump"), PARSE_VF_TEXT])
+        rows.append([t(lang, "back")])
+    else:
+        rows.append([t(lang, "feedback_btn"), t(lang, "support_project"), t(lang, "back")])
     return rows
 
 

@@ -93,9 +93,11 @@ class AddMenuRoutingTest(unittest.TestCase):
         self.assertEqual(state, VF_ADD_INPUT)
         self.assertTrue(ctx.user_data.get("vf_recheck"))
 
-    def test_settings_menu_has_no_parse_vf(self):
+    def test_settings_menu_parse_vf_is_proxy_entry_owner_only(self):
+        # spec #2 moved PARSING to the add menu; the parse_VF button returned to
+        # Settings as the proxy mini-menu entry (bug #27) and stays owner-only.
         flat = [b for row in _settings_menu_keys(OWNER) for b in row]
-        self.assertNotIn(PARSE_VF_TEXT, flat)
+        self.assertIn(PARSE_VF_TEXT, flat)
 
     def test_back_returns_to_main_menu(self):
         state, _ = self._route("back")
