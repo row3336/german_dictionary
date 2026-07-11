@@ -74,6 +74,12 @@ def detect_type_and_headword(summary_html):
         m = re.search(re.escape(marker) + r"\s+(\S+)", h1)
         if m:
             return {"type": wtype, "headword": m.group(1).strip(_QUOTE_CHARS), "has_entry": True}
+    # Generic dictionary entry ("Definition von <word>") — pronouns and other words
+    # without a grammatical card. Real entry (translations/level present), but the
+    # page does not name the type, so type='' and the caller's type_hint decides it.
+    m = re.search(r"Definition von\s+(.+)$", h1)
+    if m:
+        return {"type": "", "headword": m.group(1).strip(_QUOTE_CHARS), "has_entry": True}
     m = re.search(r"Deutsche Wörter mit\s+(.+)$", h1)
     quoted = m.group(1).strip(_QUOTE_CHARS) if m else ""
     return {"type": "", "headword": quoted, "has_entry": False}

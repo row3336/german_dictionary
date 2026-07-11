@@ -1,0 +1,1389 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<title>Definition „wer“ - Bedeutung, Synonyme, Übersetzung, Grammatik | Netzverb Wörterbuch</title>
+<meta name="description" content="Definition von wer: fragt nach einer Person oder mehreren Pe… mit Definitionen, Beschreibungen, Erklärungen, Synonymen und Grammatikangaben im Wörterbuch."/>
+<meta property="og:site_name" content="Netzverb Wörterbuch">
+<meta name="robots" content="noindex, follow" />
+<meta http-equiv='Content-Type' content='text/html; charset=UTF-8' />
+<meta name=viewport content="width=device-width, initial-scale=1.0">	
+<meta name="HandheldFriendly" content="true"/>
+<meta name="MobileOptimized" content="width"/><meta name="application-name" content="Netzverb Wörterbuch" />
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+<link rel="manifest" href="/site.webmanifest">
+<link rel="mask-icon" href="/safari-pinned-tab.svg" color="#784500">
+<meta name="msapplication-TileColor" content="#784500">
+<meta name="theme-color" content="#784500" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#281700" media="(prefers-color-scheme: dark)"><script type="text/javascript"> const Rahmen = {}; (function() { function istauf(id) { const e = document.getElementById(id); const d = e.currentStyle ? e.currentStyle.display : getComputedStyle(e, null)?.display; return d !== "none"; } function display(e) { let t = e.tagName; if(t==="UL"||t==="DIV") return "block"; if(t==="TD") return "table-cell"; if(t==="TR") return "table-row"; return "inline"; } function aufzu(id, auf) { const elements = document.querySelectorAll('[id="' + id + '"]'); elements.forEach(function(e) { aufzuE(e, auf); }); const buttons = document.querySelectorAll('[id="' + id + 'Img"]'); buttons.forEach(function(b) { aufzuB(b, auf); }); } function aufzuE(e, auf) { e.style.display = auf ? display(e) : "none"; if (auf && e.onchange) e.onchange(undefined); } function aufzuB(b, auf) { const ba = b.getElementsByClassName("rAuf")[0]; if (ba) ba.style.display = auf ? display(ba) : "none"; const bz = b.getElementsByClassName("rZu")[0]; if (bz) bz.style.display = auf ? "none" : display(bz); } function setHeight(e) { e.style.height = ''; e.style.height = e.scrollHeight + 'px'; } Rahmen.alleaufzu = function(id, k) { const ia = istauf(id); const elements = document.getElementsByClassName(k); for (let i = 0; i < elements.length; i++) { aufzu(elements[i].id, !ia); } }; Rahmen.a = function(e, u) { document.location = u; e.preventDefault(); return false; }; Rahmen.auf = function(ids) { if(ids instanceof Array) { for (const id in ids) aufzu(ids[id], true); } else aufzu(ids, true); }; Rahmen.zu = function(ids) { if (Array.isArray(ids)) { for (const id of ids) { aufzu(id, false); } } else { aufzu(ids, false); } }; Rahmen.aufzu = function(ids) { if (Array.isArray(ids)) { const ia = istauf(ids[0]); for (const id of ids) { aufzu(id, !ia); } } else { aufzu(ids, !istauf(ids)); } }; Rahmen.breite = function() { return Math.max(document.documentElement.clientWidth, window.innerWidth || 0); }; Rahmen.resize = function(ev) { setHeight(ev.target); }; Rahmen.size = function(id) { setHeight(document.getElementById(id)); }; }).apply(Rahmen); const Eingabe = {}; (function() { function element(id) { return document.getElementById(id); } function sprung(e,l,s,x=null) { let i; const os = l.getElementsByClassName("rEinOpt"); let t = -1; for (i = 0; i<os.length; i++) { if(os[i].classList.contains("rEinOptAn")) t=i; } let p = t + s; if(p<0) p=os.length-1; if(p>os.length-1) p=0; for (i = 0; i<os.length; i++) { if(i===t) os[i].classList.remove("rEinOptAn"); if(i===p) { os[i].classList.add("rEinOptAn"); } } if(x && os[p]) { x.value = os[p].getAttribute("data-id"); x.removeAttribute('disabled'); } if(e && os[p]) { e.value=os[p].getAttribute("data-word"); e.setSelectionRange(0,e.value.length); } } this.zeige = function(ide,idl,v,idx=null) { let o; const e = element(ide); const l = element(idl); const x = idx==null?null:element(idx); let s = 0; const w = e.value; while(l.children.length>0) l.removeChild(l.children[0]); for(let i=0; i<v.length; i++) { if(!v[i]) continue; let ee,ll,xx; if(v[i] instanceof Array) { if(v[i].length <= 0) continue; ee=v[i][0]; ll=v[i].length >= 2 ? v[i][1] : ee=v[i][0]; xx=v[i].length >= 3 ? v[i][2] : null; } else { ee=v[i]; ll=v[i]; } o = document.createElement("div"); o.onmousedown=function(ev) { Eingabe.uebernahmeAttribute(xx,idx); Eingabe.uebernahme(ee,ide); }; o.classList.add("rEinOpt"); o.setAttribute("data-word", ee); o.setAttribute("data-id", xx); o.innerHTML = ll; l.appendChild(o); s++; } if(s<=0) {l.style.display = "none"; return;} e.setAttribute("w",w); l.style.display="inline"; }; this.an = function(ide,idl,fn,idx=null) { const e = element(ide); const w = e.value; setTimeout(function() { if(w!==e.value) return; idx==null ? fn(ide,idl,w) : fn(ide,idl,w,idx); },50); }; this.aus = function(ide, idl) { const e = element(ide); const l = element(idl); setTimeout(function() { if(document.activeElement === e || document.activeElement === l) return; l.style.display = "none"; },50); }; this.uebernahme = function(a,ide) { if (a===null) return; const e = element(ide); if(!e && !ide) return; e.value=a; e.removeAttribute('disabled'); e.focus(); if(e.form) e.form.submit(); }; this.uebernahmeAttribute = function(a, ide) { if (a===null) return; const e = element(ide); if(!e && !ide) return; e.value=a; e.removeAttribute('disabled'); }; this.uebernahmeWert = function(ev,ide,v) { const e = element(ide); if(!e && !ide) return; e.value=v; e.removeAttribute('disabled'); if(e.form) e.form.submit(); }; this.taste = function(ide, idl, event, idx=null) { const l = element(idl); const e = element(ide); const x = idx==null?null:element(idx); let keyCode = ('which' in event) ? event.which : event.keyCode; if(keyCode === 40) { sprung(e, l, 1,x); event.preventDefault(); } if(keyCode === 38) { sprung(e, l, -1,x); event.preventDefault(); } if(keyCode === 27) { l.style.display = "none"; } }; }).apply(Eingabe); const Hinweis = {}; (function() { this.weg = function(n) { Hinweis.schliessen(n); document.cookie="de.netzverb.rahmen.hinweis_"+n+"=none" + ";expires="+new Date(new Date().setFullYear(new Date().getFullYear() + 1)).toUTCString() + ";path=/"; }; this.schliessen = function(n) { const e = document.getElementById(n); e.style.display="none"; }; }).apply(Hinweis);const Ajax = {}; (function() { let kn, kv, kfa; function pr(p, n, v) { if(!n) return p; return (p ? p + "&" : "") + encodeURIComponent(n) + "=" + encodeURIComponent(v); } function prs(f, s) { let i; let p = pr(null, kn, kv); const is = f.getElementsByTagName("input"); for(i = 0; i<is.length; i++) if(!is[i].disabled && is[i].name && (is[i].type !== "submit" || is[i] === s)) if(is[i].type !== "radio" && is[i].type !== "checkbox" || is[i].checked) p = pr(p, is[i].name, is[i].value); const bs = f.getElementsByTagName("button"); for(i = 0; i<bs.length; i++) if(!bs[i].disabled && bs[i].name && bs[i].type === "submit" && bs[i] === s) p = pr(p, bs[i].name, bs[i].value); const tas = f.getElementsByTagName("textarea"); for(i = 0; i<tas.length; i++) if(!tas[i].disabled && tas[i].name) p = pr(p, tas[i].name, tas[i].value); const ss = f.getElementsByTagName("select"); for(i = 0; i<ss.length; i++) if(!ss[i].disabled && ss[i].name && ss[i].selectedIndex >= 0) p = pr(p, ss[i].name, ss[i].options[ss[i].selectedIndex].value); return p; } this.param = function (p, n, v) { return pr(p, n ,v); }; this.ersetze = function(e, id, h) { return this.submit(e, id, h); }; this.submit = function(e, id, h) { e.preventDefault(); let s; let f = e.currentTarget; if(f.tagName !== "FORM") { s = f; f = f.form; } const p = prs(f, s); let fa = f.action; if(s && s.formAction) fa = s.formAction; if(kfa) fa = kfa; this.post(fa, p, id, h); kn = null; kv = null; kfa = null; return false; }; this.submit2 = function(f, h) { const p = prs(f); let fa = f.action; this.post2(fa, p, h); kn = null; kv = null; kfa = null; return false; }; this.loadDefJs = function(id, async = true) { const placeholder = document.getElementById(id); if (!placeholder) return; const src = placeholder.getAttribute('about'); if (!src) return; placeholder.removeAttribute('id'); placeholder.removeAttribute('about'); Object.assign(placeholder, { async, type: 'text/javascript', src }); }; this.get = function(u, id, i, h) { const r = new XMLHttpRequest(); r.withCredentials = true; r.onload = function() { const d = document.getElementById(id); if(r.status === 200) { if(i) { d.innerHTML = r.responseText; } else { d.outerHTML = r.responseText; } } else { d.innerHTML = r.responseURL + " (" + r.status + ": " + r.statusText + ")"; } if(h) { h(); } }; r.open("GET", u, true); r.setRequestHeader('X-Requested-With', 'XMLHttpRequest');	 r.send(); return false; }; this.get2 = function(u, h) { const r = new XMLHttpRequest(); r.withCredentials = true; r.onload = function() { if(h) h(r); }; r.open("GET", u, true); r.setRequestHeader('X-Requested-With', 'XMLHttpRequest'); r.send(); return false; }; this.post = function(u, p, id, h) { const r = new XMLHttpRequest(); r.withCredentials = true; r.onload = function() { const d= document.getElementById(id); if(r.status === 200) { d.outerHTML = r.responseText; } else { d.innerHTML = r.responseURL + " (" + r.status + ": " + r.statusText + ")";	} if(h) h(); }; r.open("POST", u, true); r.setRequestHeader("Content-type", "application/x-www-form-urlencoded; charset=UTF-8"); r.setRequestHeader('X-Requested-With', 'XMLHttpRequest');		 r.send(p); return false; }; this.post2 = function(u, p, h) { const r = new XMLHttpRequest(); r.withCredentials = true; r.onload = function() { if(h) h(r); }; r.open("POST", u, true); r.setRequestHeader("Content-type", "application/x-www-form-urlencoded; charset=UTF-8"); r.setRequestHeader('X-Requested-With', 'XMLHttpRequest'); r.send(p); return false; }; this.aktion = function(x) { kn = 'aktion'; kv = x; }; this.klick = function(e) { kn = e.currentTarget.name; kv = e.currentTarget.value; kfa = null; if(e.currentTarget.formAction !== window.location.href) kfa = e.currentTarget.formAction; }; }).apply(Ajax);var Woerterbuch = {}; (function() { this.suchliste = function(ide,idl,w,idx) { var r = new XMLHttpRequest(); r.open("GET", "/suche/artikel-pronomen/i/?w=" + encodeURI(w), true); r.setRequestHeader('X-Requested-With', 'XMLHttpRequest'); r.timeout = 500; r.onload = function (e) { if (r.readyState === 4 && r.status === 200) { Eingabe.zeige(ide,idl,JSON.parse(r.responseText),idx); } }; r.send(null); }; }).apply(Woerterbuch);</script><style type="text/css">html {scroll-behavior:smooth;text-size-adjust:100%;-webkit-text-size-adjust:100%;height:100.1%;}body {margin:0;padding:0;font-family:sans-serif;font-weight:400;color:#111111;fill:#111111;font-size:0.91em;line-height:1.25;}body>article {background-color:#eceaea;}body>nav>div,body>aside>div,body>article>div,body>footer>div {clear:both;padding:2px 8px;}@media (min-width:1058px){ body>nav>div,body>aside>div,body>article>div,body>footer>div {width:1042px;margin:0 auto;}}body,body>footer {background-color:#1e1e1e;}body>footer {color:#e0e0e0;font-size:0.9em;}body>footer a {color:#80bfff;}body>footer h1,body>footer h2 {color:#e0e0e0 !important;}body>nav {position:fixed;z-index:9999;font-size:1.2em;width:100%;max-height:100vh;box-shadow:0 3px 5px rgba(0,0,0,0.44); color:#aaaaaa;}body>nav a {color:#aaaaaa;}div.rKpfPlz {height:44px;}body>article>div {position:relative;}a {text-decoration:none;color:#12039c;}.rH {font-family:open sans condensed,open sans,sans-serif;}h1,h2,h3,h4,.rH1,.rH2,.rH3,.rH4 {margin-top:16px;margin-bottom:12px;font-family:sans-serif;letter-spacing:-1px;font-weight:bold;}h1,h2,.rH1,.rH2 {color:#000000;}a h1,a h2,a h3,a h4 {color:#111111 !important;}h1,.rH1 {font-size:1.5em;}h2,.rH2 {font-size:1.35em;}h3,.rH3 {font-size:1.2em;}h4,.rH4 {font-size:1.1em;}p,ul,ol,dl {margin:12px 0 16px 0;}p,li {-moz-hyphens:auto;-o-hyphens:auto;-webkit-hyphens:auto;-ms-hyphens:auto;hyphens:auto;}ul {list-style-type:disc;padding-left:12px;}mark {background-color:#d0d0d0;color:#111111;font-weight:inherit;}input,select,textarea {font-family:sans-serif;font-size:inherit;line-height:inherit;border:solid 1px #d0d0d0;outline:none;box-sizing:border-box;border-radius:0;-webkit-border-radius:0px;appearance:none;-moz-appearance:none;-webkit-appearance:none;}select.rKnpf {appearance:menulist-button;-moz-appearance:menulist;-webkit-appearance:menulist;height:29px;}select.rKnpf:invalid {color:#848484;}select.rKnpf:invalid option {color:#ffffff;}input[type='checkbox'] {appearance:checkbox;-moz-appearance:checkbox;-webkit-appearance:checkbox;}input[type='radio'] {appearance:radio;-moz-appearance:radio;-webkit-appearance:radio;} nav input,nav select,nav textarea {border:none;}.rMrgn {margin:0 10px 10px 0;}input[type=submit],.rKnpf {padding:5px 10px;margin:0 12px 12px 0;background-color:#000000;color:#ffffff;fill:#ffffff;border:none;}input[type=submit].rInf,.rInf.rKnpf {background-color:#d0d0d0;color:#ffffff;fill:#ffffff;}input[type=submit]:hover,.rKnpf:hover {box-shadow:0px 2px 5px 0px rgba(0,0,0,0.1), 0px 1px 10px 0px rgba(0,0,0,0.1)}input[type=submit].rRechts,.rKnpf.rRechts,.rMrgn.rRechts {margin:0 0 12px 12px;}.rIcn18x18 {padding:5px;font-size:0;}.rIcn18x18 svg {width:18px;height:18px;}textarea {overflow:hidden;}svg,img {vertical-align:baseline;margin:0;}img.rRechts {margin:4px 0 12px 12px;}img.rLinks {margin:4px 12px 12px 0;}button {line-height:inherit;background-color:transparent;padding:0;border:none;margin:0;font-size:inherit;font-family:inherit;color:inherit;border-radius:unset;-webkit-appearance:none;}table {border-spacing:0;border-collapse:collapse;}td,th {padding:0;vertical-align:top;}th a {color:inherit;}hr {border:none;border-bottom:solid 1px #cacaca;margin:0.75em 0;}hr.rInf {border-color:#b6b6b6;border-bottom-style:dashed;}hr.rDpl {margin:1.15em 0;padding-top:1px;}.rTrng {-moz-hyphens:auto;-o-hyphens:auto;-webkit-hyphens:auto;-ms-hyphens:auto;hyphens:auto;}.rKnpf,.rIn {box-sizing:border-box;display:inline-block;}.rKnpf {min-height:29px;min-width:29px;}.rDnb {position:absolute;left:100%;margin-left:8px;top:10px;background-color:transparent;}.rNav {height:36px;overflow:hidden;width:100%;padding:2px 0;}.rNav>* {height:36px;}.rMnRnd {margin-bottom:6px;}.rTab {display:table;}.rTab>div {display:table-cell;vertical-align:middle;}.r1Pxl {width:1px;}.r100Pro {width:100%;}.rLinks {float:left;}.rRechts {float:right;}.rDurch {text-decoration:line-through;}.rNobr {white-space:nowrap;}.r1Zeile {white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}.rClear {clear:both;}.rClrAft:after {content:"";display:table;clear:both;}.rClrBfr:before {content:"";display:table;clear:both;}.rClrRechts {clear:right;}.rClrLinks {clear:left;}.rDunkel {background-color:#000000;}.rHell {color:#f5f5f5;}.rZu {display:none;}.rAnkr {width:1px;height:56px;margin-top:-56px;float:left;display:block;}.rRel {position:relative;}.rAbs {position:absolute;}.rAuf {display:inline;}.rInl {display:inline;}.rFuss {margin:0 15px 15px 0;}.rLg {margin-right:8px;}.rAkz {color:#FF4081;}.rKnpf.rAkz {background-color:#FF4081;}.rLst {list-style-type:none;padding-left:0;padding-right:0;}.rLst li {text-indent:-15px;padding-left:15px;padding-right:0;}.rLst[dir="rtl"] li {text-indent:-15px;padding-left:0;padding-right:15px;}.rLst li::before {min-width:15px;float:left;}.rLst[dir="rtl"] li::before {float:right;}.rLstDash li::before {content:"–";}.rLstGt li::before {content:"»";}.rLstBl li::before {content:"•";}.rLstTxt li::before {content:attr(txt); }.rCntr {text-align:center;}.rInf,.rInf a,.rInf mark {color:#848484;fill:#c5c5c5;}.rInf img,.rInf svg {filter:grayscale(100%); }.rKln {font-size:0.9em;}.rMrk {background-color:#ff8bb3;}.rKln img,.rKln svg {zoom:85%;}.rGrs {font-size:1.1em;}/* deprecated */ .rKnObn {margin-top:0 !important;}/* deprecated */ .rKnUnt {margin-bottom:0 !important;}.rU0px {margin-bottom:0px !important;}.rU1px {margin-bottom:1px !important;}.rU3px {margin-bottom:3px !important;}.rU6px {margin-bottom:6px !important;}.rO0px {margin-top:0px !important;}.rO1px {margin-top:1px !important;}.rO3px {margin-top:3px !important;}.rNt::after {content:"*";color:#848484;font-size:0.65em;vertical-align:top;font-weight:normal;}.rNoSelect {-webkit-touch-callout:none;-webkit-user-select:none;-moz-user-select:none;-ms-user-select:none;user-select:none;}.rImg {border:solid 1px #d0d0d0;}.rDelay2s {animation-delay:2s;}.rFade {opacity:0;animation-name:fadeIn;animation-timing-function:ease;animation-fill-mode:forwards;}.rDuration1s {animation-duration:1s;}@keyframes fadeIn {from {opacity:0;} to   {opacity:1;} }@media (min-width:744px){h1,.rH1 {font-size:1.7em;}h2,.rH2 {font-size:1.4em;}article .rAbschnitt {margin-left:-314px;width:100%;float:left;}article .rAbschnitt>div {margin-left:314px;}article .rInfo {width:300px;float:right;}.rFuss {width:330px;}}@media (prefers-color-scheme:dark){body {color:#e1e1e1;fill:#e1e1e1;}mark {color:#e1e1e1;background-color:#3f3f3f;}body>article {background-color:#232323;}body,body>footer {background-color:#060606;}body>footer {color:#e0e0e0;}body>footer a {color:#b9d1ff;}a {color:#b9d1ff;}h1,h2,.rH1,.rH2 {color:#ffffff;}a h1,a h2,a h3,a h4 {color:#e1e1e1 !important;}input,select,textarea {background-color:#292a2c;border-color:#101112;color:#e1e1e1;}input[type=submit],.rKnpf {background-color:#000000;color:#e8eaed;fill:#e8eaed;}input[type=submit].rInf,.rInf.rKnpf {background-color:#1d1d1d;color:#626262;fill:#626262;}hr {border-color:#484848;}hr.rInf {border-color:#353535;}.rHell {color:#f5f5f5;}.rInf,.rInf a,.rInf mark {fill:#626262;}.rImg {border-color:#101112;}.rMrk {background-color:#973c5b;}}@media (min-width:1261px)and (max-width:1698px){ body>nav>div,body>aside>div,body>article>div,body>footer>div {margin-right:320px;}}@media (min-width:1261px)and (max-width:1378px){ body>nav>div,body>aside>div,body>article>div,body>footer>div {margin-right:320px;margin-left:0;}}.rBox {margin-bottom:16px;overflow:auto;margin-top:16px;}.rBox header h2 {margin-top:0;}.rBoxWht {background-color:#ffffff;border:solid 2px #d0d0d0;padding:0px 10px;}.rBoxWht textarea,.rBoxWht input,.rBoxWht select {background-color:#e9e9e9;}.rBoxWht input[type=submit],.rBoxWht .rKnpf {background-color:#000000;}.rBoxWht input[type=submit].rInf,.rBoxWht .rInf.rKnpf {background-color:#d0d0d0;}@media (prefers-color-scheme:dark){ .rBoxWht {background-color:#313131;border-color:#000000;}.rBoxWht textarea,.rBoxWht input,.rBoxWht select {background-color:#212121;}.rBoxWht input[type=submit].rInf,.rBoxWht .rInf.rKnpf {background-color:#272727;color:#626262;fill:#626262;}.rBoxWht hr {border-color:#1b1b1b;}.rBoxWht hr.rInf {border-color:#232323;}}.rHw {width:100%;padding:4px 0;background-color:#ffffff;color:#222222;border-bottom:solid 1px #d0d0d0;}.rHw svg {fill:#d0d0d0;}.rHwObn {position:relative;top:0px;}.rHwUnt {opacity:0.91;position:fixed;bottom:0px;z-index:8;box-shadow:1px 0px 2px 0px rgba(0,0,0,0.25); }.rHwUnt a {color:#80bfff;}.rHwBox>div {position:static;padding-right:10px;padding-left:13px;}.rHwBox+.rBox {margin-top:0;}.rHwFhlr svg,.rHwTpp svg,.rHwOk svg,.rHwNtrl svg {fill:#ffffff;fill-opacity:0.6;}.rHwFhlr {background-color:#d90000;color:#ffbfbf;border:none;}.rHwTpp {background-color:#aa5500;color:#ffcf9f;border:none;}.rHwOk {background-color:#008000;color:#a6ffa6;border:none;}.rHwNtrl {color:#e0e0e0;background-color:#111111;border:none;}@media (prefers-color-scheme:dark){ .rHw {background-color:#292a2c;color:#e8eaed;border-color:#101112;}.rHw svg {fill:#9aa0a6;}.rHwUnt a {color:#80bfff;}.rHwFhlr {background-color:#6a0000;color:#facfb4;}.rHwFhlr svg,.rHwTpp svg,.rHwOk svg,.rHwNtrl svg {fill:#ffffff;}.rHwTpp {background-color:#422100;color:#f5d99e;}.rHwOk {background-color:#003c00;color:#baf2b7;}.rHwNtrl {color:#e0e0e0;background-color:#111111;}}.rEin {text-align:left;}.rEin input {width:100%;-webkit-appearance:textfield;border-radius:0;}.rEin input::-webkit-search-decoration,.rEin input[type="search"] {-webkit-appearance:searchfield;appearance:auto;}.rEinMn {background-color:#ffffff;display:none;position:absolute;border:none;border-top:solid 1px #aaaaaa;color:#666666;z-index:7;box-sizing:border-box;width:inherit;max-width:inherit;min-width:inherit;}.rNav .rEinMn {position:fixed;margin-top:2px;max-height:75%;overflow:scroll;overflow-y:auto;overflow-x:hidden;box-shadow:6px 6px 6px 1px rgba(0,0,0,0.5); }.rEinOpt {padding:1px 5px;font-size:1.22em;}.rEinOptAn {background-color:#000000;color:#ffffff;}.rNav .rEin input {height:32px;margin:0;border-radius:3px;}.rNav .rEin {margin:1px 5px 0 0;width:300px;max-width:calc(100vw - 230px); border:solid 2px rgba(255,255,255,0.6); border-radius:5px;}@media (prefers-color-scheme:dark){.rEinMn {background-color:#292a2c;color:#9aa0a6;}.rEinOptAn {background-color:#000000;color:#ffffff;}}.rMn {margin:10px 0 0 auto;padding-top:8px;width:33%;border-top:solid 1px #9b9b9b;box-sizing:border-box;}.rMnOpt {padding-top:1px;}.rMnKat {color:#ffffff;}.rMnLnk {margin-left:10px;}.rMnOptn .rMnOptn {margin-left:22px;}@media (max-width:699px){.rMn {width:100%;}}nav.rKrml {margin:9px 0 8px 0;}nav.rKrml span {white-space:nowrap;}.kFrm select {border:none;background-color:transparent;}.kFrm textarea {width:100%;}.kBwrt {font-size:1.3em;}.kAn {color:#000000;}.kAus {color:#aaaaaa;}.kAnt {margin-left:5%;}.kLnk {white-space:nowrap;}@media (prefers-color-scheme:dark){.kAn {color:#dcdee4;}.kAus {color:#5e6064;}}q {font-weight:bold;}q:before {content:none;}q:after {content:none;}q>b,q>b>mark {font-weight:inherit !important;}q>u,q>u>mark {text-decoration:none;}b>u {text-decoration:none;}b>i,q>i {font-style:normal;}b>u,q>b,q>b>mark,h2.wG,.rH2.wG {color:#a79065;}b.wG>u,q.wG>b,.wG q>b,q.wG>b>mark {color:#a79065;}b.wM>u,q.wM>b,.wM q>b,q.wM>b>mark {color:#6f8fa2;}b.wF>u,q.wF>b,.wF q>b,q.wF>b>mark {color:#b07b7b;}b.wN>u,q.wN>b,.wN q>b,q.wN>b>mark {color:#6e906e;}.wG b,b>i,q>u,q>u>mark,h2.wG,.rH2.wG {color:#c3850f;}b.wG>i,q.wG>u,.wG q>u,q.wG>u>mark,h2.wG,.rH2.wG {color:#c3850f;}b.wM>i,q.wM>u,.wM q>u,q.wM>u>mark,h2.wM,.rH2.wM {color:#0072b7;}b.wF>i,q.wF>u,.wF q>u,q.wF>u>mark,h2.wF,.rH2.wF {color:#d32f2f;}b.wN>i,q.wN>u,.wN q>u,q.wN>u>mark,h2.wN,.rH2.wN {color:#368732;}b>q,q>i,q>i>mark,h2.wG,.rH2.wG {color:#c3850f;}b.wG>q,q.wG>i,.wG q>i,q.wG>i>mark,h2.wG,.rH2.wG {color:#c3850f;}b.wM>q,q.wM>i,.wM q>i,q.wM>i>mark,h2.wM,.rH2.wM {color:#0072b7;}b.wF>q,q.wF>i,.wF q>i,q.wF>i>mark,h2.wF,.rH2.wF {color:#d32f2f;}b.wN>q,q.wN>i,.wN q>i,q.wN>i>mark,h2.wN,.rH2.wN {color:#368732;}.rKnpf b>u,.rKnpf q>b {color:#bbac9d;}.rKnpf b.wG>u,.rKnpf q.wG>b,.rKnpf .wG q>b {color:#bbac9d;}.rKnpf b.wM>u,.rKnpf q.wM>b,.rKnpf .wM q>b {color:#90a5b0;}.rKnpf b.wF>u,.rKnpf q.wF>b,.rKnpf .wF q>b {color:#c19999;}.rKnpf b.wN>u,.rKnpf q.wN>b,.rKnpf .wN q>b {color:#8ca08b;}.rKnpf b>i,.rKnpf q>u {color:#bbac9d;}.rKnpf b.wG>i,.rKnpf q.wG>u,.rKnpf .wG q>u {color:#bbac9d;}.rKnpf b.wM>i,.rKnpf q.wM>u,.rKnpf .wM q>u {color:#90a5b0;}.rKnpf b.wF>i,.rKnpf q.wF>u,.rKnpf .wF q>u {color:#c19999;}.rKnpf b.wN>i,.rKnpf q.wN>u,.rKnpf .wN q>u {color:#8ca08b;}.rKnpf b>q,.rKnpf q>i {color:#bbac9d;}.rKnpf b.wG>q,.rKnpf q.wG>i,.rKnpf .wG q>i {color:#bbac9d;}.rKnpf b.wM>q,.rKnpf q.wM>i,.rKnpf .wM q>i {color:#90a5b0;}.rKnpf b.wF>q,.rKnpf q.wF>i,.rKnpf .wF q>i {color:#c19999;}.rKnpf b.wN>q,.rKnpf q.wN>i,.rKnpf .wN q>i {color:#8ca08b;}.rInf q>b,.rInf q>u,.rInf q>b>mark,.rInf q>u>mark,.rInf q>mark {color:#848484;fill:#c5c5c5;}.wKnFmt q {font-weight:normal;}.wKnFmt q>b,.wKnFmt q>u {color:inherit;font-weight:normal !important;}s {color:#aaaaaa;text-decoration:none;}g,g a {color:#848484;fill:#c5c5c5;}.rInf b>u,.rInf b>i {color:#848484;fill:#c5c5c5;}@media (prefers-color-scheme:dark){b>u,q>b,q>b>mark,h2.wG,.rH2.wG {color:#bbac9d;}b.wG>u,q.wG>b,.wG q>b,q.wG>b>mark,h2.wG,.rH2.wG {color:#bbac9d;}b.wM>u,q.wM>b,.wM q>b,q.wM>b>mark,h2.wM,.rH2.wM {color:#90a5b0;}b.wF>u,q.wF>b,.wF q>b,q.wF>b>mark,h2.wF,.rH2.wF {color:#c19999;}b.wN>u,q.wN>b,.wN q>b,q.wN>b>mark,h2.wN,.rH2.wN {color:#8ca08b;}.wG b,b>i,q>u,q>u>mark,h2.wG,.rH2.wG {color:#d19554;}b.wG>i,q.wG>u,.wG q>u,q.wG>u>mark,h2.wG,.rH2.wG {color:#d19554;}b.wM>i,q.wM>u,.wM q>u,q.wM>u>mark,h2.wM,.rH2.wM {color:#4b98c2;}b.wF>i,q.wF>u,.wF q>u,q.wF>u>mark,h2.wF,.rH2.wF {color:#d75656;}b.wN>i,q.wN>u,.wN q>u,q.wN>u>mark,h2.wN,.rH2.wN {color:#649b62;}b>q,q>i,q>i>mark,h2.wG,.rH2.wG {color:#d19554;}b.wG>q,q.wG>i,.wG q>i,q.wG>i>mark,h2.wG,.rH2.wG {color:#d19554;}b.wM>q,q.wM>i,.wM q>i,q.wM>i>mark,h2.wM,.rH2.wM {color:#4b98c2;}b.wF>q,q.wF>i,.wF q>i,q.wF>i>mark,h2.wF,.rH2.wF {color:#d75656;}b.wN>q,q.wN>i,.wN q>i,q.wN>i>mark,h2.wN,.rH2.wN {color:#649b62;}.wKnFmt q>b,.wKnFmt q>u {color:inherit;}.rInf b>u,.rInf b>i,.rInf q>b,.rInf q>u,.rInf q>b>mark,.rInf q>u>mark,.rInf q>mark {color:#848484;fill:#626262;}}.aArt {min-height:90px;}.aArtLng {min-height:90px;}.aNurMob {min-height:0 !important;}.aDnb {min-height:600px;min-width:300px;}.aInf {min-height:250px;}.aAnz {margin:8px 0;text-align:center;background-color:rgba(255,255,255,0.4); }@media (max-width:1000px){.aArt {min-height:250px;}.aArtLng {min-height:610px;}.aNurDsk {min-height:0 !important;}}@media (max-width:1260px){.aDnb {display:none;min-height:unset;min-width:unset;}}@media (prefers-color-scheme:dark){.aAnz {background-color:rgba(255,255,255,0.05); }}.bZrt {}.bKas {}.bEinLang {position:absolute;top:0;right:0;padding:6px 7px;}div.bEinMnLang {padding:0 12px;text-align:end;}div.rEin {position:relative;}div.rEin input {padding-right:25px;padding-left:2px;}.nCol {width:16px;height:16px;border-radius:50%;margin-right:5px;display:inline-block;}.nColC1 {background-color:#0072b7;}.nColC2 {background-color:#d32f2f;}.nColC3 {background-color:#368732;}.nColC4 {background-color:#5C5CE0;}.nColC5 {background-color:#c3850f;}.nColC6 {background-color:#E64D61;}.nColC7 {background-color:#b35cb3;}.nColC8 {background-color:#FAD64C;}.nColC9 {background-color:#91683C;}.nColTC1 {color:#0072b7 !important;}.nColTC2 {color:#d32f2f !important;}.nColTC3 {color:#368732 !important;}.nColTC4 {color:#5C5CE0 !important;}.nColTC5 {color:#c3850f !important;}.nColTC6 {color:#E64D61 !important;}.nColTC7 {color:#b35cb3 !important;}.nColTC8 {color:#FAD64C !important;}.nColTC9 {color:#91683C !important;}@media (prefers-color-scheme:dark){.nColC1 {background-color:#5998c5;}.nColC2 {background-color:#d75656;}.nColC3 {background-color:#649b62;}.nColC4 {background-color:#5C5CE0;}.nColC5 {background-color:#d19554;}.nColC6 {background-color:#E64D61;}.nColC7 {background-color:#cd8ccd;}.nColC8 {background-color:#FAD64C;}.nColC9 {background-color:#91683C;}.nColTC1 {color:#5998c5 !important;}.nColTC2 {color:#d75656 !important;}.nColTC3 {color:#649b62 !important;}.nColTC4 {color:#5C5CE0 !important;}.nColTC5 {color:#d19554 !important;}.nColTC6 {color:#E64D61 !important;}.nColTC7 {color:#cd8ccd !important;}.nColTC8 {color:#FAD64C !important;}.nColTC9 {color:#91683C !important;}}.rDunkel {background-color:#784500;}.rHell {color:#c9b599;}h1 {color:#784500;}body>nav,body>nav a {color:#c9b599;}input[type=submit],.rKnpf,.rBoxWht .rKnpf {background-color:#784500;}.rHch {background-color:#784500;}.rMn {border-color:#c9b599;}dl.wNrn {list-style-type:none;margin-right:0;margin-left:0;}dl.wNrn dd,dl.wNrn dt {display:flex;margin:2px 0 2px 0;align-items:baseline;}dl.wNrn .wIdx,dl.wNrn .wLng {min-width:23px;}.wIdx {font-size:1.1em;font-weight:bold;}.wFlxs {margin-right:-10px;}.wFlx {margin-right:10px;min-width:100px;}.wFlx table {margin:8px 0 12px 0;}.wFlx table td {padding-right:6px;}select.wCht {-webkit-appearance:none !important;appearance:none !important;-moz-appearance:none !important;background-size:18px;background-repeat:no-repeat;background-position:center;max-width:29px;text-indent:29px;}.wStmf {margin:4px 0 0 0;}svg.vIcn {fill:#784500;}.rEin input,.rEin .rEinMnListe {font-size:1.22em;}.rNav .rEin {width:auto;max-width:none;margin:0;}.rNav .rEinMn {margin-top:0;}table.vKpfEinTbl {margin:0 auto;max-width:500px;}table.vKpfEinTbl td.vEinSm {width:1%;}.vEinH {height:32px;vertical-align:middle;}div.vKpfTl {align-content:center;margin-right:10px;}@media (max-width:600px){div.vKpfTl {display:none;}}@media (prefers-color-scheme:dark){.rDunkel {background-color:#281700;}.rHell {color:#a9a299;}body>nav,body>nav a {color:#a9a299;}h1,h2,.rH1,.rH2 {color:#ffffff;}.rHch {background-color:#000000;}input[type=submit],.rKnpf,.rBoxWht .rKnpf {background-color:#000000;}svg.vIcn {fill:#dcdee4;}.rMn {border-color:#736b62;}}</style>
+<script type="text/javascript" data-cmp-ab="1" src="https://cdn.consentmanager.net/delivery/js/semiautomatic.min.js" data-cmp-cdid="747c8e9ba26bb" data-cmp-host="d.delivery.consentmanager.net" data-cmp-cdn="cdn.consentmanager.net" data-cmp-codesrc="0"></script>
+<script>var uuSymplr,allCookiesSymplr=document.cookie.split(";").map((e=>e.split("="))).reduce(((e,[i,o])=>({...e,[i.trim()]:decodeURIComponent(o)})),{});function createCookieSymplr(e,i){var o=e;if(void 0===(uuSymplr=allCookiesSymplr.uniqueUser)){let e=(Date.now()+window.navigator.userAgent+websiteSymplr).toString();uuSymplr=sha256(e),document.cookie=`uniqueUser=${uuSymplr};max-age=31536000;path=/;SameSite=Strict; Secure`}if(o){var u=allCookiesSymplr.uniqueUserLi;void 0===u&&(u=sha256(i),document.cookie=`uniqueUserLi=${u};max-age=31536000;path=/;SameSite=Strict; Secure`),uuSymplr=u}else document.cookie="uniqueUserLi=; max-age=0"}</script>
+<script defer src="https://cdns.symplr.de/verben.de/verben.js"></script>
+</head>
+<body>
+<div id="rkopf"></div>
+<nav class="rDunkel"><div>
+<div class="rNav">
+<div class="rRechts" id="rMnImg" onclick="Rahmen.aufzu(['rMn','rMnNav'])"><svg fill="#ffffff" fill-opacity="0.6" height="36" viewBox="0 0 24 24" width="36" xmlns="http://www.w3.org/2000/svg">
+<path class="rAuf" style="display: none;" d="m11.41 15.41 4.59-4.58 4.59 4.58 1.41-1.41-6-6l-6 6 1.41 1.41z"></path>
+<path class="rZu" style="display: inline;" d="m8 4.667h16v2h-16m0 4h16v2h-16m-2e-7 4h16v2h-16z"></path>
+</svg></div>
+<div class="rLinks rLg"><a href="/"><svg xmlns="http://www.w3.org/2000/svg" height="36" width="36" version="1.1" viewBox="0 0 320 320"><path d="M8.19 216c55.4-6.93 99.3 10.8 124 57.3.055-13 7.25-151 6.65-172-21-29.7-20-65.4-78.1-65.6z" fill="#3a3a3a"/><path d="M309 213c-55.4-6.93-97 14.5-121 61.1-.055-13-7.25-151-6.65-172 14.1-28.6 26.9-65.6 80-65.9z" fill="#d00"/><path d="M228 228c-15.3 11.5-25.6 18.7-40 46.2l-8.37-166c5.16-11.1 8.97-21.1 13.3-28.8 10.1 47.5 29.2 120 35.1 149z" fill="#c90000"/><path d="M157 181c-.207 26.7-.182 52.7-.389 79.4 9.84-9.93 35.9-33.2 32.2-53.8-2.39-13.4-13-22-31.8-25.6z" fill="#ebba00"/><path d="M110 76.7l-13.7 155c14.4 8.68 25.1 25.1 35.8 41.8l4.71-166z" fill="#2d2d2d"/><path d="M62.1 218c12.3 1.77 27.2 9.24 36.2 16.4l17.7-175c-9-8.9-20.5-17.2-41.7-22.4-3 76.4-12.2 181-12.2 181z" fill="#333"/><path d="M113 41.1l-22.1 148c10.8-8.04 90.9-20 98.9 21.2 0-23-5-132-5-157-15-31.2-58-20.7-72-11.9z" fill="#ffce00"/><path d="M267 213c-12.4 1.73-22.6 7.18-39.9 15.8l-35-149C207.9 58.2 218.8 44.2 247 38z" fill="#d30000"/><path d="M160 33.7c-20.2 22.4-24.7 147-24.7 147 29.1.176 50.3 9.36 55.4 29.7.424-22.6-4.98-133-5.55-158-5.01-10.4-19.7-15.5-25.2-18.8z" fill="#f5c400"/></svg></a></div>
+<div class="rLinks rHell vKpfTl">Netzverb Wörterbuch</div>
+<a class="rRechts" href="/user/login/"><svg fill="#ffffff" fill-opacity="0.6" height="36" viewBox="-5 0 25 25" width="36" xmlns="http://www.w3.org/2000/svg">
+<path d="M12,4A4,4 0 0,1 16,8A4,4 0 0,1 12,12A4,4 0 0,1 8,8A4,4 0 0,1 12,4M12,6A2,2 0 0,0 10,8A2,2 0 0,0 12,10A2,2 0 0,0 14,8A2,2 0 0,0 12,6M12,13C14.67,13 20,14.33 20,17V20H4V17C4,14.33 9.33,13 12,13M12,14.9C9.03,14.9 5.9,16.36 5.9,17V18.1H18.1V17C18.1,16.36 14.97,14.9 12,14.9Z"/>
+</svg>
+</a>
+<form class="vKpfEinFrm" id="vKpfEin" action="/?w=wer">
+<table class="vKpfEinTbl">
+<tr>
+<td>
+<div class="rEin vKpfEin">
+<div class="bEinLang" id="x04c74Lang" onclick="Rahmen.aufzu('x04c74LangMn')">
+<img loading="lazy" alt="" src="/bedeutungenweb/de.svg" width="14" height="14">
+</div>
+<input autofocus="autofocus" onfocus="this.setSelectionRange(0, this.value.length)" id="x04c74" name="w" type="search" value="wer" placeholder="" title="" autocomplete="off" onkeydown="Eingabe.taste('x04c74','x04c74Liste', event,'x04c74Id')" oninput="Eingabe.an('x04c74','x04c74Liste',Woerterbuch.suchliste,'x04c74Id')" onblur="Eingabe.aus('x04c74','x04c74Liste')"><br>
+<input id="x04c74Id" name="id" type="hidden" disabled>
+<div class="rEinMn bEinMnListe" id="x04c74Liste"></div>
+<div class="rZu rNoSelect rEinMn bEinMnLang" id="x04c74LangMn">
+<input id="x04c74Sl" name="sl" type="hidden" value="" disabled>
+<p>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Sl', 'de')" type="button">
+Zuerst Deutsch
+<img loading="lazy" alt="" src="/bedeutungenweb/de.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Sl', 'tr')" type="button">
+Zuerst Übersetzung
+<img loading="lazy" alt="" src="/bedeutungenweb/en.svg" width="14" height="14">
+</button>
+</p>
+<hr class="rInf">
+<input id="x04c74Tl" name="tl" type="hidden" value="en" disabled>
+<p>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'en')" type="button">
+Englisch
+<img loading="lazy" alt="" src="/bedeutungenweb/en.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'ru')" type="button">
+Russisch
+<img loading="lazy" alt="" src="/bedeutungenweb/ru.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'es')" type="button">
+Spanisch
+<img loading="lazy" alt="" src="/bedeutungenweb/es.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'fr')" type="button">
+Französisch
+<img loading="lazy" alt="" src="/bedeutungenweb/fr.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'tr')" type="button">
+Türkisch
+<img loading="lazy" alt="" src="/bedeutungenweb/tr.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'pt')" type="button">
+Portugiesisch
+<img loading="lazy" alt="" src="/bedeutungenweb/pt.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'it')" type="button">
+Italienisch
+<img loading="lazy" alt="" src="/bedeutungenweb/it.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'ro')" type="button">
+Rumänisch
+<img loading="lazy" alt="" src="/bedeutungenweb/ro.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'hu')" type="button">
+Ungarisch
+<img loading="lazy" alt="" src="/bedeutungenweb/hu.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'pl')" type="button">
+Polnisch
+<img loading="lazy" alt="" src="/bedeutungenweb/pl.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'el')" type="button">
+Griechisch
+<img loading="lazy" alt="" src="/bedeutungenweb/el.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'nl')" type="button">
+Niederländisch
+<img loading="lazy" alt="" src="/bedeutungenweb/nl.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'cs')" type="button">
+Tschechisch
+<img loading="lazy" alt="" src="/bedeutungenweb/cs.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'sv')" type="button">
+Schwedisch
+<img loading="lazy" alt="" src="/bedeutungenweb/sv.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'da')" type="button">
+Dänisch
+<img loading="lazy" alt="" src="/bedeutungenweb/da.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'ja')" type="button">
+Japanisch
+<img loading="lazy" alt="" src="/bedeutungenweb/ja.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'ca')" type="button">
+Katalanisch
+<img loading="lazy" alt="" src="/bedeutungenweb/ca.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'fi')" type="button">
+Finnisch
+<img loading="lazy" alt="" src="/bedeutungenweb/fi.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'he')" type="button">
+Hebräisch
+<img loading="lazy" alt="" src="/bedeutungenweb/he.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'no')" type="button">
+Norwegisch
+<img loading="lazy" alt="" src="/bedeutungenweb/no.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'eu')" type="button">
+Baskisch
+<img loading="lazy" alt="" src="/bedeutungenweb/eu.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'sr')" type="button">
+Serbisch
+<img loading="lazy" alt="" src="/bedeutungenweb/sr.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'mk')" type="button">
+Mazedonisch
+<img loading="lazy" alt="" src="/bedeutungenweb/mk.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'sl')" type="button">
+Slowenisch
+<img loading="lazy" alt="" src="/bedeutungenweb/sl.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'sk')" type="button">
+Slowakisch
+<img loading="lazy" alt="" src="/bedeutungenweb/sk.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'bs')" type="button">
+Bosnisch
+<img loading="lazy" alt="" src="/bedeutungenweb/bs.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'hr')" type="button">
+Kroatisch
+<img loading="lazy" alt="" src="/bedeutungenweb/hr.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'uk')" type="button">
+Ukrainisch
+<img loading="lazy" alt="" src="/bedeutungenweb/uk.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'bg')" type="button">
+Bulgarisch
+<img loading="lazy" alt="" src="/bedeutungenweb/bg.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'be')" type="button">
+Belorussisch
+<img loading="lazy" alt="" src="/bedeutungenweb/be.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'ar')" type="button">
+Arabisch
+<img loading="lazy" alt="" src="/bedeutungenweb/ar.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'fa')" type="button">
+Persisch
+<img loading="lazy" alt="" src="/bedeutungenweb/fa.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'ur')" type="button">
+Urdu
+<img loading="lazy" alt="" src="/bedeutungenweb/ur.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'id')" type="button">
+Indonesisch
+<img loading="lazy" alt="" src="/bedeutungenweb/id.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'vi')" type="button">
+Vietnamesisch
+<img loading="lazy" alt="" src="/bedeutungenweb/vi.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'uz')" type="button">
+Usbekisch
+<img loading="lazy" alt="" src="/bedeutungenweb/uz.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'hi')" type="button">
+Hindi
+<img loading="lazy" alt="" src="/bedeutungenweb/hi.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'zh')" type="button">
+Chinesisch
+<img loading="lazy" alt="" src="/bedeutungenweb/zh.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'th')" type="button">
+Thailändisch
+<img loading="lazy" alt="" src="/bedeutungenweb/th.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'ko')" type="button">
+Koreanisch
+<img loading="lazy" alt="" src="/bedeutungenweb/ko.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'az')" type="button">
+Aserbaidschanisch
+<img loading="lazy" alt="" src="/bedeutungenweb/az.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'ka')" type="button">
+Georgisch
+<img loading="lazy" alt="" src="/bedeutungenweb/ka.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'bn')" type="button">
+Bengalisch
+<img loading="lazy" alt="" src="/bedeutungenweb/bn.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'sq')" type="button">
+Albanisch
+<img loading="lazy" alt="" src="/bedeutungenweb/sq.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'mr')" type="button">
+Marathi
+<img loading="lazy" alt="" src="/bedeutungenweb/mr.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'ne')" type="button">
+Nepalesisch
+<img loading="lazy" alt="" src="/bedeutungenweb/ne.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'te')" type="button">
+Telugu
+<img loading="lazy" alt="" src="/bedeutungenweb/te.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'lv')" type="button">
+Lettisch
+<img loading="lazy" alt="" src="/bedeutungenweb/lv.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'ta')" type="button">
+Tamil
+<img loading="lazy" alt="" src="/bedeutungenweb/ta.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'et')" type="button">
+Estnisch
+<img loading="lazy" alt="" src="/bedeutungenweb/et.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'hy')" type="button">
+Armenisch
+<img loading="lazy" alt="" src="/bedeutungenweb/hy.svg" width="14" height="14">
+</button>
+<br>
+<button onclick="Eingabe.uebernahmeWert(event, 'x04c74Tl', 'ku')" type="button">
+Kurdisch
+<img loading="lazy" alt="" src="/bedeutungenweb/ku.svg" width="14" height="14">
+</button>
+</p>
+</div>
+</div>
+<script>
+document.addEventListener('click', (event) => {
+const exEs = [document.getElementById('x04c74Lang'),document.getElementById('x04c74LangMn')];
+if (exEs.every(element => !element.contains(event.target))) Rahmen.zu('x04c74LangMn')
+});
+</script></td>
+<td class="vEinH vEinSm"><button class="vEinH" type="submit"><svg fill="#ffffff" fill-opacity="0.6" height="32" viewBox="-4 0 24 24" width="32" xmlns="http://www.w3.org/2000/svg">
+<path d="M20 16L14.5 21.5L13.08 20.09L16.17 17H10.5C6.91 17 4 14.09 4 10.5V4H6V10.5C6 13 8 15 10.5 15H16.17L13.09 11.91L14.5 10.5L20 16Z" ></path>
+</svg>
+</button></td>
+<td class="vEinH vEinSm"><button class="vEinH" type="submit" formaction="/suche/?w=wer"><svg fill="#ffffff" fill-opacity="0.6" height="32" viewBox="-4 0 24 24" width="32" xmlns="http://www.w3.org/2000/svg">
+<path d="M9.5,3A6.5,6.5 0 0,1 16,9.5C16,11.11 15.41,12.59 14.44,13.73L14.71,14H15.5L20.5,19L19,20.5L14,15.5V14.71L13.73,14.44C12.59,15.41 11.11,16 9.5,16A6.5,6.5 0 0,1 3,9.5A6.5,6.5 0 0,1 9.5,3M9.5,5C7,5 5,7 5,9.5C5,12 7,14 9.5,14C12,14 14,12 14,9.5C14,7 12,5 9.5,5Z"></path>
+</svg>
+</button></td>
+</tr>
+</table>
+</form>
+</div>
+<div class="rClear"></div>
+<div class="rZu" id="rMn">
+<div class="rMn">
+<div class="rNoSelect" onClick="Rahmen.aufzu('vLng')">
+<span class="rMnKat">Sprache</span>: Deutsch
+<img src="/rahmen/mnwahl.svg" height="8" width="10" >
+</div>
+<div class="rZu" id="vLng">
+<div class="rMnOpt">
+<img src="/rahmen/mnan.svg" height="18" width="18">&nbsp;	
+<a href="https://www.verben.de/?w=wer" rel="nofollow">
+Deutsch
+</a>
+</div>
+<div class="rMnOpt">
+<img src="/rahmen/mnaus.svg" height="18" width="18">&nbsp;
+<a href="https://www.woerter.net/?w=wer" rel="nofollow">
+English
+</a>
+</div>
+<div class="rMnOpt">
+<img src="/rahmen/mnaus.svg" height="18" width="18">&nbsp;
+<a href="https://www.woerter.ru/?w=wer" rel="nofollow">
+Русский
+</a>
+</div>
+<div class="rMnOpt">
+<img src="/rahmen/mnaus.svg" height="18" width="18">&nbsp;
+<a href="https://www.woerter.es/?w=wer" rel="nofollow">
+Español
+</a>
+</div>
+<div class="rMnOpt">
+<img src="/rahmen/mnaus.svg" height="18" width="18">&nbsp;
+<a href="https://www.woerter.pt/?w=wer" rel="nofollow">
+Português
+</a>
+</div>
+<div class="rMnOpt">
+<img src="/rahmen/mnaus.svg" height="18" width="18">&nbsp;
+<a href="https://ar.woerter.net/?w=wer" rel="nofollow">
+العربية
+</a>
+</div>
+<div class="rMnOpt">
+<img src="/rahmen/mnaus.svg" height="18" width="18">&nbsp;
+<a href="https://cs.woerter.net/?w=wer" rel="nofollow">
+Čeština
+</a>
+</div>
+<div class="rMnOpt">
+<img src="/rahmen/mnaus.svg" height="18" width="18">&nbsp;
+<a href="https://fa.woerter.net/?w=wer" rel="nofollow">
+فارسی
+</a>
+</div>
+<div class="rMnOpt">
+<img src="/rahmen/mnaus.svg" height="18" width="18">&nbsp;
+<a href="https://fr.woerter.net/?w=wer" rel="nofollow">
+Français
+</a>
+</div>
+<div class="rMnOpt">
+<img src="/rahmen/mnaus.svg" height="18" width="18">&nbsp;
+<a href="https://id.woerter.net/?w=wer" rel="nofollow">
+Bahasa Indonesia
+</a>
+</div>
+<div class="rMnOpt">
+<img src="/rahmen/mnaus.svg" height="18" width="18">&nbsp;
+<a href="https://tr.woerter.net/?w=wer" rel="nofollow">
+Türkçe
+</a>
+</div>
+<div class="rMnOpt">
+<img src="/rahmen/mnaus.svg" height="18" width="18">&nbsp;
+<a href="https://uk.woerter.net/?w=wer" rel="nofollow">
+Українська
+</a>
+</div>
+<div class="rMnOpt">
+<img src="/rahmen/mnaus.svg" height="18" width="18">&nbsp;
+<a href="https://pl.woerter.net/?w=wer" rel="nofollow">
+Polski
+</a>
+</div>
+<div class="rMnOpt">
+<img src="/rahmen/mnaus.svg" height="18" width="18">&nbsp;
+<a href="https://it.woerter.net/?w=wer" rel="nofollow">
+Italiano
+</a>
+</div>
+<div class="rMnOpt">
+<img src="/rahmen/mnaus.svg" height="18" width="18">&nbsp;
+<a href="https://hu.woerter.net/?w=wer" rel="nofollow">
+Magyar
+</a>
+</div>
+<div class="rMnOpt">
+<img src="/rahmen/mnaus.svg" height="18" width="18">&nbsp;
+<a href="https://nl.woerter.net/?w=wer" rel="nofollow">
+Nederlands
+</a>
+</div>
+<div class="rMnOpt">
+<img src="/rahmen/mnaus.svg" height="18" width="18">&nbsp;
+<a href="https://sk.woerter.net/?w=wer" rel="nofollow">
+Slovenčina
+</a>
+</div>
+<div class="rMnOpt">
+<img src="/rahmen/mnaus.svg" height="18" width="18">&nbsp;
+<a href="https://hi.woerter.net/?w=wer" rel="nofollow">
+हिंदी
+</a>
+</div>
+<div class="rMnOpt">
+<img src="/rahmen/mnaus.svg" height="18" width="18">&nbsp;
+<a href="https://zh.woerter.net/?w=wer" rel="nofollow">
+中文
+</a>
+</div>
+<div class="rMnOpt">
+<img src="/rahmen/mnaus.svg" height="18" width="18">&nbsp;
+<a href="https://ja.woerter.net/?w=wer" rel="nofollow">
+日本語
+</a>
+</div>
+<div class="rMnOpt">
+<img src="/rahmen/mnaus.svg" height="18" width="18">&nbsp;
+<a href="https://bn.woerter.net/?w=wer" rel="nofollow">
+বাংলা
+</a>
+</div>
+<div class="rMnOpt">
+<img src="/rahmen/mnaus.svg" height="18" width="18">&nbsp;
+<a href="https://uz.woerter.net/?w=wer" rel="nofollow">
+O‘zbek tili
+</a>
+</div>
+</div>
+</div><div>
+<div class="rMn">
+<div>
+<span class="rMnKat">Teilen: </span>
+<a rel="nofollow" href="https://www.facebook.com/sharer/sharer.php?u=https%3A%2F%2Fwww.verben.de%2F%3Fw%3Dwer" title="Teilen"><svg fill="#ffffff" fill-opacity="0.6" height="26" viewBox="0 0 24 24" width="26" xmlns="http://www.w3.org/2000/svg">
+<path d="M17,2V2H17V6H15C14.31,6 14,6.81 14,7.5V10H14L17,10V14H14V22H10V14H7V10H10V6A4,4 0 0,1 14,2H17Z"></path>
+</svg></a>
+<a rel="nofollow" href="https://twitter.com/home?status=https%3A%2F%2Fwww.verben.de%2F%3Fw%3Dwer" title="Teilen"><svg fill="#ffffff" fill-opacity="0.6" height="26" viewBox="0 0 24 24" width="26" xmlns="http://www.w3.org/2000/svg">
+<path d="M22.46,6C21.69,6.35 20.86,6.58 20,6.69C20.88,6.16 21.56,5.32 21.88,4.31C21.05,4.81 20.13,5.16 19.16,5.36C18.37,4.5 17.26,4 16,4C13.65,4 11.73,5.92 11.73,8.29C11.73,8.63 11.77,8.96 11.84,9.27C8.28,9.09 5.11,7.38 3,4.79C2.63,5.42 2.42,6.16 2.42,6.94C2.42,8.43 3.17,9.75 4.33,10.5C3.62,10.5 2.96,10.3 2.38,10C2.38,10 2.38,10 2.38,10.03C2.38,12.11 3.86,13.85 5.82,14.24C5.46,14.34 5.08,14.39 4.69,14.39C4.42,14.39 4.15,14.36 3.89,14.31C4.43,16 6,17.26 7.89,17.29C6.43,18.45 4.58,19.13 2.56,19.13C2.22,19.13 1.88,19.11 1.54,19.07C3.44,20.29 5.7,21 8.12,21C16,21 20.33,14.46 20.33,8.79C20.33,8.6 20.33,8.42 20.32,8.23C21.16,7.63 21.88,6.87 22.46,6Z"></path>
+</svg></a>
+</div>
+</div>
+</div>
+<div class="rMnRnd rClear"></div>
+</div>
+</div></nav>
+<div class="rKpfPlz">&nbsp;</div>
+<article class=""><div>
+<nav class="rKrml rKln rInf">
+<a href="https://www.verben.de/"><span>Wörterbuch</span></a>
+› 	
+<a href="https://www.verben.de/artikel-pronomen/"><span>Artikel und Pronomen</span></a>
+› 	
+<a href="https://www.verben.de/artikel-pronomen/wer.htm"><span>wer</span></a>
+</nav><!-- Zurückbutton -->
+<a class="rKnpf rLinks" href="https://www.verben.de/artikel-pronomen/">
+<svg fill="" class="kIcn" height="10" viewBox="0 1 15 15" width="10" xmlns="http://www.w3.org/2000/svg">
+<path d="m15 7.6v1.95h-11.4l5.25 5.05-1.35 1.4-7.5-7.5 7.5-7.5 1.35 1.35-5.25 5.25z"></path>
+</svg></a>
+<a class="rKnpf rLinks" href="/suche/artikel-pronomen/">
+<svg fill="" class="kIcn" height="12" viewBox="0 1 15 15" width="12" xmlns="http://www.w3.org/2000/svg">
+<path d="m5.6 1.01a5.57 5.57 0 0 1 5.57 5.57c0 1.38-0.506 2.65-1.34 3.63l0.232 0.232h0.677l4.29 4.29-1.29 1.29-4.29-4.29v-0.677l-0.232-0.232c-1 0.8-2.27 1.4-3.65 1.4a5.57 5.57 0 0 1 -5.57 -5.62 5.57 5.57 0 0 1 5.57 -5.57m0 1.71c-2.14 0-3.86 1.71-3.86 3.86 0 2.14 1.71 3.86 3.86 3.86 2.14 0 3.86-1.71 3.86-3.86 0-2.14-1.71-3.86-3.86-3.86z"></path>
+</svg>&nbsp;
+</a>
+<form method="get" action="/chat/create/">
+<select name="topic" class="rKnpf rLinks wCht" onchange="this.form.submit()" style="background-image: url('/chatweb/chat.svg')" >
+<option value="-" disabled selected>Chat:</option>
+<option value="">Neuer Chat</option>
+<option value="general">Information über  wer</option>
+<option value="practice">Übe wer</option>
+<option value="grammar">Grammatik wer</option>
+<option value="translation">Übersetzung wer</option>
+<option value="sentences">Beispiele für wer</option>
+<option value="context">Kontext wer</option>
+<option value="definition">Bedeutung wer</option>
+<option value="etymology">Herkunft wer</option>
+</select>
+<input name="word_type" type="hidden" value="KONOMEN">
+<input name="word" type="hidden" value="wer">
+</form><div class="rKnpf rLinks" onclick="window.open('https://play.google.com/store/apps/details?id=de.verbformen.app')">
+<svg fill="" height="14" viewBox="0 -2 24 24" width="14" xmlns="http://www.w3.org/2000/svg">
+<path d="M3,20.5V3.5C3,2.91 3.34,2.39 3.84,2.15L13.69,12L3.84,21.85C3.34,21.6 3,21.09 3,20.5M16.81,15.12L6.05,21.34L14.54,12.85L16.81,15.12M20.16,10.81C20.5,11.08 20.75,11.5 20.75,12C20.75,12.5 20.53,12.9 20.18,13.18L17.89,14.5L15.39,12L17.89,9.5L20.16,10.81M6.05,2.66L16.81,8.88L14.54,11.15L6.05,2.66Z"></path>
+</svg>
+</div>
+<h1 class="rClear">Definition von wer</h1>
+<p>
+Definition von wer:<i> fragt nach einer Person oder mehreren Personen; derjenige, der; einer; irgendeiner; irgendjemand; irgendwer</i> mit Definitionen, Beschreibungen, Erklärungen, Synonymen und Grammatikangaben im Wörterbuch.</p>
+<div class="rAbschnitt "><div><!------------------- STECKBRIEF ------------------->
+<section class="rBox rBoxWht " id="x87243Box" >
+<div class="rClear" style="margin-bottom: 10px;"></div><div id="x87243" class="rAufZu">
+<div id="wStckLngImg" class="rInf rKnpf rRechts rClrRechts rNoSelect" onclick="Rahmen.aufzu('wStckLng'); Rahmen.aufzu('wStckKrz');">
+<svg fill="" class="kIcn" height="12" viewBox="6 4 12 16" width="10" xmlns="http://www.w3.org/2000/svg">
+<path style="display: none;" class="rAuf" d="M15.41,16.58L10.83,12L15.41,7.41L14,6L8,12L14,18L15.41,16.58Z"></path>
+<path style="display: inline;" class="rZu" d="M12,16A2,2 0 0,1 14,18A2,2 0 0,1 12,20A2,2 0 0,1 10,18A2,2 0 0,1 12,16M12,10A2,2 0 0,1 14,12A2,2 0 0,1 12,14A2,2 0 0,1 10,12A2,2 0 0,1 12,10M12,4A2,2 0 0,1 14,6A2,2 0 0,1 12,8A2,2 0 0,1 10,6A2,2 0 0,1 12,4Z"></path>
+</svg></div>
+<a class="rRechts rKnpf rNoSelect" href="/user/login/"><svg fill="#bbbbbb" viewBox="2 0 20 22" width="12" height="12" xmlns="http://www.w3.org/2000/svg">
+<path d="M12.1,18.55L12,18.65L11.89,18.55C7.14,14.24 4,11.39 4,8.5C4,6.5 5.5,5 7.5,5C9.04,5 10.54,6 11.07,7.36H12.93C13.46,6 14.96,5 16.5,5C18.5,5 20,6.5 20,8.5C20,11.39 16.86,14.24 12.1,18.55M16.5,3C14.76,3 13.09,3.81 12,5.08C10.91,3.81 9.24,3 7.5,3C4.42,3 2,5.41 2,8.5C2,12.27 5.4,15.36 10.55,20.03L12,21.35L13.45,20.03C18.6,15.36 22,12.27 22,8.5C22,5.41 19.58,3 16.5,3Z"/>
+</svg>
+</a>
+<span class="rInf"><span class="bZrt" title="Wortschatz Zertifikat A1">
+A1</span> ·
+<span title="Pronomen">Pronomen</span> · <span title="starke Deklination">stark</span> · &lt;<span title="teilweise auch:">auch: </span><span title="Interrogativpronomen">Interrogativum</span> · <span title="Relativpronomen">Relativum</span> · <span title="Indefinitpronomen">Indefinitum</span>&gt;</span>
+<div id="wStckInf">
+<div id="wStckKrz" class="rAuf rCntr" style="padding: 0 4%;"><!-- Hauptformen -->
+<div class="rCntr rClear" style="margin: 12px 0 16px 0">
+<span style="font-size: 1.55em;">
+<span style="font-size: 1.44em;"><q>wer</q></span></span>
+</div><!-- Stammformen -->
+<p class="r1Zeile rU3px rO0px" style="font-size: 1.22em;" onclick="Rahmen.aufzu('wStckLng'); Rahmen.aufzu('wStckKrz')">
+<q>we<b>s</b><u>sen</u></q> &middot;
+-</p>
+<p style="font-size: 1.22em;" class="r1Zeile rU6px rO0px" onclick="Rahmen.aufzu('wStckLng'); Rahmen.aufzu('wStckKrz')">
+<span  lang="en" >
+<img style="padding-bottom: 4px; vertical-align: middle" loading="lazy" alt="Englisch"
+src="/bedeutungenweb/en.svg" width="16" height="16">&nbsp;who, somebody, the one who, anyone, someone, someone of importance, someone special, someone successful, whom</span>
+</p>
+<p class="rInf r1Zeile rU3px rO0px">
+/ˈveːɐ̯/
+&middot; 
+/ˈveːsn̩/
+</p>
+<p class="rInf r1Zeile rU3px rO0px">
+<i>fragt nach einer Person oder mehreren Personen; derjenige, der; einer, irgendeiner, irgendjemand, irgendwer</i>
+</p>
+</div>
+<div id="wStckLng" class="rZu rCntr" onchange="Ajax.get('/artikel-pronomen/steckbrief-info/wer.htm', 'wStckInf', false);"></div>
+</div>
+</div>
+<div class="rClear" style="margin-top: 10px; min-height: 1px">
+</div>
+</section><div class="aAnz aArt rClear" style="margin: 0 0 14px 0;">
+<div id="verben.de_lb_1"></div>
+</div>
+<section class="rBox rBoxWht " id="x26216Box" >
+<div class="rClear" style="margin-bottom: 10px;"></div><nav class="rRechts" >
+<button class="rRechts rInf" type="button" id="x26216Img" onclick="Rahmen.alleaufzu('x26216','rAufZu')"><svg fill="" height="24" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+<path class="rAuf" d="m16.6 9.67-1.42-1.41l-3.2 3.14-3.17-3.14-1.42 1.41 4.59 4.63m-4.59 5.8 1.42 1.41 3.17-3.17 3.17 3.17 1.41-1.41-4.58-4.59-4.59 4.59zm9.19-15.9l-1.42-1.41-3.17 3.17-3.17-3.17-1.42 1.41 4.58 4.59"></path>
+<path class="rZu" d="m12 13.8-3.17-3.17-1.41 1.41 4.58 4.59 4.59-4.59-1.42-1.41m-3.16-6.36 3.17 3.17 1.41-1.41-4.58-4.59-4.59 4.59 1.42 1.41 3.17-3.17zm-0.01 15.2-3.17-3.17-1.41 1.41 4.58 4.59 4.59-4.59-1.42-1.41"></path>
+</svg>
+</button></nav>
+<header>
+<h2 class="wG rNt">Bedeutungen</h2></header>
+<div id="x26216" class="rAufZu">
+<dl class="wNrn">
+<dt>
+<span class="wIdx">1. </span>
+<span class="rInf r1Zeile"><span title="Pronomen">Pronomen</span> · <span title="Interrogativpronomen">Interrogativum</span> · <span title="starke Deklination">stark</span></span>
+</dt>
+<dd>
+<span><span class="rInf"></span>fragt nach einer Person oder mehreren Personen</span>
+</dd>
+</dl>
+<dl class="wNrn">
+<dt>
+<span class="wIdx">2. </span>
+<span class="rInf r1Zeile"><span title="Pronomen">Pronomen</span> · <span title="Relativpronomen">Relativum</span> · <span title="starke Deklination">stark</span></span>
+</dt>
+<dd>
+<span><span class="rInf"></span>derjenige, der, diejenige, die</span>
+</dd>
+</dl>
+<dl class="wNrn">
+<dt>
+<span class="wIdx">3. </span>
+<span class="rInf r1Zeile"><span title="Pronomen">Pronomen</span> · <span title="Indefinitpronomen">Indefinitum</span> · <span title="starke Deklination">stark</span></span>
+</dt>
+<dd>
+<span class="wIdx">a.</span><span><span class="rInf"></span>irgendjemand, einer, irgendeiner, irgendjemand, irgendwer, jemand</span>
+</dd>
+<dd>
+<span class="wIdx">b.</span><span><span class="rInf"></span>jemand Besonderes, jemand von Bedeutung, jemand Erfolgreiches</span>
+</dd>
+</dl>
+<hr>
+<a class="rKnpf rRechts" href="https://www.verbformen.de/deklination/artikel/wer.htm">
+Deklination <svg fill="" class="kIcn" height="10" viewBox="0 1 15 15" width="10" xmlns="http://www.w3.org/2000/svg">
+<path d="m2.83 14.4-1.38-1.38 8.06-8.06-7.28 0.141-0.0354-1.94h10.6v10.6l-1.94-0.0354 0.0354-7.39z"></path>
+</svg></a>
+<a class="rKnpf rLinks" href="/artikel-pronomen/bedeutungen/wer.htm">
+Bedeutungen <svg fill="" class="kIcn" height="10" viewBox="0 1 15 15" width="10" xmlns="http://www.w3.org/2000/svg">
+<path d="m0 9.4v-1.95h11.4l-5.25-5.05 1.35-1.4 7.5 7.5-7.5 7.5-1.35-1.4 5.25-5.2z"></path>
+</svg></a>
+</div>
+<div class="rClear" style="margin-top: 10px; min-height: 1px">
+</div>
+</section><section class="rBox rBoxWht " id="xcf3a6Box" >
+<div class="rClear" style="margin-bottom: 10px;"></div><nav class="rRechts" >
+<button class="rRechts rInf" type="button" id="xcf3a6Img" onclick="Rahmen.aufzu('xcf3a6')"><svg fill="" height="24" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+<path class="rAuf" d="M16.59,5.41L15.17,4L12,7.17L8.83,4L7.41,5.41L12,10M7.41,18.59L8.83,20L12,16.83L15.17,20L16.58,18.59L12,14L7.41,18.59Z"></path>
+<path class="rZu" d="M12,18.17L8.83,15L7.42,16.41L12,21L16.59,16.41L15.17,15M12,5.83L15.17,9L16.58,7.59L12,3L7.41,7.59L8.83,9L12,5.83Z"></path>
+</svg></button></nav>
+<header>
+<h2 class="wG rNt">Synonyme</h2></header>
+<div id="xcf3a6" class="rAufZu">
+<dl class="wNrn">
+<dt>
+<span class="wIdx">3. </span>
+<i class="rInf r1Zeile">irgendjemand; jemand Besonderes, jemand von Bedeutung, jemand Erfolgreiches; einer, irgendeiner, irgendjemand, irgendwer</i>
+</dt>
+<dd>
+<span class="wIdx">a.</span><span>&equiv;&nbsp;<a href="/artikel-pronomen/ein.htm">ein</a> &equiv;&nbsp;<a href="/artikel-pronomen/irgendein.htm">irgendein</a> &equiv;&nbsp;<a href="/artikel-pronomen/irgendjemand.htm">irgendjemand</a> &equiv;&nbsp;<a href="/artikel-pronomen/irgendwer.htm">irgendwer</a> &equiv;&nbsp;<a href="/artikel-pronomen/jemand.htm">jemand</a></span>
+</dd>
+</dl>
+<hr>
+<a class="rKnpf rLinks" href="/artikel-pronomen/synonyme/wer.htm">
+Synonyme <svg fill="" class="kIcn" height="10" viewBox="0 1 15 15" width="10" xmlns="http://www.w3.org/2000/svg">
+<path d="m0 9.4v-1.95h11.4l-5.25-5.05 1.35-1.4 7.5 7.5-7.5 7.5-1.35-1.4 5.25-5.2z"></path>
+</svg></a>
+</div>
+<div class="rClear" style="margin-top: 10px; min-height: 1px">
+</div>
+</section></div></div><div class="rInfo"><section class="rBox rBoxWht " id="x3a360Box" >
+<div class="rClear" style="margin-bottom: 10px;"></div><nav class="rRechts" >
+<button class="rRechts rInf" type="button" id="x3a360Img" onclick="Rahmen.aufzu('x3a360')"><svg fill="" height="24" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+<path class="rAuf" d="M16.59,5.41L15.17,4L12,7.17L8.83,4L7.41,5.41L12,10M7.41,18.59L8.83,20L12,16.83L15.17,20L16.58,18.59L12,14L7.41,18.59Z"></path>
+<path class="rZu" d="M12,18.17L8.83,15L7.42,16.41L12,21L16.59,16.41L15.17,15M12,5.83L15.17,9L16.58,7.59L12,3L7.41,7.59L8.83,9L12,5.83Z"></path>
+</svg></button></nav>
+<header>
+<h2 class="wG">Ressourcen</h2></header>
+<div id="x3a360" class="rAufZu">
+<a href="https://www.verbformen.de/deklination/pronomen/wer.pdf" target="_blank" rel="noopener">
+<img src="https://www.verbformen.com/declension/pronouns/wer.pdf?preview=small" alt="wer.pdf" loading="lazy"/>
+</a>
+<hr>
+<a class="rKnpf rLinks" href="/artikel-pronomen/ressourcen/wer.htm">
+Ressourcen <svg fill="" class="kIcn" height="10" viewBox="0 1 15 15" width="10" xmlns="http://www.w3.org/2000/svg">
+<path d="m0 9.4v-1.95h11.4l-5.25-5.05 1.35-1.4 7.5 7.5-7.5 7.5-1.35-1.4 5.25-5.2z"></path>
+</svg></a>
+</div>
+<div class="rClear" style="margin-top: 10px; min-height: 1px">
+</div>
+</section><section class="rBox rBoxWht " id="xa4a47Box" >
+<div class="rClear" style="margin-bottom: 10px;"></div><nav class="rRechts" >
+<button class="rRechts rInf" type="button" id="xa4a47Img" onclick="Rahmen.aufzu('xa4a47')"><svg fill="" height="24" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+<path class="rAuf" d="M16.59,5.41L15.17,4L12,7.17L8.83,4L7.41,5.41L12,10M7.41,18.59L8.83,20L12,16.83L15.17,20L16.58,18.59L12,14L7.41,18.59Z"></path>
+<path class="rZu" d="M12,18.17L8.83,15L7.42,16.41L12,21L16.59,16.41L15.17,15M12,5.83L15.17,9L16.58,7.59L12,3L7.41,7.59L8.83,9L12,5.83Z"></path>
+</svg></button></nav>
+<header>
+<h2 class="wG">Übersetzungen</h2></header>
+<div id="xa4a47" class="rAufZu">
+<dl class="wNrn" >
+<dd lang="en"><span class="wLng"><img loading="lazy" title="Englisch" alt="Englisch"
+src="/bedeutungenweb/en.svg" width="13" height="13">&nbsp;</span><span>who, somebody, the one who, anyone, someone, someone of importance, someone special, someone successful,<span class="rInf"> ...</span></span></dd>
+</dl>
+<dl class="wNrn">
+<dd lang="ru"><span class="wLng"><img loading="lazy" title="Russisch" alt="Russisch"
+src="/bedeutungenweb/ru.svg" width="13" height="13">&nbsp;</span><span>кто, кто-то, кто-либо, кто-то значимый, кто-то особенный, кто-то успешный</span></dd>
+<dd lang="es"><span class="wLng"><img loading="lazy" title="Spanisch" alt="Spanisch"
+src="/bedeutungenweb/es.svg" width="13" height="13">&nbsp;</span><span>alguien, quien, quién, alguien especial, alguien exitoso, alguien importante, el que, la que,<span class="rInf"> ...</span></span></dd>
+<dd lang="fr"><span class="wLng"><img loading="lazy" title="Französisch" alt="Französisch"
+src="/bedeutungenweb/fr.svg" width="13" height="13">&nbsp;</span><span>qui, quelqu'un, quelqu’un, celle qui, celui qui, qui que ce soit, une personne</span></dd>
+<dd lang="tr"><span class="wLng"><img loading="lazy" title="Türkisch" alt="Türkisch"
+src="/bedeutungenweb/tr.svg" width="13" height="13">&nbsp;</span><span>kim, başarılı biri, birisi, önemli biri, özel biri</span></dd>
+<dd lang="pt"><span class="wLng"><img loading="lazy" title="Portugiesisch" alt="Portugiesisch"
+src="/bedeutungenweb/pt.svg" width="13" height="13">&nbsp;</span><span>quem, alguém, alguém bem-sucedido, alguém especial, alguém importante, aquela, aquele, aquele que,<span class="rInf"> ...</span></span></dd>
+<dd lang="it"><span class="wLng"><img loading="lazy" title="Italienisch" alt="Italienisch"
+src="/bedeutungenweb/it.svg" width="13" height="13">&nbsp;</span><span>chi, qualcuno</span></dd>
+<dd lang="ro"><span class="wLng"><img loading="lazy" title="Rumänisch" alt="Rumänisch"
+src="/bedeutungenweb/ro.svg" width="13" height="13">&nbsp;</span><span>cine, cineva, care, cea care, cel care, cineva de succes, cineva important, cineva special</span></dd>
+<dd lang="hu"><span class="wLng"><img loading="lazy" title="Ungarisch" alt="Ungarisch"
+src="/bedeutungenweb/hu.svg" width="13" height="13">&nbsp;</span><span>aki, ki, valaki, valaki fontos, valaki különleges, valaki sikeres</span></dd>
+<dd lang="pl"><span class="wLng"><img loading="lazy" title="Polnisch" alt="Polnisch"
+src="/bedeutungenweb/pl.svg" width="13" height="13">&nbsp;</span><span>kto, ktoś, ktoś odnoszący sukcesy, ktoś ważny, ktoś wyjątkowy, która, którzy, któż</span></dd>
+<dd lang="el"><span class="wLng"><img loading="lazy" title="Griechisch" alt="Griechisch"
+src="/bedeutungenweb/el.svg" width="13" height="13">&nbsp;</span><span>ποιος, αυτή που, αυτός που, κάποιος, κάποιος επιτυχημένος, κάποιος ιδιαίτερος, κάποιος σημαντικός, ποιοι</span></dd>
+<dd lang="nl"><span class="wLng"><img loading="lazy" title="Niederländisch" alt="Niederländisch"
+src="/bedeutungenweb/nl.svg" width="13" height="13">&nbsp;</span><span>degene, iemand, wie, die, wie iemand</span></dd>
+<dd lang="cs"><span class="wLng"><img loading="lazy" title="Tschechisch" alt="Tschechisch"
+src="/bedeutungenweb/cs.svg" width="13" height="13">&nbsp;</span><span>kdo, který, někdo, někdo významný, někdo zvláštní, někdo úspěšný</span></dd>
+<dd lang="sv"><span class="wLng"><img loading="lazy" title="Schwedisch" alt="Schwedisch"
+src="/bedeutungenweb/sv.svg" width="13" height="13">&nbsp;</span><span>den som, någon, vem, inte vemsomhelst, någon av betydelse, någon framgångsrik, någon speciell, vilka</span></dd>
+<dd lang="da"><span class="wLng"><img loading="lazy" title="Dänisch" alt="Dänisch"
+src="/bedeutungenweb/da.svg" width="13" height="13">&nbsp;</span><span>hvem, den der, denne, nogen, nogen betydningsfuld, nogen succesfuld, nogen særlig</span></dd>
+<dd lang="ja"><span class="wLng"><img loading="lazy" title="Japanisch" alt="Japanisch"
+src="/bedeutungenweb/ja.svg" width="13" height="13">&nbsp;</span><span>誰, 誰か, 成功した人, 特別な人, 重要な人</span></dd>
+<dd lang="ca"><span class="wLng"><img loading="lazy" title="Katalanisch" alt="Katalanisch"
+src="/bedeutungenweb/ca.svg" width="13" height="13">&nbsp;</span><span>qui, algú, algú especial, algú exitós, algú important, quins</span></dd>
+<dd lang="fi"><span class="wLng"><img loading="lazy" title="Finnisch" alt="Finnisch"
+src="/bedeutungenweb/fi.svg" width="13" height="13">&nbsp;</span><span>kuka, erityinen, joka, joku, ken, ketkä, merkittävä, onnistunut,<span class="rInf"> ...</span></span></dd>
+<dd lang="no"><span class="wLng"><img loading="lazy" title="Norwegisch" alt="Norwegisch"
+src="/bedeutungenweb/no.svg" width="13" height="13">&nbsp;</span><span>hvem, de som, den som, noen, noen av betydning, noen spesiell, noen vellykket</span></dd>
+<dd lang="eu"><span class="wLng"><img loading="lazy" title="Baskisch" alt="Baskisch"
+src="/bedeutungenweb/eu.svg" width="13" height="13">&nbsp;</span><span>nor, norbait, nork</span></dd>
+<dd lang="sr"><span class="wLng"><img loading="lazy" title="Serbisch" alt="Serbisch"
+src="/bedeutungenweb/sr.svg" width="13" height="13">&nbsp;</span><span>ko, neko, neko od značaja, neko poseban, neko uspešan, onaj ko, ко, тко</span></dd>
+<dd lang="mk"><span class="wLng"><img loading="lazy" title="Mazedonisch" alt="Mazedonisch"
+src="/bedeutungenweb/mk.svg" width="13" height="13">&nbsp;</span><span>кој, ко, кои, која, некој, некој од значење, некој посебен, некој успешен,<span class="rInf"> ...</span></span></dd>
+<dd lang="sl"><span class="wLng"><img loading="lazy" title="Slowenisch" alt="Slowenisch"
+src="/bedeutungenweb/sl.svg" width="13" height="13">&nbsp;</span><span>kdo, kdo vse, kdorkoli, nekdo pomemben, nekdo poseben, nekdo uspešen</span></dd>
+<dd lang="sk"><span class="wLng"><img loading="lazy" title="Slowakisch" alt="Slowakisch"
+src="/bedeutungenweb/sk.svg" width="13" height="13">&nbsp;</span><span>kto, ktorý, niekto, niekto významný, niekto zvláštny, niekto úspešný</span></dd>
+<dd lang="bs"><span class="wLng"><img loading="lazy" title="Bosnisch" alt="Bosnisch"
+src="/bedeutungenweb/bs.svg" width="13" height="13">&nbsp;</span><span>ko, neko, neko od značaja, neko poseban, neko uspješan, onaj koji</span></dd>
+<dd lang="hr"><span class="wLng"><img loading="lazy" title="Kroatisch" alt="Kroatisch"
+src="/bedeutungenweb/hr.svg" width="13" height="13">&nbsp;</span><span>ko, tko, koji, netko, netko poseban, netko uspješan, netko važan, onaj koji</span></dd>
+<dd lang="uk"><span class="wLng"><img loading="lazy" title="Ukrainisch" alt="Ukrainisch"
+src="/bedeutungenweb/uk.svg" width="13" height="13">&nbsp;</span><span>хто, котрий, хтось, хтось важливий, хтось особливий, хтось успішний</span></dd>
+<dd lang="bg"><span class="wLng"><img loading="lazy" title="Bulgarisch" alt="Bulgarisch"
+src="/bedeutungenweb/bg.svg" width="13" height="13">&nbsp;</span><span>кой, кои, който, която, някой, някой значим, някой специален, някой успешен</span></dd>
+<dd lang="be"><span class="wLng"><img loading="lazy" title="Belorussisch" alt="Belorussisch"
+src="/bedeutungenweb/be.svg" width="13" height="13">&nbsp;</span><span>хто, хтосьці, хтосьці асаблівы, хтосьці значны, хтосьці паспяховы</span></dd>
+<dd lang="id"><span class="wLng"><img loading="lazy" title="Indonesisch" alt="Indonesisch"
+src="/bedeutungenweb/id.svg" width="13" height="13">&nbsp;</span><span>dia yang, selebriti, seseorang, siapa, siapa saja, tokoh, yang</span></dd>
+<dd lang="vi"><span class="wLng"><img loading="lazy" title="Vietnamesisch" alt="Vietnamesisch"
+src="/bedeutungenweb/vi.svg" width="13" height="13">&nbsp;</span><span>ai, ai mà, ai đó, bất kỳ ai, kẻ, ngôi sao, người, nhân vật</span></dd>
+<dd lang="uz"><span class="wLng"><img loading="lazy" title="Usbekisch" alt="Usbekisch"
+src="/bedeutungenweb/uz.svg" width="13" height="13">&nbsp;</span><span>birov, katta odam, kim, kimdir, kimki, nufuzli shaxs, o kimki</span></dd>
+<dd lang="hi"><span class="wLng"><img loading="lazy" title="Hindi" alt="Hindi"
+src="/bedeutungenweb/hi.svg" width="13" height="13">&nbsp;</span><span>कोई, कौन, जो, बड़ी हस्ती, वह जो, हस्ती</span></dd>
+<dd lang="zh"><span class="wLng"><img loading="lazy" title="Chinesisch" alt="Chinesisch"
+src="/bedeutungenweb/zh.svg" width="13" height="13">&nbsp;</span><span>任何人, 名人, 大人物, 她, 某人, 者, 谁</span></dd>
+<dd lang="th"><span class="wLng"><img loading="lazy" title="Thailändisch" alt="Thailändisch"
+src="/bedeutungenweb/th.svg" width="13" height="13">&nbsp;</span><span>คนดัง, คนสำคัญ, ผู้, ผู้ที่, เธอผู้ที่, ใคร, ใครก็ได้, ใครสักคน</span></dd>
+<dd lang="ko"><span class="wLng"><img loading="lazy" title="Koreanisch" alt="Koreanisch"
+src="/bedeutungenweb/ko.svg" width="13" height="13">&nbsp;</span><span>거물, 그녀, 누구, 누군가, 아무나, 유력자, 자</span></dd>
+<dd lang="az"><span class="wLng"><img loading="lazy" title="Aserbaidschanisch" alt="Aserbaidschanisch"
+src="/bedeutungenweb/az.svg" width="13" height="13">&nbsp;</span><span>kim, kimsə, nüfuzlu şəxs, o ki, o kəs ki, ulduz</span></dd>
+<dd lang="ka"><span class="wLng"><img loading="lazy" title="Georgisch" alt="Georgisch"
+src="/bedeutungenweb/ka.svg" width="13" height="13">&nbsp;</span><span>ვარსკვლავი, ვინ, ვინმე, ვინც, ცნობილი პირი</span></dd>
+<dd lang="bn"><span class="wLng"><img loading="lazy" title="Bengalisch" alt="Bengalisch"
+src="/bedeutungenweb/bn.svg" width="13" height="13">&nbsp;</span><span>যিনি, কে, কেউ, বিশিষ্টজন, যে, যে কেউ, সেলিব্রিটি</span></dd>
+<dd lang="sq"><span class="wLng"><img loading="lazy" title="Albanisch" alt="Albanisch"
+src="/bedeutungenweb/sq.svg" width="13" height="13">&nbsp;</span><span>ai që, ajo që, dikush, kush, kushdo, personalitet, yll</span></dd>
+<dd lang="mr"><span class="wLng"><img loading="lazy" title="Marathi" alt="Marathi"
+src="/bedeutungenweb/mr.svg" width="13" height="13">&nbsp;</span><span>कोण, कोणी, कोणीतरी, जो, ती जी, मान्यवर, मोठी हस्ती</span></dd>
+<dd lang="ne"><span class="wLng"><img loading="lazy" title="Nepalesisch" alt="Nepalesisch"
+src="/bedeutungenweb/ne.svg" width="13" height="13">&nbsp;</span><span>उनी जो, को, कोही, जो, जो कोही, मान्यवर, सेलिब्रिटी</span></dd>
+<dd lang="te"><span class="wLng"><img loading="lazy" title="Telugu" alt="Telugu"
+src="/bedeutungenweb/te.svg" width="13" height="13">&nbsp;</span><span>ఎవరు, ఆమె, ఎవరైనా, ఎవరో, ప్రముఖుడు, వీఐపీ</span></dd>
+<dd lang="lv"><span class="wLng"><img loading="lazy" title="Lettisch" alt="Lettisch"
+src="/bedeutungenweb/lv.svg" width="13" height="13">&nbsp;</span><span>kas, kurš, kāds, personība, slavenība</span></dd>
+<dd lang="ta"><span class="wLng"><img loading="lazy" title="Tamil" alt="Tamil"
+src="/bedeutungenweb/ta.svg" width="13" height="13">&nbsp;</span><span>யார், அவள், எவர், ஒருவர், பிரபலர், முக்கியஸ்தர், யாராவது</span></dd>
+<dd lang="et"><span class="wLng"><img loading="lazy" title="Estnisch" alt="Estnisch"
+src="/bedeutungenweb/et.svg" width="13" height="13">&nbsp;</span><span>keegi, kes, kuulsus, staar</span></dd>
+<dd lang="hy"><span class="wLng"><img loading="lazy" title="Armenisch" alt="Armenisch"
+src="/bedeutungenweb/hy.svg" width="13" height="13">&nbsp;</span><span>աստղ, ինչ-որ մեկը, հեղինակություն, ով, որևէ մեկը</span></dd>
+<dd lang="ku"><span class="wLng"><img loading="lazy" title="Kurdisch" alt="Kurdisch"
+src="/bedeutungenweb/ku.svg" width="13" height="13">&nbsp;</span><span>kesek, kê, kî, navdar, ya ku, yek kes, yê ku, şexsiyet</span></dd>
+</dl>
+<dl class="wNrn" dir="rtl">
+<dd lang="he"><span class="wLng"><img loading="lazy" title="Hebräisch" alt="Hebräisch"
+src="/bedeutungenweb/he.svg" width="13" height="13"></span><span>מי&#1548; המי&#1548; מישהו&#1548; מישהו בעל משמעות&#1548; מישהו מיוחד&#1548; מישהו מצליח</span></dd>
+<dd lang="ar"><span class="wLng"><img loading="lazy" title="Arabisch" alt="Arabisch"
+src="/bedeutungenweb/ar.svg" width="13" height="13"></span><span>من&#1548; أحد&#1548; التي&#1548; الذي&#1548; شخص ذو أهمية&#1548; شخص مميز&#1548; شخص ناجح</span></dd>
+<dd lang="fa"><span class="wLng"><img loading="lazy" title="Persisch" alt="Persisch"
+src="/bedeutungenweb/fa.svg" width="13" height="13"></span><span>چه کسانی&#1548; چه کسی&#1548; کسی&#1548; کسی با اهمیت&#1548; کسی خاص&#1548; کسی موفق&#1548; کسی که&#1548; کی</span></dd>
+<dd lang="ur"><span class="wLng"><img loading="lazy" title="Urdu" alt="Urdu"
+src="/bedeutungenweb/ur.svg" width="13" height="13"></span><span>وہ&#1548; اہم شخص&#1548; جو&#1548; خاص شخص&#1548; کامیاب شخص&#1548; کس&#1548; کوئی&#1548; کون</span></dd>
+<dd>
+<span class="rInf">...</span>
+</dd>
+</dl>
+<hr>
+<a class="rKnpf rLinks" href="/artikel-pronomen/uebersetzungen/wer.htm">
+Übersetzungen <svg fill="" class="kIcn" height="10" viewBox="0 1 15 15" width="10" xmlns="http://www.w3.org/2000/svg">
+<path d="m0 9.4v-1.95h11.4l-5.25-5.05 1.35-1.4 7.5 7.5-7.5 7.5-1.35-1.4 5.25-5.2z"></path>
+</svg></a>
+</div>
+<div class="rClear" style="margin-top: 10px; min-height: 1px">
+</div>
+</section><section class="rBox rBoxWht " id="x24597Box" >
+<div class="rClear" style="margin-bottom: 10px;"></div><nav class="rRechts" >
+<button class="rRechts rInf" type="button" id="x24597Img" onclick="Rahmen.aufzu('x24597')"><svg fill="" height="24" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+<path class="rAuf" d="M16.59,5.41L15.17,4L12,7.17L8.83,4L7.41,5.41L12,10M7.41,18.59L8.83,20L12,16.83L15.17,20L16.58,18.59L12,14L7.41,18.59Z"></path>
+<path class="rZu" d="M12,18.17L8.83,15L7.42,16.41L12,21L16.59,16.41L15.17,15M12,5.83L15.17,9L16.58,7.59L12,3L7.41,7.59L8.83,9L12,5.83Z"></path>
+</svg></button></nav>
+<header>
+<h2 class="wG">Deklination</h2></header>
+<div id="x24597" class="rAufZu">
+<q>we<b>s</b><u>sen</u></q> &middot;
+-<div class="wFlxs">
+<div class="rLinks wFlx">
+<h3 class="wG">Singular</h3>
+<table><tr><td><q class="wM">wer</q></td></tr><tr><td><q class="wM">we<b>s</b><u>sen</u></q></td></tr><tr><td><q class="wM">we<b>m</b></q></td></tr><tr><td><q class="wM">we<b>n</b></q></td></tr></table>
+</div>
+<div class="rLinks wFlx">
+<h3 class="wG">Plural</h3>
+<table><tr><td>-</td></tr><tr><td>-</td></tr><tr><td>-</td></tr><tr><td>-</td></tr></table>
+</div>
+</div>
+<hr class="rClear">
+<a class="rKnpf rLinks" href="https://www.verbformen.de/deklination/artikel/wer.htm">
+Deklination <svg fill="" class="kIcn" height="10" viewBox="0 1 15 15" width="10" xmlns="http://www.w3.org/2000/svg">
+<path d="m2.83 14.4-1.38-1.38 8.06-8.06-7.28 0.141-0.0354-1.94h10.6v10.6l-1.94-0.0354 0.0354-7.39z"></path>
+</svg></a>
+</div>
+<div class="rClear" style="margin-top: 10px; min-height: 1px">
+</div>
+</section><div class="aAnz aInf rClear" style="margin: 0 0 14px 0;">
+<div id="verben.de_sitebar_1"></div>
+</div>
+</div>&nbsp;
+<div class="rClear"></div>
+<div class="rAnkr rAnkrBox" id="kommentare"></div><section class="rBox rBoxTrns " id="xee8a1Box" >
+<nav class="rRechts" >
+<button class="rRechts rInf" type="button" id="xee8a1Img" onclick="Rahmen.aufzu('xee8a1')"><svg fill="" height="24" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+<path class="rAuf" d="M16.59,5.41L15.17,4L12,7.17L8.83,4L7.41,5.41L12,10M7.41,18.59L8.83,20L12,16.83L15.17,20L16.58,18.59L12,14L7.41,18.59Z"></path>
+<path class="rZu" d="M12,18.17L8.83,15L7.42,16.41L12,21L16.59,16.41L15.17,15M12,5.83L15.17,9L16.58,7.59L12,3L7.41,7.59L8.83,9L12,5.83Z"></path>
+</svg></button></nav>
+<header>
+<h2 onclick="Rahmen.aufzu('xee8a1')">Kommentare</h2></header>
+<div id="xee8a1" class="rAufZu">
+<hr><p>
+<span class="rInf rKln">2026/05 ·</span> 
+<span class="rNoSelect rInf rKln" onclick="Rahmen.aufzu('k0c758Ant')">Antworten</span><br>
+<b>Fraeisen meint:</b> Kommentar wurde gespeichert. Nach einer inhaltlichen Prüfung wird der Kommentar freigegeben.</p>
+<div class="kAnt">	
+<div class="rZu" id="k0c758Ant">
+<div class="kFrm" id="xaeb38">
+<form method="post" action="/kommentare/anlage.htm" onsubmit="Ajax.ersetze(event,'xaeb38')">
+<div class="rMrgn">
+<select class="kBwrt rRechts" name="bewertung">
+<option value="" selected="selected">★✰✰✰✰</option>
+<option value="5">★★★★★</option>
+<option value="4">★★★★</option>
+<option value="3">★★★</option>
+<option value="2">★★</option>
+<option value="1">★</option>
+</select>
+<label for="kommentar">Kommentar:</label><br>
+<div class="rClear"></div>
+<textarea maxlength="1000" rows="5" name="kommentar" id="kommentar" required="required"></textarea>
+</div>
+<a href="/user/login/" class="rKnpf">Anmelden</a>
+<input name="pfad" type="hidden" value="/">
+<input name="url" type="hidden" value="https://www.verben.de/?w=wer">
+<input name="bezug" type="hidden" value="0c758">
+</form>
+</div></div>
+</div><p>
+<span class="rInf rKln">2025/08 ·</span> 
+<span class="rNoSelect rInf rKln" onclick="Rahmen.aufzu('k4a8c0Ant')">Antworten</span><br>
+<span style="font-size: 1.2em;">
+<span class="kAn">★★★★★</span></span><b>danke meint:</b> danke
+</p>
+<div class="kAnt">	
+<div class="rZu" id="k4a8c0Ant">
+<div class="kFrm" id="xd077d">
+<form method="post" action="/kommentare/anlage.htm" onsubmit="Ajax.ersetze(event,'xd077d')">
+<div class="rMrgn">
+<select class="kBwrt rRechts" name="bewertung">
+<option value="" selected="selected">★✰✰✰✰</option>
+<option value="5">★★★★★</option>
+<option value="4">★★★★</option>
+<option value="3">★★★</option>
+<option value="2">★★</option>
+<option value="1">★</option>
+</select>
+<label for="kommentar">Kommentar:</label><br>
+<div class="rClear"></div>
+<textarea maxlength="1000" rows="5" name="kommentar" id="kommentar" required="required"></textarea>
+</div>
+<a href="/user/login/" class="rKnpf">Anmelden</a>
+<input name="pfad" type="hidden" value="/">
+<input name="url" type="hidden" value="https://www.verben.de/?w=wer">
+<input name="bezug" type="hidden" value="4a8c0">
+</form>
+</div></div>
+</div><p>
+<span class="rInf rKln">2025/08 ·</span> 
+<span class="rNoSelect rInf rKln" onclick="Rahmen.aufzu('k5c4ffAnt')">Antworten</span><br>
+<b>danke meint:</b> vielen dank
+</p>
+<div class="kAnt">	
+<div class="rZu" id="k5c4ffAnt">
+<div class="kFrm" id="xa1711">
+<form method="post" action="/kommentare/anlage.htm" onsubmit="Ajax.ersetze(event,'xa1711')">
+<div class="rMrgn">
+<select class="kBwrt rRechts" name="bewertung">
+<option value="" selected="selected">★✰✰✰✰</option>
+<option value="5">★★★★★</option>
+<option value="4">★★★★</option>
+<option value="3">★★★</option>
+<option value="2">★★</option>
+<option value="1">★</option>
+</select>
+<label for="kommentar">Kommentar:</label><br>
+<div class="rClear"></div>
+<textarea maxlength="1000" rows="5" name="kommentar" id="kommentar" required="required"></textarea>
+</div>
+<a href="/user/login/" class="rKnpf">Anmelden</a>
+<input name="pfad" type="hidden" value="/">
+<input name="url" type="hidden" value="https://www.verben.de/?w=wer">
+<input name="bezug" type="hidden" value="5c4ff">
+</form>
+</div></div>
+</div><p>
+<span class="rInf rKln">2025/03 ·</span> 
+<span class="rNoSelect rInf rKln" onclick="Rahmen.aufzu('k274cdAnt')">Antworten</span><br>
+<b>Martin meint:</b> Genug = Достаточно (russ)</p>
+<div class="kAnt">	
+<div class="rZu" id="k274cdAnt">
+<div class="kFrm" id="xa0efa">
+<form method="post" action="/kommentare/anlage.htm" onsubmit="Ajax.ersetze(event,'xa0efa')">
+<div class="rMrgn">
+<select class="kBwrt rRechts" name="bewertung">
+<option value="" selected="selected">★✰✰✰✰</option>
+<option value="5">★★★★★</option>
+<option value="4">★★★★</option>
+<option value="3">★★★</option>
+<option value="2">★★</option>
+<option value="1">★</option>
+</select>
+<label for="kommentar">Kommentar:</label><br>
+<div class="rClear"></div>
+<textarea maxlength="1000" rows="5" name="kommentar" id="kommentar" required="required"></textarea>
+</div>
+<a href="/user/login/" class="rKnpf">Anmelden</a>
+<input name="pfad" type="hidden" value="/">
+<input name="url" type="hidden" value="https://www.verben.de/?w=wer">
+<input name="bezug" type="hidden" value="274cd">
+</form>
+</div></div>
+</div><p>
+<span class="rInf rKln">2025/03 ·</span> 
+<span class="rNoSelect rInf rKln" onclick="Rahmen.aufzu('k039e5Ant')">Antworten</span><br>
+<b>Volkan meint:</b> Diese Webseite ist echt top Ich spreche Türkisch, Deutsch, Englisch und ich kann die Wörter in allen Sprachen gleichzeitig nachgucken...Danke für so eine Webseite </p>
+<div class="kAnt">	
+<div class="rZu" id="k039e5Ant">
+<div class="kFrm" id="xd35ac">
+<form method="post" action="/kommentare/anlage.htm" onsubmit="Ajax.ersetze(event,'xd35ac')">
+<div class="rMrgn">
+<select class="kBwrt rRechts" name="bewertung">
+<option value="" selected="selected">★✰✰✰✰</option>
+<option value="5">★★★★★</option>
+<option value="4">★★★★</option>
+<option value="3">★★★</option>
+<option value="2">★★</option>
+<option value="1">★</option>
+</select>
+<label for="kommentar">Kommentar:</label><br>
+<div class="rClear"></div>
+<textarea maxlength="1000" rows="5" name="kommentar" id="kommentar" required="required"></textarea>
+</div>
+<a href="/user/login/" class="rKnpf">Anmelden</a>
+<input name="pfad" type="hidden" value="/">
+<input name="url" type="hidden" value="https://www.verben.de/?w=wer">
+<input name="bezug" type="hidden" value="039e5">
+</form>
+</div></div>
+</div><p>
+<span class="rInf rKln">2025/02 ·</span> 
+<span class="rNoSelect rInf rKln" onclick="Rahmen.aufzu('k8c6d2Ant')">Antworten</span><br>
+<b>emz meint:</b> ich habe meine Prüfung absolviert
+</p>
+<div class="kAnt">	
+<div class="rZu" id="k8c6d2Ant">
+<div class="kFrm" id="x03c1e">
+<form method="post" action="/kommentare/anlage.htm" onsubmit="Ajax.ersetze(event,'x03c1e')">
+<div class="rMrgn">
+<select class="kBwrt rRechts" name="bewertung">
+<option value="" selected="selected">★✰✰✰✰</option>
+<option value="5">★★★★★</option>
+<option value="4">★★★★</option>
+<option value="3">★★★</option>
+<option value="2">★★</option>
+<option value="1">★</option>
+</select>
+<label for="kommentar">Kommentar:</label><br>
+<div class="rClear"></div>
+<textarea maxlength="1000" rows="5" name="kommentar" id="kommentar" required="required"></textarea>
+</div>
+<a href="/user/login/" class="rKnpf">Anmelden</a>
+<input name="pfad" type="hidden" value="/">
+<input name="url" type="hidden" value="https://www.verben.de/?w=wer">
+<input name="bezug" type="hidden" value="8c6d2">
+</form>
+</div></div>
+</div><p>
+<span class="rInf rKln">2025/01 ·</span> 
+<span class="rNoSelect rInf rKln" onclick="Rahmen.aufzu('k9c3edAnt')">Antworten</span><br>
+<b>Felix meint:</b> Ich möchte Ihnen Danke für Ihre Bemühungen sagen. Das ist ein tolles romantisches Beispiel, das sehr interessant klingt. Ich hoffe, dass ich mit Ihrer Hilfe es schneller schaffen werden kann- Deutsch zu lernen. Vielen Dank.</p>
+<div class="kAnt">	
+<div class="rZu" id="k9c3edAnt">
+<div class="kFrm" id="x9e9ad">
+<form method="post" action="/kommentare/anlage.htm" onsubmit="Ajax.ersetze(event,'x9e9ad')">
+<div class="rMrgn">
+<select class="kBwrt rRechts" name="bewertung">
+<option value="" selected="selected">★✰✰✰✰</option>
+<option value="5">★★★★★</option>
+<option value="4">★★★★</option>
+<option value="3">★★★</option>
+<option value="2">★★</option>
+<option value="1">★</option>
+</select>
+<label for="kommentar">Kommentar:</label><br>
+<div class="rClear"></div>
+<textarea maxlength="1000" rows="5" name="kommentar" id="kommentar" required="required"></textarea>
+</div>
+<a href="/user/login/" class="rKnpf">Anmelden</a>
+<input name="pfad" type="hidden" value="/">
+<input name="url" type="hidden" value="https://www.verben.de/?w=wer">
+<input name="bezug" type="hidden" value="9c3ed">
+</form>
+</div></div>
+</div><p>
+<span class="rInf rKln">2021/11 ·</span> 
+<span class="rNoSelect rInf rKln" onclick="Rahmen.aufzu('keb4afAnt')">Antworten</span><br>
+<b>Varvara Gadiyeva meint:</b> Cool 😎 Webseite: woerter.ru</p>
+<div class="kAnt">	
+<div class="rZu" id="keb4afAnt">
+<div class="kFrm" id="x37579">
+<form method="post" action="/kommentare/anlage.htm" onsubmit="Ajax.ersetze(event,'x37579')">
+<div class="rMrgn">
+<select class="kBwrt rRechts" name="bewertung">
+<option value="" selected="selected">★✰✰✰✰</option>
+<option value="5">★★★★★</option>
+<option value="4">★★★★</option>
+<option value="3">★★★</option>
+<option value="2">★★</option>
+<option value="1">★</option>
+</select>
+<label for="kommentar">Kommentar:</label><br>
+<div class="rClear"></div>
+<textarea maxlength="1000" rows="5" name="kommentar" id="kommentar" required="required"></textarea>
+</div>
+<a href="/user/login/" class="rKnpf">Anmelden</a>
+<input name="pfad" type="hidden" value="/">
+<input name="url" type="hidden" value="https://www.verben.de/?w=wer">
+<input name="bezug" type="hidden" value="eb4af">
+</form>
+</div></div>
+</div><p>
+<span class="rInf rKln">2021/08 ·</span> 
+<span class="rNoSelect rInf rKln" onclick="Rahmen.aufzu('kb353eAnt')">Antworten</span><br>
+<b>Soumya meint:</b> Danke👍</p>
+<div class="kAnt">	
+<div class="rZu" id="kb353eAnt">
+<div class="kFrm" id="xa1442">
+<form method="post" action="/kommentare/anlage.htm" onsubmit="Ajax.ersetze(event,'xa1442')">
+<div class="rMrgn">
+<select class="kBwrt rRechts" name="bewertung">
+<option value="" selected="selected">★✰✰✰✰</option>
+<option value="5">★★★★★</option>
+<option value="4">★★★★</option>
+<option value="3">★★★</option>
+<option value="2">★★</option>
+<option value="1">★</option>
+</select>
+<label for="kommentar">Kommentar:</label><br>
+<div class="rClear"></div>
+<textarea maxlength="1000" rows="5" name="kommentar" id="kommentar" required="required"></textarea>
+</div>
+<a href="/user/login/" class="rKnpf">Anmelden</a>
+<input name="pfad" type="hidden" value="/">
+<input name="url" type="hidden" value="https://www.verben.de/?w=wer">
+<input name="bezug" type="hidden" value="b353e">
+</form>
+</div></div>
+</div><p>
+<span class="rInf rKln">2021/05 ·</span> 
+<span class="rNoSelect rInf rKln" onclick="Rahmen.aufzu('k40140Ant')">Antworten</span><br>
+<b>Варя  Гадиева💝 meint:</b> Ich will auch wissen, wann die Webseite erfunden wurde. Ich Danke euch wenn sie mir antworten 😚😚😍.</p>
+<div class="kAnt">	
+<div class="rZu" id="k40140Ant">
+<div class="kFrm" id="xa43ef">
+<form method="post" action="/kommentare/anlage.htm" onsubmit="Ajax.ersetze(event,'xa43ef')">
+<div class="rMrgn">
+<select class="kBwrt rRechts" name="bewertung">
+<option value="" selected="selected">★✰✰✰✰</option>
+<option value="5">★★★★★</option>
+<option value="4">★★★★</option>
+<option value="3">★★★</option>
+<option value="2">★★</option>
+<option value="1">★</option>
+</select>
+<label for="kommentar">Kommentar:</label><br>
+<div class="rClear"></div>
+<textarea maxlength="1000" rows="5" name="kommentar" id="kommentar" required="required"></textarea>
+</div>
+<a href="/user/login/" class="rKnpf">Anmelden</a>
+<input name="pfad" type="hidden" value="/">
+<input name="url" type="hidden" value="https://www.verben.de/?w=wer">
+<input name="bezug" type="hidden" value="40140">
+</form>
+</div></div>
+</div><p>
+<span class="rInf rKln">2021/05 ·</span> 
+<span class="rNoSelect rInf rKln" onclick="Rahmen.aufzu('k67f8eAnt')">Antworten</span><br>
+<b>Varvara meint:</b> Ja, es ist cool 😎 </p>
+<div class="kAnt">	
+<div class="rZu" id="k67f8eAnt">
+<div class="kFrm" id="x0ddc0">
+<form method="post" action="/kommentare/anlage.htm" onsubmit="Ajax.ersetze(event,'x0ddc0')">
+<div class="rMrgn">
+<select class="kBwrt rRechts" name="bewertung">
+<option value="" selected="selected">★✰✰✰✰</option>
+<option value="5">★★★★★</option>
+<option value="4">★★★★</option>
+<option value="3">★★★</option>
+<option value="2">★★</option>
+<option value="1">★</option>
+</select>
+<label for="kommentar">Kommentar:</label><br>
+<div class="rClear"></div>
+<textarea maxlength="1000" rows="5" name="kommentar" id="kommentar" required="required"></textarea>
+</div>
+<a href="/user/login/" class="rKnpf">Anmelden</a>
+<input name="pfad" type="hidden" value="/">
+<input name="url" type="hidden" value="https://www.verben.de/?w=wer">
+<input name="bezug" type="hidden" value="67f8e">
+</form>
+</div></div>
+</div><p>
+<span class="rInf rKln">2021/02 ·</span> 
+<span class="rNoSelect rInf rKln" onclick="Rahmen.aufzu('kf1c82Ant')">Antworten</span><br>
+<b>Maram meint:</b> Herzlichen dank fűr ihre Műhe</p>
+<div class="kAnt">	
+<div class="rZu" id="kf1c82Ant">
+<div class="kFrm" id="x225cc">
+<form method="post" action="/kommentare/anlage.htm" onsubmit="Ajax.ersetze(event,'x225cc')">
+<div class="rMrgn">
+<select class="kBwrt rRechts" name="bewertung">
+<option value="" selected="selected">★✰✰✰✰</option>
+<option value="5">★★★★★</option>
+<option value="4">★★★★</option>
+<option value="3">★★★</option>
+<option value="2">★★</option>
+<option value="1">★</option>
+</select>
+<label for="kommentar">Kommentar:</label><br>
+<div class="rClear"></div>
+<textarea maxlength="1000" rows="5" name="kommentar" id="kommentar" required="required"></textarea>
+</div>
+<a href="/user/login/" class="rKnpf">Anmelden</a>
+<input name="pfad" type="hidden" value="/">
+<input name="url" type="hidden" value="https://www.verben.de/?w=wer">
+<input name="bezug" type="hidden" value="f1c82">
+</form>
+</div></div>
+</div><p>
+<span class="rInf rKln">2020/10 ·</span> 
+<span class="rNoSelect rInf rKln" onclick="Rahmen.aufzu('k84e39Ant')">Antworten</span><br>
+<b>Bachta meint:</b> Seit wann  gibt es die Website? müsste es in meiner Seminararbeit angeben. Lieben Dank</p>
+<div class="kAnt">	
+<div class="rZu" id="k84e39Ant">
+<div class="kFrm" id="x75eda">
+<form method="post" action="/kommentare/anlage.htm" onsubmit="Ajax.ersetze(event,'x75eda')">
+<div class="rMrgn">
+<select class="kBwrt rRechts" name="bewertung">
+<option value="" selected="selected">★✰✰✰✰</option>
+<option value="5">★★★★★</option>
+<option value="4">★★★★</option>
+<option value="3">★★★</option>
+<option value="2">★★</option>
+<option value="1">★</option>
+</select>
+<label for="kommentar">Kommentar:</label><br>
+<div class="rClear"></div>
+<textarea maxlength="1000" rows="5" name="kommentar" id="kommentar" required="required"></textarea>
+</div>
+<a href="/user/login/" class="rKnpf">Anmelden</a>
+<input name="pfad" type="hidden" value="/">
+<input name="url" type="hidden" value="https://www.verben.de/?w=wer">
+<input name="bezug" type="hidden" value="84e39">
+</form>
+</div></div>
+</div><p>
+<span class="rInf rKln">2020/09 ·</span> 
+<span class="rNoSelect rInf rKln" onclick="Rahmen.aufzu('k9f6edAnt')">Antworten</span><br>
+<span style="font-size: 1.2em;">
+<span class="kAn">★★★★★</span></span><b>Marina meint:</b> Danke für die vielen nützlichen Informationen 😍</p>
+<div class="kAnt">	
+<div class="rZu" id="k9f6edAnt">
+<div class="kFrm" id="x50c9a">
+<form method="post" action="/kommentare/anlage.htm" onsubmit="Ajax.ersetze(event,'x50c9a')">
+<div class="rMrgn">
+<select class="kBwrt rRechts" name="bewertung">
+<option value="" selected="selected">★✰✰✰✰</option>
+<option value="5">★★★★★</option>
+<option value="4">★★★★</option>
+<option value="3">★★★</option>
+<option value="2">★★</option>
+<option value="1">★</option>
+</select>
+<label for="kommentar">Kommentar:</label><br>
+<div class="rClear"></div>
+<textarea maxlength="1000" rows="5" name="kommentar" id="kommentar" required="required"></textarea>
+</div>
+<a href="/user/login/" class="rKnpf">Anmelden</a>
+<input name="pfad" type="hidden" value="/">
+<input name="url" type="hidden" value="https://www.verben.de/?w=wer">
+<input name="bezug" type="hidden" value="9f6ed">
+</form>
+</div></div>
+<p>
+<span class="rInf rKln">2021/11</span><br>
+<b>Varvara Gadiyeva meint:</b> Ja ja ja JA JA JA JA 👍🏻 👍🏻👍🏻👍🏻👍🏻👍🏻👍🏻👍🏻👍🏻👍🏻👍🏻👍🏻👍🏻👍🏻👍🏻👍🏻👍🏻👍🏻👍🏻😀😍🥰😀😍🥰😂</p>
+</div><div class="kFrm" id="x52ea2">
+<form method="post" action="/kommentare/anlage.htm" onsubmit="Ajax.ersetze(event,'x52ea2')">
+<div class="rMrgn">
+<select class="kBwrt rRechts" name="bewertung">
+<option value="" selected="selected">★✰✰✰✰</option>
+<option value="5">★★★★★</option>
+<option value="4">★★★★</option>
+<option value="3">★★★</option>
+<option value="2">★★</option>
+<option value="1">★</option>
+</select>
+<label for="kommentar">Kommentar:</label><br>
+<div class="rClear"></div>
+<textarea maxlength="1000" rows="5" name="kommentar" id="kommentar" required="required"></textarea>
+</div>
+<a href="/user/login/" class="rKnpf">Anmelden</a>
+<input name="pfad" type="hidden" value="/">
+<input name="url" type="hidden" value="https://www.verben.de/?w=wer">
+</form>
+</div></div>
+<div class="rClear" style="margin-top: 10px; min-height: 1px">
+</div>
+</section><footer class="rInf rKln rClear">
+<p></p>
+<p>
+* Die Definitionen stammen zum Teil aus dem Wiktionary (de.wiktionary.org) und wurden mitunter nachträglich geändert. Sie sind unter der Lizenz CC-BY-SA 3.0 (creativecommons.org/licenses/by-sa/3.0) frei verfügbar. Die Urheber können über folgende Links nachgeschlagen werden: <a href="https://de.wiktionary.org/wiki?curid=59174" rel="nofollow" target="WIKTIONARY">59174</a>, <a href="https://de.wiktionary.org/wiki?curid=59174" rel="nofollow" target="WIKTIONARY">59174</a>, <a href="https://de.wiktionary.org/wiki?curid=59174" rel="nofollow" target="WIKTIONARY">59174</a>, <a href="https://de.wiktionary.org/wiki?curid=59174" rel="nofollow" target="WIKTIONARY">59174</a></p>
+</footer>
+<div class="rDnb"><div class="aAnz aDnb" style="position: fixed;">
+<div id="verben.de_sky_1"></div>
+</div>
+</div></div><div class="rClear"></div></article><footer><div><div class="rLinks rFuss">
+<h2>Kontakt</h2>
+<p>Netzverb® Deutsch<br>
+Inh. <a href="https://www.netzverb.de/andreas.htm">Andreas Göbel</a><br>
+Alte Buchholzer Str. 8<br>
+D-09487 Schlettau</p>
+<p>Telefon: +49 3733 6196894<br>
+E-Mail: info@netzverb.de</p>
+<p>Facebook: <a rel="nofollow" href="https://www.facebook.com/Netzverb">facebook.com/Netzverb</a><br>
+Twitter: <a rel="nofollow" href="https://twitter.com/Netzverb">twitter.com/Netzverb</a><br>
+Youtube: <a href="https://www.youtube.com/Netzverb-Deutsch">youtube.com/Netzverb</a><br>
+TikTok: <a href="https://www.tiktok.com/@netzverb">tiktok.com/@Netzverb</a><br>
+Instagram: <a href="https://www.instagram.com/netzverb/">instagram.com/Netzverb</a><br>
+Pinterest: <a href="https://www.pinterest.de/netzverb/">pinterest.de/Netzverb</a><br>
+Tumblr: <a href="https://netzverb.tumblr.com/">netzverb.tumblr.com</a><br>
+Google Play Store: <a href="https://play.google.com/store/apps/dev?id=7197812532170593543">play.google.com/Netzverb</a><br>
+Apple App Store: <a href="https://apps.apple.com/de/developer/andreas-goebel/id1522285303">apps.apple.com/andreas-goebel</a><br></p>
+</div>
+<div class="rLinks rFuss">
+<h2>Netzverb</h2>
+<p>Netzwerk der deutschen Sprache<br>
+<a rel="nofollow" href="https://www.netzverb.de">www.netzverb.de</a></p>
+<p>Deutsche Flexion: <a rel="nofollow" href="https://www.verbformen.de">verbformen.de</a><br>
+Deutsches Wörterbuch: <a rel="nofollow" href="https://www.verben.de">verben.de</a><br>
+Deutsche Grammatik: <a rel="nofollow" href="//www.sprachlehre.de">sprachlehre.de</a><br>
+Deutsche Sätze: <a rel="nofollow" href="//www.satzapp.de">satzapp.de</a><br>
+Deutsche Wörter: <a rel="nofollow" href="https://www.verblisten.de">verblisten.de</a><br>
+Sprachforum: <a rel="nofollow" href="http://www.konjugation.de">konjugation.de</a><br></p>
+<p><strong>Apps</strong><br>
+<a href="https://netzverb-dictionary.app/">Netzverb Wörterbuch App</a><br>
+Android: <a href="https://play.google.com/store/apps/details?id=de.verbformen.app">Netzverb Wörterbuch</a><br>
+iOS: <a href="https://apps.apple.com/app/id1638334347">Netzverb Wörterbuch</a><br></p>
+<p><strong>KI und Chat</strong><br>
+Netzverb Chat: <a href="/chat">chat</a></p>
+</div>
+<div class="rLinks rFuss">
+<h2>Hinweise</h2>
+<p><a href="//www.netzverb.de/impressum.htm">Impressum</a><br>
+<a href="//www.netzverb.de/impressum.htm">Nutzungsbedingungen</a></p>
+<h2>Datenschutz</h2>
+<p><a href="//www.netzverb.de/datenschutz.htm">Datenschutzerklärung</a><br>
+<a href="#" onclick="window._sp_.gdpr.loadPrivacyManagerModal(527153)">Einwilligungen</a></p>
+<a href="/user/login/">Anmelden</a>
+</div>
+<div class="rClear">
+<a href="https://creativecommons.org/licenses/by-sa/4.0/" rel="nofollow">
+<svg fill="#fff" fill-opacity="0.6" height="26" viewBox="0 0 26 26" width="26" xmlns="http://www.w3.org/2000/svg">
+<path d="m13 0c3.6 0 6.7 1.3 9.3 3.8 1.2 1.2 2.2 2.6 2.8 4.2 0.6 1.6 0.9 3.3 0.9 5 0 1.8-0.3 3.5-0.9 5 -0.6 1.6-1.5 2.9-2.8 4.1 -1.3 1.3-2.7 2.2-4.3 2.9 -1.6 0.7-3.3 1-5 1s-3.4-0.3-4.9-1c-1.6-0.6-3-1.6-4.3-2.9 -1.3-1.2-2.2-2.6-2.8-4.2 -0.6-1.5-1-3.2-1-4.9s0.3-3.4 1-5c0.7-1.6 1.6-3 2.9-4.3 2.5-2.5 5.5-3.8 9.1-3.8Zm0 2.3c-3 0-5.5 1-7.5 3.1 -1 1-1.8 2.2-2.3 3.5 -0.5 1.3-0.8 2.6-0.8 4 0 1.4 0.3 2.7 0.8 4 0.5 1.3 1.3 2.4 2.4 3.5s2.2 1.8 3.5 2.3c1.3 0.5 2.6 0.8 4 0.8 1.4 0 2.7-0.3 4.1-0.8s2.5-1.3 3.5-2.3c2-2 3-4.5 3-7.4 0-1.4-0.3-2.8-0.8-4.1 -0.5-1.3-1.2-2.4-2.2-3.4 -2.1-2.1-4.6-3.1-7.6-3.1Zm-0.2 8.5l-1.7 0.9c-0.2-0.4-0.4-0.7-0.7-0.8 -0.3-0.2-0.5-0.2-0.8-0.2 -1.2 0-1.7 0.8-1.7 2.3 0 0.7 0.1 1.3 0.4 1.7 0.3 0.4 0.7 0.6 1.3 0.6 0.8 0 1.3-0.4 1.6-1.1l1.6 0.8c-0.3 0.6-0.8 1.1-1.4 1.5 -0.6 0.4-1.3 0.5-2 0.5 -1.2 0-2.1-0.4-2.8-1.1 -0.7-0.7-1.1-1.7-1.1-3 0-1.2 0.4-2.2 1.1-2.9 0.7-0.7 1.6-1.1 2.7-1.1 1.6 0 2.8 0.6 3.5 1.9Zm7.5 0l-1.7 0.9c-0.2-0.4-0.4-0.7-0.7-0.8 -0.3-0.2-0.5-0.2-0.8-0.2 -1.2 0-1.7 0.8-1.7 2.3 0 0.7 0.1 1.3 0.4 1.7 0.3 0.4 0.7 0.6 1.3 0.6 0.8 0 1.3-0.4 1.6-1.1l1.6 0.8c-0.4 0.6-0.8 1.1-1.4 1.5 -0.6 0.4-1.3 0.5-2 0.5 -1.2 0-2.1-0.4-2.8-1.1 -0.7-0.7-1.1-1.7-1.1-3 0-1.2 0.4-2.2 1.1-2.9 0.7-0.7 1.6-1.1 2.7-1.1 1.6 0 2.8 0.6 3.4 1.9Z"></path>
+</svg>
+<svg fill="#fff" fill-opacity="0.6" height="26" viewBox="0 0 26 26" width="26" xmlns="http://www.w3.org/2000/svg">
+<path d="m13 0c3.7 0 6.7 1.3 9.2 3.8 2.5 2.6 3.8 5.6 3.8 9.2 0 3.7-1.2 6.7-3.7 9.1 -2.6 2.6-5.8 3.9-9.3 3.9 -3.6 0-6.6-1.3-9.2-3.8 -2.5-2.6-3.8-5.6-3.8-9.2 0-3.6 1.3-6.6 3.8-9.2 2.5-2.5 5.6-3.8 9.2-3.8Zm0.1 2.3c-3 0-5.4 1-7.5 3.1 -2.1 2.2-3.2 4.7-3.2 7.6 0 2.9 1.1 5.4 3.2 7.5 2 2 4.5 3.1 7.4 3.1 2.9 0 5.4-1.1 7.6-3.2 2-2 3.1-4.5 3.1-7.4s-1-5.5-3.1-7.6c-2-2.1-4.5-3.2-7.5-3.2Zm3.5 7.4v5.3h-1.5v6.3h-4v-6.3h-1.5v-5.3c0-0.2 0.1-0.4 0.2-0.6 0.2-0.2 0.4-0.2 0.6-0.2h5.3c0.2 0 0.4 0.1 0.6 0.2 0.2 0.2 0.3 0.4 0.3 0.6Zm-5.4-3.4c0-1.2 0.6-1.8 1.8-1.8s1.8 0.6 1.8 1.8c0 1.2-0.6 1.8-1.8 1.8 -1.2 0-1.8-0.6-1.8-1.8Z"></path>
+</svg>
+<svg fill="#fff" fill-opacity="0.6" height="26" viewBox="0 0 26 26" width="26" xmlns="http://www.w3.org/2000/svg">
+<path d="m13 0c3.6 0 6.7 1.3 9.2 3.8 2.5 2.5 3.8 5.6 3.8 9.2 0 3.6-1.2 6.7-3.7 9.1 -2.6 2.6-5.7 3.9-9.3 3.9 -3.5 0-6.6-1.3-9.2-3.8 -2.5-2.6-3.8-5.6-3.8-9.2 0-3.5 1.3-6.6 3.8-9.2 2.5-2.5 5.6-3.8 9.2-3.8Zm0 2.3c-3 0-5.4 1-7.5 3.1 -2.1 2.2-3.2 4.7-3.2 7.5 0 2.9 1.1 5.4 3.2 7.5 2.1 2.1 4.6 3.2 7.5 3.2 2.9 0 5.4-1.1 7.6-3.2 2.1-2 3.1-4.5 3.1-7.4 0-3-1-5.5-3.1-7.5 -2-2.2-4.5-3.2-7.4-3.2Zm-5.7 8.9c0.3-1.6 0.9-2.9 1.9-3.7 1-0.9 2.3-1.3 3.8-1.3 2.1 0 3.7 0.7 4.9 2 1.2 1.3 1.8 3 1.8 5.1 0 2-0.6 3.7-1.9 5 -1.3 1.3-2.9 2-4.9 2 -1.5 0-2.7-0.4-3.8-1.3s-1.7-2.1-1.9-3.8h3.3c0.1 1.6 1 2.4 2.9 2.4 0.9 0 1.7-0.4 2.2-1.2 0.6-0.8 0.8-1.8 0.8-3.2 0-1.4-0.3-2.4-0.8-3.1 -0.5-0.7-1.2-1.1-2.2-1.1 -1.7 0-2.7 0.8-2.9 2.3h1l-2.6 2.6 -2.6-2.6 1 0Z"></path>
+</svg>
+</a>
+<p>Alle originären Inhalte auf dieser Website sind, soweit nichts anderes vermerkt oder mit abweichendem Copyright Hinweis versehen, unter der offenen Lizenz <a href="https://creativecommons.org/licenses/by-sa/4.0/" rel="license nofollow" target="_blank">CC BY-SA 4.0</a> <em>(https://creativecommons.org/licenses/by-sa/4.0)</em> verfügbar. Die Inhalte dürfen somit frei und dauerhaft verwendet, kopiert und geändert werden und eignen sich im Rahmen von Open Educational Resources (OER) als Lehrmaterial. Bei einer Veröffentlichung ist als Urheber <em>"Netzverb (<a href="https://www.verben.de/">www.verben.de</a>)"</em> mit Verlinkung auf <em>https://www.verben.de/</em> zu nennen. Mehr Informationen stehen in den <a rel="nofollow" href="//www.netzverb.de/impressum.htm">Nutzungsbedingungen</a>.</p>
+</div>
+<span class="rInf rKln">46 ms</span>
+<script type="application/ld+json">{
+"@context": "http://schema.org",
+"@type": "WebSite",
+"url": "https://www.verben.de/",
+"potentialAction": {
+"@type": "SearchAction",
+"target": "https://www.verben.de/suche/?w={search_term_string}",
+"query-input": "required name=search_term_string"
+},
+"author": { "@id": "http://www.netzverb.de/" },
+"publisher": { "@id": "http://www.netzverb.de/" }
+}</script>
+<script async>
+document.cookie = "jsok=1; path=/; SameSite=Lax";
+</script>
+<script type="application/ld+json">[
+{
+"@context": "http://schema.org/",
+"@type": "SiteNavigationElement",
+"name":"Bedeutungen",
+"url":"https://www.verben.de/artikel-pronomen/bedeutungen/wer.htm"
+},
+{
+"@context": "http://schema.org/",
+"@type": "SiteNavigationElement",
+"name":"Übersetzungen",
+"url":"https://www.verben.de/artikel-pronomen/uebersetzungen/wer.htm"
+},
+{
+"@context": "http://schema.org/",
+"@type": "SiteNavigationElement",
+"name":"Synonyme",
+"url":"https://www.verben.de/artikel-pronomen/synonyme/wer.htm"
+},
+{
+"@context": "http://schema.org/",
+"@type": "SiteNavigationElement",
+"name":"Definitionen",
+"url":"https://www.verben.de/artikel-pronomen/wer.htm"
+}
+]</script>
+</div></footer><script async type="text/plain" class="cmplazyload" data-cmp-vendor="s26" data-cmp-src="https://www.googletagmanager.com/gtag/js?id=1466848-16""></script>
+<script>
+window.dataLayer = window.dataLayer || [];
+function gtag(){dataLayer.push(arguments);}
+gtag('js', new Date());
+gtag('config', 'UA-1466848-16', { 'anonymize_ip': true });
+</script>
+<script defer>
+Ajax.loadDefJs('google-login-script');
+document.getElementById('fallback-google-login')?.remove();
+Ajax.loadDefJs('apple-login-script');
+document.getElementById('fallback-apple-login')?.remove();
+</script>pt>
+</body>
+</html>

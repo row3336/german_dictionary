@@ -54,12 +54,16 @@ def summary_url(word, type_hint=None):
     """The .de summary page URL for a word (query encoded).
 
     With a `type_hint` that maps to a verben.de type page (preposition/adverb/
-    conjunction), return that dedicated page so the lookup is not hijacked by a
-    same-spelling noun/verb homonym on verbformen's `?w=` search. Otherwise fall
-    back to the verbformen summary search.
+    conjunction/partikel), return that dedicated page so the lookup is not hijacked
+    by a same-spelling noun/verb homonym on verbformen's `?w=` search. Pronouns have
+    no /segment/ page but a `?w=&id=pronomen:` query on verben.de selects the pronoun
+    entry. Otherwise fall back to the verbformen summary search.
     """
     w = quote(str(word or "").strip())
-    seg = TYPE_URL_SEGMENTS.get(str(type_hint or "").strip().lower())
+    hint = str(type_hint or "").strip().lower()
+    if hint == "pronomen":
+        return f"{VERBEN_BASE}/?w={w}&id=pronomen:{w}"
+    seg = TYPE_URL_SEGMENTS.get(hint)
     if seg:
         return f"{VERBEN_BASE}/{seg}/{w}.htm"
     return f"{BASE}/?w={w}"

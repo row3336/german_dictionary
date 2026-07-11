@@ -309,6 +309,22 @@ class TypeHintTest(unittest.TestCase):
             {"type": "praeposition", "headword": "aus", "has_entry": True},
         )
 
+    def test_detect_recognises_generic_definition_page(self):
+        # pronoun pages use a generic "Definition von <word>" h1 (no type word) —
+        # still a real entry, type left to the hint
+        self.assertEqual(
+            detect_type_and_headword(load("wer_pronomen_summary.html")),
+            {"type": "", "headword": "wer", "has_entry": True},
+        )
+
+    def test_pronomen_page_full_card(self):
+        e = parse_de(load("wer_pronomen_summary.html"), query="wer", type_hint="pronomen")
+        self.assertEqual(e["type"], "pronomen")
+        self.assertEqual(e["german"], "wer")
+        self.assertEqual(e["cefr_level"], "A1")
+        self.assertIn("кто", e["russian"])
+        self.assertEqual(e["_flags"], [])  # generic page is a real entry -> no no_card
+
     def test_detect_recognises_partikel_page(self):
         self.assertEqual(
             detect_type_and_headword(load("ja_partikel_summary.html")),

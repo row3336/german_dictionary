@@ -36,9 +36,13 @@ class UrlTest(unittest.TestCase):
         # case-insensitive hint
         self.assertEqual(F.summary_url("aus", "Praeposition"), "https://www.verben.de/praepositionen/aus.htm")
 
+    def test_summary_url_pronomen_uses_verben_query(self):
+        # pronouns have no /segment/ page; a ?w=&id=pronomen: query selects the entry
+        self.assertEqual(F.summary_url("wer", "pronomen"), "https://www.verben.de/?w=wer&id=pronomen:wer")
+
     def test_summary_url_unmapped_hint_falls_back(self):
         # a hint without a type page (or none) falls back to the ?w= search
-        self.assertEqual(F.summary_url("wer", "pronomen"), "https://www.verbformen.de/?w=wer")
+        self.assertEqual(F.summary_url("x", "phrase"), "https://www.verbformen.de/?w=x")
         self.assertEqual(F.summary_url("aus", ""), "https://www.verbformen.de/?w=aus")
 
     def test_conjugation_url_from_verb_summary(self):
