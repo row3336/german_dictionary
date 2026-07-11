@@ -3,6 +3,9 @@ weak / topics / verbs / learning-queue), free-text word lookup -> word card ->
 clarify_fields entry, and the DB_SEARCH / DB_SEARCH_VIEW state handlers.
 """
 
+import re
+from datetime import date
+
 from telegram import ReplyKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
@@ -345,6 +348,35 @@ def _format_weak_form_line(entry):
     return f"{word} — {forms}"
 
 
+def _list_filename(list_name):
+    """db_<list>_<date>.txt with a filesystem-safe list token."""
+    safe = re.sub(r"[^\w.-]+", "_", str(list_name).strip()) or "list"
+    return f"db_{safe}_{date.today().isoformat()}.txt"
+
+
+async def _send_lines_or_file(message, body, list_name, markup, caption=None):
+    """Send a db_search listing inline or as a file (T6, owner decision 11.07).
+
+    Short output (fits one message) stays inline as before; anything that would
+    need 2+ messages goes as ONE .txt document instead of a message series
+    (rate-limiter friendly, easier to scroll on a PC). The reply keyboard rides
+    on the same message either way."""
+    chunks = _split_text_chunks(body)
+    if len(chunks) <= 1:
+        await message.reply_text(
+            f"```text\n{body}\n```",
+            reply_markup=markup,
+            parse_mode="Markdown",
+        )
+        return
+    await message.reply_document(
+        document=body.encode("utf-8"),
+        filename=_list_filename(list_name),
+        caption=caption or body.split("\n", 1)[0].strip()[:200],
+        reply_markup=markup,
+    )
+
+
 async def _send_db_search_prompt(update: Update, user_id, prefix_text=None):
     """Handle send db search prompt."""
     text = t(_user_interface_lang(user_id), "search_prompt")
@@ -387,14 +419,7 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return DB_SEARCH
         lines = [f"topic {text}: {len(entries)} words", ""]
         lines.extend(_format_topic_words_line(entry) for entry in entries)
-        chunks = _split_text_chunks("\n".join(lines))
-        for idx, chunk in enumerate(chunks):
-            reply_markup = markup if idx == len(chunks) - 1 else None
-            await update.message.reply_text(
-                f"```text\n{chunk}\n```",
-                reply_markup=reply_markup,
-                parse_mode="Markdown",
-            )
+        await _send_lines_or_file(update.message, "\n".join(lines), f"topic_{text}", markup)
         return DB_SEARCH
     if context.user_data.get("db_search_type_pick"):
         markup, types = _db_search_type_markup(user_id)
@@ -409,14 +434,7 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return DB_SEARCH
         lines = [f"{chosen}: {len(entries)} words", ""]
         lines.extend(_format_topic_words_line(entry) for entry in entries)
-        chunks = _split_text_chunks("\n".join(lines))
-        for idx, chunk in enumerate(chunks):
-            reply_markup = markup if idx == len(chunks) - 1 else None
-            await update.message.reply_text(
-                f"```text\n{chunk}\n```",
-                reply_markup=reply_markup,
-                parse_mode="Markdown",
-            )
+        await _send_lines_or_file(update.message, "\n".join(lines), f"type_{chosen}", markup)
         return DB_SEARCH
     if action == "db_search_topics_lern":
         context.user_data.pop("db_search_topic_pick", None)
@@ -426,14 +444,7 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await _send_db_search_prompt(update, user_id, t(_user_interface_lang(user_id), "no_queued_learning"))
         lines = [f"learning queue: {len(entries)} words", ""]
         lines.extend(_format_topic_learning_line(entry) for entry in entries)
-        chunks = _split_text_chunks("\n".join(lines))
-        for idx, chunk in enumerate(chunks):
-            markup = _db_search_markup(user_id) if idx == len(chunks) - 1 else None
-            await update.message.reply_text(
-                f"```text\n{chunk}\n```",
-                reply_markup=markup,
-                parse_mode="Markdown",
-            )
+        await _send_lines_or_file(update.message, "\n".join(lines), "learning_queue", _db_search_markup(user_id))
         return DB_SEARCH
     if action == "send_learn" and context.user_data.get("db_search_weak_ids"):
         ids = list(dict.fromkeys(context.user_data.get("db_search_weak_ids") or []))
@@ -459,14 +470,10 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         blocks = _list_match_pairs(entries, _user_dict_lang(user_id))
         if not blocks:
             return await _send_db_search_prompt(update, user_id, t(_user_interface_lang(user_id), "no_matches_found"))
-        chunks = _split_text_chunks("\n\n".join(blocks))
-        for idx, chunk in enumerate(chunks):
-            markup = _db_search_markup(user_id) if idx == len(chunks) - 1 else None
-            await update.message.reply_text(
-                f"```text\n{chunk}\n```",
-                reply_markup=markup,
-                parse_mode="Markdown",
-            )
+        await _send_lines_or_file(
+            update.message, "\n\n".join(blocks), "matches", _db_search_markup(user_id),
+            caption=f"matches: {len(blocks)} pairs",
+        )
         return DB_SEARCH
     if action == "db_search_plural_match":
         context.user_data.pop("db_search_topic_pick", None)
@@ -486,14 +493,7 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             article = (e.get("article") or "").strip()
             german = _cap_word(e.get("german", ""))
             lines.append(f"{article} {german}".strip())
-        chunks = _split_text_chunks("\n".join(lines))
-        for idx, chunk in enumerate(chunks):
-            markup = _db_search_markup(user_id) if idx == len(chunks) - 1 else None
-            await update.message.reply_text(
-                f"```text\n{chunk}\n```",
-                reply_markup=markup,
-                parse_mode="Markdown",
-            )
+        await _send_lines_or_file(update.message, "\n".join(lines), "plural_match", _db_search_markup(user_id))
         return DB_SEARCH
     if action == "db_search_weak_words":
         context.user_data.pop("db_search_topic_pick", None)
@@ -504,14 +504,10 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await _send_db_search_prompt(update, user_id, t(_user_interface_lang(user_id), "no_weak_words"))
         context.user_data["db_search_weak_ids"] = [x.get("id") for x in entries if x.get("id")]
         lines = [_format_weak_form_line(entry) for entry in entries]
-        chunks = _split_text_chunks("\n\n".join(lines))
-        for idx, chunk in enumerate(chunks):
-            markup = _db_search_weak_markup(user_id) if idx == len(chunks) - 1 else None
-            await update.message.reply_text(
-                f"```text\n{chunk}\n```",
-                reply_markup=markup,
-                parse_mode="Markdown",
-            )
+        await _send_lines_or_file(
+            update.message, "\n\n".join(lines), "weak_words", _db_search_weak_markup(user_id),
+            caption=f"weak words: {len(entries)}",
+        )
         return DB_SEARCH
     if action == "db_search_topic_words":
         context.user_data["db_search_words_lists_menu"] = True
