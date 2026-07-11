@@ -50,6 +50,7 @@ from .vf_file import (
     render_review_json,
     review_filename,
 )
+from .vf_review_html import render_review_html, review_html_filename
 
 # Rough per-word estimates, shown with a "≈" so no false precision. Average of a
 # single summary fetch and a verb's summary+conjugation, plus the slow-drip delay.
@@ -181,13 +182,23 @@ def _render(db_path, job_id):
 
 
 async def _send_review_file(bot, chat_id, job_id, counts):
-    """Build the review JSON for a finished/partial/stopped job and send it."""
-    data = render_review_json(build_review_document(get_db_path(), job_id)).encode("utf-8")
+    """Build the review for a finished/partial/stopped job and send it: the JSON
+    (the apply artifact of record) plus the interactive HTML companion (todo T8) —
+    the owner reviews in a browser and downloads a ready apply-JSON from there."""
+    doc = build_review_document(get_db_path(), job_id)
+    data = render_review_json(doc).encode("utf-8")
     caption = f"🌐 VF review — {counts['done']} parsed, {counts['error']} errors. Edit and send back to apply."
     try:
         await bot.send_document(chat_id=chat_id, document=data, filename=review_filename(job_id), caption=caption)
     except Exception:
         await bot.send_message(chat_id=chat_id, text="VF parsing finished, but sending the review file failed.")
+    html = render_review_html(doc).encode("utf-8")
+    html_caption = "🖥 Review UI — open in a browser, untick what you don't want, then send the downloaded apply-JSON back."
+    try:
+        await bot.send_document(chat_id=chat_id, document=html, filename=review_html_filename(job_id), caption=html_caption)
+    except Exception:
+        # best-effort companion: the JSON above is enough to apply
+        await bot.send_message(chat_id=chat_id, text="Review HTML could not be sent; the JSON above still works.")
 
 
 async def _make_progress_cb(bot, chat_id, job_id):

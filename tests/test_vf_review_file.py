@@ -65,14 +65,21 @@ class ReviewFileTest(unittest.TestCase):
         self.assertEqual(err["_review"]["error"], "http 429")
 
     def test_send_review_file(self):
+        # T8: the review now ships as TWO documents — the apply JSON plus the
+        # interactive HTML companion built from the same document.
         bot = _FakeBot()
         counts = JS.job_counts(self.db, self.jid)
         asyncio.run(AF._send_review_file(bot, 100, self.jid, counts))
-        self.assertEqual(len(bot.docs), 1)
+        self.assertEqual(len(bot.docs), 2)
         sent = bot.docs[0]
         self.assertEqual(sent["filename"], review_filename(self.jid))
         parsed = json.loads(sent["data"].decode("utf-8"))
         self.assertEqual(len(parsed["words"]), 2)
+        html = bot.docs[1]
+        self.assertEqual(html["filename"], f"vf_review_job{self.jid}.html")
+        page = html["data"].decode("utf-8")
+        self.assertIn("gehen", page)
+        self.assertNotIn("__VF_REVIEW_DATA__", page)
 
 
 if __name__ == "__main__":
