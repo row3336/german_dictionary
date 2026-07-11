@@ -139,9 +139,9 @@ def parse_verb_forms(summary_html):
 
     The line is three ``·``-separated parts: present (ignored), Präteritum,
     auxiliary+Partizip II. Returns ``{"prateritum": ..., "partizip2": ...}``
-    (lowercased); missing/non-verb page -> both empty. Separate from the .com
-    ``_vf_parse_verb`` because the .de markup splits stems and the auxiliary
-    differently.
+    (lowercased); missing/non-verb page -> both empty. Written separately from
+    the old .com stammformen parser (removed in T4) because the .de markup
+    splits stems and the auxiliary differently.
     """
     m = re.search(r'<p[^>]*id="stammformen"[^>]*>(.*?)</p>', summary_html or "", re.S)
     if not m:

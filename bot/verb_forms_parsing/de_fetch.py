@@ -124,6 +124,40 @@ def fetch_url(url, proxy=None, timeout_sec=40):
     return (code == 200 and not blocked), code, body
 
 
+def test_proxy(proxy=None, timeout_sec=20):
+    """Cheap proxy connectivity check for the parse_VF mini-menu (T4).
+
+    The proxy is paid per traffic (owner rule), so this NEVER downloads a page:
+    a HEAD to the base URL, falling back to GET /robots.txt (a few hundred
+    bytes) for servers that reject HEAD. Returns (ok, http_code).
+    """
+    proxy = configured_proxy() if proxy is None else proxy
+
+    def _http_code(args):
+        try:
+            proc = subprocess.run(args, capture_output=True, text=True)
+        except Exception:
+            return 0
+        if proc.returncode != 0:
+            return 0
+        tail = proc.stdout.rpartition("__HTTP__")[2].strip()[:3]
+        return int(tail) if tail.isdigit() else 0
+
+    base_cmd = [
+        "curl", "-sS",
+        "-A", _random_user_agent(),
+        "--max-time", str(int(timeout_sec)),
+        "-o", "/dev/null",
+        "-w", "\n__HTTP__%{http_code}",
+    ]
+    if proxy:
+        base_cmd.extend(["-x", proxy])
+    code = _http_code(base_cmd + ["-I", f"{BASE}/"])
+    if code in (0, 403, 405):  # transport error or HEAD rejected -> tiny GET
+        code = _http_code(base_cmd + [f"{BASE}/robots.txt"])
+    return 200 <= code < 400, code
+
+
 def fetch_word_pages(word, proxy=None, timeout_sec=40, pause=None, type_hint=None):
     """Fetch a word's summary and (if linked) conjugation page.
 
