@@ -5,7 +5,9 @@ never on handler modules — so handler modules can import these without cycles.
 """
 
 import asyncio
+import logging
 
+import httpx
 from telegram import ReplyKeyboardMarkup, Update
 from telegram.error import NetworkError, RetryAfter, TimedOut
 from telegram.ext import ContextTypes
@@ -108,8 +110,33 @@ def _action_key_from_text(text, user_id):
     return mapping.get(text.strip(), "")
 
 
+logger = logging.getLogger(__name__)
+
+# Connect-phase httpx failures: the request never left this machine, so a resend
+# cannot create a duplicate message. PTB 20.7 chains the original httpx error as
+# __cause__ (TimedOut/NetworkError `from err` in _httpxrequest.py). PoolTimeout
+# is documented by PTB as "Request was *not* sent to Telegram".
+_SAFE_TO_RESEND_CAUSES = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
+
+
+def _send_may_have_reached_telegram(exc):
+    """True unless the failure certainly happened before the request was sent."""
+    return not isinstance(exc.__cause__, _SAFE_TO_RESEND_CAUSES)
+
+
 async def _reply_text_with_retry(message, text, max_retries=3, **kwargs):
-    """Handle reply text with retry."""
+    """reply_text with duplicate-safe retries (T2).
+
+    - RetryAfter (flood): wait and retry — Telegram rejected the request, no
+      duplicate possible.
+    - Connect-phase network failures: retry with backoff; if retries run out,
+      raise (the message truly never went out — the error handler nudges the
+      user, which IS required action).
+    - Read-phase/unknown failures: the message MAY already be delivered, so a
+      resend risks a duplicate quiz question. Owner decision (2026-07-11): stay
+      silent — log a warning, return None, no retry, no extra notification; the
+      user just taps again if nothing arrived.
+    """
     attempts = 0
     while True:
         try:
@@ -119,7 +146,12 @@ async def _reply_text_with_retry(message, text, max_retries=3, **kwargs):
             if attempts > max_retries:
                 raise
             await asyncio.sleep(int(getattr(exc, "retry_after", 1)) + 1)
-        except (TimedOut, NetworkError):
+        except (TimedOut, NetworkError) as exc:
+            if _send_may_have_reached_telegram(exc):
+                logger.warning(
+                    "send may have reached Telegram; not resending to avoid a duplicate (%r)", exc
+                )
+                return None
             attempts += 1
             if attempts > max_retries:
                 raise
