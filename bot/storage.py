@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .app_config import CASE_TYPES, CEFR_LEVELS, PREPOSITION_TYPES, get_owner_id, is_owner
 from .common.conjugation import parse_conjugation, takes_praeteritum
-from .text_utils import cap_word
+from .text_utils import cap_word, split_plural_forms
 
 DEFAULT_EASE = 2.5
 MIN_EASE = 1.3
@@ -2494,6 +2494,10 @@ def _normalize_word_entry_for_storage(entry):
 
     if word_type == "nomen":
         result["german"] = cap_word(result.get("german", ""))
+        # Each plural form is a noun too (T1); "Pizzas, Pizzen" caps both.
+        plural = _safe_text(result.get("plural", "")).strip()
+        if plural:
+            result["plural"] = ", ".join(cap_word(p) for p in split_plural_forms(plural))
     else:
         for field in ("german", "infinitive", "prateritum", "partizip2", "komparativ", "superlativ"):
             value = _safe_text(result.get(field, "")).strip().lower()
@@ -2506,6 +2510,13 @@ def _normalize_word_entry_for_storage(entry):
             result[field] = value
 
     return result
+
+
+def normalize_word_entry(entry):
+    """Public entry point for the casing rules above (T1): manual edits
+    (clarify) must land in the shared dictionary with the same casing as the
+    AI add path — nomen capitalized, everything else and translations lower."""
+    return _normalize_word_entry_for_storage(entry)
 
 
 def add_word(db_path, entry):

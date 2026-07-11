@@ -47,6 +47,7 @@ from ..labels import SYNONYMS_TEXT
 from ..storage import (
     add_error_report,
     delete_word,
+    normalize_word_entry,
     set_user_word_media,
     set_user_word_translation,
     update_word_fields,
@@ -622,6 +623,11 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         return ADD_EDIT
 
+    # T1: a manual edit must land with the same casing rules as the AI add path
+    # (nomen + plural capitalized, everything else and translations lowercase);
+    # normalized BEFORE both the session copy and the DB write below, so the
+    # card the user keeps seeing matches what was stored.
+    updated = normalize_word_entry(updated)
     context.user_data[entry_key] = updated
     context.user_data["edit_stage"] = "pick_field"
     context.user_data.pop("edit_field", None)
