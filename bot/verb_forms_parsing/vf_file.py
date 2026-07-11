@@ -13,10 +13,12 @@ from ..app_config import ALLOWED_AI_TYPES
 from ..storage import get_word_by_id
 from .job_store import get_job, list_items
 
-# Fields compared current-vs-VF in a recheck diff (conjugation compared separately).
+# Fields compared current-vs-VF in a recheck diff. conjugation_praesens included
+# (owner request, live run 11.07): the review must show the Präsens block too.
 _DIFF_FIELDS = (
     "type", "article", "german", "plural", "infinitive", "prateritum", "partizip2",
     "komparativ", "superlativ", "russian", "ukrainian", "english", "example", "cefr_level",
+    "conjugation_praesens",
 )
 
 INSTRUCTIONS = (

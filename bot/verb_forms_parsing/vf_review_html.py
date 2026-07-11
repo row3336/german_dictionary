@@ -112,6 +112,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
     display: inline-block; min-width: 60px; padding: 3px 10px; border-radius: 6px;
     border: 1px solid var(--green); background: var(--green-bg); color: #7ee787; cursor: text;
   }
+  .single.block { display: block; white-space: pre-line; max-width: 360px; }
   h2.section { font-size: 14px; color: var(--yellow); margin: 26px 0 4px; }
   input[type=checkbox] { accent-color: var(--accent); width: 15px; height: 15px; cursor: pointer; }
   #toast {
@@ -153,10 +154,13 @@ const DATA = __VF_REVIEW_DATA__;
 const COMMA_FIELDS = new Set(["russian", "ukrainian", "english"]);
 // example: one chip per sentence, split on newlines
 const NL_FIELDS = new Set(["example"]);
+// Multiline blocks (owner 11.07): shown/edited as a whole — the Präsens block
+// must stay a valid 6-line unit, so no per-line chips.
+const BLOCK_FIELDS = new Set(["conjugation_praesens"]);
 // Field order used to synthesize a diff for ADD jobs (new cards have no diff).
 const CARD_FIELDS = ["type", "article", "german", "plural", "infinitive", "prateritum",
   "partizip2", "komparativ", "superlativ", "russian", "ukrainian", "english",
-  "example", "cefr_level"];
+  "example", "cefr_level", "conjugation_praesens"];
 
 const norm = s => s.trim().toLowerCase();
 const splitVal = (field, v) =>
@@ -175,6 +179,9 @@ const model = DATA.words.map((w, i) => {
   }
   const isPending = r.status !== "done" || !Object.keys(diff).length;
   const fields = Object.entries(diff).map(([fname, d]) => {
+    if (BLOCK_FIELDS.has(fname)) {
+      return { name: fname, kind: "block", current: d.current, value: d.vf, accepted: true };
+    }
     if (COMMA_FIELDS.has(fname) || NL_FIELDS.has(fname)) {
       const curVals = splitVal(fname, d.current);
       const curSet = new Set(curVals.map(norm));
@@ -250,6 +257,13 @@ function render() {
         tdNew.innerHTML = `<span class="lbl">станет</span>`;
         if (f.kind === "chips") {
           f.chips.forEach(ch => tdNew.appendChild(makeChip(f, ch)));
+        } else if (f.kind === "block") {
+          // multiline unit (Präsens conjugation): edited as a whole, lines kept
+          const dv = document.createElement("div");
+          dv.className = "single block"; dv.contentEditable = "true";
+          dv.textContent = f.value;
+          dv.onblur = () => { f.value = dv.innerText.trim(); };
+          tdNew.appendChild(dv);
         } else {
           const sp = document.createElement("span");
           sp.className = "single"; sp.contentEditable = "true"; sp.textContent = f.value;

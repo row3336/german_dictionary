@@ -256,6 +256,14 @@ class ParseDeAssemblyTest(unittest.TestCase):
         self.assertEqual(len(e["example"].split("\n")), 3)
         self.assertEqual(e["_flags"], [])
 
+    def test_verb_without_conjugation_page_is_flagged(self):
+        # bug #29 (live run, fliegen): a failed/missing conjugation page used to
+        # produce a silently empty conjugation_praesens — must be flagged so the
+        # owner sees it in the review file.
+        e = parse_de(load("gehen_summary.html"), conj_html=None, query="gehen")
+        self.assertEqual(e["conjugation_praesens"], "")
+        self.assertIn("conjugation_missing", e["_flags"])
+
     def test_nomen_full_card(self):
         e = parse_de(load("Haus_summary.html"), query="Haus")
         self.assertEqual(e["type"], "nomen")

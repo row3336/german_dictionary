@@ -401,6 +401,11 @@ def parse_de(summary_html, conj_html=None, query=None, topic="", type_hint=None)
         except ValueError:
             entry["conjugation_praesens"] = ""
             flags.append("conjugation_parse_error")
+        # bug #29: a failed/missing conjugation page returns '' WITHOUT raising —
+        # a verb landing without its Präsens block must be visible in the review,
+        # not silently empty.
+        if not entry["conjugation_praesens"] and "conjugation_parse_error" not in flags:
+            flags.append("conjugation_missing")
     elif wtype == "nomen":
         ap = parse_noun_article_plural(summary_html)
         entry["article"] = ap["article"]
