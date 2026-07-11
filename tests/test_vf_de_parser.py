@@ -309,6 +309,20 @@ class TypeHintTest(unittest.TestCase):
             {"type": "praeposition", "headword": "aus", "has_entry": True},
         )
 
+    def test_detect_recognises_partikel_page(self):
+        self.assertEqual(
+            detect_type_and_headword(load("ja_partikel_summary.html")),
+            {"type": "partikel", "headword": "ja", "has_entry": True},
+        )
+
+    def test_partikel_page_full_card(self):
+        e = parse_de(load("ja_partikel_summary.html"), query="ja", type_hint="partikel")
+        self.assertEqual(e["type"], "partikel")
+        self.assertEqual(e["german"], "ja")
+        self.assertEqual(e["cefr_level"], "A1")
+        self.assertIn("да", e["russian"])
+        self.assertEqual(e["_flags"], [])
+
     def test_preposition_page_full_card(self):
         e = parse_de(load("aus_praeposition_summary.html"), query="aus", type_hint="praeposition")
         self.assertEqual(e["type"], "praeposition")

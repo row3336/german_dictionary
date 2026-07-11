@@ -32,12 +32,13 @@ class UrlTest(unittest.TestCase):
         self.assertEqual(F.summary_url("aus", "praeposition"), "https://www.verben.de/praepositionen/aus.htm")
         self.assertEqual(F.summary_url("wieder", "adverb"), "https://www.verben.de/adverbien/wieder.htm")
         self.assertEqual(F.summary_url("und", "konjunktion"), "https://www.verben.de/konjunktionen/und.htm")
+        self.assertEqual(F.summary_url("ja", "partikel"), "https://www.verben.de/partikeln/ja.htm")
         # case-insensitive hint
         self.assertEqual(F.summary_url("aus", "Praeposition"), "https://www.verben.de/praepositionen/aus.htm")
 
     def test_summary_url_unmapped_hint_falls_back(self):
         # a hint without a type page (or none) falls back to the ?w= search
-        self.assertEqual(F.summary_url("doch", "partikel"), "https://www.verbformen.de/?w=doch")
+        self.assertEqual(F.summary_url("wer", "pronomen"), "https://www.verbformen.de/?w=wer")
         self.assertEqual(F.summary_url("aus", ""), "https://www.verbformen.de/?w=aus")
 
     def test_conjugation_url_from_verb_summary(self):

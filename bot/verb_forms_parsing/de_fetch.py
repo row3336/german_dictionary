@@ -31,6 +31,7 @@ TYPE_URL_SEGMENTS = {
     "praeposition": "praepositionen",
     "adverb": "adverbien",
     "konjunktion": "konjunktionen",
+    "partikel": "partikeln",
 }
 
 # Rotate the fingerprint per request ("подмешивать имитацию разных" — owner):

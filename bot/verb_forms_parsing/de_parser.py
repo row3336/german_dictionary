@@ -31,6 +31,7 @@ _H1_TYPE_MARKERS = (
     ("der Präposition", "praeposition"),
     ("des Adverbs", "adverb"),
     ("der Konjunktion", "konjunktion"),
+    ("des Partikel", "partikel"),
 )
 
 _QUOTE_CHARS = " „“”\"'»«"
