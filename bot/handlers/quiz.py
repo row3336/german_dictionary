@@ -286,14 +286,29 @@ def _check_ru_de_strict(entry, answer_text):
             "prateritum": prateritum_provided and prateritum_in == _normalize_answer(entry.get("prateritum", "")),
         }
 
-    # single-field answer (adjective/adverb/…): tolerate stray commas/periods too.
-    answer = _normalize_answer(re.sub(r"[,.]+", " ", answer_text))
-    expected_values = []
+    # single-field answer (adjective/adverb/…). An adjective may be answered with
+    # the base form alone, or base+komparativ, or base+komparativ+superlativ — in
+    # that order, the extra degrees optional (bug #26). Commas, periods, newlines
+    # and stray whitespace are all interchangeable separators, and the superlativ
+    # itself carries a space ("am leisesten"), so instead of re-splitting the
+    # answer into fields we compare the fully-collapsed answer against the equally
+    # collapsed expected prefixes (base / base+komp / base+komp+super).
+    def _collapse(value):
+        return _normalize_answer(re.sub(r"[,.]+", " ", str(value or "")))
+
+    answer = _collapse(answer_text)
+    expected_values = set()
     for cand in synonyms:
-        if (cand.get("type") or "").strip().lower() == "verb":
-            expected_values.append(_normalize_answer(cand.get("infinitive", "")))
-        else:
-            expected_values.append(_normalize_answer(cand.get("german", "")))
+        ctype = (cand.get("type") or "").strip().lower()
+        if ctype == "verb":
+            expected_values.add(_normalize_answer(cand.get("infinitive", "")))
+            continue
+        forms = [cand.get("german", "")]
+        if ctype == "adjektiv":
+            forms += [cand.get("komparativ", ""), cand.get("superlativ", "")]
+        forms = [f for f in forms if str(f).strip()]
+        for n in range(1, len(forms) + 1):
+            expected_values.add(_collapse(" ".join(forms[:n])))
     return answer in expected_values, {}
 
 

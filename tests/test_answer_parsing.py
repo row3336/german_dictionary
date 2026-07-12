@@ -100,5 +100,62 @@ class GeneralAnswerPunctuationTest(unittest.TestCase):
             self.assertTrue(ok, raw)
 
 
+# bug #26: an adjective may be answered with 1, 2 or 3 forms (base / +komparativ /
+# +superlativ), in that order, with any separator style; typing extra degrees must
+# not flip a right answer to wrong.
+ADJ = {"type": "adjektiv", "german": "leise", "komparativ": "leiser", "superlativ": "am leisesten"}
+
+
+class AdjektivDegreeValidationTest(unittest.TestCase):
+    def _ok(self, answer, entry=ADJ):
+        ok, _ = _check_ru_de_strict(entry, answer)
+        return ok
+
+    def test_base_only_valid(self):
+        self.assertTrue(self._ok("leise"))
+
+    def test_base_plus_komparativ_any_separator(self):
+        for raw in ("leise, leiser", "leise leiser", "leise. leiser", "leise,leiser", "leise ,, leiser"):
+            self.assertTrue(self._ok(raw), raw)
+
+    def test_all_three_forms_any_separator(self):
+        # superlativ itself carries a space ("am leisesten")
+        for raw in (
+            "leise, leiser, am leisesten",
+            "leise leiser am leisesten",
+            "leise. leiser. am leisesten",
+            "leise,leiser,am leisesten",
+            "leise, leiser, am leisesten,",   # trailing comma
+            "  leise ,, leiser .. am leisesten ",
+        ):
+            self.assertTrue(self._ok(raw), raw)
+
+    def test_komparativ_alone_rejected(self):
+        # the base form is still required; a lone higher degree is not a pass
+        self.assertFalse(self._ok("leiser"))
+        self.assertFalse(self._ok("am leisesten"))
+
+    def test_superlativ_without_komparativ_rejected(self):
+        # forms must be supplied in order (base, komparativ, superlativ)
+        self.assertFalse(self._ok("leise, am leisesten"))
+
+    def test_wrong_extra_form_rejected(self):
+        self.assertFalse(self._ok("leise, falsch"))
+        self.assertFalse(self._ok("leise, leiser, am lautesten"))
+
+    def test_wrong_base_rejected(self):
+        self.assertFalse(self._ok("laut"))
+
+    def test_adjektiv_without_degrees_base_only(self):
+        entry = {"type": "adjektiv", "german": "toll", "komparativ": "", "superlativ": ""}
+        self.assertTrue(self._ok("toll", entry))
+        self.assertFalse(self._ok("toll besser", entry))
+
+    def test_adverb_still_base_only(self):
+        entry = {"type": "adverb", "german": "oft"}
+        self.assertTrue(self._ok("oft", entry))
+        self.assertFalse(self._ok("oft mehr", entry))
+
+
 if __name__ == "__main__":
     unittest.main()
