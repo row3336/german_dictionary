@@ -32,6 +32,7 @@ from pathlib import Path
 import httpx
 
 from bot.common.db_safety import backup_database, get_user_version
+from bot.offsite_backup import crypto
 
 _API = "https://api.telegram.org/bot{token}/{method}"
 
@@ -60,11 +61,13 @@ class BackupConfig:
     db_path: Path
     retries: int = 3
     backoff_seconds: float = 5.0
+    public_key: object = None  # nacl PublicKey; None -> send plaintext .gz
 
 
 def load_config(env=None):
     """Build a BackupConfig from the environment. Raises SystemExit with a clear
-    message (no secrets) if the required vars are missing."""
+    message (no secrets) if the required vars are missing. Encryption is on when
+    BACKUP_PUBLIC_KEY is set (recommended); the caption always states which."""
     env = env or os.environ
     token = (env.get("BACKUP_BOT_TOKEN") or "").strip()
     channel = (env.get("BACKUP_CHANNEL_ID") or "").strip()
@@ -73,7 +76,11 @@ def load_config(env=None):
     alert = (env.get("BACKUP_ALERT_CHAT_ID") or "").strip() or channel
     db_path = Path(env.get("DB_PATH", "./data/words.db"))
     retries = int(env.get("BACKUP_RETRIES", "3"))
-    return BackupConfig(token=token, channel_id=channel, alert_chat_id=alert, db_path=db_path, retries=retries)
+    public_key = crypto.load_public_key(env.get("BACKUP_PUBLIC_KEY"))
+    if public_key is None:
+        log.warning("BACKUP_PUBLIC_KEY not set — backups will be sent UNENCRYPTED")
+    return BackupConfig(token=token, channel_id=channel, alert_chat_id=alert,
+                        db_path=db_path, retries=retries, public_key=public_key)
 
 
 def _table_counts(db_path):
@@ -94,11 +101,13 @@ def _sha256(path):
     return digest.hexdigest()
 
 
-def build_snapshot(db_path, work_dir, now=None):
-    """WAL-safe consistent snapshot of the DB, gzipped. Returns (gz_path, meta).
+def build_snapshot(db_path, work_dir, now=None, public_key=None):
+    """WAL-safe consistent snapshot of the DB, gzipped and (if a public key is
+    given) sealed. Returns (artifact_path, meta).
 
     meta carries the fields the caption needs: human date, schema user_version,
-    sha256 of the .gz, per-table row counts, and the .gz size.
+    sha256 of the artifact actually sent, per-table row counts, size, and whether
+    it is encrypted.
     """
     now = now or datetime.now(timezone.utc)
     work = Path(work_dir)
@@ -116,14 +125,22 @@ def build_snapshot(db_path, work_dir, now=None):
             shutil.copyfileobj(fin, fout)
     finally:
         raw.unlink(missing_ok=True)  # the plaintext snapshot never lingers on disk
+    artifact = gz
+    encrypted = False
+    if public_key is not None:
+        enc = work / f"{gz.name}.enc"
+        crypto.encrypt_file(public_key, gz, enc)
+        gz.unlink(missing_ok=True)  # only the sealed copy leaves this box
+        artifact, encrypted = enc, True
     meta = {
         "date": now.strftime("%Y-%m-%d %H:%M UTC"),
         "user_version": version,
-        "sha256": _sha256(gz),
+        "sha256": _sha256(artifact),
         "counts": counts,
-        "size": gz.stat().st_size,
+        "size": artifact.stat().st_size,
+        "encrypted": encrypted,
     }
-    return gz, meta
+    return artifact, meta
 
 
 def format_caption(meta, filename):
@@ -131,9 +148,10 @@ def format_caption(meta, filename):
     block (sha256 included) is tap-to-copy in Telegram. Send with
     parse_mode=CAPTION_PARSE_MODE."""
     counts = "\n".join(f"{k}={v}" for k, v in meta["counts"].items())
+    lock = "🔒 encrypted" if meta.get("encrypted") else "⚠️ plaintext"
     body = (
         f"🗄 DB backup {filename}\n"
-        f"date {meta['date']} · schema v{meta['user_version']} · {meta['size']} B\n"
+        f"date {meta['date']} · schema v{meta['user_version']} · {meta['size']} B · {lock}\n"
         f"sha256 {meta['sha256']}\n"
         f"{counts}"
     )
@@ -188,7 +206,7 @@ def run_backup(config, client=None, sleep=time.sleep, work_dir=None, now=None):
     work_dir = work_dir or (config.db_path.parent / "offsite_tmp")
     gz = None
     try:
-        gz, meta = build_snapshot(config.db_path, work_dir, now=now)
+        gz, meta = build_snapshot(config.db_path, work_dir, now=now, public_key=config.public_key)
         caption = format_caption(meta, gz.name)
         last_error = None
         for attempt in range(1, config.retries + 1):

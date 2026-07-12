@@ -10,3 +10,7 @@ openai==1.40.0
 # broke OpenAI() init. We pass our own http_client (bot/ai.py) so we're version-
 # safe regardless, but pinning keeps deploys deterministic.
 httpx==0.28.1
+
+# Off-site backup encryption (spec #4): libsodium sealed boxes (asymmetric).
+# Server holds only the public key; the private key stays with the owner.
+PyNaCl==1.6.2

@@ -15,6 +15,7 @@ import unittest
 from datetime import datetime, timezone
 
 from bot.offsite_backup import backup as B
+from bot.offsite_backup import crypto as C
 from bot.storage import add_word, init_db
 
 TOKEN = "123456789:AA-SECRET-TOKEN-VALUE-do-not-leak-0000"
@@ -41,7 +42,9 @@ class FakeClient:
     def post(self, url, data=None, files=None, timeout=None):
         method = url.rsplit("/", 1)[-1]
         prior = sum(1 for c in self.calls if c["method"] == method)
-        self.calls.append({"method": method, "url": url, "data": dict(data or {}), "has_file": bool(files)})
+        fname = files["document"][0] if files and "document" in files else None
+        self.calls.append({"method": method, "url": url, "data": dict(data or {}),
+                           "has_file": bool(files), "filename": fname})
         result = self._handler(method, prior) if self._handler else FakeResp()
         if isinstance(result, Exception):
             raise result
@@ -215,6 +218,64 @@ def _mk_gz(work_dir):
     with gzip.open(path, "wb") as f:
         f.write(b"not-a-real-db")
     return path
+
+
+class EncryptionTest(unittest.TestCase):
+    def setUp(self):
+        self.db = _mk_db(words=2)
+        self.work = tempfile.mkdtemp()
+        self.addCleanup(lambda: os.unlink(self.db))
+        self.addCleanup(lambda: shutil.rmtree(self.work, ignore_errors=True))
+
+    def test_file_roundtrip(self):
+        pub_b64, priv_b64 = C.generate_keypair()
+        src = os.path.join(self.work, "plain.bin")
+        with open(src, "wb") as f:
+            f.write(b"top secret db bytes")
+        enc = os.path.join(self.work, "sealed.enc")
+        C.encrypt_file(C.load_public_key(pub_b64), src, enc)
+        with open(enc, "rb") as f:
+            self.assertNotIn(b"top secret", f.read())  # ciphertext, not plaintext
+        out = os.path.join(self.work, "opened.bin")
+        C.decrypt_file(C.load_private_key(priv_b64), enc, out)
+        with open(out, "rb") as f:
+            self.assertEqual(f.read(), b"top secret db bytes")
+
+    def test_snapshot_encrypts_and_is_decryptable(self):
+        pub_b64, priv_b64 = C.generate_keypair()
+        gz, meta = B.build_snapshot(self.db, self.work, public_key=C.load_public_key(pub_b64))
+        self.assertTrue(gz.name.endswith(".db.gz.enc"), gz.name)
+        self.assertTrue(meta["encrypted"])
+        # only the sealed copy survives — no plaintext .gz left behind
+        self.assertEqual([f for f in os.listdir(self.work) if f.endswith(".db.gz")], [])
+        # owner decrypts -> gunzip -> a valid DB
+        dec = os.path.join(self.work, "back.db.gz")
+        C.decrypt_file(C.load_private_key(priv_b64), gz, dec)
+        restored = os.path.join(self.work, "restored.db")
+        _gunzip_to(dec, restored)
+        with sqlite3.connect(restored) as conn:
+            self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM words").fetchone()[0], 2)
+
+    def test_no_key_leaves_plaintext_gz(self):
+        gz, meta = B.build_snapshot(self.db, self.work, public_key=None)
+        self.assertTrue(gz.name.endswith(".db.gz"))
+        self.assertFalse(meta["encrypted"])
+
+    def test_caption_marks_encryption_state(self):
+        enc_meta = {"date": "d", "user_version": 11, "sha256": "x", "counts": {}, "size": 1, "encrypted": True}
+        plain_meta = {**enc_meta, "encrypted": False}
+        self.assertIn("🔒 encrypted", B.format_caption(enc_meta, "f.enc"))
+        self.assertIn("plaintext", B.format_caption(plain_meta, "f.gz"))
+
+    def test_run_backup_sends_enc_artifact(self):
+        pub_b64, _priv = C.generate_keypair()
+        client = FakeClient()
+        cfg = _config(self.db)
+        cfg.public_key = C.load_public_key(pub_b64)
+        code = B.run_backup(cfg, client=client, work_dir=self.work)
+        self.assertEqual(code, 0)
+        self.assertTrue(client.calls[0]["filename"].endswith(".db.gz.enc"), client.calls[0]["filename"])
 
 
 if __name__ == "__main__":
