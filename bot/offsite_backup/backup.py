@@ -130,7 +130,7 @@ def format_caption(meta, filename):
     """Caption as a MarkdownV2 fenced code block — renders monospace and the whole
     block (sha256 included) is tap-to-copy in Telegram. Send with
     parse_mode=CAPTION_PARSE_MODE."""
-    counts = " · ".join(f"{k}={v}" for k, v in meta["counts"].items())
+    counts = "\n".join(f"{k}={v}" for k, v in meta["counts"].items())
     body = (
         f"🗄 DB backup {filename}\n"
         f"date {meta['date']} · schema v{meta['user_version']} · {meta['size']} B\n"
