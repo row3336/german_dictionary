@@ -84,7 +84,6 @@ def _action_key_from_text(text, user_id):
         ("weak_verb_mode", "weak_verb"),
         ("weak_prateritum_mode", "weak_prateritum"),
         ("weak_partizip2_mode", "weak_partizip2"),
-        ("auto_dump", "auto_dump"),
         ("daily", "daily"),
         ("weekly", "weekly"),
         ("off", "off"),

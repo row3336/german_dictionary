@@ -42,8 +42,6 @@ from .app_config import (
     ALGO_SETTINGS_CONFIRM,
     ALGO_SETTINGS_EDIT,
     ALGO_SETTINGS_MENU,
-    AUTO_DUMP_MENU,
-    AUTO_DUMP_SETTING_KEY,
     CONJUGATION_MENU,
     DB_SEARCH,
     DB_SEARCH_VIEW,
@@ -116,7 +114,6 @@ from .common.txlog import UNDO_MSG_ID_KEY, UNDO_TOTAL_KEY
 from .ui.keyboards import _main_menu_markup
 from .i18n import t
 from .handlers.dump import (
-    auto_dump_choice,
     dump_menu_choice,
 )
 from .handlers.db_search import (
@@ -214,7 +211,6 @@ from .handlers.quiz import (
     quiz_ru_de,
 )
 from .jobs.access_reminders import _configure_access_reminders
-from .jobs.auto_dump import _configure_auto_dump
 from .jobs.reminders import _configure_learning_reminders
 from .jobs.reports import _configure_fsrs_reports
 from .jobs.owner_digest import _configure_owner_digest
@@ -456,8 +452,6 @@ def main():
     )
     app.add_error_handler(_on_error)
 
-    mode = get_setting(get_db_path(), AUTO_DUMP_SETTING_KEY, "off")
-    _configure_auto_dump(app, mode)
     _configure_learning_reminders(app)
     _configure_fsrs_reports(app)
     _configure_access_reminders(app)
@@ -516,7 +510,6 @@ def main():
             ALGO_SETTINGS_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, algo_settings_confirm)],
             TOPIC_FILTER_EDIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, topic_filter_edit)],
             DUMP_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, dump_menu_choice)],
-            AUTO_DUMP_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, auto_dump_choice)],
             ADD_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_menu_choice)],
             VF_ADD_INPUT: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, vf_add_input),
