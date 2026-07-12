@@ -1,0 +1,25 @@
+# Off-site DB backup (spec #4, phase 1). Oneshot: ship one gzipped, WAL-safe
+# snapshot of words.db to the private backup channel via the dedicated backup
+# bot. Triggered by offsite-backup.timer — NOT run from inside the main bot, so
+# a dead/banned main bot does not stop backups.
+#
+# Install (server, owner):
+#   1. Add BACKUP_BOT_TOKEN + BACKUP_CHANNEL_ID (and optionally BACKUP_ALERT_CHAT_ID)
+#      to the project .env — NEVER commit these.
+#   2. Adjust WorkingDirectory / EnvironmentFile / venv path below to the deploy.
+#   3. cp deploy/offsite-backup.{service,timer} /etc/systemd/system/
+#      systemctl daemon-reload && systemctl enable --now offsite-backup.timer
+#   4. Dry-run once now:  systemctl start offsite-backup.service ; journalctl -u offsite-backup -n 30
+
+[Unit]
+Description=Off-site DB backup — ship a gzipped snapshot to the backup channel
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+# --- adjust these three to the actual deploy path ---
+WorkingDirectory=/root/tests/test_new_api
+EnvironmentFile=/root/tests/test_new_api/.env
+ExecStart=/root/tests/test_new_api/venv/bin/python3 -m scripts.offsite_backup
+# non-zero exit (send failed / fatal) is surfaced by journal + the script's own alert

@@ -1,0 +1,17 @@
+# Trigger for offsite-backup.service — twice a day, 03:00 and 15:00 UTC.
+#
+# The UTC suffix in OnCalendar needs systemd >= v252. On older systemd, drop
+# " UTC" and make sure the server clock is UTC (the default on most VPS), or
+# adjust the hours to the server's local time. Persistent=true runs a missed
+# backup after downtime (e.g. a reboot spanning a trigger time).
+
+[Unit]
+Description=Off-site DB backup twice daily at 03:00 and 15:00 UTC
+
+[Timer]
+OnCalendar=*-*-* 03:00:00 UTC
+OnCalendar=*-*-* 15:00:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target
