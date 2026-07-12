@@ -42,6 +42,7 @@ _NEW_KEYS = (
     "learning_skipped",
     "learning_saved_next",
     "learning_use_next_skip_back",
+    "learning_done_sent_fsrs",
 )
 
 

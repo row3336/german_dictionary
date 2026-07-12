@@ -506,5 +506,5 @@ async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _log_transaction(user_id, "learning:answer", snapshot)
     feedback = _format_feedback_ru_de(entry, ok, lang=_user_interface_lang(user_id))
     if result.get("completed"):
-        feedback = f"{feedback}\n\nLearning done ✅, sent to fsrs"
+        feedback = f"{feedback}\n\n{t(_user_interface_lang(user_id), 'learning_done_sent_fsrs')}"
     return await _send_learning_prompt(update, context, feedback)
