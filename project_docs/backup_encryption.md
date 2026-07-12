@@ -1,128 +1,125 @@
-# Backup encryption — manual
+# Backup Encryption
 
-How the off-site DB backups are encrypted, how to set it up, and how to decrypt a
-backup when you need to restore. Companion to `backup_restore.md` (which covers
-the full restore procedure and the acceptance gate).
+Мануал: как шифруются off-site бэкапы БД, как это настроить и как расшифровать
+бэкап при восстановлении. Дополняет `backup_restore.md` (там — полная процедура
+восстановления и чек-лист приёмки).
 
-Code: `bot/offsite_backup/crypto.py` · `scripts/backup_keygen.py` ·
+Код: `bot/offsite_backup/crypto.py` · `scripts/backup_keygen.py` ·
 `scripts/backup_decrypt.py`.
 
 ---
 
-## 1. How it works (in one paragraph)
+## 1. Как это устроено (в одном абзаце)
 
-Each backup is sealed with a **libsodium sealed box** (Curve25519 + XSalsa20-
-Poly1305, via PyNaCl) — **asymmetric** encryption. There are two keys:
+Каждый бэкап запечатывается **libsodium sealed box** (Curve25519 + XSalsa20-
+Poly1305, через PyNaCl) — это **асимметричное** шифрование. Есть два ключа:
 
-- **Public key** — lives on the server (`BACKUP_PUBLIC_KEY`). It can **encrypt**
-  backups but **cannot decrypt** them. It is *not* secret.
-- **Private key** — lives only with you, offline. It is the **only** thing that
-  can **decrypt** a backup.
+- **Публичный ключ** — лежит на сервере (`BACKUP_PUBLIC_KEY`). Он умеет
+  **шифровать** бэкапы, но **не умеет расшифровывать**. Он **не секретный**.
+- **Приватный ключ** — только у тебя, офлайн. Это **единственное**, чем бэкап
+  можно **расшифровать**.
 
-Consequence: someone who gets into the backup channel — or even someone who
-compromises the server — sees only ciphertext. There is no decryption secret on
-the server to steal. The trade-off is the one rule below.
+Следствие: кто получит доступ к каналу — или даже взломает сервер — увидит только
+шифротекст. На сервере **нет секрета для расшифровки**. Плата за это — одно
+правило ниже.
 
-> ⚠️ **The one rule:** if you lose the private key, **every** backup is
-> permanently unrecoverable. Keep it in a password manager **and** one offline
-> copy (e.g. a USB stick in a drawer).
+> ⚠️ **Единственное правило:** потеряешь приватный ключ — **все** бэкапы навсегда
+> нечитаемы. Держи его в менеджере паролей **и** в одной офлайн-копии (например,
+> USB-флешка в ящике).
 
 ---
 
-## 2. One-time setup
+## 2. Разовая настройка
 
-### 2.1 Generate the keypair (do this on your own machine)
+### 2.1 Сгенерировать пару ключей (на своей машине)
 ```bash
-python3 -m scripts.backup_keygen            # optional: pass an output path
+python3 -m scripts.backup_keygen            # опц.: передать путь для файла ключа
 ```
-It prints the **public key** and writes the **private key** to a `0600` file
-(default `backup_private_key.txt`) — the private key is never printed, so it
-can't end up in a terminal log.
+Скрипт печатает **публичный** ключ и пишет **приватный** в файл с правами `0600`
+(по умолчанию `backup_private_key.txt`). Приватный ключ в stdout **не** выводится —
+чтобы не попал в лог терминала.
 
-- Copy the printed public key → you'll put it in the server env (next step).
-- Move the private-key file somewhere safe: password manager + one offline copy.
-  **Do not** put it on the server and **do not** commit it.
+- Скопируй напечатанный публичный ключ → положишь в серверный env (шаг 2.2).
+- Файл приватного ключа убери в надёжное место: менеджер паролей + одна
+  офлайн-копия. **Не** клади его на сервер и **не** коммить.
 
-### 2.2 Configure the server
-Add to the server `.env` (never committed):
+### 2.2 Настроить сервер
+Добавить в серверный `.env` (в git не коммитим):
 ```
-BACKUP_BOT_TOKEN=<backup bot token>
-BACKUP_CHANNEL_ID=<-100… channel id>
-BACKUP_PUBLIC_KEY=<the public key from 2.1>
-BACKUP_ALERT_CHAT_ID=<optional; defaults to the channel>
+BACKUP_BOT_TOKEN=<токен бэкап-бота>
+BACKUP_CHANNEL_ID=<-100… id канала>
+BACKUP_PUBLIC_KEY=<публичный ключ из 2.1>
+BACKUP_ALERT_CHAT_ID=<опц.; по умолчанию = канал>
 ```
-That's it. From the next run on, backups are encrypted.
+Всё. Со следующего запуска бэкапы шифруются.
 
 ---
 
-## 3. Everyday behaviour (nothing to do)
+## 3. Повседневность (делать ничего не надо)
 
-- With `BACKUP_PUBLIC_KEY` set, every backup is sealed before upload. The file in
-  the channel is `words-YYYYMMDD-HHMM.db.gz.enc` and the caption says
+- Если `BACKUP_PUBLIC_KEY` задан — каждый бэкап запечатывается перед отправкой.
+  Файл в канале называется `words-YYYYMMDD-HHMM.db.gz.enc`, в подписи —
   **`🔒 encrypted`**.
-- If the key is **missing/misconfigured**, the script still runs but sends a
-  plaintext `.gz` and the caption says **`⚠️ plaintext`** — a misconfig is
-  visible, never silent. If you ever see `⚠️ plaintext`, fix `BACKUP_PUBLIC_KEY`.
-- The plaintext snapshot is created only for a moment on the server and deleted
-  right after sealing — only the encrypted copy leaves the machine.
+- Если ключ **не задан/сбит** — скрипт всё равно отработает, но пришлёт открытый
+  `.gz`, а подпись скажет **`⚠️ plaintext`** (сбой конфигурации виден, а не
+  проглатывается молча). Увидел `⚠️ plaintext` — поправь `BACKUP_PUBLIC_KEY`.
+- Открытый снапшот существует на сервере лишь мгновение и удаляется сразу после
+  запечатывания — наружу уходит только зашифрованная копия.
 
 ---
 
-## 4. Decrypting a backup (restore side)
+## 4. Расшифровка бэкапа (сторона восстановления)
 
-Do this **on your own machine**, where the private key lives — never copy the
-private key to the server.
+Делай это **на своей машине**, где лежит приватный ключ — приватный ключ на
+сервер копировать нельзя.
 
 ```bash
-# 1. (optional) verify the download matches the message caption
+# 1. (опц.) сверить скачанный файл с sha256 из подписи сообщения
 sha256sum words-YYYYMMDD-HHMM.db.gz.enc
 
-# 2. decrypt: .enc -> .gz  (needs your private-key file)
+# 2. расшифровать: .enc -> .gz  (нужен файл приватного ключа)
 python3 -m scripts.backup_decrypt words-YYYYMMDD-HHMM.db.gz.enc backup_private_key.txt
-#   -> writes words-YYYYMMDD-HHMM.db.gz  (drop the .enc)
-#   or pass an explicit output name as a 3rd argument
+#   -> пишет words-YYYYMMDD-HHMM.db.gz  (снимает .enc)
+#   или передать имя выходного файла третьим аргументом
 
-# 3. gunzip -> the SQLite DB, then sanity-check it
+# 3. gunzip -> SQLite-БД, затем проверить целостность
 gunzip words-YYYYMMDD-HHMM.db.gz
-sqlite3 words-YYYYMMDD-HHMM.db 'PRAGMA integrity_check;'   # must print: ok
+sqlite3 words-YYYYMMDD-HHMM.db 'PRAGMA integrity_check;'   # должно быть: ok
 ```
 
-Then follow `backup_restore.md` from the "stop the bot → swap → start" steps to
-put it back into service.
+Дальше — по `backup_restore.md` с шагов «стоп бота → подмена → старт».
 
 ---
 
-## 5. Key management
+## 5. Управление ключами
 
-- **Safeguard:** private key in a password manager **+** one offline copy. Losing
-  it = losing every backup.
-- **The public key is not secret.** It can sit in the env, in configs, anywhere.
-  It only lets someone *make* backups you can read — not read yours.
-- **Rotation** (if you ever suspect the private key leaked): generate a new
-  keypair (§2.1), replace `BACKUP_PUBLIC_KEY` on the server. New backups use the
-  new key. **Keep the old private key** as long as you might still need to decrypt
-  old backups made with the old key — old and new archives need their respective
-  private keys.
-- **Never** email/paste the private key, and never store it on the server.
+- **Хранение:** приватный ключ в менеджере паролей **+** одна офлайн-копия.
+  Потеря = потеря всех бэкапов.
+- **Публичный ключ не секрет.** Он может лежать в env, в конфигах, где угодно. Он
+  лишь позволяет *делать* бэкапы, которые прочитаешь ты — а не читать твои.
+- **Ротация** (если подозреваешь утечку приватного ключа): сгенерировать новую
+  пару (§2.1), заменить `BACKUP_PUBLIC_KEY` на сервере. Новые бэкапы идут на новый
+  ключ. **Старый приватный ключ сохрани**, пока может понадобиться расшифровать
+  старые бэкапы — старые и новые архивы требуют своих приватных ключей.
+- **Никогда** не пересылай приватный ключ и не храни его на сервере.
 
 ---
 
 ## 6. Troubleshooting
 
-| Symptom | Cause / fix |
+| Симптом | Причина / фикс |
 |---|---|
-| Caption shows `⚠️ plaintext` | `BACKUP_PUBLIC_KEY` unset or empty on the server → set it. |
-| `backup_decrypt` fails / garbage output | Wrong private key for this file (key rotated?), or a corrupted download — recheck sha256 against the caption. |
-| `nacl` import error on the server | `pip install -r requirements.txt` (PyNaCl) in the deploy venv. |
-| Lost the private key | Backups are unrecoverable. Generate a new keypair and start fresh; treat old archives as gone. |
+| В подписи `⚠️ plaintext` | `BACKUP_PUBLIC_KEY` не задан/пуст на сервере → задать. |
+| `backup_decrypt` падает / мусор на выходе | Не тот приватный ключ для этого файла (ротация?) или битая загрузка — пересверить sha256 с подписью. |
+| Ошибка импорта `nacl` на сервере | `pip install -r requirements.txt` (PyNaCl) в деплой-venv. |
+| Потерян приватный ключ | Бэкапы нечитаемы. Сгенерировать новую пару и начать заново; старые архивы считать утраченными. |
 
 ---
 
-## 7. Threat model (what this does and doesn't protect)
+## 7. Модель угроз (что защищает, а что нет)
 
-- **Protects:** the backup **archive at rest** in the channel and off the server.
-  Channel access ≠ data access; server compromise ≠ backup-archive access.
-- **Does not protect:** the **live** DB on the running server (whoever controls
-  the server already has it) — that's out of scope for backup encryption and
-  unchanged by this. Backup encryption is specifically about the copies that
-  leave the machine.
+- **Защищает:** сам **архив бэкапа** — в канале и вне сервера. Доступ к каналу ≠
+  доступ к данным; взлом сервера ≠ доступ к архиву бэкапов.
+- **Не защищает:** **живую** БД на работающем сервере (у кого контроль над
+  сервером — у того и она) — это вне задачи шифрования бэкапов и им не меняется.
+  Шифрование бэкапов — именно про копии, покидающие машину.
