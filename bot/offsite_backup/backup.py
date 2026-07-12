@@ -35,6 +35,11 @@ from bot.common.db_safety import backup_database, get_user_version
 
 _API = "https://api.telegram.org/bot{token}/{method}"
 
+# Captions go out as a MarkdownV2 fenced code block (monospace, tap-to-copy).
+CAPTION_PARSE_MODE = "MarkdownV2"
+# Inside a code fence only backslash and backtick need escaping (Telegram rule).
+_MDV2_CODE_ESCAPE = str.maketrans({"\\": "\\\\", "`": "\\`"})
+
 # Row-count tables reported in the caption (an invariant fingerprint of the
 # snapshot). Missing tables are skipped so an older schema still backs up.
 _COUNT_TABLES = ("words", "progress", "learning_items", "quiz_events", "users", "user_settings")
@@ -122,13 +127,17 @@ def build_snapshot(db_path, work_dir, now=None):
 
 
 def format_caption(meta, filename):
+    """Caption as a MarkdownV2 fenced code block — renders monospace and the whole
+    block (sha256 included) is tap-to-copy in Telegram. Send with
+    parse_mode=CAPTION_PARSE_MODE."""
     counts = " · ".join(f"{k}={v}" for k, v in meta["counts"].items())
-    return (
+    body = (
         f"🗄 DB backup {filename}\n"
         f"date {meta['date']} · schema v{meta['user_version']} · {meta['size']} B\n"
         f"sha256 {meta['sha256']}\n"
         f"{counts}"
     )
+    return "```\n" + body.translate(_MDV2_CODE_ESCAPE) + "\n```"
 
 
 def _post(client, token, method, data=None, files=None, timeout=120):
@@ -148,11 +157,13 @@ def _post(client, token, method, data=None, files=None, timeout=120):
     return payload
 
 
-def send_document(client, token, chat_id, file_path, caption):
+def send_document(client, token, chat_id, file_path, caption, parse_mode=CAPTION_PARSE_MODE):
     file_path = Path(file_path)
     with open(file_path, "rb") as handle:
         files = {"document": (file_path.name, handle, "application/gzip")}
         data = {"chat_id": str(chat_id), "caption": caption}
+        if parse_mode:
+            data["parse_mode"] = parse_mode
         return _post(client, token, "sendDocument", data=data, files=files)
 
 

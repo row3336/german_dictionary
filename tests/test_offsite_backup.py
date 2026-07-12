@@ -146,6 +146,9 @@ class CaptionTest(unittest.TestCase):
         caption = B.format_caption(meta, "words-20260712.db.gz")
         for needle in ("words-20260712.db.gz", "2026-07-12", "v11", "1234 B", "a" * 64, "words=737", "progress=1096"):
             self.assertIn(needle, caption)
+        # rendered as a MarkdownV2 fenced code block (monospace, tap-to-copy)
+        self.assertTrue(caption.startswith("```\n"))
+        self.assertTrue(caption.endswith("\n```"))
 
 
 class SendPipelineTest(unittest.TestCase):
@@ -161,6 +164,7 @@ class SendPipelineTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(client.methods(), ["sendDocument"])
         self.assertEqual(client.calls[0]["data"]["chat_id"], "-100999")
+        self.assertEqual(client.calls[0]["data"]["parse_mode"], "MarkdownV2")
         self.assertTrue(client.calls[0]["has_file"])
         # no leftover .gz in the work dir
         self.assertEqual([f for f in os.listdir(self.work) if f.endswith(".gz")], [])
