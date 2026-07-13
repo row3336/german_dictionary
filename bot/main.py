@@ -190,6 +190,7 @@ from .handlers.access import (
     access_rejected_choice,
 )
 from .handlers.topic_filter import topic_filter_toggle_callback
+from .handlers.word_filter_ui import word_filter_callback
 from .handlers.owner_stats import stat_toggle_callback
 from .handlers.rescue import rescue_handler
 from .handlers.menu import (
@@ -547,6 +548,8 @@ def main():
     app.add_handler(CallbackQueryHandler(access_decision_callback, pattern=r"^access:"))
     # Global handler for the topic-filter inline toggle buttons (spec #8).
     app.add_handler(CallbackQueryHandler(topic_filter_toggle_callback, pattern=r"^topicf:"))
+    # Global handler for the CEFR/book-topics filter drill (spec_topics_levels.md).
+    app.add_handler(CallbackQueryHandler(word_filter_callback, pattern=r"^wf:"))
     # Global handler for the conjugation card's inline "hide forms" toggle (Feature B).
     app.add_handler(CallbackQueryHandler(conjugation_card_callback, pattern=r"^conj:"))
     # Global handler for the "menu" button attached to owner broadcasts (spec #12).

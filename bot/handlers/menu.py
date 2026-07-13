@@ -230,8 +230,8 @@ async def tests_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         from .conjugation import start_conjugation  # local import: anti-cycle
         return await start_conjugation(update, context)
     if action == "topic_filter":
-        from .topic_filter import send_topic_filter_screen  # local import: anti-cycle
-        return await send_topic_filter_screen(update, context, user_id, "tests_menu")
+        from .word_filter_ui import send_word_filter_screen  # local import: anti-cycle
+        return await send_word_filter_screen(update, context, user_id, "tests_menu")
 
     await update.message.reply_text(
         t(_user_interface_lang(user_id), "settings_use_tests_buttons"),
@@ -252,8 +252,8 @@ async def quiz_ru_de_menu_choice(update: Update, context: ContextTypes.DEFAULT_T
         )
         return TESTS_MENU
     if action == "topic_filter":
-        from .topic_filter import send_topic_filter_screen  # local import: anti-cycle
-        return await send_topic_filter_screen(update, context, user_id, "ru_de_menu")
+        from .word_filter_ui import send_word_filter_screen  # local import: anti-cycle
+        return await send_word_filter_screen(update, context, user_id, "ru_de_menu")
     if action == "standard_fsrs":
         _reset_retry_state(context)
         _clear_last_answer(context)

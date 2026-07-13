@@ -378,8 +378,8 @@ async def algo_settings_menu_choice(update: Update, context: ContextTypes.DEFAUL
         return await _send_learning_settings_menu(update, user_id)
 
     if text == t(lang, "topic_filter"):
-        from .topic_filter import send_topic_filter_screen  # local import: anti-cycle
-        return await send_topic_filter_screen(update, context, user_id, "algo")
+        from .word_filter_ui import send_word_filter_screen  # local import: anti-cycle
+        return await send_word_filter_screen(update, context, user_id, "algo")
 
     if text == t(lang, "unit_tests"):
         if not is_owner(user_id):  # owner-only (P3.2): in-bot test run
@@ -625,6 +625,11 @@ async def topic_filter_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lang = _user_interface_lang(user_id)
     if _action_key_from_text(text, user_id) == "back":
         return_to = context.user_data.pop("topic_return", "")
+        # spec_topics_levels.md: the CEFR/book-topics filter prints the active filter
+        # on the way out (its selections were made via inline buttons, not text).
+        if context.user_data.pop("wf_active", False):
+            from ..handlers.word_filter_ui import filter_summary  # local import: anti-cycle
+            await update.message.reply_text(filter_summary(user_id))
         if return_to == "add_queue":
             await update.message.reply_text(
                 t(lang, "settings_topic_selection_canceled"),
@@ -658,6 +663,11 @@ async def topic_filter_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get("topic_return") == "add_queue":
         from ..handlers.add_words import handle_add_topic_input  # local import: anti-cycle
         return await handle_add_topic_input(update, context, text)
+
+    # CEFR/book-topics filter: selections are inline-only (spec_topics_levels.md removed
+    # the '1+2+03' text input). Ignore stray text; the user changes the filter by tapping.
+    if context.user_data.get("wf_active"):
+        return TOPIC_FILTER_EDIT
 
     value = text.strip()
     if not value:
