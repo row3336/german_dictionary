@@ -34,7 +34,12 @@ from pathlib import Path
 #      it verifies, so the diff apply updates that word).
 # 12 = word-level CEFR (+ words.cefr_level, DEFAULT ''): per-word A1..C2 parsed from
 #      verbformen.de, feeding the level-aware topic filters.
-SCHEMA_VERSION = 13
+# 13 = VF recheck (+ words.vf_checked_at, DEFAULT ''): timestamp of last successful
+#      recheck so an 'unchecked' rescan skips already-verified words.
+# 14 = topic book-level (+ topics.level, DEFAULT ''): per-topic A1..C2 level, independent
+#      of words.cefr_level, groups the "book topics" filter. '' = unassigned (hidden from
+#      that filter until set). Migration is column-only; A1 backfill is a deliberate step.
+SCHEMA_VERSION = 14
 
 # Tables whose row counts we snapshot before/after a migration (must not shrink).
 _COUNT_TABLES = (

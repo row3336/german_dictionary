@@ -590,6 +590,14 @@ def _ensure_schema(conn):
         SELECT DISTINCT trim(topic) FROM words WHERE trim(coalesce(topic, '')) != ''
         """
     )
+    # v13 -> v14: per-topic "book level" (A1..C2), independent of words.cefr_level.
+    # Additive, DEFAULT '' so every existing topic (unassigned) and an older/rolled-back
+    # build stay valid. Column-only on purpose: assigning A1 to current topics is a
+    # deliberate one-off backfill, never a blanket UPDATE here (so future B1/B2 levels
+    # are never clobbered on a re-run). '' topics are hidden from the "book topics" filter.
+    topic_cols = {row["name"] for row in conn.execute("PRAGMA table_info(topics)").fetchall()}
+    if "level" not in topic_cols:
+        conn.execute("ALTER TABLE topics ADD COLUMN level TEXT NOT NULL DEFAULT ''")
     # spec #2: persisted VF-add batch job (survives restart). A job holds the
     # owner's word list; each item is fetched/parsed one at a time (slow-drip),
     # partial results stored so a restart resumes instead of starting over.
@@ -1011,6 +1019,124 @@ def insert_topic_if_absent(db_path, name, description):
             (name, str(description or "").strip()),
         )
         return cur.rowcount > 0
+
+
+# --- Topic "book level" (v14): per-topic A1..C2, independent of words.cefr_level. ---
+
+def get_topic_level(db_path, name):
+    """This topic's book-level (A1..C2), or '' if unassigned/unknown."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT level FROM topics WHERE name = ?", (str(name).strip(),)
+        ).fetchone()
+    return row["level"] if row else ""
+
+
+def set_topic_level(db_path, name, level):
+    """Assign a topic's book-level. `level` must be a valid CEFR level (else ValueError).
+
+    Creates the topic row if absent (no description). Used by the add-flow (new topic)
+    and the owner level-management UI.
+    """
+    init_db(db_path)
+    name = str(name).strip()
+    level = _safe_cefr_level(level)
+    if not name:
+        raise ValueError("Empty topic name.")
+    if not level:
+        raise ValueError("Invalid CEFR level.")
+    with _connect(db_path) as conn:
+        conn.execute("INSERT OR IGNORE INTO topics (name) VALUES (?)", (name,))
+        conn.execute("UPDATE topics SET level = ? WHERE name = ?", (level, name))
+
+
+def list_topics_with_level(db_path):
+    """Every known topic as (name, description, level); level '' = unassigned."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        rows = conn.execute("SELECT name, description, level FROM topics").fetchall()
+    return [(row["name"], row["description"], row["level"]) for row in rows]
+
+
+def list_topics_for_level(db_path, level):
+    """Topic names assigned to the given book-level (unsorted; UI orders them)."""
+    init_db(db_path)
+    level = _safe_cefr_level(level)
+    if not level:
+        return []
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT name FROM topics WHERE level = ?", (level,)
+        ).fetchall()
+    return [row["name"] for row in rows]
+
+
+def list_book_levels(db_path):
+    """Book-levels that actually have >=1 word, in CEFR order (dynamic S2 list).
+
+    A level shows only if some topic of that level holds at least one word — empty
+    levels never clutter the "book topics" menu.
+    """
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT t.level
+            FROM topics t
+            JOIN words w ON w.topic = t.name
+            WHERE trim(coalesce(t.level, '')) != ''
+            """
+        ).fetchall()
+    present = {row["level"] for row in rows}
+    return [lvl for lvl in CEFR_LEVELS if lvl in present]
+
+
+def count_words_for_book_level(db_path, level):
+    """Number of words whose topic is assigned to the given book-level."""
+    init_db(db_path)
+    level = _safe_cefr_level(level)
+    if not level:
+        return 0
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT COUNT(*) AS cnt
+            FROM words w
+            JOIN topics t ON t.name = w.topic
+            WHERE t.level = ?
+            """,
+            (level,),
+        ).fetchone()
+    return int(row["cnt"])
+
+
+def list_cefr_levels_with_words(db_path):
+    """Word CEFR levels present in the dictionary, in CEFR order (dynamic S1 list).
+
+    Empty/unknown cefr_level is excluded — the CEFR filter menu lists only levels
+    that some word actually has.
+    """
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT cefr_level FROM words WHERE trim(coalesce(cefr_level, '')) != ''"
+        ).fetchall()
+    present = {row["cefr_level"] for row in rows}
+    return [lvl for lvl in CEFR_LEVELS if lvl in present]
+
+
+def count_words_for_cefr(db_path, level):
+    """Number of words with the given CEFR level (S1 per-level counter)."""
+    init_db(db_path)
+    level = _safe_cefr_level(level)
+    if not level:
+        return 0
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM words WHERE cefr_level = ?", (level,)
+        ).fetchone()
+    return int(row["cnt"])
 
 
 def get_statistics_snapshot(db_path, user_id, mode):

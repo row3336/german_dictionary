@@ -377,7 +377,8 @@ class TopicsRegistryMigrationTest(unittest.TestCase):
         self.assertEqual(report["to_version"], SCHEMA_VERSION)
         self.assertGreaterEqual(SCHEMA_VERSION, 6)
         self.assertIn("topics", _schema(db))
-        self.assertEqual({"name", "description"}, _schema(db)["topics"])
+        # migrating to the current version also adds topics.level (v14)
+        self.assertEqual({"name", "description", "level"}, _schema(db)["topics"])
         self.assertTrue(report["healthcheck"]["ok"])
         self.assertEqual(get_user_version(db), SCHEMA_VERSION)
 
@@ -718,6 +719,73 @@ class CefrLevelColumnMigrationTest(unittest.TestCase):
         db = os.path.join(d, "words.db")
         apply_migrations_safely(db, os.path.join(d, "backups"))
         self.assertIn("cefr_level", _schema(db)["words"])
+
+
+class TopicLevelMigrationTest(unittest.TestCase):
+    """v13 -> v14 adds topics.level (per-topic book-level). Column-only, DEFAULT '';
+    no blanket UPDATE, so pre-existing levels are never clobbered on a re-run."""
+
+    def _seed_v13(self, d):
+        db = os.path.join(d, "words.db")
+        init_db(db)  # full current schema, then peel the v14 column back off
+        conn = sqlite3.connect(db)
+        conn.executescript(
+            """
+            INSERT INTO words (id, type, german, russian, topic) VALUES ('w1','nomen','Haus','дом','1');
+            INSERT INTO words (id, type, german, russian, topic) VALUES ('w2','verb','reisen','ехать','2');
+            ALTER TABLE topics DROP COLUMN level;
+            """
+        )
+        conn.commit()
+        conn.close()
+        set_user_version(db, 13)
+        self.assertNotIn("level", _schema(db)["topics"])
+        return db
+
+    def test_v13_to_v14_adds_level_keeps_data(self):
+        d = tempfile.mkdtemp()
+        db = self._seed_v13(d)
+
+        report = apply_migrations_safely(db, os.path.join(d, "backups"))
+
+        self.assertTrue(report["migrated"])
+        self.assertEqual(report["from_version"], 13)
+        self.assertEqual(report["to_version"], SCHEMA_VERSION)
+        self.assertGreaterEqual(SCHEMA_VERSION, 14)
+        self.assertIn("level", _schema(db)["topics"])
+        self.assertTrue(report["healthcheck"]["ok"])
+        self.assertEqual(get_user_version(db), SCHEMA_VERSION)
+
+        # existing topics migrated with an EMPTY level (unassigned), not a forced A1
+        conn = sqlite3.connect(db)
+        try:
+            rows = conn.execute("SELECT name, level FROM topics ORDER BY name").fetchall()
+        finally:
+            conn.close()
+        self.assertEqual(rows, [("1", ""), ("2", "")])
+
+    def test_migration_does_not_clobber_existing_levels(self):
+        # a DB already carrying a real B2 level must keep it across a re-run of init_db
+        d = tempfile.mkdtemp()
+        db = self._seed_v13(d)
+        apply_migrations_safely(db, os.path.join(d, "backups"))
+        conn = sqlite3.connect(db)
+        conn.execute("UPDATE topics SET level = 'B2' WHERE name = '2'")
+        conn.commit()
+        conn.close()
+        init_db(db)  # defensive re-run must not reset the level
+        conn = sqlite3.connect(db)
+        try:
+            level = conn.execute("SELECT level FROM topics WHERE name='2'").fetchone()[0]
+        finally:
+            conn.close()
+        self.assertEqual(level, "B2")
+
+    def test_fresh_db_has_topic_level_column(self):
+        d = tempfile.mkdtemp()
+        db = os.path.join(d, "words.db")
+        apply_migrations_safely(db, os.path.join(d, "backups"))
+        self.assertIn("level", _schema(db)["topics"])
 
 
 if __name__ == "__main__":
