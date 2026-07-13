@@ -29,6 +29,7 @@ from ..app_config import (
     ALLOWED_AI_TYPES,
     ARTICLE_SET,
     CASE_TYPES,
+    CEFR_LEVELS,
     MENU,
     NUMERAL_SET,
     NUMERIC_RE,
@@ -39,12 +40,11 @@ from ..app_config import (
     PREPOSITION_TYPES,
     STOP_TEXT,
     TOPIC_FILTER_EDIT,
-    TOPIC_FILTER_KEY,
     get_db_path,
 )
 from ..common.lang import _user_dict_lang, _user_interface_lang
 from ..common.navigation import _action_key_from_text, _back_to_main_menu, _reply_text_with_retry
-from ..common.settings import _current_topic_value, _topic_filter_banner
+from ..common.settings import _topic_filter_banner
 from ..common.topics import parse_topic_input
 from ..i18n import t
 from ..storage import (
@@ -57,7 +57,7 @@ from ..storage import (
     list_all_words,
     list_topics,
     list_topics_with_desc,
-    set_user_setting,
+    set_topic_level,
 )
 from ..text_utils import cap_word as _cap_word
 from ..text_utils import md_escape as _md_escape
@@ -711,7 +711,7 @@ async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, w
         )
         return ADD_CLARIFY
 
-    entry = _normalize_ai_entry(entry, _current_topic_value(update.effective_user.id))
+    entry = _normalize_ai_entry(entry, _session_add_topic(context))
     if forced_type in {"nomen", "verb", "phrase"}:
         entry["type"] = forced_type
     for key, value in forced_fields.items():
@@ -757,30 +757,75 @@ async def _show_ai_preview(update: Update, entry):
     return ADD_CONFIRM
 
 
-async def _finalize_add_topic(update, context, name):
-    """Commit the chosen topic for the pending add batch and start processing it.
+def _session_add_topic(context):
+    """The topic chosen for the current add/VF batch (spec_topics_levels.md P4).
 
-    The chosen topic is stored the legacy way (as the user's topic_filter, since
-    _current_topic_value drives the topic assigned to each added word).
+    Decoupled from the quiz topic-filter: the add-flow no longer writes TOPIC_FILTER_KEY,
+    so adding words never changes what the user is quizzed on. Default '1' as before.
     """
-    set_user_setting(get_db_path(), update.effective_user.id, TOPIC_FILTER_KEY, name)
+    return str((context.user_data or {}).get("add_topic") or "1")
+
+
+def _level_reply_keyboard(user_id):
+    """Reply keyboard of the six CEFR levels (+ back) for a new topic's level pick."""
+    rows = [list(CEFR_LEVELS[i : i + 3]) for i in range(0, len(CEFR_LEVELS), 3)]
+    rows.append([t(_user_interface_lang(user_id), "back")])
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True)
+
+
+async def _finalize_add_topic(update, context, name):
+    """Commit the chosen topic for the pending batch and continue (AI queue or VF job).
+
+    The topic lives only in this session (context.user_data['add_topic']); it is NOT
+    written to the quiz topic-filter (decoupled, spec_topics_levels.md P4).
+    """
+    context.user_data["add_topic"] = name
     context.user_data.pop("topic_return", None)
     context.user_data.pop("pending_new_topic", None)
+    context.user_data.pop("pending_topic_level", None)
+    then = context.user_data.pop("add_topic_then", "ai")
+    if then == "vf":
+        words = context.user_data.pop("pending_vf_words", [])
+        from ..verb_forms_parsing.add_flow import start_vf_add_job  # local import: anti-cycle
+        return await start_vf_add_job(update, context, words)
     pending = context.user_data.pop("pending_add_queue", [])
     context.user_data.pop("pending_add_stats", None)
     context.user_data["add_queue"] = pending
     return await _process_next_ai_word(update, context)
 
 
-async def handle_add_topic_input(update, context, raw):
-    """Owner add-flow topic selection (spec #8, text-only — no inline buttons).
+async def _ask_topic_level(update, context, name):
+    """Prompt the mandatory book-level for a freshly created topic (6 reply buttons)."""
+    context.user_data["pending_topic_level"] = name
+    context.user_data.pop("pending_new_topic", None)
+    await update.message.reply_text(
+        t(_user_interface_lang(update.effective_user.id), "wf_new_topic_level").format(name=name),
+        reply_markup=_level_reply_keyboard(update.effective_user.id),
+    )
+    return TOPIC_FILTER_EDIT
 
-    New topic requires a description: 'name description' inserts it; a bare new name
-    triggers a one-shot description prompt (handled on the next turn via
-    'pending_new_topic'). An existing topic is selected as-is and any tail is ignored
-    (descriptions are never edited through the add-flow).
+
+async def handle_add_topic_input(update, context, raw):
+    """Owner add-flow topic selection (spec #8 + spec_topics_levels.md P4).
+
+    Existing topic: selected as-is (keeps its level). New topic: name -> description ->
+    mandatory book-level (A1..C2), then commit. Level is asked only for new topics.
     """
     db = get_db_path()
+    # step 3: awaiting the new topic's book-level (reply button = a CEFR level)
+    pending_level = context.user_data.get("pending_topic_level")
+    if pending_level:
+        try:
+            set_topic_level(db, pending_level, raw)
+        except ValueError:
+            await update.message.reply_text(
+                t(_user_interface_lang(update.effective_user.id), "wf_new_topic_level").format(name=pending_level),
+                reply_markup=_level_reply_keyboard(update.effective_user.id),
+            )
+            return TOPIC_FILTER_EDIT
+        return await _finalize_add_topic(update, context, pending_level)
+
+    # step 2: awaiting the new topic's description
     pending_name = context.user_data.get("pending_new_topic")
     if pending_name:
         desc = str(raw or "").strip()
@@ -788,8 +833,9 @@ async def handle_add_topic_input(update, context, raw):
             await update.message.reply_text(f"Enter description for new topic {pending_name}:")
             return TOPIC_FILTER_EDIT
         insert_topic_if_absent(db, pending_name, desc)
-        return await _finalize_add_topic(update, context, pending_name)
+        return await _ask_topic_level(update, context, pending_name)
 
+    # step 1: topic name (+ optional inline description)
     name, desc = parse_topic_input(raw)
     if not name:
         await update.message.reply_text("Send a topic name (e.g. '05 Essen' for a new one).")
@@ -797,12 +843,29 @@ async def handle_add_topic_input(update, context, raw):
 
     known = {n for n, _ in list_topics_with_desc(db)}
     if name in known:
-        return await _finalize_add_topic(update, context, name)  # existing: tail ignored
+        return await _finalize_add_topic(update, context, name)  # existing: keeps its level
     if desc:
         insert_topic_if_absent(db, name, desc)
-        return await _finalize_add_topic(update, context, name)
+        return await _ask_topic_level(update, context, name)
     context.user_data["pending_new_topic"] = name
     await update.message.reply_text(f"Enter description for new topic {name}:")
+    return TOPIC_FILTER_EDIT
+
+
+async def prompt_add_topic(update, context):
+    """Show the 'choose/create a topic' prompt for a batch (VF add reuses this).
+
+    The caller stashes its continuation (add_topic_then + pending payload) first;
+    handle_add_topic_input resumes it via _finalize_add_topic once a topic is picked.
+    """
+    lang = _user_interface_lang(update.effective_user.id)
+    topics = ", ".join(list_topics(get_db_path())) or "-"
+    await _reply_text_with_retry(
+        update.message,
+        f"Topics: {topics}\nChoose a topic, or type 'name description' to create a new one:",
+        reply_markup=ReplyKeyboardMarkup([[t(lang, "back")]], resize_keyboard=True),
+    )
+    context.user_data["topic_return"] = "add_queue"
     return TOPIC_FILTER_EDIT
 
 
@@ -971,7 +1034,7 @@ async def add_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["precheck_items"] = items
     await _reply_text_with_retry(
         update.message,
-        f"```text\n{_format_precheck_list(items, _current_topic_value(update.effective_user.id))}\n```",
+        f"```text\n{_format_precheck_list(items, _session_add_topic(context))}\n```",
         reply_markup=ReplyKeyboardMarkup(PRECHECK_KEYS, resize_keyboard=True),
         parse_mode="Markdown",
     )
@@ -1130,7 +1193,7 @@ async def add_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["precheck_items"] = items
     await _reply_text_with_retry(
         update.message,
-        f"```text\n{_format_precheck_list(items, _current_topic_value(update.effective_user.id))}\n```",
+        f"```text\n{_format_precheck_list(items, _session_add_topic(context))}\n```",
         reply_markup=ReplyKeyboardMarkup(PRECHECK_KEYS, resize_keyboard=True),
         parse_mode="Markdown",
     )

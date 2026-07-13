@@ -638,6 +638,9 @@ async def topic_filter_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.pop("pending_add_queue", None)
             context.user_data.pop("pending_add_stats", None)
             context.user_data.pop("pending_new_topic", None)
+            context.user_data.pop("pending_topic_level", None)
+            context.user_data.pop("pending_vf_words", None)
+            context.user_data.pop("add_topic_then", None)
             return ADD_INPUT
         if return_to == "algo":
             return await _send_algo_settings_menu(update, user_id)

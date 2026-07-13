@@ -21,7 +21,6 @@ from telegram import ReplyKeyboardMarkup
 from ..app_config import MENU, VF_ADD_INPUT, VF_APPLY_CONFIRM, get_db_path, get_dump_dir
 from ..common.db_safety import backup_db_with_event
 from ..common.navigation import _action_key_from_text, _back_to_main_menu, _reply_text_with_retry
-from ..common.settings import _current_topic_value
 from ..i18n import t
 from ..common.lang import _user_interface_lang
 from ..storage import (
@@ -264,10 +263,12 @@ async def _launch_job(update: Update, context: ContextTypes.DEFAULT_TYPE, job_id
 
 
 async def start_vf_add_job(update: Update, context: ContextTypes.DEFAULT_TYPE, words):
-    """Create + launch a VF-add job from a word list."""
+    """Create + launch a VF-add job from a word list, using the topic picked for this
+    batch (context.user_data['add_topic'], set by the topic step — not the quiz filter)."""
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
-    job_id = create_job(get_db_path(), user_id, chat_id, _current_topic_value(user_id), words)
+    topic = str((context.user_data or {}).get("add_topic") or "1")
+    job_id = create_job(get_db_path(), user_id, chat_id, topic, words)
     return await _launch_job(update, context, job_id, len(words))
 
 
@@ -386,7 +387,17 @@ async def vf_add_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=_add_menu_markup(user_id),
         )
         return VF_ADD_INPUT
-    return await start_vf_add_job(update, context, words)
+    return await _prompt_vf_topic(update, context, words)
+
+
+async def _prompt_vf_topic(update, context, words):
+    """VF add asks for the target topic every time (decoupled from the quiz filter,
+    spec_topics_levels.md P4). Stash the batch, then reuse the shared topic prompt;
+    the pick resumes at start_vf_add_job via _finalize_add_topic."""
+    context.user_data["pending_vf_words"] = words
+    context.user_data["add_topic_then"] = "vf"
+    from ..handlers.add_words import prompt_add_topic  # local import: anti-cycle
+    return await prompt_add_topic(update, context)
 
 
 async def vf_add_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -401,7 +412,7 @@ async def vf_add_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not words:
         await update.message.reply_text("File is empty.")
         return VF_ADD_INPUT
-    return await start_vf_add_job(update, context, words)
+    return await _prompt_vf_topic(update, context, words)
 
 
 # --- Step 5: apply the owner's edited review file ---

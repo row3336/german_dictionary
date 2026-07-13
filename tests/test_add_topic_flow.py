@@ -14,9 +14,11 @@ from _telegram_stub import install
 install()
 
 import bot.handlers.add_words as AW  # noqa: E402
-from bot.common.settings import _topic_filter_value  # noqa: E402
+from bot.app_config import TOPIC_FILTER_KEY  # noqa: E402
 from bot.storage import (  # noqa: E402
     get_topic_description,
+    get_topic_level,
+    get_user_setting,
     init_db,
     insert_topic_if_absent,
     list_topics_with_desc,
@@ -86,10 +88,17 @@ class AddTopicFlowTest(unittest.TestCase):
 
     def test_new_topic_with_description_inserts_and_proceeds(self):
         ctx = self._fresh_ctx()
+        # new topic: inserts + asks for a mandatory book-level (does NOT proceed yet)
         _upd, result = self._call("05 Essen und Trinken", ctx)
-        self.assertEqual(result, _SENTINEL)                       # proceeded to AI step
+        self.assertNotEqual(result, _SENTINEL)
         self.assertEqual(get_topic_description(self.db, "05"), "Essen und Trinken")
-        self.assertEqual(_topic_filter_value(OWNER), "05")        # topic chosen for batch
+        self.assertEqual(ctx.user_data.get("pending_topic_level"), "05")
+        # pick the level -> commits the batch topic and proceeds
+        _upd2, result2 = self._call("A1", ctx)
+        self.assertEqual(result2, _SENTINEL)
+        self.assertEqual(get_topic_level(self.db, "05"), "A1")
+        self.assertEqual(ctx.user_data.get("add_topic"), "05")        # session, not quiz filter
+        self.assertIsNone(get_user_setting(self.db, OWNER, TOPIC_FILTER_KEY, None))
         self.assertEqual(ctx.user_data.get("add_queue"), [{"x": 1}])
 
     def test_bare_new_topic_prompts_then_inserts(self):
@@ -100,18 +109,23 @@ class AddTopicFlowTest(unittest.TestCase):
         self.assertTrue(any("description for new topic 06" in r for r in upd.message.replies))
         self.assertEqual(get_topic_description(self.db, "06"), "")  # not inserted yet
 
-        upd2, result2 = self._call("Beschreibung sechs", ctx)
-        self.assertEqual(result2, _SENTINEL)
+        _upd2, result2 = self._call("Beschreibung sechs", ctx)     # desc -> ask level
+        self.assertNotEqual(result2, _SENTINEL)
         self.assertEqual(get_topic_description(self.db, "06"), "Beschreibung sechs")
-        self.assertEqual(_topic_filter_value(OWNER), "06")
-        self.assertIsNone(ctx.user_data.get("pending_new_topic"))
+        self.assertEqual(ctx.user_data.get("pending_topic_level"), "06")
+        _upd3, result3 = self._call("B1", ctx)                     # level -> proceed
+        self.assertEqual(result3, _SENTINEL)
+        self.assertEqual(get_topic_level(self.db, "06"), "B1")
+        self.assertEqual(ctx.user_data.get("add_topic"), "06")
 
     def test_existing_topic_tail_ignored_description_unchanged(self):
         insert_topic_if_absent(self.db, "01", "Zahlen")
         ctx = self._fresh_ctx()
         _upd, result = self._call("01 some random tail", ctx)
+        # existing topic keeps its level -> no level prompt, proceeds immediately
         self.assertEqual(result, _SENTINEL)
-        self.assertEqual(_topic_filter_value(OWNER), "01")
+        self.assertEqual(ctx.user_data.get("add_topic"), "01")
+        self.assertIsNone(get_user_setting(self.db, OWNER, TOPIC_FILTER_KEY, None))
         self.assertEqual(get_topic_description(self.db, "01"), "Zahlen")  # NOT edited
 
     def test_separators_comma_dash_dot(self):

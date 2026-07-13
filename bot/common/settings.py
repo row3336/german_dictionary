@@ -193,12 +193,3 @@ def _topic_filter_banner(user_id):
     label = _topic_filter_label(user_id)
     heading = t(_user_interface_lang(user_id), "topic_filter_banner")
     return f"{heading}\n\n🟥 *{_md_escape(label)}* 🟥"
-
-
-def _current_topic_value(user_id):
-    """Handle current topic value."""
-    raw = _topic_filter_value(user_id)
-    topics = _parse_topic_filter(raw)
-    if not topics:
-        return "1"
-    return topics[0]
