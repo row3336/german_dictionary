@@ -45,6 +45,7 @@ class _FakeMsg:
 
     async def reply_text(self, text, reply_markup=None, **kwargs):
         self.replies.append(text)
+        self.reply_kwargs = kwargs
 
 
 class _FakeUpdate:
@@ -122,6 +123,15 @@ class RecheckTest(unittest.TestCase):
         # reset clears the mark -> back in the unchecked list
         reset_word_vf_checks(self.db)
         self.assertIn("Haus", {lookup for _w, lookup, _t, _a in list_words_for_vf_recheck(self.db, only_unchecked=True)})
+
+    def test_recheck_prompt_keywords_are_tap_to_copy(self):
+        # the all/unchecked keywords render as MarkdownV2 inline code (tap-to-copy)
+        up = _FakeUpdate()
+        asyncio.run(AF.vf_recheck_prompt(up, _Ctx()))
+        self.assertEqual(up.message.reply_kwargs.get("parse_mode"), "MarkdownV2")
+        prompt = up.message.replies[-1]
+        self.assertIn("`all`", prompt)
+        self.assertIn("`unchecked`", prompt)
 
     def test_recheck_unchecked_launches_only_unmarked(self):
         mark_word_vf_checked(self.db, self.gehen)

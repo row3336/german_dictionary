@@ -311,13 +311,17 @@ async def vf_recheck_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Entry from the Add submenu 'VF recheck' button: ask what to recheck."""
     reset_vf_checks(get_db_path())  # legacy .com results table (stale) — unrelated to v13 marks
     context.user_data["vf_recheck"] = True
+    # MarkdownV2 so the keywords render as inline code -> tap-to-copy on mobile.
+    # Text is written without MarkdownV2 specials (no . - ( ) ! etc.) so only the
+    # `code` spans need backticks; em dashes (—) are not MarkdownV2 specials.
     await _reply_text_with_retry(
         update.message,
-        "🔁 Recheck existing words against verbformen. Send:\n"
-        "• `all` — every word, re-verify from scratch (clears the 'checked' marks)\n"
-        "• `unchecked` — only words not verified yet (continue a big batch cheaply)\n"
-        "• a list (one per line) — just those words",
+        "🔁 Recheck against verbformen — send one of:\n"
+        "`all` — verify every word again, clears the checked marks\n"
+        "`unchecked` — only words not verified yet\n"
+        "or a word list, one per line",
         reply_markup=_add_menu_markup(update.effective_user.id),
+        parse_mode="MarkdownV2",
     )
     return VF_ADD_INPUT
 
