@@ -141,10 +141,12 @@ def progress_text(job, counts, details_items=None):
         f"{processed}/{total} ({pct}%) · errors {counts['error']} · ETA {eta}",
     ]
     if details_items is not None:
+        # Show the last processed words, not the last by position: for a mid-run batch
+        # the tail positions are all still `pending`, which would render an empty detail
+        # block (and Telegram rejects the unchanged edit as "not modified").
+        processed = [it for it in details_items if it["status"] != "pending"]
         lines.append("")
-        for it in details_items[-15:]:
-            if it["status"] == "pending":
-                continue
+        for it in processed[-15:]:
             mark = {"done": "✅", "error": "❌", "skipped": "⏭"}.get(it["status"], "•")
             note = ""
             if it["status"] == "error":
@@ -157,6 +159,11 @@ def progress_text(job, counts, details_items=None):
 
 def progress_keyboard(job):
     jid = job["id"]
+    # A terminal job (done/stopped/error) has no live task behind it — drop the
+    # controls so they don't sit there dead. Continue a stopped batch by re-running
+    # recheck; only a paused job resumes in place.
+    if job["status"] not in ("running", "paused"):
+        return None
     paused = job["status"] == "paused"
     toggle = InlineKeyboardButton(
         "▶️ Resume" if paused else "⏸ Pause",
@@ -201,15 +208,32 @@ async def _send_review_file(bot, chat_id, job_id, counts):
         await bot.send_message(chat_id=chat_id, text="Review HTML could not be sent; the JSON above still works.")
 
 
+async def _edit_progress_message(bot, chat_id, message_id, text, kb, retries=0):
+    """Edit the live progress message. Best-effort by default (a mid-run tick that
+    fails or is unchanged must not kill the job). The terminal render passes
+    `retries` > 0 so the final status reliably lands even through a transient
+    network blip (last night a Bad Gateway left the card stuck on 'running')."""
+    for attempt in range(retries + 1):
+        try:
+            await bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, reply_markup=kb)
+            return
+        except Exception as exc:  # noqa: BLE001
+            # "message is not modified" means the card already shows this text — done.
+            if "not modified" in str(exc).lower() or attempt >= retries:
+                return
+            await asyncio.sleep(2 * (attempt + 1))
+
+
 async def _make_progress_cb(bot, chat_id, job_id):
     async def on_progress(job, counts, done):
         text, kb = _render(get_db_path(), job_id)
         if text is not None:
             ui = VF_ADD_UI.get(job_id, {})
-            try:
-                await bot.edit_message_text(text, chat_id=chat_id, message_id=ui.get("message_id"), reply_markup=kb)
-            except Exception:
-                pass  # a "message not modified" / transient edit error must not kill the job
+            # The final (terminal) render must land, so the owner never sees a stale
+            # 'running' after an auto-stop; interim ticks stay best-effort.
+            await _edit_progress_message(
+                bot, chat_id, ui.get("message_id"), text, kb, retries=4 if done else 0
+            )
         if done:
             await _send_review_file(bot, chat_id, job_id, counts)
             VF_ADD_TASKS.pop(job_id, None)

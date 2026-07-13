@@ -99,6 +99,21 @@ class PureHelpersTest(unittest.TestCase):
         self.assertIn("❌ weil", t)
         self.assertIn("http 429", t)
 
+    def test_progress_text_details_shows_processed_not_trailing_pending(self):
+        # regression: a mid-run batch's tail positions are all pending; Details must
+        # show the processed words (not render an empty block that Telegram rejects).
+        job = {"id": 1, "status": "running"}
+        counts = {"total": 20, "pending": 18, "done": 2, "error": 0, "skipped": 0}
+        items = (
+            [{"word": "gehen", "status": "done", "flags": "", "error": ""},
+             {"word": "Haus", "status": "done", "flags": "", "error": ""}]
+            + [{"word": f"w{i}", "status": "pending", "flags": "", "error": ""} for i in range(18)]
+        )
+        t = AF.progress_text(job, counts, details_items=items)
+        self.assertIn("✅ gehen", t)
+        self.assertIn("✅ Haus", t)
+        self.assertNotIn("w0", t)  # trailing pending words are not listed
+
     def test_progress_keyboard_toggles_pause_resume(self):
         run_kb = AF.progress_keyboard({"id": 9, "status": "running"})
         btn = run_kb.inline_keyboard[0][0]
@@ -107,6 +122,11 @@ class PureHelpersTest(unittest.TestCase):
         pause_kb = AF.progress_keyboard({"id": 9, "status": "paused"})
         self.assertIn("Resume", pause_kb.inline_keyboard[0][0].text)
         self.assertEqual(pause_kb.inline_keyboard[0][0].callback_data, "vfadd:resume:9")
+
+    def test_progress_keyboard_none_when_terminal(self):
+        # a done/stopped/error job has no live task -> no dead control buttons
+        for status in ("done", "stopped", "error"):
+            self.assertIsNone(AF.progress_keyboard({"id": 9, "status": status}))
 
 
 class CallbackTest(unittest.TestCase):

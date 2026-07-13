@@ -56,16 +56,69 @@ class JobRunnerTest(unittest.TestCase):
         self.assertEqual(progress[-1], (2, True))  # final progress marks done
 
     def test_ban_streak_emergency_stop(self):
+        # a run of real BLOCK responses (http=429) trips the emergency stop
         jid = JS.create_job(self.db, 7, 100, "t", ["a", "b", "c", "d", "e"])
 
         def fetcher(word, type_hint=""):
-            raise RuntimeError("boom")
+            raise RuntimeError("summary fetch failed (http=429) for 'x'")
 
         status = self._run(jid, fetcher=fetcher, ban_limit=3)
         self.assertEqual(status, "error")
         c = JS.job_counts(self.db, jid)
         self.assertEqual(c["error"], 3)
         self.assertEqual(c["pending"], 2)  # stopped early, remainder untouched
+
+    def test_404_streak_does_not_ban(self):
+        # a run of genuine 404s (absent words) must NOT look like a ban -> job finishes
+        jid = JS.create_job(self.db, 7, 100, "t", ["a", "b", "c", "d", "e"])
+
+        def fetcher(word, type_hint=""):
+            raise RuntimeError(f"summary fetch failed (http=404) for {word!r}")
+
+        status = self._run(jid, fetcher=fetcher, ban_limit=3)
+        self.assertEqual(status, "done")            # not halted despite 5 >= ban_limit errors
+        c = JS.job_counts(self.db, jid)
+        self.assertEqual((c["error"], c["pending"]), (5, 0))  # every word attempted
+
+    def test_transient_wave_cools_down_then_continues(self):
+        # a 5xx wave triggers a cooldown and the job keeps going (not a terminal stop)
+        jid = JS.create_job(self.db, 7, 100, "t", ["a", "b", "c", "d"])
+        fails = {"a", "b"}  # first two 503, rest parse fine
+
+        def fetcher(word, type_hint=""):
+            if word in fails:
+                raise RuntimeError(f"summary fetch failed (http=503) for {word!r}")
+            return load("Haus_summary.html"), ""
+
+        cools = {"n": 0}
+
+        async def cooldown():
+            cools["n"] += 1
+
+        status = self._run(jid, fetcher=fetcher, cooldown=cooldown,
+                            transient_limit=2, fetch_retries=0)
+        self.assertEqual(status, "done")            # survived the wave
+        self.assertEqual(cools["n"], 1)             # cooled down once after 2 transient fails
+        c = JS.job_counts(self.db, jid)
+        self.assertEqual((c["done"], c["error"], c["pending"]), (2, 2, 0))
+
+    def test_prolonged_transient_gives_up(self):
+        # if the site stays down past the cooldown budget, hand back partial results
+        jid = JS.create_job(self.db, 7, 100, "t", ["a", "b", "c", "d", "e", "f"])
+
+        def fetcher(word, type_hint=""):
+            raise RuntimeError(f"summary fetch failed (http=503) for {word!r}")
+
+        cools = {"n": 0}
+
+        async def cooldown():
+            cools["n"] += 1
+
+        status = self._run(jid, fetcher=fetcher, cooldown=cooldown,
+                            transient_limit=2, max_cooldowns=1, fetch_retries=0)
+        self.assertEqual(status, "error")           # gave up after the budget
+        self.assertEqual(cools["n"], 1)             # 1st wave cools; 2nd exceeds budget -> stop, no cool
+        self.assertGreater(JS.job_counts(self.db, jid)["pending"], 0)  # remainder untouched
 
     def test_stopped_job_does_nothing(self):
         jid = JS.create_job(self.db, 7, 100, "t", ["gehen", "Haus"])
