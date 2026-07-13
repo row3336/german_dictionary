@@ -246,7 +246,15 @@ async def _launch_job(update: Update, context: ContextTypes.DEFAULT_TYPE, job_id
     """Send the pre-start + live progress messages and start the background task."""
     chat_id = update.effective_chat.id
     db_path = get_db_path()
-    await _reply_text_with_retry(update.message, prestart_text(count))
+    # Launch returns to the MENU state (so a re-uploaded review file is caught by
+    # vf_review_document). Swap the visible keyboard to the main menu too, or the
+    # stale add-submenu buttons would hit the main-menu router and just report
+    # "unknown command" (its back has no branch there) — a dead keyboard.
+    await _reply_text_with_retry(
+        update.message,
+        prestart_text(count),
+        reply_markup=_main_menu_markup(update.effective_user.id),
+    )
     text, kb = _render(db_path, job_id)
     msg = await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=kb)
     VF_ADD_UI[job_id] = {"chat_id": chat_id, "message_id": msg.message_id, "details": False}
