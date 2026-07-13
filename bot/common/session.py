@@ -18,10 +18,10 @@ from ..common.lang import _mode_de_l1, _mode_l1_de, _mode_pl_sg
 from ..common.settings import (
     _session_retry_gap,
     _session_retry_iterations,
-    _topic_filter_for_query,
     _weak_drill_gap,
     _weak_drill_repeats,
 )
+from ..common.word_filter import resolve_quiz_filter
 from ..retry_logic import maybe_take_retry_entry, register_retry_result
 from ..storage import get_word_by_id, select_due
 
@@ -179,12 +179,14 @@ def _pick_due_entry(context, user_id, mode, word_type=None):
     is_fsrs_mode = mode in {_mode_l1_de(user_id), _mode_de_l1(user_id), _mode_pl_sg(user_id)}
 
     def _fetch_due():
+        qf = resolve_quiz_filter(user_id)
         return select_due(
             get_db_path(),
             user_id=user_id,
             mode=mode,
             word_type=word_type,
-            topics=_topic_filter_for_query(user_id),
+            topics=qf.topics,
+            cefr_levels=qf.cefr_levels,
             exclude_correct_today=is_fsrs_mode,
         )
 

@@ -25,7 +25,7 @@ from ..app_config import (
 )
 from ..common.lang import _mode_de_l1, _mode_l1_de, _mode_pl_sg, _user_dict_lang, _user_interface_lang
 from ..common.navigation import _action_key_from_text, _back_to_tests, _reply_text_with_retry
-from ..common.settings import _topic_filter_for_query
+from ..common.word_filter import count_words_for_filter
 from ..common.session import (
     _bump_answer_streak,
     _bump_session_result,
@@ -51,7 +51,6 @@ from ..storage import QUIZ_RU_DE as MODE_RU_DE
 from ..storage import (
     _DICT_TRANSLATION_COLUMN,
     apply_user_word_media,
-    count_words_for_topics,
     get_synonym_group,
     log_quiz_event,
     mark_last_quiz_event_correct,
@@ -83,7 +82,7 @@ def _no_words_key(user_id, due_key):
     """Choose the empty-state message (spec #8): 'no words under the selected topics
     at all' when the topic filter matches zero words in the DB, otherwise the given
     mode-specific 'no due' key (words exist but none are due)."""
-    if count_words_for_topics(get_db_path(), _topic_filter_for_query(user_id)) == 0:
+    if count_words_for_filter(user_id) == 0:
         return "topic_no_words_quiz"
     return due_key
 

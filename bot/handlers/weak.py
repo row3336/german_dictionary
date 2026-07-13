@@ -31,7 +31,7 @@ from ..common.session import (
     _set_weak_drill_since_last,
     _weak_drill_since_last,
 )
-from ..common.settings import _topic_filter_for_query
+from ..common.word_filter import resolve_quiz_filter
 from ..common.txlog import _capture_transaction_snapshot, _log_transaction
 from ..handlers.quiz import _plural_matches, _stop_with_summary
 from ..i18n import t
@@ -341,12 +341,14 @@ async def quiz_partizip2_weak(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 def _pick_weak_entry(context, user_id, weak_field, word_type=None):
     """Handle pick weak entry."""
+    qf = resolve_quiz_filter(user_id)
     due = list_weak_words(
         get_db_path(),
         user_id=user_id,
         weak_field=weak_field,
         word_type=word_type,
-        topics=_topic_filter_for_query(user_id),
+        topics=qf.topics,
+        cefr_levels=qf.cefr_levels,
         limit=300,
     )
     if not due:

@@ -2587,6 +2587,26 @@ def _safe_cefr_level(value):
     return level if level in CEFR_LEVELS else ""
 
 
+# toggle_user_level (defined earlier) validates a level through this name: a valid CEFR
+# level normalizes to itself, anything else -> '' so the caller rejects it.
+_normalize_level = _safe_cefr_level
+
+
+def _cefr_filter_sql(cefr_levels):
+    """Build the CEFR level restriction for a word query (spec_topics_levels.md §3).
+
+    Returns ('w.cefr_level IN (?,?)', [levels]) for a non-empty valid selection, else
+    ('', []). None/empty means NO restriction — the caller adds nothing (in CEFR mode
+    that is the 'all six levels selected' case, which by design shows every word,
+    including those with an empty cefr_level).
+    """
+    clean = [_safe_cefr_level(x) for x in (cefr_levels or []) if _safe_cefr_level(x)]
+    if not clean:
+        return "", []
+    placeholders = ",".join("?" for _ in clean)
+    return f"w.cefr_level IN ({placeholders})", clean
+
+
 def _normalize_word_entry_for_storage(entry):
     """Normalize word casing before storing."""
     result = dict(entry)
@@ -2685,10 +2705,15 @@ def select_due(
     mode,
     word_type=None,
     topics=None,
+    cefr_levels=None,
     today=None,
     exclude_correct_today=False,
 ):
-    """Handle select due."""
+    """Handle select due.
+
+    `topics` and `cefr_levels` are the two mutually-exclusive quiz filters
+    (spec_topics_levels.md): the resolver passes at most one of them.
+    """
     if today is None:
         today = date.today()
     due_today = today.isoformat()
@@ -2733,6 +2758,10 @@ def select_due(
             placeholders = ",".join("?" for _ in clean_topics)
             where_clauses.append(f"w.topic IN ({placeholders})")
             where_params.extend(clean_topics)
+    cefr_clause, cefr_params = _cefr_filter_sql(cefr_levels)
+    if cefr_clause:
+        where_clauses.append(cefr_clause)
+        where_params.extend(cefr_params)
     if exclude_correct_today:
         where_clauses.append(
             """NOT EXISTS (
@@ -3031,7 +3060,7 @@ def _mix_by_topic_proportional(entries, limit):
     return mixed
 
 
-def learning_pick_new_words(db_path, user_id, limit, topics=None, mix=False):
+def learning_pick_new_words(db_path, user_id, limit, topics=None, cefr_levels=None, mix=False):
     """Pick new (never-seen, not-yet-in-learning) words to enqueue for learning.
 
     This is the *selection* layer for the learning queue — the only place mix
@@ -3054,6 +3083,9 @@ def learning_pick_new_words(db_path, user_id, limit, topics=None, mix=False):
             placeholders = ",".join("?" for _ in clean_topics)
             where_topics = f" AND w.topic IN ({placeholders})"
             params.extend(clean_topics)
+    cefr_clause, cefr_params = _cefr_filter_sql(cefr_levels)
+    where_cefr = f" AND {cefr_clause}" if cefr_clause else ""
+    params.extend(cefr_params)
     with _connect(db_path) as conn:
         rows = conn.execute(
             """
@@ -3068,9 +3100,9 @@ def learning_pick_new_words(db_path, user_id, limit, topics=None, mix=False):
                 SELECT 1 FROM learning_items li
                 WHERE li.user_id = ? AND li.word_id = w.id
               )
-            {where_topics}
+            {where_topics}{where_cefr}
             ORDER BY w.created_at ASC, w.id ASC
-            """.format(where_topics=where_topics),
+            """.format(where_topics=where_topics, where_cefr=where_cefr),
             (*params,),
         ).fetchall()
     entries = [_row_to_entry(row) for row in rows]
@@ -4171,7 +4203,7 @@ def get_form_review_stage(db_path, user_id, word_id, field):
     return int(row["stage"] or 0) if row else 0
 
 
-def list_weak_words(db_path, user_id, weak_field, word_type=None, topics=None, limit=200):
+def list_weak_words(db_path, user_id, weak_field, word_type=None, topics=None, cefr_levels=None, limit=200):
     """Handle list weak words."""
     weak_field = _safe_text(weak_field).strip().lower()
     if weak_field not in {"article", "plural", "prateritum", "partizip2"}:
@@ -4194,6 +4226,10 @@ def list_weak_words(db_path, user_id, weak_field, word_type=None, topics=None, l
             placeholders = ",".join("?" for _ in clean_topics)
             where.append(f"w.topic IN ({placeholders})")
             params.extend(clean_topics)
+    cefr_clause, cefr_params = _cefr_filter_sql(cefr_levels)
+    if cefr_clause:
+        where.append(cefr_clause)
+        params.extend(cefr_params)
     query = f"""
         SELECT
             w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ, w.russian,
@@ -4523,7 +4559,7 @@ def get_word_study_status(db_path, user_id, word_id):
     return "fsrs 0"
 
 
-def list_learning_queue_words(db_path, user_id, topics=None):
+def list_learning_queue_words(db_path, user_id, topics=None, cefr_levels=None):
     """Handle new words that have no first touch and are not completed in learning."""
     init_db(db_path)
     where_topics = ""
@@ -4534,6 +4570,9 @@ def list_learning_queue_words(db_path, user_id, topics=None):
             placeholders = ",".join("?" for _ in clean_topics)
             where_topics = f" AND w.topic IN ({placeholders})"
             params.extend(clean_topics)
+    cefr_clause, cefr_params = _cefr_filter_sql(cefr_levels)
+    where_cefr = f" AND {cefr_clause}" if cefr_clause else ""
+    params.extend(cefr_params)
     with _connect(db_path) as conn:
         rows = conn.execute(
             """
@@ -4549,13 +4588,13 @@ def list_learning_queue_words(db_path, user_id, topics=None):
                 SELECT 1 FROM learning_items li
                 WHERE li.user_id = ? AND li.word_id = w.id AND li.status = 'completed'
               )
-            {where_topics}
+            {where_topics}{where_cefr}
             ORDER BY
                 CASE WHEN trim(coalesce(w.topic, '')) GLOB '[0-9]*' THEN 0 ELSE 1 END ASC,
                 CASE WHEN trim(coalesce(w.topic, '')) GLOB '[0-9]*' THEN CAST(trim(w.topic) AS INTEGER) ELSE NULL END ASC,
                 w.topic ASC,
                 w.created_at ASC
-            """.format(where_topics=where_topics),
+            """.format(where_topics=where_topics, where_cefr=where_cefr),
             tuple(params),
         ).fetchall()
     return [_row_to_entry(row) for row in rows]

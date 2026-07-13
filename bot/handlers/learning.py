@@ -29,14 +29,13 @@ from ..common.settings import (
     _learning_schedule_seconds,
     _set_learning_mix_mode,
     _topic_filter_banner,
-    _topic_filter_for_query,
 )
+from ..common.word_filter import count_words_for_filter, resolve_quiz_filter
 from ..common.txlog import _capture_transaction_snapshot, _log_transaction
 from ..handlers.quiz import _check_ru_de_strict, _set_reaction
 from ..i18n import t
 from ..storage import (
     apply_user_word_media,
-    count_words_for_topics,
     learning_active_count,
     learning_add_word_by_id,
     learning_add_words,
@@ -98,7 +97,7 @@ def _learning_empty_text(user_id):
     an unterminated italic entity under parse_mode='Markdown'). It must never be
     sent with parse_mode='Markdown'.
     """
-    if count_words_for_topics(get_db_path(), _topic_filter_for_query(user_id)) == 0:
+    if count_words_for_filter(user_id) == 0:
         return t(_user_interface_lang(user_id), "topic_no_words_learning")
     snapshot = learning_status_snapshot(get_db_path(), user_id, _learning_ready_quorum(get_db_path(), user_id))
     base = t(_user_interface_lang(user_id), "learning_no_due")
@@ -277,11 +276,13 @@ async def _learning_add_words(update: Update, context: ContextTypes.DEFAULT_TYPE
             reply_markup=ReplyKeyboardMarkup(_learning_menu_keys(user_id), resize_keyboard=True),
         )
         return LEARNING_MENU
+    qf = resolve_quiz_filter(user_id)
     picked = learning_pick_new_words(
         db_path,
         user_id=user_id,
         limit=need,
-        topics=_topic_filter_for_query(user_id),
+        topics=qf.topics,
+        cefr_levels=qf.cefr_levels,
         mix=_learning_mix_mode_enabled(user_id),
     )
     if not picked:
