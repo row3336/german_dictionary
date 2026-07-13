@@ -18,7 +18,9 @@ from bot.storage import (  # noqa: E402
     init_db,
     list_all_words,
     list_words_for_vf_recheck,
+    mark_word_vf_checked,
     reset_vf_checks,
+    reset_word_vf_checks,
     save_vf_check_result,
 )
 from bot.verb_forms_parsing import job_store as JS  # noqa: E402
@@ -109,6 +111,30 @@ class RecheckTest(unittest.TestCase):
         jobs = JS.active_jobs(self.db)
         words = {it["word"] for it in JS.list_items(self.db, jobs[0]["id"])} if jobs else None
         return words, up.message.replies
+
+    def test_only_unchecked_filters_marked_words(self):
+        # a word marked vf_checked is dropped from the only_unchecked candidate list
+        mark_word_vf_checked(self.db, self.haus)
+        cand = list_words_for_vf_recheck(self.db, only_unchecked=True)
+        self.assertEqual({lookup for _w, lookup, _t, _a in cand}, {"gehen", "mit"})
+        # full list still includes it
+        self.assertIn("Haus", {lookup for _w, lookup, _t, _a in list_words_for_vf_recheck(self.db)})
+        # reset clears the mark -> back in the unchecked list
+        reset_word_vf_checks(self.db)
+        self.assertIn("Haus", {lookup for _w, lookup, _t, _a in list_words_for_vf_recheck(self.db, only_unchecked=True)})
+
+    def test_recheck_unchecked_launches_only_unmarked(self):
+        mark_word_vf_checked(self.db, self.gehen)
+        words, _ = self._launch_recheck("unchecked")
+        self.assertEqual(words, {"Haus", "mit"})  # gehen skipped (already checked)
+
+    def test_recheck_all_resets_marks_and_takes_everything(self):
+        mark_word_vf_checked(self.db, self.gehen)
+        mark_word_vf_checked(self.db, self.haus)
+        words, _ = self._launch_recheck("all")
+        self.assertEqual(words, {"gehen", "Haus", "mit"})  # all re-verified
+        # 'all' cleared the marks
+        self.assertEqual(len(list_words_for_vf_recheck(self.db, only_unchecked=True)), 3)
 
     def test_recheck_matches_bare_and_correct_article(self):
         # 'das Haus' (article matches DB) and bare 'Haus'/'mit' all resolve

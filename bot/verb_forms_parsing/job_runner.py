@@ -12,6 +12,7 @@ import asyncio
 import random
 import time
 
+from ..storage import mark_word_vf_checked
 from .de_fetch import fetch_word_pages
 from .de_parser import parse_de
 from .job_store import (
@@ -137,6 +138,8 @@ async def run_job(
                 summary, conj = await asyncio.to_thread(fetcher, word, type_hint)
                 entry = parse_de(summary, conj, query=word, topic=job["topic"], type_hint=type_hint)
                 save_item_result(db_path, item["id"], "done", result=entry, flags=",".join(entry.get("_flags") or []))
+                if item.get("word_id"):  # recheck item -> stamp the word as verified (v13)
+                    mark_word_vf_checked(db_path, item["word_id"])
                 error_kind = None
                 break
             except Exception as exc:  # noqa: BLE001 - one bad word must not kill the batch

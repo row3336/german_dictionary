@@ -569,6 +569,13 @@ def _ensure_schema(conn):
     # write. Feeds the level-aware topic filters (chosen levels -> eligible words).
     if "cefr_level" not in word_cols:
         conn.execute("ALTER TABLE words ADD COLUMN cefr_level TEXT NOT NULL DEFAULT ''")
+    # v12 -> v13 (spec #2 recheck): timestamp of the last successful VF recheck for this
+    # word. Additive, DEFAULT '' so every existing row (never rechecked) and an older/
+    # rolled-back build stay valid. Set when a recheck item parses OK; an 'unchecked'
+    # recheck then skips words whose mark is non-empty, so already-verified words don't
+    # go through the fetch loop again. Errors leave it '' so they retry next run.
+    if "vf_checked_at" not in word_cols:
+        conn.execute("ALTER TABLE words ADD COLUMN vf_checked_at TEXT NOT NULL DEFAULT ''")
     conn.execute("UPDATE words SET topic = '1' WHERE trim(coalesce(topic, '')) = ''")
     # spec #8: topics registry. Defensive create (mirrors vf_checks above) + idempotent
     # seed of every DISTINCT topic in use, with empty description. INSERT OR IGNORE keeps
@@ -4931,23 +4938,59 @@ def reset_vf_checks(db_path):
         conn.execute("DELETE FROM vf_checks")
 
 
-def list_words_for_vf_recheck(db_path):
+def list_words_for_vf_recheck(db_path, only_unchecked=False):
     """Existing words to re-verify against the .de parser:
     (word_id, lookup, type, article) for every type EXCEPT ``phrase`` (multi-word,
     no single dictionary page). The type is carried so the recheck lookup routes by
     it — function words go to their verben.de type page instead of a homonym card.
     lookup = infinitive for verbs, else german; article is '' for non-nouns (used
-    by the recheck UI to match an owner who typed the noun with its article)."""
+    by the recheck UI to match an owner who typed the noun with its article).
+
+    With ``only_unchecked=True`` words already marked (``vf_checked_at`` set by a prior
+    successful recheck) are skipped, so an incremental recheck doesn't re-fetch what a
+    previous run already verified (spec #2 v13)."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT id, type, article, german, infinitive, vf_checked_at
+            FROM words
+            ORDER BY created_at ASC
+            """
+        ).fetchall()
     out = []
-    for entry in list_all_words(db_path):
-        wtype = _safe_text(entry.get("type", "")).strip().lower()
+    for r in rows:
+        wtype = _safe_text(r["type"]).strip().lower()
         if not wtype or wtype == "phrase":
             continue
-        lookup = entry.get("infinitive") if wtype == "verb" else entry.get("german")
-        lookup = _safe_text(lookup).strip()
+        if only_unchecked and _safe_text(r["vf_checked_at"]).strip():
+            continue
+        lookup = _safe_text(r["infinitive"] if wtype == "verb" else r["german"]).strip()
         if lookup:
-            out.append((entry.get("id"), lookup, wtype, _safe_text(entry.get("article", "")).strip()))
+            out.append((r["id"], lookup, wtype, _safe_text(r["article"]).strip()))
     return out
+
+
+def mark_word_vf_checked(db_path, word_id, when=None):
+    """Stamp a word as successfully rechecked against verbformen (spec #2 v13).
+
+    Called when a recheck item parses OK; ``list_words_for_vf_recheck(only_unchecked=True)``
+    then skips it. ``when`` (an explicit timestamp) is used by the backfill of an existing
+    job's already-parsed items; live marking passes None -> CURRENT_TIMESTAMP. Errors never
+    call this, so a failed word keeps ``vf_checked_at=''`` and retries next run."""
+    with _connect(db_path) as conn:
+        conn.execute(
+            "UPDATE words SET vf_checked_at = COALESCE(?, CURRENT_TIMESTAMP) WHERE id = ?",
+            (_safe_text(when) or None, word_id),
+        )
+
+
+def reset_word_vf_checks(db_path):
+    """Clear every word's recheck mark (spec #2 v13) — a full 'all' re-scan re-verifies
+    everything from scratch. Distinct from ``reset_vf_checks`` (the legacy .com table)."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        conn.execute("UPDATE words SET vf_checked_at = ''")
 
 
 def save_vf_check_result(

@@ -34,7 +34,7 @@ from pathlib import Path
 #      it verifies, so the diff apply updates that word).
 # 12 = word-level CEFR (+ words.cefr_level, DEFAULT ''): per-word A1..C2 parsed from
 #      verbformen.de, feeding the level-aware topic filters.
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 # Tables whose row counts we snapshot before/after a migration (must not shrink).
 _COUNT_TABLES = (

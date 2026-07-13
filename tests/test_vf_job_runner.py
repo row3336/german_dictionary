@@ -5,9 +5,19 @@ import os
 import tempfile
 import unittest
 
-from bot.storage import init_db
+from bot.storage import add_word, init_db
 from bot.verb_forms_parsing import job_store as JS
 from bot.verb_forms_parsing.job_runner import run_job
+
+
+def _vf_mark(db, word_id):
+    import sqlite3
+    conn = sqlite3.connect(db)
+    try:
+        row = conn.execute("SELECT vf_checked_at FROM words WHERE id = ?", (word_id,)).fetchone()
+    finally:
+        conn.close()
+    return row[0] if row else None
 
 FIX = os.path.join(os.path.dirname(__file__), "fixtures", "verbformen_de")
 
@@ -187,6 +197,28 @@ class JobRunnerTest(unittest.TestCase):
         self.assertEqual(status, "done")            # job itself completes
         self.assertEqual(calls["n"], 3)             # 1 initial + 2 retries
         self.assertEqual(JS.job_counts(self.db, jid)["error"], 1)
+
+    def test_recheck_done_marks_word_checked(self):
+        # a recheck item (carries word_id) that parses OK stamps the word (v13)
+        wid = add_word(self.db, {"type": "nomen", "article": "das", "german": "Haus",
+                                 "russian": "дом", "topic": "1"})["id"]
+        jid = JS.create_recheck_job(self.db, 7, 100, [("Haus", wid, "nomen")])
+        status = self._run(jid, fetcher=lambda w, h="": (load("Haus_summary.html"), ""))
+        self.assertEqual(status, "done")
+        self.assertTrue(_vf_mark(self.db, wid))  # marked checked
+
+    def test_recheck_error_leaves_word_unmarked(self):
+        # a failed recheck item must NOT mark the word, so it retries next run
+        wid = add_word(self.db, {"type": "nomen", "article": "das", "german": "Haus",
+                                 "russian": "дом", "topic": "1"})["id"]
+        jid = JS.create_recheck_job(self.db, 7, 100, [("Haus", wid, "nomen")])
+
+        def fetcher(word, type_hint=""):
+            raise RuntimeError(f"summary fetch failed (http=404) for {word!r}")
+
+        status = self._run(jid, fetcher=fetcher)
+        self.assertEqual(status, "done")
+        self.assertEqual(_vf_mark(self.db, wid), "")  # not marked -> retryable
 
     def test_404_is_not_retried(self):
         # a real 404 (word absent) must fail fast, no wasted retries

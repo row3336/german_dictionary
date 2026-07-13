@@ -29,6 +29,7 @@ from ..storage import (
     get_word_by_id,
     list_words_for_vf_recheck,
     reset_vf_checks,
+    reset_word_vf_checks,
     set_word_conjugation,
     update_word_fields,
 )
@@ -263,15 +264,26 @@ async def start_vf_add_job(update: Update, context: ContextTypes.DEFAULT_TYPE, w
 
 
 async def _start_recheck(update: Update, context: ContextTypes.DEFAULT_TYPE, text):
-    """Create + launch a VF-recheck job over existing words ('all' or a list)."""
+    """Create + launch a VF-recheck job over existing words.
+
+    'all'       -> every word, and clear the 'checked' marks first (full re-scan).
+    'unchecked' -> only words not yet verified (vf_checked_at empty) — cheap continue
+                   of a big batch: already-parsed words don't go through the loop again.
+    a word list -> just those words (marks ignored, an explicit re-verify)."""
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
     db_path = get_db_path()
     context.user_data.pop("vf_recheck", None)
-    candidates = list_words_for_vf_recheck(db_path)  # (word_id, lookup, type, article)
-    if text.strip().lower() == "all":
+    keyword = text.strip().lower()
+    if keyword == "all":
+        reset_word_vf_checks(db_path)  # full re-scan: forget prior marks
+        candidates = list_words_for_vf_recheck(db_path)
+        pairs = [(lookup, wid, _t) for wid, lookup, _t, _a in candidates]
+    elif keyword == "unchecked":
+        candidates = list_words_for_vf_recheck(db_path, only_unchecked=True)
         pairs = [(lookup, wid, _t) for wid, lookup, _t, _a in candidates]
     else:
+        candidates = list_words_for_vf_recheck(db_path)
         # A noun may be typed bare ("Dialog") or with its article ("der Dialog").
         # Bare lemma matches on the lemma alone; a typed article must equal the
         # word's DB article (any gender for a multi-gender "der, das") — a wrong
@@ -296,13 +308,15 @@ async def _start_recheck(update: Update, context: ContextTypes.DEFAULT_TYPE, tex
 
 
 async def vf_recheck_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Entry from the Add submenu 'VF recheck' button: wipe stale checks, ask what to recheck."""
-    reset_vf_checks(get_db_path())  # old .com results are stale under the .de parser
+    """Entry from the Add submenu 'VF recheck' button: ask what to recheck."""
+    reset_vf_checks(get_db_path())  # legacy .com results table (stale) — unrelated to v13 marks
     context.user_data["vf_recheck"] = True
     await _reply_text_with_retry(
         update.message,
-        "🔁 Recheck existing words against verbformen. Send 'all' for every word (except phrases), "
-        "or a list (one per line). Old check results were cleared.",
+        "🔁 Recheck existing words against verbformen. Send:\n"
+        "• `all` — every word, re-verify from scratch (clears the 'checked' marks)\n"
+        "• `unchecked` — only words not verified yet (continue a big batch cheaply)\n"
+        "• a list (one per line) — just those words",
         reply_markup=_add_menu_markup(update.effective_user.id),
     )
     return VF_ADD_INPUT

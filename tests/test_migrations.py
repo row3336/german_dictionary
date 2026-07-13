@@ -143,7 +143,7 @@ class MigrationFromOldSchemaTest(unittest.TestCase):
 
         cols = _schema(db)
         for col in ("ukrainian", "english", "topic", "image", "example",
-                    "komparativ", "superlativ", "updated_at"):
+                    "komparativ", "superlativ", "updated_at", "vf_checked_at"):
             self.assertIn(col, cols["words"], f"late column '{col}' was not added")
         self.assertIn("interface_lang", cols["users"])
         self.assertIn("dict_lang", cols["users"])
