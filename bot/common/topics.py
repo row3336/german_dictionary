@@ -1,21 +1,14 @@
-"""Topic-filter subsystem (spec #8): ordering, filter-string logic, and screen render.
+"""Topic-filter subsystem (spec #8): ordering and filter-string logic.
 
 The on-disk filter format is unchanged — a per-user string like '01+03+7' or 'all'
-(see common.settings / _parse_topic_filter). The core logic functions are pure and
-DB-free so they unit-test without a database; only the render helpers touch telegram.
+(see common.settings / _parse_topic_filter). All functions here are pure and DB-free
+so they unit-test without a database; the inline screens that consume them live in
+handlers/word_filter_ui.py.
 """
 
 import re
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-
-# callback_data prefixes for the inline toggle screen
-CB_PREFIX = "topicf:"
-CB_ALL = "topicf:all"
-CB_TOPIC = "topicf:t:"  # + <name>
-
 _ALL_TOKENS = {"all", "*"}
-_BUTTONS_PER_ROW = 5
 
 # add-flow topic input: a name (no separators) then a description; separators
 # between them are any run of space / comma / dot / dash (spec #8).
@@ -111,63 +104,3 @@ def toggle(raw, name, all_topics):
     else:
         active.add(name)
     return format_filter(active, all_topics), False
-
-
-def select_all(raw, all_topics):
-    """Result of tapping the 'all' button: 'all', or None when already all (no-op)."""
-    if filter_is_all(raw):
-        return None
-    return "all"
-
-
-def render_text(lang, raw, topics_with_desc):
-    """Screen body: localized title + a ```text``` block of '[✅]/[ ] [name] desc'
-    lines (sorted), + a localized hint. Content lives inside the code block so curated
-    German descriptions never trip Markdown parsing.
-    """
-    from ..i18n import t
-
-    by_name = {name: desc for name, desc in topics_with_desc}
-    active = resolve_active(raw, by_name.keys())
-    lines = []
-    for name in sorted_topics(by_name.keys()):
-        mark = "✅" if name in active else "  "
-        desc = (by_name.get(name) or "").strip() or "—"
-        lines.append(f"[{mark}] [{name}] {desc}")
-    body = "\n".join(lines) if lines else "—"
-    return f"{t(lang, 'topic_filter_title')}\n\n```text\n{body}\n```\n{t(lang, 'topic_filter_hint')}"
-
-
-def keyboard_layout(raw, all_topics):
-    """Pure layout (no telegram): list of button rows, each button a
-    (text, callback_data, style) tuple. One style='success' (active) / None (neutral)
-    button per topic in canonical order, rows of 5, trailing 'all' row (green when
-    filter=all). Kept telegram-free so it unit-tests without PTB or its test stub.
-    """
-    active = resolve_active(raw, all_topics)
-    ordered = sorted_topics(all_topics)
-    rows = []
-    for i in range(0, len(ordered), _BUTTONS_PER_ROW):
-        rows.append(
-            [
-                (name, f"{CB_TOPIC}{name}", "success" if name in active else None)
-                for name in ordered[i : i + _BUTTONS_PER_ROW]
-            ]
-        )
-    rows.append([("all", CB_ALL, "success" if filter_is_all(raw) else None)])
-    return rows
-
-
-def build_keyboard(raw, all_topics):
-    """Wrap keyboard_layout() into a telegram InlineKeyboardMarkup with style buttons
-    (PTB >= 22.7 / Bot API 9.4). Old clients ignore style — the checkmarks in the code
-    block carry the state regardless (spec #8 deliberate degradation)."""
-    return InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton(text, callback_data=data, style=style)
-                for text, data, style in row
-            ]
-            for row in keyboard_layout(raw, all_topics)
-        ]
-    )

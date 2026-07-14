@@ -35,7 +35,6 @@ from ..app_config import (
     SETTINGS_MENU,
     TESTS_MENU,
     TOPIC_FILTER_EDIT,
-    TOPIC_FILTER_KEY,
     WEAK_DRILL_GAP_KEY,
     WEAK_DRILL_REPEATS_KEY,
     get_db_path,
@@ -619,7 +618,10 @@ async def algo_settings_confirm(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def topic_filter_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Topic filter text input (quiz filter) + owner add-flow topic selection."""
+    """Text handler for the TOPIC_FILTER_EDIT state: `back` returns to the calling
+    menu (printing the active-filter summary when the inline word-filter screen is
+    open), and owner add-flow topic input is delegated to add_words. The quiz filter
+    itself is chosen via inline buttons (word_filter_ui), not text."""
     text = update.message.text.strip()
     user_id = update.effective_user.id
     lang = _user_interface_lang(user_id)
@@ -667,42 +669,9 @@ async def topic_filter_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         from ..handlers.add_words import handle_add_topic_input  # local import: anti-cycle
         return await handle_add_topic_input(update, context, text)
 
-    # CEFR/book-topics filter: selections are inline-only (spec_topics_levels.md removed
-    # the '1+2+03' text input). Ignore stray text; the user changes the filter by tapping.
-    if context.user_data.get("wf_active"):
-        return TOPIC_FILTER_EDIT
-
-    value = text.strip()
-    if not value:
-        await update.message.reply_text(t(lang, "topic_filter_empty"))
-        return TOPIC_FILTER_EDIT
-
-    set_user_setting(get_db_path(), user_id, TOPIC_FILTER_KEY, value)
-    return_to = context.user_data.pop("topic_return", "")
-    if return_to == "ru_de_menu":
-        await update.message.reply_text(
-            t(lang, "topic_filter_set").format(value=value),
-            reply_markup=ReplyKeyboardMarkup(_ru_de_menu_keys(user_id), resize_keyboard=True),
-        )
-        return QUIZ_RU_DE_MENU
-    if return_to == "algo":
-        await update.message.reply_text(
-            t(lang, "topic_filter_set").format(value=value),
-            reply_markup=ReplyKeyboardMarkup(_algo_settings_menu_keys(user_id), resize_keyboard=True),
-        )
-        return ALGO_SETTINGS_MENU
-    if return_to == "tests_menu":
-        await update.message.reply_text(
-            t(lang, "topic_filter_set").format(value=value),
-            reply_markup=ReplyKeyboardMarkup(_tests_menu_keys(user_id), resize_keyboard=True),
-        )
-        return TESTS_MENU
-
-    await update.message.reply_text(
-        t(lang, "topic_filter_set").format(value=value),
-        reply_markup=ReplyKeyboardMarkup(_settings_menu_keys(user_id), resize_keyboard=True),
-    )
-    return SETTINGS_MENU
+    # The CEFR/book-topics filter is inline-only (spec_topics_levels.md removed the
+    # '1+2+03' text input): stray text while the screen is open changes nothing.
+    return TOPIC_FILTER_EDIT
 
 
 def _vf_proxy_markup():
