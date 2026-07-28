@@ -6,16 +6,21 @@ reply-keyboard from before this screen is left untouched. Guests never get the
 inline buttons and keep today's plain progress-only screen.
 """
 
+import logging
+
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.error import BadRequest, TelegramError
 from telegram.ext import ContextTypes
 
 from ..app_config import APP_VERSION, get_db_path, is_owner
 from ..common.lang import _mode_de_l1, _mode_l1_de, _quiz_dir_labels, _user_interface_lang
 from ..i18n import t
 from ..storage import get_statistics_snapshot, list_user_activity, select_due
+from ..text_utils import md_escape
 from .review import _clickable
 
 STAT_CALLBACK_PREFIX = "stat"
+logger = logging.getLogger(__name__)
 
 
 def _format_progress_text(user_id):
@@ -98,10 +103,16 @@ def _format_users_text(lang):
     items = list_user_activity(get_db_path())
     if not items:
         return t(lang, "stat_users_empty")
-    return "\n".join(
-        f"{_clickable(item)} — {item['quiz_events_count']} ({item['learning_done_count']})"
-        for item in items
-    )
+    lines = []
+    for item in items:
+        username = (item.get("username") or "").strip().lstrip("@")
+        # This view uses legacy Markdown. Telegram usernames may contain "_",
+        # which must be escaped or Telegram rejects the entire edited message.
+        user_ref = md_escape(f"@{username}") if username else _clickable(item)
+        lines.append(
+            f"{user_ref} — {item['quiz_events_count']} ({item['learning_done_count']})"
+        )
+    return "\n".join(lines)
 
 
 def _owner_stat_keyboard():
@@ -127,6 +138,9 @@ async def stat_toggle_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     await query.answer()
     try:
         await query.edit_message_text(text, reply_markup=_owner_stat_keyboard(), parse_mode="Markdown")
-    except Exception:
-        # Identical content (rare double-tap) or an edit race - safe to ignore.
-        pass
+    except BadRequest as exc:
+        # A rare double-tap can legitimately edit a message to identical content.
+        if "message is not modified" not in str(exc).lower():
+            logger.warning("Failed to edit owner statistics message", exc_info=True)
+    except TelegramError:
+        logger.warning("Failed to edit owner statistics message", exc_info=True)

@@ -37,7 +37,7 @@ def install():
     err = sys.modules.get("telegram.error") or types.ModuleType("telegram.error")
     if not hasattr(err, "TelegramError"):
         err.TelegramError = type("TelegramError", (Exception,), {})
-    for _n in ("NetworkError", "RetryAfter", "TimedOut", "Forbidden"):
+    for _n in ("BadRequest", "NetworkError", "RetryAfter", "TimedOut", "Forbidden"):
         if not hasattr(err, _n):
             setattr(err, _n, type(_n, (err.TelegramError,), {}))
     sys.modules["telegram.error"] = err

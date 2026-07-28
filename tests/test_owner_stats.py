@@ -23,6 +23,7 @@ if "dotenv" not in sys.modules:  # menu.py -> quiz.py imports bot.main locally
     sys.modules["dotenv"] = _d
 
 from telegram import InlineKeyboardMarkup, ReplyKeyboardMarkup  # noqa: E402
+from telegram.error import TelegramError  # noqa: E402
 
 import bot.handlers.owner_stats as OS  # noqa: E402
 from bot.handlers.menu import menu_choice  # noqa: E402
@@ -159,12 +160,11 @@ class FormatUsersTextTest(unittest.TestCase):
         self.assertNotIn(f"tg://user?id={U1}", text)
         self.assertIn("— 1 (0)", text)
 
-    def test_username_with_underscore_has_no_backslash(self):
+    def test_username_with_underscore_is_escaped_for_legacy_markdown(self):
         register_or_update_user(self.db, U1, "Row_xyz2", "Aleksey")
         set_user_status(self.db, U1, "approved")
         text = OS._format_users_text("en")
-        self.assertIn("@Row_xyz2", text)
-        self.assertNotIn("\\_", text)  # the bug: legacy Markdown showed '@Row\\_xyz2'
+        self.assertIn("@Row\\_xyz2", text)
 
     def test_username_less_user_falls_back_to_tg_link(self):
         register_or_update_user(self.db, U1, "", "Тамта")
@@ -258,6 +258,11 @@ class _FakeCbUpdate:
         self.callback_query = query
 
 
+class _FailingQuery(_FakeQuery):
+    async def edit_message_text(self, text, **kw):
+        raise TelegramError("malformed entity")
+
+
 class StatToggleCallbackTest(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.NamedTemporaryFile(delete=False)
@@ -299,6 +304,12 @@ class StatToggleCallbackTest(unittest.TestCase):
         _run(OS.stat_toggle_callback(_FakeCbUpdate(query), None))
         self.assertEqual(query.edits, [])
         self.assertEqual(len(query.answers), 1)
+
+    def test_telegram_edit_error_is_logged(self):
+        query = _FailingQuery("stat:users", OWNER)
+        with self.assertLogs(OS.__name__, level="WARNING") as captured:
+            _run(OS.stat_toggle_callback(_FakeCbUpdate(query), None))
+        self.assertIn("Failed to edit owner statistics message", captured.output[0])
 
 
 if __name__ == "__main__":
