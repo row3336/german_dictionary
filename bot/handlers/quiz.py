@@ -58,6 +58,7 @@ from ..storage import (
     update_form_stats,
     update_progress,
 )
+from ..text_utils import has_plural_form
 from ..text_utils import normalize_answer as _normalize_answer
 from ..text_utils import russian_variants as _russian_variants
 from ..text_utils import split_plural_forms
@@ -288,7 +289,10 @@ def _check_ru_de_strict(entry, answer_text):
 
     if entry_type == "nomen":
         if len(parts) < 2:
-            return False, {"article": False, "plural": False}
+            checks = {"article": False}
+            if has_plural_form(entry.get("plural", "")):
+                checks["plural"] = False
+            return False, checks
         article_in = _normalize_answer(parts[0])
         german_in = _normalize_answer(parts[1])
         plural_in = _normalize_plural_value(" ".join(parts[2:])) if len(parts) >= 3 else german_in
@@ -297,13 +301,21 @@ def _check_ru_de_strict(entry, answer_text):
                 continue
             article_ok = _article_matches(article_in, cand.get("article", ""))
             german_ok = german_in == _normalize_answer(cand.get("german", ""))
-            plural_ok = plural_in in _plural_form_set(cand.get("plural", ""))
+            has_plural = has_plural_form(cand.get("plural", ""))
+            plural_ok = (
+                plural_in in _plural_form_set(cand.get("plural", ""))
+                if has_plural
+                else len(parts) == 2
+            )
             if article_ok and german_ok and plural_ok:
-                return True, {"article": True, "plural": True}
-        return False, {
-            "article": _article_matches(article_in, entry.get("article", "")),
-            "plural": plural_in in _plural_form_set(entry.get("plural", "")),
-        }
+                checks = {"article": True}
+                if has_plural:
+                    checks["plural"] = True
+                return True, checks
+        checks = {"article": _article_matches(article_in, entry.get("article", ""))}
+        if has_plural_form(entry.get("plural", "")):
+            checks["plural"] = plural_in in _plural_form_set(entry.get("plural", ""))
+        return False, checks
 
     if entry_type == "verb":
         answer = _normalize_multi_field_answer(answer_text)

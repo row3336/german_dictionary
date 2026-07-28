@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .app_config import CASE_TYPES, CEFR_LEVELS, PREPOSITION_TYPES, get_owner_id, is_owner
 from .common.conjugation import parse_conjugation, takes_praeteritum
-from .text_utils import cap_word, split_plural_forms
+from .text_utils import ABSENT_PLURAL_MARKERS, cap_word, split_plural_forms
 
 DEFAULT_EASE = 2.5
 MIN_EASE = 1.3
@@ -4217,6 +4217,10 @@ def list_weak_words(db_path, user_id, weak_field, word_type=None, topics=None, c
         f"({active_cond} OR {review_cond})",
     ]
     params = [int(user_id), today]
+    if weak_field == "plural":
+        placeholders = ",".join("?" for _ in ABSENT_PLURAL_MARKERS)
+        where.append(f"TRIM(COALESCE(w.plural, '')) NOT IN ({placeholders})")
+        params.extend(ABSENT_PLURAL_MARKERS)
     if word_type:
         where.append("w.type = ?")
         params.append(_safe_text(word_type))
@@ -5195,5 +5199,4 @@ def save_vf_check_result(
                 _safe_text(source_hash),
             ),
         )
-
 

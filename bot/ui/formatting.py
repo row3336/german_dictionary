@@ -9,6 +9,7 @@ from ..i18n import t
 from ..storage import apply_user_word_media, get_word_study_status
 from ..text_utils import cap_plural as _cap_plural
 from ..text_utils import cap_word as _cap_word
+from ..text_utils import has_plural_form as _has_plural_form
 from ..text_utils import low_word as _low_word
 from ..text_utils import md_escape as _md_escape
 from ..text_utils import normalize_answer as _normalize_answer
@@ -315,7 +316,7 @@ def _is_pl_sg_eligible(entry):
     singular_article = _normalize_answer(entry.get("article", ""))
     singular = _normalize_answer(entry.get("german", ""))
     plural = _normalize_answer(entry.get("plural", ""))
-    if not singular or not plural:
+    if not singular or not _has_plural_form(entry.get("plural", "")):
         return False
     if singular_article == "die" and singular == plural:
         return False

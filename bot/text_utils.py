@@ -2,6 +2,14 @@ import json
 import re
 
 
+ABSENT_PLURAL_MARKERS = ("", "-", "–", "—", "―")
+
+
+def has_plural_form(value):
+    """Return whether a noun has an actual plural rather than an absence marker."""
+    return str(value or "").strip() not in ABSENT_PLURAL_MARKERS
+
+
 def normalize_answer(text):
     return " ".join(text.strip().lower().split())
 
@@ -74,6 +82,8 @@ def split_plural_forms(plural):
 
 def cap_plural(plural):
     """Capitalize every plural form (German plurals are nouns)."""
+    if not has_plural_form(plural):
+        return ""
     forms = split_plural_forms(plural)
     if not forms:
         return cap_word(plural)
