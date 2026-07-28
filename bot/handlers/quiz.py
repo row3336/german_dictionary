@@ -204,6 +204,51 @@ def _split_answer_parts(text):
     return [p for p in re.split(r"[,.\s]+", raw) if p]
 
 
+def _normalize_multi_field_answer(text):
+    """Collapse punctuation and whitespace without guessing field boundaries."""
+    return _normalize_answer(re.sub(r"[,.\s]+", " ", str(text or "")))
+
+
+def _stored_form_variants(value):
+    """Return normalized alternatives from a comma/slash/semicolon field."""
+    return {
+        normalized
+        for part in re.split(r"[,/;]", str(value or ""))
+        if (normalized := _normalize_answer(part))
+    }
+
+
+def _partizip2_variants(entry):
+    """Expand stored Partizip II alternatives while preserving an auxiliary."""
+    variants = set()
+    for part in _stored_form_variants(entry.get("partizip2", "")):
+        candidate = dict(entry)
+        candidate["partizip2"] = part
+        expected = _expected_partizip2(candidate)
+        if expected:
+            variants.add(expected)
+    return variants
+
+
+def _verb_answer_candidates(entry):
+    """Build complete short/full answers without splitting multi-word forms."""
+    infinitives = _stored_form_variants(entry.get("infinitive", ""))
+    prateritums = _stored_form_variants(entry.get("prateritum", ""))
+    partizip2s = _partizip2_variants(entry)
+    short = {
+        _normalize_multi_field_answer(f"{infinitive} {partizip2}")
+        for infinitive in infinitives
+        for partizip2 in partizip2s
+    }
+    full = {
+        _normalize_multi_field_answer(f"{infinitive} {prateritum} {partizip2}")
+        for infinitive in infinitives
+        for prateritum in prateritums
+        for partizip2 in partizip2s
+    }
+    return short, full
+
+
 def _normalize_plural_value(value):
     """Handle normalize plural value."""
     token = _normalize_answer(value)
@@ -261,28 +306,31 @@ def _check_ru_de_strict(entry, answer_text):
         }
 
     if entry_type == "verb":
-        if len(parts) < 2:
+        answer = _normalize_multi_field_answer(answer_text)
+        if not answer:
             return False, {"partizip2": False, "prateritum": False}
-        infinitive_in = _normalize_answer(parts[0])
-        prateritum_in = ""
-        prateritum_provided = False
-        if len(parts) == 2:
-            p2_in = _normalize_answer(parts[1])
-        else:
-            prateritum_in = _normalize_answer(parts[1])
-            prateritum_provided = True
-            p2_in = _normalize_answer(" ".join(parts[2:]))
         for cand in synonyms:
             if (cand.get("type") or "").strip().lower() != "verb":
                 continue
-            inf_ok = infinitive_in == _normalize_answer(cand.get("infinitive", ""))
-            p2_ok = p2_in == _expected_partizip2(cand)
-            pr_ok = prateritum_provided and prateritum_in == _normalize_answer(cand.get("prateritum", ""))
-            if inf_ok and p2_ok:
-                return True, {"partizip2": True, "prateritum": pr_ok}
+            short, full = _verb_answer_candidates(cand)
+            if answer in full:
+                return True, {"partizip2": True, "prateritum": True}
+            if answer in short:
+                return True, {"partizip2": True, "prateritum": False}
+
+        partizip2s = _partizip2_variants(entry)
+        prateritums = _stored_form_variants(entry.get("prateritum", ""))
+        p2_ok = any(answer == value or answer.endswith(f" {value}") for value in partizip2s)
+        pr_ok = any(
+            answer == value
+            or answer.startswith(f"{value} ")
+            or answer.endswith(f" {value}")
+            or f" {value} " in answer
+            for value in prateritums
+        )
         return False, {
-            "partizip2": p2_in == _expected_partizip2(entry),
-            "prateritum": prateritum_provided and prateritum_in == _normalize_answer(entry.get("prateritum", "")),
+            "partizip2": p2_ok,
+            "prateritum": pr_ok,
         }
 
     # single-field answer (adjective/adverb/…). An adjective may be answered with

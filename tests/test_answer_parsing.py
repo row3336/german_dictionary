@@ -67,9 +67,9 @@ VERB = {"type": "verb", "infinitive": "kreuzen", "prateritum": "kreuzte", "parti
 
 class VerbValidationTest(unittest.TestCase):
     """Verb answers must tolerate comma/period-without-space just like nomen
-    (checked live on the alpha bot). A valid verb answer starts with the
-    infinitive: 3 parts = infinitive/prateritum/partizip2, 2 parts =
-    infinitive/partizip2 (prateritum skipped)."""
+    (checked live on the alpha bot). Short answers contain infinitive+Partizip II;
+    full answers contain infinitive+Präteritum+Partizip II. Forms may themselves
+    contain spaces, so validation compares complete normalized candidates."""
 
     def _ok(self, answer):
         ok, _ = _check_ru_de_strict(VERB, answer)
@@ -90,6 +90,45 @@ class VerbValidationTest(unittest.TestCase):
         # [infinitive=kreuzte, partizip2=gekreuzt] -> wrong. NOT a no-space issue:
         # the infinitive is simply absent.
         self.assertFalse(self._ok("kreuzte,gekreuzt"))
+
+    def test_multiword_prateritum_with_any_separator(self):
+        entry = {
+            "type": "verb",
+            "infinitive": "anfangen",
+            "prateritum": "fing an",
+            "partizip2": "angefangen",
+        }
+        for raw in (
+            "anfangen fing an angefangen",
+            "Anfangen, fing an, angefangen",
+            "anfangen,fing an,angefangen",
+            "anfangen. fing an. angefangen",
+            "anfangen angefangen",
+        ):
+            ok, _ = _check_ru_de_strict(entry, raw)
+            self.assertTrue(ok, raw)
+
+    def test_incomplete_multiword_prateritum_is_rejected(self):
+        entry = {
+            "type": "verb",
+            "infinitive": "anfangen",
+            "prateritum": "fing an",
+            "partizip2": "angefangen",
+        }
+        ok, checks = _check_ru_de_strict(entry, "anfangen fing angefangen")
+        self.assertFalse(ok)
+        self.assertEqual(checks, {"partizip2": True, "prateritum": False})
+
+    def test_stored_partizip2_alternatives_are_individually_accepted(self):
+        entry = {
+            "type": "verb",
+            "infinitive": "backen",
+            "prateritum": "backte",
+            "partizip2": "gebacken, gebackt",
+        }
+        for raw in ("backen gebacken", "backen,backte,gebackt"):
+            ok, _ = _check_ru_de_strict(entry, raw)
+            self.assertTrue(ok, raw)
 
 
 class GeneralAnswerPunctuationTest(unittest.TestCase):
