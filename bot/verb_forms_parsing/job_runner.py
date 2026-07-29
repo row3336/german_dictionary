@@ -74,6 +74,7 @@ async def run_job(
     job_id,
     *,
     fetcher=_default_fetcher,
+    fetch_call=None,
     delay=None,
     cooldown=None,
     on_progress=None,
@@ -88,6 +89,9 @@ async def run_job(
       failed fetch. A transient failure (proxy/5xx, see `_fetch_error_kind`) is retried
       up to `fetch_retries` times (slow-drip between attempts) before the item is
       recorded as 'error'; a 404/block fails on the first try.
+    - fetch_call(word, type_hint): optional async execution seam. Production leaves
+      it unset and runs the blocking fetcher through `asyncio.to_thread`; unit tests
+      inject a no-thread wrapper for deterministic fixture fetches.
     - delay: async callable awaited between items (defaults to random 20-50s).
     - cooldown: async callable awaited after a transient wave (defaults to 10 min).
     - on_progress(job, counts, done): optional async callback for the UI.
@@ -97,6 +101,10 @@ async def run_job(
     triggers a `cooldown` and the job keeps going — up to `max_cooldowns` waves before it
     gives up. Genuine 404s never accrue toward either, so absent words don't halt the batch.
     """
+    if fetch_call is None:
+        async def fetch_call(word, type_hint):
+            return await asyncio.to_thread(fetcher, word, type_hint)
+
     if delay is None:
         async def delay():
             await asyncio.sleep(random.randint(*DELAY_RANGE))
@@ -135,7 +143,7 @@ async def run_job(
         error_kind = None
         while True:
             try:
-                summary, conj = await asyncio.to_thread(fetcher, word, type_hint)
+                summary, conj = await fetch_call(word, type_hint)
                 entry = parse_de(summary, conj, query=word, topic=job["topic"], type_hint=type_hint)
                 save_item_result(db_path, item["id"], "done", result=entry, flags=",".join(entry.get("_flags") or []))
                 if item.get("word_id"):  # recheck item -> stamp the word as verified (v13)

@@ -682,6 +682,15 @@ def _vf_proxy_markup():
     )
 
 
+async def _run_vf_proxy_test(proxy):
+    """Run the blocking proxy probe outside the event loop.
+
+    Kept as an async seam so unit tests can inject a fixture result without
+    touching Python 3.14's default executor.
+    """
+    return await asyncio.to_thread(_vf_test_proxy, proxy)
+
+
 async def _send_vf_proxy_menu(update, prefix_text=None):
     """Show the parse_VF proxy mini-menu with the (masked) current proxy."""
     proxy = _normalize_proxy_input(get_setting(get_db_path(), VF_PROXY_KEY, ""))
@@ -769,7 +778,7 @@ async def settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
                 return await _send_vf_proxy_menu(update, "❌ proxy is required")
             # The proxy is paid per traffic: the check is a HEAD/robots.txt
             # request (owner rule, T4) — never a page download or a speed test.
-            ok, code = await asyncio.to_thread(_vf_test_proxy, proxy)
+            ok, code = await _run_vf_proxy_test(proxy)
             note = f"✅ proxy ok (http {code})" if ok else f"❌ proxy failed (http {code})"
             return await _send_vf_proxy_menu(update, note)
 

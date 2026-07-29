@@ -4,6 +4,7 @@ import asyncio
 import os
 import tempfile
 import unittest
+from unittest.mock import AsyncMock, patch
 
 from bot.storage import add_word, init_db
 from bot.verb_forms_parsing import job_store as JS
@@ -41,6 +42,12 @@ class JobRunnerTest(unittest.TestCase):
 
     def _run(self, jid, **kw):
         kw.setdefault("delay", _noop_delay)
+        fetcher = kw.get("fetcher")
+        if fetcher is not None and "fetch_call" not in kw:
+            async def fetch_call(word, type_hint):
+                return fetcher(word, type_hint)
+
+            kw["fetch_call"] = fetch_call
         return asyncio.run(run_job(self.db, jid, **kw))
 
     def test_completes_and_parses(self):
@@ -233,6 +240,29 @@ class JobRunnerTest(unittest.TestCase):
         self.assertEqual(status, "done")
         self.assertEqual(calls["n"], 1)             # no retry on 404
         self.assertEqual(JS.job_counts(self.db, jid)["error"], 1)
+
+    def test_injected_fetch_call_avoids_asyncio_default_executor(self):
+        jid = JS.create_job(self.db, 7, 100, "t", ["Haus"])
+
+        with patch("asyncio.to_thread", side_effect=AssertionError("default executor used")):
+            status = self._run(
+                jid,
+                fetcher=lambda word, type_hint="": (load("Haus_summary.html"), ""),
+            )
+
+        self.assertEqual(status, "done")
+        self.assertEqual(JS.job_counts(self.db, jid)["done"], 1)
+
+    def test_default_fetch_path_still_uses_worker_thread(self):
+        jid = JS.create_job(self.db, 7, 100, "t", ["Haus"])
+        to_thread = AsyncMock(return_value=(load("Haus_summary.html"), ""))
+
+        with patch("asyncio.to_thread", to_thread):
+            status = asyncio.run(run_job(self.db, jid, delay=_noop_delay))
+
+        self.assertEqual(status, "done")
+        to_thread.assert_awaited_once()
+        self.assertEqual(to_thread.await_args.args[1:], ("Haus", ""))
 
 
 if __name__ == "__main__":

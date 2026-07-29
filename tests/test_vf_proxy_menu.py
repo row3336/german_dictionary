@@ -153,9 +153,13 @@ class VfProxyMenuTest(unittest.TestCase):
 
     def test_test_proxy_reports_result(self):
         import bot.handlers.settings as S
-        self._old_test = S._vf_test_proxy
-        S._vf_test_proxy = lambda proxy: (True, 200)
-        self.addCleanup(lambda: setattr(S, "_vf_test_proxy", self._old_test))
+        self._old_test = S._run_vf_proxy_test
+
+        async def fake_test(proxy):
+            return True, 200
+
+        S._run_vf_proxy_test = fake_test
+        self.addCleanup(lambda: setattr(S, "_run_vf_proxy_test", self._old_test))
         _, ctx = self._send(OWNER, PARSE_VF_TEXT)
         self._send(OWNER, VF_SET_PROXY_TEXT, ctx)
         self._send(OWNER, "host:1080:user:pass", ctx)
