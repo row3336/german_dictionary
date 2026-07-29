@@ -1,8 +1,9 @@
 """spec #15 / todo T5 — add_int: push a word's next show further out from its card.
 
-Flow: card button "add_int" -> pick direction -> type n (3..7, fool-proofed) ->
-preview "next show = <due>" -> Confirm -> progress written as if the word had
-been answered correctly n times in a row; undo-able via the transaction log.
+Flow: a directional quiz supplies its progress mode; db_search asks for it.
+Then type n (1..15, fool-proofed) -> preview "next show = <due>" -> Confirm ->
+progress is written as if the word had been answered correctly n times in a
+row; undo-able via the transaction log. Weak-mode cards do not offer add_int.
 """
 
 import asyncio
@@ -20,6 +21,17 @@ if "dotenv" not in sys.modules:
     _d.load_dotenv = lambda *a, **k: False
     sys.modules["dotenv"] = _d
 
+from bot.app_config import (  # noqa: E402
+    DB_SEARCH_VIEW,
+    QUIZ_ARTICLE,
+    QUIZ_ARTICLE_WEAK,
+    QUIZ_DE_RU,
+    QUIZ_PARTIZIP2_WEAK,
+    QUIZ_PL_SG,
+    QUIZ_PLURAL_WEAK,
+    QUIZ_PRATERITUM_WEAK,
+    QUIZ_RU_DE,
+)
 from bot.labels import SYN_CONFIRM_TEXT  # noqa: E402
 from bot.storage import (  # noqa: E402
     add_word,
@@ -100,12 +112,13 @@ class AddIntFlowTest(unittest.TestCase):
             else:
                 os.environ[k] = v
 
-    def _ctx_for(self, uid):
+    def _ctx_for(self, uid, return_state=DB_SEARCH_VIEW):
         ctx = _Ctx()
         ctx.user_data.update({
             "edit_source": "quiz",
             "quiz_edit_entry": dict(self.entry),
             "edit_stage": "pick_field",
+            "edit_return_state": return_state,
         })
         return ctx
 
@@ -132,6 +145,54 @@ class AddIntFlowTest(unittest.TestCase):
         upd = self._send(uid, n_text, ctx)
         return upd, ctx
 
+    def test_directional_quiz_skips_mode_picker(self):
+        ctx = self._ctx_for(OWNER, QUIZ_RU_DE)
+        upd = self._send(OWNER, "add_int", ctx)
+        self.assertEqual(ctx.user_data["edit_stage"], "add_int_n")
+        self.assertEqual(ctx.user_data["add_int_mode"], self._mode(OWNER))
+        self.assertIn("1", upd.message.replies[-1])
+        self.assertIn("15", upd.message.replies[-1])
+
+    def test_each_directional_quiz_resolves_its_progress_mode(self):
+        from bot.common.lang import _mode_de_l1, _mode_pl_sg
+        from bot.handlers.clarify_fields import _add_int_mode_for_return_state
+        from bot.storage import QUIZ_ARTICLE as MODE_ARTICLE
+
+        expected = {
+            QUIZ_RU_DE: self._mode(OWNER),
+            QUIZ_DE_RU: _mode_de_l1(OWNER),
+            QUIZ_PL_SG: _mode_pl_sg(OWNER),
+            QUIZ_ARTICLE: MODE_ARTICLE,
+        }
+        for return_state, mode in expected.items():
+            with self.subTest(return_state=return_state):
+                self.assertEqual(
+                    _add_int_mode_for_return_state(OWNER, return_state),
+                    mode,
+                )
+
+    def test_weak_cards_hide_and_reject_add_int(self):
+        from bot.handlers.clarify_fields import _clarify_screen
+
+        weak_states = (
+            QUIZ_ARTICLE_WEAK,
+            QUIZ_PLURAL_WEAK,
+            QUIZ_PRATERITUM_WEAK,
+            QUIZ_PARTIZIP2_WEAK,
+        )
+        for return_state in weak_states:
+            with self.subTest(return_state=return_state):
+                ctx = self._ctx_for(OWNER, return_state)
+                buttons = [
+                    button
+                    for row in _clarify_screen(ctx, OWNER).rows
+                    for button in row
+                ]
+                self.assertNotIn("add_int", buttons)
+                self._send(OWNER, "add_int", ctx)
+                self.assertEqual(ctx.user_data["edit_stage"], "pick_field")
+                self.assertNotIn("add_int_mode", ctx.user_data)
+
     def test_full_flow_writes_progress_equal_to_preview(self):
         upd, ctx = self._drive_to_confirm(OWNER, "5")
         self.assertEqual(ctx.user_data["edit_stage"], "add_int_confirm")
@@ -143,13 +204,18 @@ class AddIntFlowTest(unittest.TestCase):
         self.assertEqual(stored["repetitions"], 5)
 
     def test_invalid_n_is_reasked_and_nothing_written(self):
-        for bad in ("abc", "2", "99", ""):
+        for bad in ("abc", "0", "16", "99", ""):
             ctx = self._ctx_for(OWNER)
             self._send(OWNER, "add_int", ctx)
             self._send(OWNER, self._l1_de_label(OWNER), ctx)
             self._send(OWNER, bad, ctx)
             self.assertEqual(ctx.user_data["edit_stage"], "add_int_n", bad)
         self.assertEqual(get_progress(self.db, OWNER, "w-int", self._mode(OWNER)), default_srs())
+
+    def test_range_accepts_one_and_fifteen(self):
+        for value in ("1", "15"):
+            _, ctx = self._drive_to_confirm(OWNER, value)
+            self.assertEqual(ctx.user_data["edit_stage"], "add_int_confirm")
 
     def test_cancel_on_preview_writes_nothing(self):
         _, ctx = self._drive_to_confirm(OWNER, "4")

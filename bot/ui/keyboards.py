@@ -167,7 +167,13 @@ def _weak_article_markup(user_id):
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 
-def _clarify_fields_markup(source, user_id=None, in_search=False, is_prep=False):
+def _clarify_fields_markup(
+    source,
+    user_id=None,
+    in_search=False,
+    is_prep=False,
+    show_add_int=True,
+):
     """Unified clarify/card keyboard (P6: no separate root menu — one screen).
 
     A guest (non-owner) edits only image/example (personal, P4) + report; the
@@ -190,17 +196,23 @@ def _clarify_fields_markup(source, user_id=None, in_search=False, is_prep=False)
     if source == "quiz" and user_id is not None and not is_owner(user_id):
         # spec #7: guest also gets a personal-translation edit button (their dict_lang).
         # add_int (spec #15/T5) pushes the guest's OWN progress — safe to offer.
-        rows = [["image", "example", "add_int"], [t(lang, "my_translation"), t(lang, "report_card")]]
+        card_actions = ["image", "example"]
+        if show_add_int:
+            card_actions.append("add_int")
+        rows = [card_actions, [t(lang, "my_translation"), t(lang, "report_card")]]
         rows.append([t(lang, "send_learn"), BACK_TEXT] if in_search else [BACK_TEXT])
         return ReplyKeyboardMarkup(rows, resize_keyboard=True)
     if source == "quiz":
         # Owner edits fields directly, so no "report / fix" button (#20) — that's
         # for guests to report TO the owner; the owner has nobody to report to.
+        card_actions = ["image", "example"]
+        if show_add_int:
+            card_actions.append("add_int")
         rows = [
             ["ru", "ukr", "de", SYNONYMS_TEXT],
             ["article", "plural", "type", "infinitive"],
             ["prateritum", "partizip2", "komparativ", "superlativ"],
-            ["image", "example", "add_int"],
+            card_actions,
         ]
         if is_prep:
             # spec #1: preposition-only fields, so the owner can (re)set the category

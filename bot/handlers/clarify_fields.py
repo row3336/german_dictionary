@@ -34,7 +34,14 @@ from ..app_config import (
     get_db_path,
     is_owner,
 )
-from ..common.lang import _mode_de_l1, _mode_l1_de, _quiz_dir_labels, _user_dict_lang, _user_interface_lang
+from ..common.lang import (
+    _mode_de_l1,
+    _mode_l1_de,
+    _mode_pl_sg,
+    _quiz_dir_labels,
+    _user_dict_lang,
+    _user_interface_lang,
+)
 from ..common.navigation import _action_key_from_text, _back_to_main_menu, _back_to_tests, _reply_text_with_retry
 from ..common.txlog import _capture_transaction_snapshot, _log_transaction
 from ..handlers.quiz import (
@@ -47,6 +54,7 @@ from ..handlers.quiz import (
 from ..i18n import t
 from ..labels import SYN_CONFIRM_TEXT, SYNONYMS_TEXT
 from ..storage import (
+    QUIZ_ARTICLE as MODE_ARTICLE,
     add_error_report,
     delete_word,
     get_progress,
@@ -93,10 +101,43 @@ def _is_prep_entry(entry):
 
 def _clarify_screen(context: ContextTypes.DEFAULT_TYPE, user_id):
     """Unified clarify keyboard for the current edit context (P6 collapsed card)."""
-    in_search = context.user_data.get("edit_return_state") == DB_SEARCH_VIEW
+    return_state = context.user_data.get("edit_return_state")
+    in_search = return_state == DB_SEARCH_VIEW
     source = context.user_data.get("edit_source", "add")
     is_prep = _is_prep_entry(_edit_entry(context))
-    return _clarify_fields_markup(source, user_id, in_search=in_search, is_prep=is_prep)
+    return _clarify_fields_markup(
+        source,
+        user_id,
+        in_search=in_search,
+        is_prep=is_prep,
+        show_add_int=not _is_weak_return_state(return_state),
+    )
+
+
+_WEAK_RETURN_STATES = {
+    QUIZ_ARTICLE_WEAK,
+    QUIZ_PLURAL_WEAK,
+    QUIZ_PRATERITUM_WEAK,
+    QUIZ_PARTIZIP2_WEAK,
+}
+
+
+def _is_weak_return_state(return_state):
+    """Return whether the clarify card was opened from a weak-form drill."""
+    return return_state in _WEAK_RETURN_STATES
+
+
+def _add_int_mode_for_return_state(user_id, return_state):
+    """Resolve the progress mode supplied by a directional FSRS quiz."""
+    if return_state == QUIZ_RU_DE:
+        return _mode_l1_de(user_id)
+    if return_state == QUIZ_DE_RU:
+        return _mode_de_l1(user_id)
+    if return_state == QUIZ_PL_SG:
+        return _mode_pl_sg(user_id)
+    if return_state == QUIZ_ARTICLE:
+        return MODE_ARTICLE
+    return None
 
 
 def _allowed_clarify_fields(source, user_id=None, is_prep=False):
@@ -472,8 +513,9 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
         return await _exit_clarify(update, context)
 
     # --- add_int (spec #15 / T5): push the word's next show further out, as if
-    # answered correctly n times in a row. Stages: pick mode -> enter n (3..7) ->
-    # preview next due -> Confirm. Undo-able via the transaction log.
+    # answered correctly n times in a row. Directional quizzes supply their mode;
+    # non-directional sources such as db_search ask for it. Then enter n (1..15),
+    # preview next due and Confirm. Undo-able via the transaction log.
     if stage == "add_int_mode":
         uid = update.effective_user.id
         lang = _user_interface_lang(uid)
@@ -510,7 +552,7 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
             n = int(text.strip())
         except (TypeError, ValueError):
             n = None
-        if n is None or not 3 <= n <= 7:
+        if n is None or not 1 <= n <= 15:
             await update.message.reply_text(
                 t(lang, "add_int_bad_n"),
                 reply_markup=ReplyKeyboardMarkup([["3", "4", "5", "6", "7"], [t(lang, "back")]], resize_keyboard=True),
@@ -591,6 +633,25 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
             if text.strip().lower() == "add_int":
                 # spec #15 (T5): owner AND guest — each pushes their own progress.
                 lang = _user_interface_lang(uid)
+                return_state = context.user_data.get("edit_return_state")
+                if _is_weak_return_state(return_state):
+                    await update.message.reply_text(
+                        t(lang, "clarify_use_field_buttons"),
+                        reply_markup=_clarify_screen(context, uid),
+                    )
+                    return ADD_EDIT
+                mode = _add_int_mode_for_return_state(uid, return_state)
+                if mode:
+                    context.user_data["add_int_mode"] = mode
+                    context.user_data["edit_stage"] = "add_int_n"
+                    await update.message.reply_text(
+                        t(lang, "add_int_pick_n"),
+                        reply_markup=ReplyKeyboardMarkup(
+                            [["3", "4", "5", "6", "7"], [t(lang, "back")]],
+                            resize_keyboard=True,
+                        ),
+                    )
+                    return ADD_EDIT
                 l1_de_label, de_l1_label = _quiz_dir_labels(uid)
                 context.user_data["edit_stage"] = "add_int_mode"
                 await update.message.reply_text(
