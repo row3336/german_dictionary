@@ -189,7 +189,21 @@ async def word_filter_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     if data == CB_FORK_CEFR:
         render = render_cefr
     elif data == CB_FORK_TOPICS:
-        render = render_topics
+        levels = list_book_levels(db)
+        if len(levels) == 1:
+            # Skip a redundant level screen while the library has only one book
+            # level. Do not assume A1: the sole populated level may change later.
+            previous = get_active_book_level(user_id)
+            level = levels[0]
+            set_active_book_level(user_id, level)
+            if previous != level:
+                set_user_setting(db, user_id, TOPIC_FILTER_KEY, "all")
+            render = render_topics
+        else:
+            # With multiple levels the intermediate S2 screen becomes useful.
+            # Zero configured levels also land here; the dedicated empty-state
+            # guard is tracked separately from this navigation rule.
+            render = render_booklevels
     elif data == CB_BACK + "fork":
         render = render_fork
     elif data == CB_BACK + "blvl":

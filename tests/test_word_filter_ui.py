@@ -148,6 +148,40 @@ class WordFilterUITest(unittest.TestCase):
         self.assertEqual(wf.get_active_book_level(U), "B1")
         self.assertEqual(get_user_setting(self.db, U, TOPIC_FILTER_KEY, ""), "all")
 
+    def test_book_topics_with_multiple_levels_opens_level_picker(self):
+        q = _Query(UI.CB_FORK_TOPICS, U)
+        _run(q)
+        text, kb = q.edits[-1]
+        self.assertEqual(text, UI.render_booklevels(U)[0])
+        self.assertIn(UI.CB_BLVL + "A1", _cbs(kb))
+        self.assertIn(UI.CB_BLVL + "B1", _cbs(kb))
+
+    def test_book_topics_with_single_a1_skips_level_picker(self):
+        from bot.storage import _connect
+        with _connect(self.db) as conn:
+            conn.execute("DELETE FROM words WHERE topic = '2'")
+        q = _Query(UI.CB_FORK_TOPICS, U)
+        _run(q)
+        text, kb = q.edits[-1]
+        self.assertEqual(wf.get_active_book_level(U), "A1")
+        self.assertEqual(text, UI.render_topics(U)[0])
+        self.assertIn(UI.CB_TOPIC + "1", _cbs(kb))
+        self.assertNotIn(UI.CB_BLVL + "A1", _cbs(kb))
+
+    def test_book_topics_with_single_nondefault_level_selects_it(self):
+        from bot.storage import _connect, set_user_setting
+        with _connect(self.db) as conn:
+            conn.execute("DELETE FROM words WHERE topic = '1'")
+        set_user_setting(self.db, U, TOPIC_FILTER_KEY, "1")
+        q = _Query(UI.CB_FORK_TOPICS, U)
+        _run(q)
+        text, kb = q.edits[-1]
+        self.assertEqual(wf.get_active_book_level(U), "B1")
+        self.assertEqual(get_user_setting(self.db, U, TOPIC_FILTER_KEY, ""), "all")
+        self.assertEqual(text, UI.render_topics(U)[0])
+        self.assertIn(UI.CB_TOPIC + "2", _cbs(kb))
+        self.assertNotIn(UI.CB_BLVL + "B1", _cbs(kb))
+
     def test_topic_toggle(self):
         wf.set_active_book_level(U, "A1")
         _run(_Query(UI.CB_TOPIC + "1", U))  # only topic in A1 -> can't drop last -> alert
