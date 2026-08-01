@@ -112,7 +112,7 @@ def render_booklevels(user_id):
     active = get_active_book_level(user_id)
     body = "\n".join(
         f"{lv} (words: {count_words_for_book_level(db, lv)})" for lv in levels
-    ) or "—"
+    ) or t(lang, "wf_booklevel_empty")
     text = f"{t(lang, 'wf_booklevel_title')}\n\n```text\n{body}\n```"
     rows = []
     for i in range(0, len(levels), _LEVELS_PER_ROW):

@@ -156,6 +156,18 @@ class WordFilterUITest(unittest.TestCase):
         self.assertIn(UI.CB_BLVL + "A1", _cbs(kb))
         self.assertIn(UI.CB_BLVL + "B1", _cbs(kb))
 
+    def test_migrated_unassigned_topics_show_explicit_empty_state(self):
+        from bot.storage import _connect
+        with _connect(self.db) as conn:
+            # v11 -> v14 deliberately leaves existing topics unassigned.
+            conn.execute("UPDATE topics SET level = ''")
+        q = _Query(UI.CB_FORK_TOPICS, U)
+        _run(q)
+        text, kb = q.edits[-1]
+        self.assertIn("Уровни тем по книгам пока не настроены.", text)
+        self.assertNotIn("\n—\n", text)
+        self.assertEqual(_cbs(kb), [UI.CB_BACK + "fork"])
+
     def test_book_topics_with_single_a1_skips_level_picker(self):
         from bot.storage import _connect
         with _connect(self.db) as conn:
