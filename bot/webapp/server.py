@@ -69,11 +69,12 @@ def create_app(bot_token, application=None, registry=None):
 class WebAppServer:
     """Owns the runner/site pair so start and stop stay symmetric."""
 
-    def __init__(self, bot_token, host=WEBAPP_HOST, port=None, application=None):
+    def __init__(self, bot_token, host=WEBAPP_HOST, port=None, application=None, registry=None):
         self._bot_token = bot_token
         self._host = host
         self._port = get_webapp_port() if port is None else port
         self._application = application
+        self._registry = registry
         self._runner = None
 
     @property
@@ -85,7 +86,8 @@ class WebAppServer:
         if self._runner is not None:
             return
         runner = web.AppRunner(
-            create_app(self._bot_token, application=self._application), access_log=None
+            create_app(self._bot_token, application=self._application, registry=self._registry),
+            access_log=None,
         )
         await runner.setup()
         site = web.TCPSite(runner, self._host, self._port)

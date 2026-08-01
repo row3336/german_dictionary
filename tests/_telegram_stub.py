@@ -56,6 +56,13 @@ def install():
                "MessageHandler", "PreCheckoutQueryHandler"):
         if not hasattr(ext, _n):
             setattr(ext, _n, type(_n, (), {"__init__": lambda self, *a, **k: None}))
+    # TypeHandler keeps its callback: the Mini App installs one to hand a session
+    # back from the app to the chat, and the test has to be able to call it.
+    if not hasattr(ext, "TypeHandler"):
+        def _type_handler_init(self, type_=None, callback=None, **k):
+            self.type = type_
+            self.callback = callback
+        ext.TypeHandler = type("TypeHandler", (), {"__init__": _type_handler_init})
     if not hasattr(ext, "filters"):
         ext.filters = types.SimpleNamespace()
     sys.modules["telegram.ext"] = ext

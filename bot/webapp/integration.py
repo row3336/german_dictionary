@@ -20,6 +20,9 @@ logger = logging.getLogger(__name__)
 # The running server is parked in bot_data so post_shutdown can find it without a
 # module-level global (and so tests can assert on it).
 WEBAPP_SERVER_KEY = "webapp_server"
+# The session registry lives there too: the takeover hook and the web routes must
+# be looking at the same one.
+WEBAPP_REGISTRY_KEY = "webapp_session_registry"
 
 
 def build_post_init(inner=None):
@@ -38,17 +41,45 @@ def build_post_init(inner=None):
             # Imported lazily: with the flag off, a deploy that has no aiohttp
             # installed still starts normally.
             from .server import WebAppServer
+            from .sessions import SessionRegistry
 
+            # One registry, shared by the web routes and the takeover hook - two
+            # registries would mean the chat could never actually take a session
+            # away from the app.
+            registry = SessionRegistry()
             # Handing the Application over is what lets the web layer clear the
             # bot's quiz state and post the takeover notice (§4.2).
-            server = WebAppServer(app.bot.token, application=app)
+            server = WebAppServer(app.bot.token, application=app, registry=registry)
             await server.start()
         except Exception:
             logger.exception("webapp: failed to start, bot continues without it")
             return
         app.bot_data[WEBAPP_SERVER_KEY] = server
+        app.bot_data[WEBAPP_REGISTRY_KEY] = registry
+        _install_takeover_hook(app, registry)
 
     return post_init
+
+
+def _install_takeover_hook(app, registry):
+    """Register the reverse-takeover handler ahead of the bot's own (§4.2 п.2).
+
+    Isolated and defensive: if PTB ever renames what we reach for, the app still
+    works and only the automatic hand-back to the chat is missing — which is a
+    degradation, not an outage.
+    """
+    try:
+        from telegram import Update
+        from telegram.ext import TypeHandler
+
+        from .takeover_hook import TAKEOVER_HANDLER_GROUP, build_takeover_callback
+
+        app.add_handler(
+            TypeHandler(Update, build_takeover_callback(registry)),
+            group=TAKEOVER_HANDLER_GROUP,
+        )
+    except Exception:
+        logger.exception("webapp: takeover hook not installed; chat cannot reclaim sessions")
 
 
 def build_post_shutdown(inner=None):
