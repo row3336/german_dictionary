@@ -83,14 +83,25 @@ class LearningSettingsEntryTest(unittest.TestCase):
     # --- layout -----------------------------------------------------------
     def test_second_row_is_settings_then_back(self):
         rows = K._learning_menu_keys(GUEST)
-        self.assertEqual(rows[1], [t("en", "learning_sett"), t("en", "back")])
+        self.assertEqual(rows[1], [t("en", "learning_sett_btn"), t("en", "back")])
 
     def test_settings_button_localized_in_all_langs(self):
         for lang in ("en", "ru", "uk"):
             set_user_interface_lang(self.db, GUEST, lang)
             rows = K._learning_menu_keys(GUEST)
-            self.assertEqual(rows[1][0], t(lang, "learning_sett"), lang)
+            self.assertEqual(rows[1][0], t(lang, "learning_sett_btn"), lang)
             self.assertEqual(_action_key_from_text(rows[1][0], GUEST), "learning_sett", lang)
+
+    def test_button_label_never_collides_with_main_menu_settings(self):
+        # _action_key_from_text builds one global text->action map (and always
+        # registers the English label too), so an identical string would silently
+        # re-route the main-menu Settings button into this submenu.
+        for lang in ("en", "ru", "uk"):
+            set_user_interface_lang(self.db, GUEST, lang)
+            for label in {t(lang, "learning_sett_btn"), t("en", "learning_sett_btn")}:
+                self.assertNotEqual(label, t(lang, "settings"), lang)
+                self.assertNotEqual(label, t("en", "settings"), lang)
+            self.assertEqual(_action_key_from_text(t(lang, "settings"), GUEST), "settings", lang)
 
     def test_first_row_unchanged(self):
         rows = K._learning_menu_keys(GUEST)
@@ -105,10 +116,27 @@ class LearningSettingsEntryTest(unittest.TestCase):
         )
 
     # --- routing ----------------------------------------------------------
+    def test_param_labels_drop_the_learning_prefix(self):
+        # The submenu header already says "learning"; repeating it in every
+        # button made the rows overflow (owner, 01.08).
+        for key in (
+            "learning_daily_qty",
+            "learning_intervals",
+            "learning_ready_quorum",
+            "learning_reminder_interval",
+            "learning_reminder_cooldown",
+        ):
+            for lang in ("en", "ru", "uk"):
+                self.assertFalse(t(lang, key).startswith("learning"), f"{lang}/{key}")
+
+    def test_algo_entry_label_matches_sibling_submenus(self):
+        # algo settings row reads FSRS_sett / weak_sett / learning_sett
+        self.assertEqual(t("en", "learning_sett"), "learning_sett")
+
     def test_press_opens_submenu_and_marks_origin(self):
         set_user_interface_lang(self.db, GUEST, "uk")
         ctx = _Ctx()
-        upd = _Update(t("uk", "learning_sett"), GUEST)
+        upd = _Update(t("uk", "learning_sett_btn"), GUEST)
         state = _run(learning_menu_choice(upd, ctx))
         self.assertEqual(state, LEARNING_SETTINGS_MENU)
         self.assertEqual(ctx.user_data["learning_sett_return"], "learning_menu")
@@ -116,7 +144,7 @@ class LearningSettingsEntryTest(unittest.TestCase):
 
     def test_back_returns_to_learning_menu(self):
         ctx = _Ctx()
-        _run(learning_menu_choice(_Update(t("en", "learning_sett"), GUEST), ctx))
+        _run(learning_menu_choice(_Update(t("en", "learning_sett_btn"), GUEST), ctx))
         state = _run(learning_settings_menu_choice(_Update(t("en", "back"), GUEST), ctx))
         self.assertEqual(state, LEARNING_MENU)
         # flag consumed: a later entry from algo settings must not be hijacked
@@ -144,7 +172,7 @@ class LearningSettingsEntryTest(unittest.TestCase):
     # --- nested value edit keeps the origin -------------------------------
     def test_edit_value_then_back_lands_in_learning_menu(self):
         ctx = _Ctx()
-        _run(learning_menu_choice(_Update(t("en", "learning_sett"), GUEST), ctx))
+        _run(learning_menu_choice(_Update(t("en", "learning_sett_btn"), GUEST), ctx))
         state = _run(learning_settings_menu_choice(_Update(t("en", "learning_daily_qty"), GUEST), ctx))
         self.assertEqual(state, ALGO_SETTINGS_EDIT)
         state = _run(algo_settings_edit(_Update("7", GUEST), ctx))
@@ -155,7 +183,7 @@ class LearningSettingsEntryTest(unittest.TestCase):
 
     def test_edit_cancel_then_back_lands_in_learning_menu(self):
         ctx = _Ctx()
-        _run(learning_menu_choice(_Update(t("en", "learning_sett"), GUEST), ctx))
+        _run(learning_menu_choice(_Update(t("en", "learning_sett_btn"), GUEST), ctx))
         _run(learning_settings_menu_choice(_Update(t("en", "learning_intervals"), GUEST), ctx))
         state = _run(algo_settings_edit(_Update(t("en", "back"), GUEST), ctx))
         self.assertEqual(state, LEARNING_SETTINGS_MENU)

@@ -68,7 +68,7 @@ def _learning_menu_keys(user_id):
     lang = _user_interface_lang(user_id)
     return [
         [t(lang, "learning_start"), t(lang, "learning_mix_mode"), t(lang, "add_for_learning"), t(lang, "learning_reset")],
-        [t(lang, "learning_sett"), t(lang, "back")],
+        [t(lang, "learning_sett_btn"), t(lang, "back")],
     ]
 
 

@@ -62,6 +62,7 @@ def _action_key_from_text(text, user_id):
         ("fsrs_sett", "fsrs_sett"),
         ("weak_sett", "weak_sett"),
         ("learning_sett", "learning_sett"),
+        ("learning_sett_btn", "learning_sett"),
         ("learning_daily_qty", "learning_daily_qty"),
         ("learning_intervals", "learning_intervals"),
         ("learning_reminder_interval", "learning_reminder_interval"),
