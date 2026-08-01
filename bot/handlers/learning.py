@@ -379,6 +379,13 @@ async def learning_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
             reply_markup=ReplyKeyboardMarkup(_tests_menu_keys(user_id), resize_keyboard=True),
         )
         return TESTS_MENU
+    if action == "learning_sett":
+        # Same submenu as algo settings; remember the entry point so its "back"
+        # returns here instead of to algo settings.
+        from .settings import _send_learning_settings_menu  # local import: anti-cycle
+
+        context.user_data["learning_sett_return"] = "learning_menu"
+        return await _send_learning_settings_menu(update, user_id)
     if action == "learning_add":
         return await _learning_add_words(update, context)
     if action == "learning_mix_mode":

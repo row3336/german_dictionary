@@ -60,11 +60,15 @@ def _ru_de_menu_keys(user_id):
 
 
 def _learning_menu_keys(user_id):
-    """Learning menu keyboard (all labels localized)."""
+    """Learning menu keyboard (all labels localized).
+
+    The second row duplicates the "learning_sett" entry from algo settings so the
+    params can be tuned without leaving the learning flow; back from there returns
+    here (see learning_sett_return in handlers/settings.py)."""
     lang = _user_interface_lang(user_id)
     return [
         [t(lang, "learning_start"), t(lang, "learning_mix_mode"), t(lang, "add_for_learning"), t(lang, "learning_reset")],
-        [t(lang, "back")],
+        [t(lang, "learning_sett"), t(lang, "back")],
     ]
 
 

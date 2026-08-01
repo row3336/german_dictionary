@@ -374,6 +374,7 @@ async def algo_settings_menu_choice(update: Update, context: ContextTypes.DEFAUL
     if action == "weak_sett":
         return await _send_drill_settings_menu(update, user_id)
     if action == "learning_sett":
+        context.user_data["learning_sett_return"] = "algo"
         return await _send_learning_settings_menu(update, user_id)
 
     if text == t(lang, "topic_filter"):
@@ -499,6 +500,12 @@ async def learning_settings_menu_choice(update: Update, context: ContextTypes.DE
     lang = _user_interface_lang(user_id)
     action = _action_key_from_text(text, user_id)
     if action == "back":
+        # The submenu has two entry points (algo settings and the learning menu);
+        # back must land where the user came from.
+        if context.user_data.pop("learning_sett_return", "algo") == "learning_menu":
+            from .learning import _send_learning_menu  # local import: anti-cycle
+
+            return await _send_learning_menu(update, user_id)
         return await _send_algo_settings_menu(update, user_id)
     if text == t(lang, "learning_daily_qty"):
         context.user_data["algo_setting_edit"] = LEARNING_DAILY_QTY_KEY
