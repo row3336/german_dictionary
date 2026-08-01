@@ -62,6 +62,7 @@ class WebSession:
         "mode",
         "word_type",
         "ctx",
+        "question",
         "question_token",
         "created_at",
         "touched_at",
@@ -73,6 +74,10 @@ class WebSession:
         self.mode = mode
         self.word_type = word_type
         self.ctx = WebContext()
+        # The serialized question the client is currently looking at, kept so a
+        # WebView that was minimized and reopened gets the same question back
+        # instead of a new one (§7.2). Filled in by the quiz routes in M4.
+        self.question = None
         self.question_token = ""
         self.created_at = now
         self.touched_at = now

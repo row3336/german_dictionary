@@ -12,18 +12,25 @@ middleware below: no request is allowed to raise past it, and a failure to start
 the server is logged rather than propagated by the caller.
 """
 
+import asyncio
+import contextlib
 import logging
 
 from aiohttp import web
 
-from . import meta_api
+from . import meta_api, session_api
 from .access import auth_middleware
 from .app_keys import BOT_TOKEN_KEY, BRIDGE_KEY, REGISTRY_KEY
 from .bot_bridge import BotBridge
 from .config import WEBAPP_HOST, get_webapp_port
+from .session_api import session_error_middleware
 from .sessions import SessionRegistry
 
 logger = logging.getLogger(__name__)
+
+# How often idle sessions are swept (§4.3). Far below the two-hour TTL, and cheap:
+# the sweep walks a dict of at most one entry per active user.
+SWEEP_INTERVAL_SECONDS = 5 * 60
 
 # Re-exported for callers that build an app (the token key in particular: it is
 # where the initData secret lives, and it is never logged or served — §6.1 п.4).
@@ -58,12 +65,39 @@ def create_app(bot_token, application=None, registry=None):
     auth middleware itself still comes back as a 500 rather than escaping into the
     event loop the bot is running on.
     """
-    app = web.Application(middlewares=[error_middleware, auth_middleware])
+    app = web.Application(
+        middlewares=[error_middleware, auth_middleware, session_error_middleware]
+    )
     app[BOT_TOKEN_KEY] = bot_token
     app[BRIDGE_KEY] = BotBridge(application)
     app[REGISTRY_KEY] = SessionRegistry() if registry is None else registry
     app.add_routes(meta_api.routes)
+    app.add_routes(session_api.routes)
+    app.cleanup_ctx.append(_session_sweeper)
     return app
+
+
+async def _session_sweeper(app):
+    """Background task dropping idle sessions for as long as the app runs (§4.3)."""
+
+    async def run():
+        while True:
+            await asyncio.sleep(SWEEP_INTERVAL_SECONDS)
+            try:
+                dropped = app[REGISTRY_KEY].sweep()
+            except Exception:
+                # A sweep that throws must not end the task and leave sessions to
+                # pile up for the rest of the process's life.
+                logger.exception("webapp: session sweep failed")
+                continue
+            if dropped:
+                logger.info("webapp: swept %s idle session(s)", dropped)
+
+    task = asyncio.create_task(run())
+    yield
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
 
 
 class WebAppServer:
