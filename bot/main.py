@@ -110,6 +110,7 @@ from .common.db_safety import apply_migrations_safely
 from .common.lang import _user_interface_lang
 from .common.outbound import configure_outbound_logger
 from .common.navigation import _back_to_tests
+from .common.runtime_checks import require_supported_ptb
 from .common.txlog import UNDO_MSG_ID_KEY, UNDO_TOTAL_KEY
 from .ui.keyboards import _main_menu_markup
 from .i18n import t
@@ -426,6 +427,9 @@ def main():
     """Handle main."""
     load_dotenv()
     _configure_logging()
+    # Before anything talks to Telegram: an outdated PTB only fails later, inside
+    # handlers, where the user just sees "Something went wrong" (prod 2026-07-04).
+    require_supported_ptb()
     token = os.getenv("BOT_TOKEN")
     if not token:
         raise SystemExit("BOT_TOKEN is missing in .env")
