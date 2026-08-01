@@ -6,6 +6,7 @@ the token-bearing URL in the raised error or in the alert text.
 """
 
 import gzip
+import logging
 import os
 import shutil
 import sqlite3
@@ -13,12 +14,31 @@ import tempfile
 import threading
 import unittest
 from datetime import datetime, timezone
+from unittest import mock
 
 from bot.offsite_backup import backup as B
 from bot.offsite_backup import crypto as C
 from bot.storage import add_word, init_db
+from scripts import offsite_backup as ENTRYPOINT
 
 TOKEN = "123456789:AA-SECRET-TOKEN-VALUE-do-not-leak-0000"
+
+
+class EntrypointLoggingTest(unittest.TestCase):
+    def test_http_transport_access_logs_are_suppressed(self):
+        httpx_logger = logging.getLogger("httpx")
+        httpcore_logger = logging.getLogger("httpcore")
+        old_levels = (httpx_logger.level, httpcore_logger.level)
+        self.addCleanup(httpx_logger.setLevel, old_levels[0])
+        self.addCleanup(httpcore_logger.setLevel, old_levels[1])
+        httpx_logger.setLevel(logging.INFO)
+        httpcore_logger.setLevel(logging.INFO)
+
+        with mock.patch.object(logging, "basicConfig"):
+            ENTRYPOINT.configure_logging()
+
+        self.assertEqual(httpx_logger.level, logging.WARNING)
+        self.assertEqual(httpcore_logger.level, logging.WARNING)
 
 
 class FakeResp:

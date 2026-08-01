@@ -18,11 +18,21 @@ from dotenv import load_dotenv
 from bot.offsite_backup.backup import load_config, run_backup
 
 
-def main():
+def configure_logging():
+    """Keep token-bearing Bot API URLs out of the systemd journal."""
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s offsite_backup %(levelname)s %(message)s",
     )
+    # Telegram embeds the bot token in the request path. httpx logs the complete
+    # URL at INFO after every request, so the dedicated backup process must
+    # suppress transport access logs even when the application logs at INFO.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+
+def main():
+    configure_logging()
     load_dotenv()
     return run_backup(load_config())
 
