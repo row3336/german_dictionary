@@ -14,7 +14,9 @@ shape stays identical to every other read in the project.
 
 from ..storage import (  # noqa: PLC2701 - deliberate reuse, see module docstring
     _connect,
+    _normalize_text,
     _row_to_entry,
+    _strip_leading_article,
     apply_user_word_media,
     get_synonym_group,
     get_word_study_status,
@@ -25,21 +27,45 @@ from ..storage import (  # noqa: PLC2701 - deliberate reuse, see module docstrin
 # database calls the form; the label the user sees is German either way (§8.4a).
 WEAK_FORM_FIELDS = ("article", "plural", "prateritum", "partizip2")
 
+# Columns a search looks through — every written form plus all three translations,
+# the same set the bot's search_word uses, so a query finds the same word in the
+# app as it does in the chat.
+_SEARCHED_COLUMNS = (
+    "german",
+    "infinitive",
+    "plural",
+    "prateritum",
+    "partizip2",
+    "russian",
+    "ukrainian",
+    "english",
+)
+
+# The longest query we send to the database (§7.5). Anything past this is not a
+# word, and a card is not the answer to it.
+MAX_QUERY_LENGTH = 100
+
+# Enough candidates for a disambiguation screen and no more: past a handful the
+# list stops being a choice and becomes a search result page, which the app does
+# not have (§2 — the dictionary is the smaller half of v1).
+MAX_CANDIDATES = 5
+
+# Every column the card can show. Interpolated into SQL from this constant only —
+# never from anything a request carries; user values always travel as ? parameters.
+_CARD_COLUMNS = """
+    id, type, article, german, plural, infinitive, prateritum, partizip2,
+    komparativ, superlativ, russian, ukrainian, english, image, example,
+    topic, preposition_type, case_type, cefr_level,
+    conjugation_praesens, conjugation_praeteritum
+"""
+
 
 def get_word_full(db_path, word_id):
     """One word with every column the card can show, or None."""
     init_db(db_path)
     with _connect(db_path) as conn:
         row = conn.execute(
-            """
-            SELECT id, type, article, german, plural, infinitive, prateritum, partizip2,
-                   komparativ, superlativ, russian, ukrainian, english, image, example,
-                   topic, preposition_type, case_type, cefr_level,
-                   conjugation_praesens, conjugation_praeteritum
-            FROM words
-            WHERE id = ?
-            LIMIT 1
-            """,
+            f"SELECT {_CARD_COLUMNS} FROM words WHERE id = ? LIMIT 1",
             (str(word_id or ""),),
         ).fetchone()
     return _row_to_entry(row) if row else None
@@ -113,6 +139,65 @@ def get_weak_forms(db_path, user_id, word_id):
     if not row:
         return []
     return [field for field in WEAK_FORM_FIELDS if row[f"{field}_active"]]
+
+
+def search_words(db_path, token, limit=MAX_CANDIDATES):
+    """Words matching `token`, best kind of match first (§7.5).
+
+    Exact matches on any written form or translation come first; only when there
+    are none does the search fall back to a substring match. The column set and the
+    leading-article stripping mirror the bot's own `search_word`, so "der Tisch"
+    and "Tische" find the same word in both places.
+
+    Unlike the bot, this returns several rows. `search_word` takes LIMIT 1, which
+    means the chat silently picks one of two homonyms; the app is specified to show
+    the choice instead (§7.5), so it has to see them all.
+    """
+    candidate = _normalize_text(token)
+    if not candidate:
+        return []
+    stripped = _strip_leading_article(candidate)
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            f"""
+            SELECT {_CARD_COLUMNS}
+            FROM words
+            WHERE {" OR ".join(f"lower(trim({col})) IN (?, ?)" for col in _SEARCHED_COLUMNS)}
+            LIMIT ?
+            """,
+            _pair_params(candidate, stripped) + [int(limit)],
+        ).fetchall()
+        if not rows:
+            condition = " OR ".join(
+                f"lower({col}) LIKE ? ESCAPE '\\' OR lower({col}) LIKE ? ESCAPE '\\'"
+                for col in _SEARCHED_COLUMNS
+            )
+            rows = conn.execute(
+                f"SELECT {_CARD_COLUMNS} FROM words WHERE {condition} LIMIT ?",
+                _pair_params(_like_pattern(candidate), _like_pattern(stripped)) + [int(limit)],
+            ).fetchall()
+    return [_row_to_entry(row) for row in rows]
+
+
+def _like_pattern(value):
+    """Wrap a query in wildcards, escaping the ones the user typed.
+
+    Without this a search for `%` matches the entire dictionary and a search for
+    `_` matches every two-letter difference: not an injection (values still travel
+    as parameters) but the user's text would be read as pattern syntax rather than
+    as the word they are looking for.
+    """
+    escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
+def _pair_params(first, second):
+    """The (value, stripped-value) pair repeated once per searched column."""
+    params = []
+    for _ in _SEARCHED_COLUMNS:
+        params.extend((first, second))
+    return params
 
 
 def load_card_sources(db_path, user_id, word_id):

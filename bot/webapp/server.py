@@ -18,7 +18,7 @@ import logging
 
 from aiohttp import web
 
-from . import meta_api, session_api
+from . import dict_api, meta_api, session_api
 from .access import auth_middleware
 from .app_keys import BOT_TOKEN_KEY, BRIDGE_KEY, REGISTRY_KEY
 from .bot_bridge import BotBridge
@@ -73,6 +73,7 @@ def create_app(bot_token, application=None, registry=None):
     app[REGISTRY_KEY] = SessionRegistry() if registry is None else registry
     app.add_routes(meta_api.routes)
     app.add_routes(session_api.routes)
+    app.add_routes(dict_api.routes)
     app.cleanup_ctx.append(_session_sweeper)
     return app
 
