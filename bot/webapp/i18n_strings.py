@@ -78,6 +78,9 @@ APP_TEXTS = {
         "state_offline": "No connection",
         "state_retry": "Try again",
         "state_chat_only": "This is done in the chat",
+        # Sent into the chat, not rendered in the app: the one message that explains
+        # why the question hanging in the conversation is no longer live (§4.2).
+        "chat_session_moved": "▶️ The session continues in the app. The question above is no longer active.",
         # errors (§7.7)
         "error_generic": "Something went wrong",
         "error_reopen": "Please open the app again",
@@ -135,6 +138,7 @@ APP_TEXTS = {
         "state_offline": "Нет связи",
         "state_retry": "Повторить",
         "state_chat_only": "Это делается в чате",
+        "chat_session_moved": "▶️ Сессия продолжается в приложении. Вопрос выше больше не активен.",
         "error_generic": "Что-то сломалось",
         "error_reopen": "Откройте приложение заново",
         "error_rate_limited": "Слишком часто, подождите",
@@ -191,6 +195,7 @@ APP_TEXTS = {
         "state_offline": "Немає зв'язку",
         "state_retry": "Спробувати ще",
         "state_chat_only": "Це робиться в чаті",
+        "chat_session_moved": "▶️ Сесія продовжується в застосунку. Питання вище більше не активне.",
         "error_generic": "Щось зламалось",
         "error_reopen": "Відкрийте застосунок заново",
         "error_rate_limited": "Занадто часто, зачекайте",

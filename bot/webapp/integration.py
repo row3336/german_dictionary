@@ -39,7 +39,9 @@ def build_post_init(inner=None):
             # installed still starts normally.
             from .server import WebAppServer
 
-            server = WebAppServer(app.bot.token)
+            # Handing the Application over is what lets the web layer clear the
+            # bot's quiz state and post the takeover notice (§4.2).
+            server = WebAppServer(app.bot.token, application=app)
             await server.start()
         except Exception:
             logger.exception("webapp: failed to start, bot continues without it")

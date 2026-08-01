@@ -16,6 +16,7 @@ from aiohttp import web
 
 from ..app_config import get_db_path, is_owner
 from ..storage import get_user_status
+from .app_keys import BOT_TOKEN_KEY
 from .auth import AUTH_HEADER, InitDataError, parse_auth_header, validate_init_data
 
 logger = logging.getLogger(__name__)
@@ -24,9 +25,6 @@ logger = logging.getLogger(__name__)
 # /healthz sit outside it: the shell has to load in order to render the "no
 # access" screen at all, so gating it would leave the user a white rectangle.
 API_PREFIX = "/api/v1/"
-
-# aiohttp application key — the token used to verify initData signatures.
-BOT_TOKEN_KEY = web.AppKey("bot_token", str)
 
 # Request keys filled in by the middleware for downstream handlers.
 REQUEST_USER_ID = "webapp_user_id"

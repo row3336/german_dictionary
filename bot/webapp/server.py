@@ -17,15 +17,17 @@ import logging
 from aiohttp import web
 
 from . import meta_api
-from .access import BOT_TOKEN_KEY, auth_middleware
+from .access import auth_middleware
+from .app_keys import BOT_TOKEN_KEY, BRIDGE_KEY, REGISTRY_KEY
+from .bot_bridge import BotBridge
 from .config import WEBAPP_HOST, get_webapp_port
+from .sessions import SessionRegistry
 
 logger = logging.getLogger(__name__)
 
-# Re-exported for callers that build an app: the bot token is stored under this key
-# so request handlers can verify initData without reaching for the PTB application.
-# Never logged, never returned (§6.1 п.4).
-__all__ = ["BOT_TOKEN_KEY", "WebAppServer", "create_app", "error_middleware"]
+# Re-exported for callers that build an app (the token key in particular: it is
+# where the initData secret lives, and it is never logged or served — §6.1 п.4).
+__all__ = ["BOT_TOKEN_KEY", "BRIDGE_KEY", "REGISTRY_KEY", "WebAppServer", "create_app"]
 
 
 @web.middleware
@@ -45,8 +47,12 @@ async def error_middleware(request, handler):
         return web.json_response({"error": "internal_error"}, status=500)
 
 
-def create_app(bot_token):
+def create_app(bot_token, application=None, registry=None):
     """Build the aiohttp application. Pure — no sockets are opened here.
+
+    `application` is the running PTB Application when the web layer lives inside
+    the bot, and None when it runs standalone; the bridge turns the second case
+    into a set of no-ops rather than a special case at every call site.
 
     Middleware order matters: the error net is outermost, so a failure inside the
     auth middleware itself still comes back as a 500 rather than escaping into the
@@ -54,6 +60,8 @@ def create_app(bot_token):
     """
     app = web.Application(middlewares=[error_middleware, auth_middleware])
     app[BOT_TOKEN_KEY] = bot_token
+    app[BRIDGE_KEY] = BotBridge(application)
+    app[REGISTRY_KEY] = SessionRegistry() if registry is None else registry
     app.add_routes(meta_api.routes)
     return app
 
@@ -61,10 +69,11 @@ def create_app(bot_token):
 class WebAppServer:
     """Owns the runner/site pair so start and stop stay symmetric."""
 
-    def __init__(self, bot_token, host=WEBAPP_HOST, port=None):
+    def __init__(self, bot_token, host=WEBAPP_HOST, port=None, application=None):
         self._bot_token = bot_token
         self._host = host
         self._port = get_webapp_port() if port is None else port
+        self._application = application
         self._runner = None
 
     @property
@@ -75,7 +84,9 @@ class WebAppServer:
         """Bind the loopback socket. Safe to call once per process."""
         if self._runner is not None:
             return
-        runner = web.AppRunner(create_app(self._bot_token), access_log=None)
+        runner = web.AppRunner(
+            create_app(self._bot_token, application=self._application), access_log=None
+        )
         await runner.setup()
         site = web.TCPSite(runner, self._host, self._port)
         await site.start()
