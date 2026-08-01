@@ -33,8 +33,13 @@ class HealthzTest(AioHTTPTestCase):
         for leak in ("user", "words", "db", TOKEN):
             self.assertNotIn(leak, body.lower())
 
-    async def test_unknown_route_is_a_plain_404(self):
-        self.assertEqual((await self.client.get("/api/v1/nope")).status, 404)
+    async def test_unknown_public_route_is_a_plain_404(self):
+        self.assertEqual((await self.client.get("/nope")).status, 404)
+
+    async def test_unknown_api_route_is_refused_before_routing(self):
+        # The gate runs ahead of the router, so an unauthenticated caller gets 401
+        # everywhere under the prefix and cannot map which endpoints exist.
+        self.assertEqual((await self.client.get("/api/v1/nope")).status, 401)
 
 
 class ErrorMiddlewareTest(unittest.IsolatedAsyncioTestCase):

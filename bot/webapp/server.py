@@ -17,13 +17,15 @@ import logging
 from aiohttp import web
 
 from . import meta_api
+from .access import BOT_TOKEN_KEY, auth_middleware
 from .config import WEBAPP_HOST, get_webapp_port
 
 logger = logging.getLogger(__name__)
 
-# The bot token lives here so request handlers can verify initData without
-# reaching for the PTB application. Never logged, never returned (§6.1 п.4).
-BOT_TOKEN_KEY = web.AppKey("bot_token", str)
+# Re-exported for callers that build an app: the bot token is stored under this key
+# so request handlers can verify initData without reaching for the PTB application.
+# Never logged, never returned (§6.1 п.4).
+__all__ = ["BOT_TOKEN_KEY", "WebAppServer", "create_app", "error_middleware"]
 
 
 @web.middleware
@@ -44,8 +46,13 @@ async def error_middleware(request, handler):
 
 
 def create_app(bot_token):
-    """Build the aiohttp application. Pure — no sockets are opened here."""
-    app = web.Application(middlewares=[error_middleware])
+    """Build the aiohttp application. Pure — no sockets are opened here.
+
+    Middleware order matters: the error net is outermost, so a failure inside the
+    auth middleware itself still comes back as a 500 rather than escaping into the
+    event loop the bot is running on.
+    """
+    app = web.Application(middlewares=[error_middleware, auth_middleware])
     app[BOT_TOKEN_KEY] = bot_token
     app.add_routes(meta_api.routes)
     return app

@@ -7,12 +7,12 @@ auth_date, a tampered field with the original hash kept, duplicate keys.
 No telegram stub is needed: bot.webapp.auth is stdlib-only by design.
 """
 
-import hashlib
-import hmac
 import json
 import time
 import unittest
 from urllib.parse import urlencode
+
+from _webapp_helpers import OTHER_TOKEN, TOKEN, make_fields, sign
 
 from bot.webapp.auth import (
     INVALID_INIT_DATA,
@@ -21,29 +21,7 @@ from bot.webapp.auth import (
     validate_init_data,
 )
 
-TOKEN = "123456:AAH-real-bot-token"
-OTHER_TOKEN = "654321:AAH-other-bot-token"
 USER_ID = 4242
-
-
-def sign(fields, token=TOKEN):
-    """Build a valid initData query string the way a Telegram client would."""
-    data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(fields.items()))
-    secret = hmac.new(b"WebAppData", token.encode(), hashlib.sha256).digest()
-    digest = hmac.new(secret, data_check_string.encode(), hashlib.sha256).hexdigest()
-    return urlencode({**fields, "hash": digest})
-
-
-def make_fields(user_id=USER_ID, auth_date=None, **extra):
-    return {
-        "auth_date": str(int(time.time()) if auth_date is None else auth_date),
-        "query_id": "AAEtest",
-        "user": json.dumps(
-            {"id": user_id, "first_name": "Test", "language_code": "ru"},
-            separators=(",", ":"),
-        ),
-        **extra,
-    }
 
 
 class ValidInitDataTest(unittest.TestCase):
