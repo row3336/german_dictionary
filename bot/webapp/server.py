@@ -1,0 +1,120 @@
+"""aiohttp application factory and lifecycle for the Mini App (miniapp.md §3.3).
+
+Two ways to run it:
+
+  * inside the bot — `WebAppServer` is started from PTB's post_init and stopped
+    from post_shutdown, sharing the bot's event loop and process;
+  * standalone — `python -m bot.webapp.server`, for local development while the
+    web layer is not yet wired into bot/main.py.
+
+Risk #7 in §12 is "the web part takes the bot down with it". Hence the error
+middleware below: no request is allowed to raise past it, and a failure to start
+the server is logged rather than propagated by the caller.
+"""
+
+import logging
+
+from aiohttp import web
+
+from . import meta_api
+from .config import WEBAPP_HOST, get_webapp_port
+
+logger = logging.getLogger(__name__)
+
+# The bot token lives here so request handlers can verify initData without
+# reaching for the PTB application. Never logged, never returned (§6.1 п.4).
+BOT_TOKEN_KEY = web.AppKey("bot_token", str)
+
+
+@web.middleware
+async def error_middleware(request, handler):
+    """Turn anything unexpected into a 500 JSON body, and keep the loop alive.
+
+    HTTPException subclasses are aiohttp's own control flow (404, 405, and later
+    our 401/403/409), so they pass through untouched.
+    """
+    try:
+        return await handler(request)
+    except web.HTTPException:
+        raise
+    except Exception:
+        # The path is safe to log; query strings are not used by this API (§6.1 п.5).
+        logger.exception("webapp: unhandled error on %s %s", request.method, request.path)
+        return web.json_response({"error": "internal_error"}, status=500)
+
+
+def create_app(bot_token):
+    """Build the aiohttp application. Pure — no sockets are opened here."""
+    app = web.Application(middlewares=[error_middleware])
+    app[BOT_TOKEN_KEY] = bot_token
+    app.add_routes(meta_api.routes)
+    return app
+
+
+class WebAppServer:
+    """Owns the runner/site pair so start and stop stay symmetric."""
+
+    def __init__(self, bot_token, host=WEBAPP_HOST, port=None):
+        self._bot_token = bot_token
+        self._host = host
+        self._port = get_webapp_port() if port is None else port
+        self._runner = None
+
+    @property
+    def port(self):
+        return self._port
+
+    async def start(self):
+        """Bind the loopback socket. Safe to call once per process."""
+        if self._runner is not None:
+            return
+        runner = web.AppRunner(create_app(self._bot_token), access_log=None)
+        await runner.setup()
+        site = web.TCPSite(runner, self._host, self._port)
+        await site.start()
+        self._runner = runner
+        logger.info("webapp: listening on http://%s:%s", self._host, self._port)
+
+    async def stop(self):
+        """Release the socket. Idempotent, so post_shutdown can call it blindly."""
+        if self._runner is None:
+            return
+        await self._runner.cleanup()
+        self._runner = None
+        logger.info("webapp: stopped")
+
+
+def _standalone():
+    """Development entry point: run the web layer without the bot.
+
+    Reads BOT_TOKEN from the environment/.env exactly like the bot does, because
+    initData is signed with it — a server started with the wrong token rejects
+    every request with 401 and looks broken for no visible reason.
+    """
+    import asyncio
+    import os
+
+    from dotenv import load_dotenv
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    load_dotenv()
+    token = os.getenv("BOT_TOKEN", "")
+    if not token:
+        raise SystemExit("BOT_TOKEN is not set - initData could not be verified")
+
+    async def run():
+        server = WebAppServer(token)
+        await server.start()
+        try:
+            await asyncio.Event().wait()  # serve until Ctrl-C
+        finally:
+            await server.stop()
+
+    try:
+        asyncio.run(run())
+    except KeyboardInterrupt:
+        pass
+
+
+if __name__ == "__main__":
+    _standalone()

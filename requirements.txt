@@ -14,3 +14,8 @@ httpx==0.28.1
 # Off-site backup encryption (spec #4): libsodium sealed boxes (asymmetric).
 # Server holds only the public key; the private key stays with the owner.
 PyNaCl==1.6.2
+
+# Telegram Mini App backend (miniapp.md §3.2): the web server runs in the bot's
+# own process and event loop. Imported lazily and only when WEBAPP_ENABLED=1, so a
+# deploy that misses this line still starts the bot - it just cannot serve the app.
+aiohttp==3.13.2
