@@ -16,6 +16,7 @@ from ..app_config import (
     ADD_CONFIRM,
     ADD_EDIT,
     ADD_INPUT,
+    ADD_MENU,
     ADD_PRECHECK,
     ADD_PRECHECK_EDIT,
     AI_BAN_WORD,
@@ -27,6 +28,8 @@ from ..app_config import (
     AI_SKIP,
     ALLOWED_AI_TYPES,
     ARTICLE_SET,
+    CASE_TYPES,
+    CEFR_LEVELS,
     MENU,
     NUMERAL_SET,
     NUMERIC_RE,
@@ -34,22 +37,27 @@ from ..app_config import (
     PRECHECK_EDIT,
     PRECHECK_KEYS,
     PRECHECK_REJECT,
+    PREPOSITION_TYPES,
     STOP_TEXT,
     TOPIC_FILTER_EDIT,
     get_db_path,
 )
 from ..common.lang import _user_dict_lang, _user_interface_lang
 from ..common.navigation import _action_key_from_text, _back_to_main_menu, _reply_text_with_retry
-from ..common.settings import _current_topic_value
+from ..common.settings import _topic_filter_banner
+from ..common.topics import parse_topic_input
 from ..i18n import t
 from ..storage import (
     add_banned_word,
     add_word,
     find_existing_word,
     has_translation_collision,
+    insert_topic_if_absent,
     is_banned_word,
     list_all_words,
     list_topics,
+    list_topics_with_desc,
+    set_topic_level,
 )
 from ..text_utils import cap_word as _cap_word
 from ..text_utils import md_escape as _md_escape
@@ -59,7 +67,14 @@ from ..text_utils import russian_variants as _russian_variants
 from ..text_utils import try_parse_json as _try_parse_json
 from ..text_utils import type_label as _type_label
 from ..ui.formatting import _entry_translation, _format_word_card
-from ..ui.keyboards import _add_keys, _clarify_fields_markup, _main_menu_markup
+from ..verb_forms_parsing.add_flow import vf_add_prompt, vf_recheck_prompt
+from ..ui.keyboards import (
+    _add_input_markup,
+    _add_keys,
+    _add_menu_markup,
+    _clarify_fields_markup,
+    _main_menu_markup,
+)
 
 
 def _stop_keys(user_id):
@@ -218,6 +233,12 @@ def _exists_word_for_type(forced_type, lookup_word):
     word = _normalize_lookup_text(lookup_word)
     if not word:
         return False
+    if forced_type == "praeposition":
+        # spec #1: a second meaning of the same preposition is a legitimate new word
+        # (distinct preposition_type/case_type). Don't pre-block on spelling here —
+        # the exact (german, preposition_type, case_type) duplicate is enforced at
+        # save time in storage._dedupe_entry.
+        return False
     if forced_type not in {"nomen", "verb", "phrase"}:
         return bool(find_existing_word(get_db_path(), lookup_word))
     for entry in list_all_words(get_db_path()):
@@ -287,6 +308,11 @@ def _ai_prompt(word, clarification):
         "For nomen return: type, article, german, plural, russian. "
         "For verb return: type, infinitive, prateritum, partizip2, russian. "
         "For adjektiv return: type, german, komparativ, superlativ, russian. "
+        "For praeposition return: type, german, russian, preposition_type, case_type. "
+        "preposition_type is the semantic category, one of: local, temporal, modal, kausal. "
+        "case_type is the governed case, one of: dativ, akkusativ, genitiv, wechsel "
+        "(wechsel = two-way Wechselpraeposition: Dativ on Wo?, Akkusativ on Wohin?). "
+        "If unsure about either, return an empty string for it. "
         "For all other allowed types return: type, german, russian. "
         "Use Russian translations in singular only. No extra text. "
         "German noun plurals are irregular: recall the exact plural form, "
@@ -294,7 +320,8 @@ def _ai_prompt(word, clarification):
         '{"type":"nomen","article":"das","german":"Wort","plural":"Wörter","russian":"слово"}\n'
         '{"type":"nomen","article":"der","german":"Bus","plural":"Busse","russian":"автобус"}\n'
         '{"type":"nomen","article":"die","german":"Stadt","plural":"Städte","russian":"город"}\n'
-        '{"type":"verb","infinitive":"gehen","prateritum":"ging","partizip2":"gegangen","russian":"идти"}'
+        '{"type":"verb","infinitive":"gehen","prateritum":"ging","partizip2":"gegangen","russian":"идти"}\n'
+        '{"type":"praeposition","german":"mit","russian":"с","preposition_type":"modal","case_type":"dativ"}'
         f"\nWord: {word}{extra}"
     )
 
@@ -344,9 +371,9 @@ def _parse_precheck_entry(entry):
     return {"type": entry_type, "word": value}
 
 
-def _format_precheck_list(items):
+def _format_precheck_list(items, topic):
     """Handle format precheck list."""
-    lines = [f"Precheck list (topic: {_current_topic_value()}):"]
+    lines = [f"Precheck list (topic: {topic}):"]
     active = [x for x in items if x.get("word")]
     for idx, item in enumerate(active, start=1):
         word = item.get("word", "")
@@ -435,12 +462,11 @@ def _validate_ai_entry(entry):
     return bool(entry.get("german")) and bool(entry.get("russian"))
 
 
-def _normalize_ai_entry(entry):
+def _normalize_ai_entry(entry, topic):
     """Handle normalize ai entry."""
     entry = dict(entry)
     entry_type = _type_label(entry.get("type", ""))
     entry["type"] = entry_type
-    topic = _current_topic_value()
 
     if entry_type == "verb":
         return {
@@ -476,6 +502,23 @@ def _normalize_ai_entry(entry):
             "ukrainian": str(entry.get("ukrainian", "")).strip(),
             "english": str(entry.get("english", "")).strip(),
             "topic": topic,
+        }
+
+    if entry_type == "praeposition":
+        # spec #1: keep the two extra fields, but only if the AI returned a value from
+        # the controlled vocabulary — anything else becomes '' (shown blank on the
+        # owner review step to fix by hand). Never store free text here.
+        ptype = str(entry.get("preposition_type", "")).strip().lower()
+        ctype = str(entry.get("case_type", "")).strip().lower()
+        return {
+            "type": "praeposition",
+            "german": str(entry.get("german", "")).strip(),
+            "russian": _normalize_russian_singular(entry.get("russian", "")),
+            "ukrainian": str(entry.get("ukrainian", "")).strip(),
+            "english": str(entry.get("english", "")).strip(),
+            "topic": topic,
+            "preposition_type": ptype if ptype in PREPOSITION_TYPES else "",
+            "case_type": ctype if ctype in CASE_TYPES else "",
         }
 
     return {
@@ -555,6 +598,12 @@ def _format_ai_preview(entry, dict_lang, has_synonym=False):
         "",
         f"*{_md_escape(ger)}* - {_md_escape(translation)}",
     ]
+    # spec #1: surface the preposition fields on the review step so the owner can
+    # verify them (blank = AI unsure / rejected value → fix via clarify buttons).
+    if entry_type == "praeposition":
+        ptype = entry.get("preposition_type", "") or "-"
+        ctype = entry.get("case_type", "") or "-"
+        lines.append(f"_preposition_type: {_md_escape(ptype)} · case_type: {_md_escape(ctype)}_")
     if warn:
         lines += ["", warn]
     return "\n".join(lines)
@@ -592,6 +641,10 @@ async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, w
     if forced_type in {"nomen", "verb", "phrase"}:
         if _exists_word_for_type(forced_type, lookup_word):
             existing = {"type": forced_type, "value": lookup_word}
+    elif forced_type == "praeposition":
+        # spec #1: don't pre-block a new preposition meaning; the exact triple
+        # duplicate is caught at save time (see _exists_word_for_type).
+        existing = None
     else:
         existing = find_existing_word(get_db_path(), lookup_word)
     if existing:
@@ -658,7 +711,7 @@ async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, w
         )
         return ADD_CLARIFY
 
-    entry = _normalize_ai_entry(entry)
+    entry = _normalize_ai_entry(entry, _session_add_topic(context))
     if forced_type in {"nomen", "verb", "phrase"}:
         entry["type"] = forced_type
     for key, value in forced_fields.items():
@@ -702,6 +755,118 @@ async def _show_ai_preview(update: Update, entry):
         parse_mode="Markdown",
     )
     return ADD_CONFIRM
+
+
+def _session_add_topic(context):
+    """The topic chosen for the current add/VF batch (spec_topics_levels.md P4).
+
+    Decoupled from the quiz topic-filter: the add-flow no longer writes TOPIC_FILTER_KEY,
+    so adding words never changes what the user is quizzed on. Default '1' as before.
+    """
+    return str((context.user_data or {}).get("add_topic") or "1")
+
+
+def _level_reply_keyboard(user_id):
+    """Reply keyboard of the six CEFR levels (+ back) for a new topic's level pick."""
+    rows = [list(CEFR_LEVELS[i : i + 3]) for i in range(0, len(CEFR_LEVELS), 3)]
+    rows.append([t(_user_interface_lang(user_id), "back")])
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True)
+
+
+async def _finalize_add_topic(update, context, name):
+    """Commit the chosen topic for the pending batch and continue (AI queue or VF job).
+
+    The topic lives only in this session (context.user_data['add_topic']); it is NOT
+    written to the quiz topic-filter (decoupled, spec_topics_levels.md P4).
+    """
+    context.user_data["add_topic"] = name
+    context.user_data.pop("topic_return", None)
+    context.user_data.pop("pending_new_topic", None)
+    context.user_data.pop("pending_topic_level", None)
+    then = context.user_data.pop("add_topic_then", "ai")
+    if then == "vf":
+        words = context.user_data.pop("pending_vf_words", [])
+        from ..verb_forms_parsing.add_flow import start_vf_add_job  # local import: anti-cycle
+        return await start_vf_add_job(update, context, words)
+    pending = context.user_data.pop("pending_add_queue", [])
+    context.user_data.pop("pending_add_stats", None)
+    context.user_data["add_queue"] = pending
+    return await _process_next_ai_word(update, context)
+
+
+async def _ask_topic_level(update, context, name):
+    """Prompt the mandatory book-level for a freshly created topic (6 reply buttons)."""
+    context.user_data["pending_topic_level"] = name
+    context.user_data.pop("pending_new_topic", None)
+    await update.message.reply_text(
+        t(_user_interface_lang(update.effective_user.id), "wf_new_topic_level").format(name=name),
+        reply_markup=_level_reply_keyboard(update.effective_user.id),
+    )
+    return TOPIC_FILTER_EDIT
+
+
+async def handle_add_topic_input(update, context, raw):
+    """Owner add-flow topic selection (spec #8 + spec_topics_levels.md P4).
+
+    Existing topic: selected as-is (keeps its level). New topic: name -> description ->
+    mandatory book-level (A1..C2), then commit. Level is asked only for new topics.
+    """
+    db = get_db_path()
+    # step 3: awaiting the new topic's book-level (reply button = a CEFR level)
+    pending_level = context.user_data.get("pending_topic_level")
+    if pending_level:
+        try:
+            set_topic_level(db, pending_level, raw)
+        except ValueError:
+            await update.message.reply_text(
+                t(_user_interface_lang(update.effective_user.id), "wf_new_topic_level").format(name=pending_level),
+                reply_markup=_level_reply_keyboard(update.effective_user.id),
+            )
+            return TOPIC_FILTER_EDIT
+        return await _finalize_add_topic(update, context, pending_level)
+
+    # step 2: awaiting the new topic's description
+    pending_name = context.user_data.get("pending_new_topic")
+    if pending_name:
+        desc = str(raw or "").strip()
+        if not desc:
+            await update.message.reply_text(f"Enter description for new topic {pending_name}:")
+            return TOPIC_FILTER_EDIT
+        insert_topic_if_absent(db, pending_name, desc)
+        return await _ask_topic_level(update, context, pending_name)
+
+    # step 1: topic name (+ optional inline description)
+    name, desc = parse_topic_input(raw)
+    if not name:
+        await update.message.reply_text("Send a topic name (e.g. '05 Essen' for a new one).")
+        return TOPIC_FILTER_EDIT
+
+    known = {n for n, _ in list_topics_with_desc(db)}
+    if name in known:
+        return await _finalize_add_topic(update, context, name)  # existing: keeps its level
+    if desc:
+        insert_topic_if_absent(db, name, desc)
+        return await _ask_topic_level(update, context, name)
+    context.user_data["pending_new_topic"] = name
+    await update.message.reply_text(f"Enter description for new topic {name}:")
+    return TOPIC_FILTER_EDIT
+
+
+async def prompt_add_topic(update, context):
+    """Show the 'choose/create a topic' prompt for a batch (VF add reuses this).
+
+    The caller stashes its continuation (add_topic_then + pending payload) first;
+    handle_add_topic_input resumes it via _finalize_add_topic once a topic is picked.
+    """
+    lang = _user_interface_lang(update.effective_user.id)
+    topics = ", ".join(list_topics(get_db_path())) or "-"
+    await _reply_text_with_retry(
+        update.message,
+        f"Topics: {topics}\nChoose a topic, or type 'name description' to create a new one:",
+        reply_markup=ReplyKeyboardMarkup([[t(lang, "back")]], resize_keyboard=True),
+    )
+    context.user_data["topic_return"] = "add_queue"
+    return TOPIC_FILTER_EDIT
 
 
 async def _process_next_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -782,6 +947,45 @@ def _parse_precheck_edit_lines(lines):
     return result
 
 
+async def add_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Add submenu router (spec #2): pick recognition method.
+
+    - AI: the current interactive flow, unchanged (prompt -> ADD_INPUT).
+    - VF add / VF recheck: filled in by later spec #2 steps (stubs for now).
+    - back: main menu.
+    """
+    user_id = update.effective_user.id
+    text = update.message.text.strip()
+    action = _action_key_from_text(text, user_id)
+
+    if action == "back":
+        return await _back_to_main_menu(update)
+
+    if action == "add_ai":
+        await _reply_text_with_retry(
+            update.message,
+            f"Send a word or a list (one per line), or upload a .txt file.\n\n{_topic_filter_banner(user_id)}",
+            reply_markup=_add_input_markup(user_id),
+            parse_mode="Markdown",
+        )
+        return ADD_INPUT
+
+    if action == "vf_recheck":
+        # VF recheck = the new .de recheck flow (spec #2 step 6): reset stale checks,
+        # ask for 'all' or a list, run the same background job, produce a diff file.
+        return await vf_recheck_prompt(update, context)
+
+    if action == "add_vf":
+        return await vf_add_prompt(update, context)
+
+    await _reply_text_with_retry(
+        update.message,
+        "Choose: AI, VF add, VF recheck, or back.",
+        reply_markup=_add_menu_markup(user_id),
+    )
+    return ADD_MENU
+
+
 async def add_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle add input."""
     raw = update.message.text.strip()
@@ -830,7 +1034,7 @@ async def add_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["precheck_items"] = items
     await _reply_text_with_retry(
         update.message,
-        f"```text\n{_format_precheck_list(items)}\n```",
+        f"```text\n{_format_precheck_list(items, _session_add_topic(context))}\n```",
         reply_markup=ReplyKeyboardMarkup(PRECHECK_KEYS, resize_keyboard=True),
         parse_mode="Markdown",
     )
@@ -895,7 +1099,7 @@ async def add_precheck(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Filtred {len(filtered)}\n"
             f"For recognition {len(recognition)}\n"
             f"Topics: {', '.join(list_topics(get_db_path())) or '-'}\n"
-            "Choose topic for this list:"
+            "Choose a topic, or type 'name description' to create a new one:"
         ),
         reply_markup=ReplyKeyboardMarkup([[t(_user_interface_lang(update.effective_user.id), "back")]], resize_keyboard=True),
     )
@@ -941,7 +1145,7 @@ async def add_precheck_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Filtred {len(filtered)}\n"
             f"For recognition {len(recognition)}\n"
             f"Topics: {', '.join(list_topics(get_db_path())) or '-'}\n"
-            "Choose topic for this list:"
+            "Choose a topic, or type 'name description' to create a new one:"
         ),
         reply_markup=ReplyKeyboardMarkup([[t(_user_interface_lang(update.effective_user.id), "back")]], resize_keyboard=True),
     )
@@ -989,7 +1193,7 @@ async def add_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["precheck_items"] = items
     await _reply_text_with_retry(
         update.message,
-        f"```text\n{_format_precheck_list(items)}\n```",
+        f"```text\n{_format_precheck_list(items, _session_add_topic(context))}\n```",
         reply_markup=ReplyKeyboardMarkup(PRECHECK_KEYS, resize_keyboard=True),
         parse_mode="Markdown",
     )

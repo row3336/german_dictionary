@@ -1,0 +1,31 @@
+# Off-site DB backup (spec #4, phase 1). Oneshot: ship one gzipped, WAL-safe
+# snapshot of words.db to the private backup channel via the dedicated backup
+# bot. Triggered by offsite-backup.timer — NOT run from inside the main bot, so
+# a dead/banned main bot does not stop backups.
+#
+# Paths point at PROD. Only prod ships to the backup channel — the test contours
+# have no reason to, so the alpha timer was disabled on 03.08 and these units were
+# repointed instead of keeping a second pair around.
+#
+# Install (server, owner):
+#   1. Add BACKUP_BOT_TOKEN + BACKUP_CHANNEL_ID + BACKUP_PUBLIC_KEY (and optionally
+#      BACKUP_ALERT_CHAT_ID) to the project .env — NEVER commit these. (Done 03.08.)
+#   2. PyNaCl must be in the venv, otherwise this service dies importing nacl:
+#      venv/bin/pip install -r requirements.txt
+#   3. cp deploy/offsite-backup.{service,timer} /etc/systemd/system/
+#      systemctl daemon-reload && systemctl enable --now offsite-backup.timer
+#   4. Dry-run once now:  systemctl start offsite-backup.service ; journalctl -u offsite-backup -n 30
+
+[Unit]
+Description=Off-site DB backup — ship a gzipped snapshot to the backup channel
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+# --- adjust these three to the actual deploy path ---
+WorkingDirectory=/root/tests/german_dictionary_test
+EnvironmentFile=/root/tests/german_dictionary_test/.env
+ExecStart=/root/tests/german_dictionary_test/venv/bin/python3 -m scripts.offsite_backup
+# DB_PATH stays unset: the default ./data/words.db resolves against WorkingDirectory.
+# non-zero exit (send failed / fatal) is surfaced by journal + the script's own alert

@@ -9,31 +9,46 @@ from datetime import (
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import (
+    AIORateLimiter,
     Application,
+    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     ConversationHandler,
     MessageHandler,
+    PreCheckoutQueryHandler,
     filters,
 )
 
 from .app_config import (
+    ACCESS_MESSAGE,
+    BROADCAST_CONFIRM,
+    BROADCAST_INPUT,
+    DONATE_AMOUNT,
+    DONATE_CUSTOM,
+    FEEDBACK_INPUT,
+    LANGUAGE_MENU,
+    OWNER_REVIEW_MENU,
+    ACCESS_REJECTED,
     ADD_CLARIFY,
     ADD_CONFIRM,
     ADD_EDIT,
     ADD_INPUT,
+    ADD_MENU,
     ADD_PRECHECK,
+    VF_ADD_INPUT,
+    VF_APPLY_CONFIRM,
     ADD_PRECHECK_EDIT,
     ALGO_SETTINGS_CONFIRM,
     ALGO_SETTINGS_EDIT,
     ALGO_SETTINGS_MENU,
-    AUTO_DUMP_MENU,
-    AUTO_DUMP_SETTING_KEY,
+    CONJUGATION_MENU,
     DB_SEARCH,
     DB_SEARCH_VIEW,
     DRILL_SETTINGS_MENU,
     DUMP_MENU,
     FSRS_REPORT_HOUR_KEY,
+    FSRS_SETTINGS_MENU,
     FSRS_REPORT_UTC_HOUR_DEFAULT,
     FSRS_WEEKLY_REPORT_WEEK_KEY,
     LEARNING_DAILY_QTY_DEFAULT,
@@ -81,23 +96,25 @@ from .app_config import (
     get_db_path,
     get_dump_dir,
     get_log_path,
-    is_owner,
 )
 from .storage import (
     add_word_flag,
     cleanup_transaction_logs,
     delete_transaction_logs,
     get_setting,
-    init_db,
     list_transaction_logs,
     restore_user_word_state,
     set_setting,
 )
+from .common.db_safety import apply_migrations_safely
 from .common.lang import _user_interface_lang
+from .common.outbound import configure_outbound_logger
 from .common.navigation import _back_to_tests
+from .common.runtime_checks import require_supported_ptb
+from .common.txlog import UNDO_MSG_ID_KEY, UNDO_TOTAL_KEY
+from .ui.keyboards import _main_menu_markup
 from .i18n import t
 from .handlers.dump import (
-    auto_dump_choice,
     dump_menu_choice,
 )
 from .handlers.db_search import (
@@ -122,11 +139,13 @@ from .handlers.learning import (
     learning_menu_choice,
     learning_quiz,
 )
+from .handlers.conjugation import conjugation_card_callback, conjugation_input
 from .handlers.add_words import (
     add_clarify,
     add_confirm,
     add_document,
     add_input,
+    add_menu_choice,
     add_precheck,
     add_precheck_edit,
 )
@@ -135,13 +154,47 @@ from .handlers.settings import (
     algo_settings_edit,
     algo_settings_menu_choice,
     drill_settings_menu_choice,
+    fsrs_settings_menu_choice,
+    language_menu_choice,
     learning_settings_menu_choice,
     select_dict_lang,
     select_ui_lang,
     settings_menu_choice,
     topic_filter_edit,
 )
+from .handlers.feedback import feedback_input
+from .handlers.review import owner_review_menu_choice
+from .verb_forms_parsing.add_flow import (
+    resume_jobs,
+    vf_add_callback,
+    vf_add_document,
+    vf_add_input,
+    vf_apply_confirm,
+    vf_review_document,
+)
+from .handlers.broadcast import (
+    BROADCAST_MENU_CALLBACK,
+    broadcast_confirm,
+    broadcast_input,
+    broadcast_menu_callback,
+)
+from .handlers.donate import (
+    donate_amount_choice,
+    donate_custom_input,
+    precheckout_callback,
+    successful_payment_callback,
+)
+from .handlers.access import (
+    access_allowed,
+    access_decision_callback,
+    access_message_input,
+    access_rejected_choice,
+)
+from .handlers.word_filter_ui import word_filter_callback
+from .handlers.owner_stats import stat_toggle_callback
+from .handlers.rescue import rescue_handler
 from .handlers.menu import (
+    _guest_start,
     menu_choice,
     quiz_ru_de_menu_choice,
     start,
@@ -158,17 +211,14 @@ from .handlers.quiz import (
     quiz_pl_sg,
     quiz_ru_de,
 )
-from .jobs.auto_dump import _configure_auto_dump
+from .jobs.access_reminders import _configure_access_reminders
 from .jobs.reminders import _configure_learning_reminders
 from .jobs.reports import _configure_fsrs_reports
+from .jobs.owner_digest import _configure_owner_digest
+from .handlers.owner_inbox import open_report_word, owner_inbox_callback
 
 
 logger = logging.getLogger(__name__)
-
-
-def _is_owner_only(user_id):
-    """Handle is owner only."""
-    return is_owner(user_id)
 
 
 async def _on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
@@ -191,9 +241,10 @@ async def _on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
 async def undo_steps(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /undo [N] rollback by transaction log."""
     user_id = update.effective_user.id
-    if not _is_owner_only(user_id):
-        await update.message.reply_text("❌ Owner-only bot.")
-        return ConversationHandler.END
+    # #9: /undo is per-user (transaction_log/restore/delete are all scoped by
+    # user_id), so any APPROVED user may undo THEIR OWN steps — not owner-only.
+    if not access_allowed(user_id):
+        return await _guest_start(update, context)
     steps = 1
     if context.args:
         try:
@@ -202,19 +253,45 @@ async def undo_steps(update: Update, context: ContextTypes.DEFAULT_TYPE):
             steps = 1
     steps = max(1, min(20, steps))
     logs = list_transaction_logs(get_db_path(), user_id=user_id, limit=steps)
-    if not logs:
-        await update.message.reply_text("Nothing to undo.")
-        return MENU
     restored = 0
     processed_ids = []
     for item in logs:
         payload = item.get("payload") or {}
         snapshot = payload.get("snapshot")
-        if restore_user_word_state(get_db_path(), snapshot):
-            restored += 1
+        # A failed restore must NOT abort the whole /undo: the entry is still
+        # marked processed (deleted below) so a single bad snapshot can't jam the
+        # transaction log and brick /undo forever on repeated presses.
+        try:
+            if restore_user_word_state(get_db_path(), snapshot):
+                restored += 1
+        except Exception:
+            logger.exception("undo: failed to restore snapshot for log id=%s", item.get("id"))
         processed_ids.append(int(item.get("id")))
-    delete_transaction_logs(get_db_path(), user_id=user_id, ids=processed_ids)
-    await update.message.reply_text(f"Undo done: {restored}/{len(logs)} step(s).")
+    if processed_ids:
+        delete_transaction_logs(get_db_path(), user_id=user_id, ids=processed_ids)
+
+    # Consecutive /undo presses accumulate into ONE message edited in place (a live
+    # step counter) instead of one reply per press; the main-menu keyboard is shown
+    # so the keyboard matches the state we land in (MENU). Any other action resets
+    # the counter via reset_undo_progress() (called from start/menu_choice).
+    total = int(context.user_data.get(UNDO_TOTAL_KEY, 0)) + restored
+    if restored:
+        context.user_data[UNDO_TOTAL_KEY] = total
+        text = f"↩️ Undo done: {total} step(s)."
+    else:
+        text = f"↩️ Undo done: {total} step(s). Nothing more to undo." if total else "Nothing to undo."
+
+    msg_id = context.user_data.get(UNDO_MSG_ID_KEY)
+    if msg_id and restored:
+        try:
+            await context.bot.edit_message_text(
+                chat_id=update.effective_chat.id, message_id=msg_id, text=text,
+            )
+            return MENU
+        except Exception:
+            pass  # message gone/uneditable -> fall through and send a fresh one
+    sent = await update.message.reply_text(text, reply_markup=_main_menu_markup(user_id))
+    context.user_data[UNDO_MSG_ID_KEY] = sent.message_id
     return MENU
 
 
@@ -272,6 +349,8 @@ def _configure_logging():
     root_logger.addHandler(stream_handler)
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
+    # Outbound send log (P5) goes to its own rotating file, off the root logger.
+    configure_outbound_logger()
     logging.getLogger("apscheduler").setLevel(logging.WARNING)
     logging.getLogger("apscheduler.executors.default").setLevel(logging.WARNING)
 
@@ -296,7 +375,15 @@ def _cleanup_old_dump_logs(days=14):
 def _prepare_storage():
     """Handle prepare storage."""
     db_path = get_db_path()
-    init_db(db_path)
+    # Safe migration: backup-before-change → apply schema → healthcheck → log timeline.
+    report = apply_migrations_safely(db_path, get_dump_dir())
+    if report.get("migrated"):
+        logger.info(
+            "DB schema migrated v%s→v%s (backup=%s)",
+            report["from_version"], report["to_version"], report["backup"],
+        )
+    if not report["healthcheck"]["ok"]:
+        logger.error("DB healthcheck FAILED after init: %s", report["healthcheck"])
     if not get_setting(db_path, OWNER_INTERFACE_LANG_KEY):
         set_setting(db_path, OWNER_INTERFACE_LANG_KEY, "en")
     if not get_setting(db_path, OWNER_DICT_LANG_KEY):
@@ -324,10 +411,25 @@ def _prepare_storage():
     cleanup_transaction_logs(db_path, days=7)
 
 
+def _with_inbox_open(states):
+    """bug #3: the "🔧 open word" inbox button (`inb:open:`) must fire while the
+    owner is mid-conversation too, not only when idle via the entry_point. So add
+    the same handler into every conversation state. `allow_reentry` is NOT usable
+    (the rescue entry_point would then swallow all text), hence the per-state inject.
+    Mutates and returns the states dict."""
+    handler = CallbackQueryHandler(open_report_word, pattern=r"^inb:open:")
+    for state_handlers in states.values():
+        state_handlers.append(handler)
+    return states
+
+
 def main():
     """Handle main."""
     load_dotenv()
     _configure_logging()
+    # Before anything talks to Telegram: an outdated PTB only fails later, inside
+    # handlers, where the user just sees "Something went wrong" (prod 2026-07-04).
+    require_supported_ptb()
     token = os.getenv("BOT_TOKEN")
     if not token:
         raise SystemExit("BOT_TOKEN is missing in .env")
@@ -337,47 +439,86 @@ def main():
     # Timeouts/pool tuned for a flaky VPS↔Telegram route: PTB defaults (connect/read
     # 5s, pool size 1, pool_timeout 1s) are too tight and cause ConnectTimeout/pool
     # exhaustion → lost/delayed quiz sends (diagnosed in docs/todo.md).
+    # AIORateLimiter is the outbound governor (P5): paces ALL sends <=30 msg/s
+    # globally and auto-retries 429/RetryAfter, so broadcasts to all users can't
+    # burst into a Telegram flood/ban. Needs the [rate-limiter] extra (aiolimiter).
     app = (
         Application.builder()
         .token(token)
+        .rate_limiter(AIORateLimiter())
         .connect_timeout(20)
         .read_timeout(20)
         .write_timeout(20)
         .pool_timeout(10)
         .connection_pool_size(8)
+        .post_init(resume_jobs)  # spec #2: resume any in-flight VF-add job after a restart
         .build()
     )
     app.add_error_handler(_on_error)
 
-    mode = get_setting(get_db_path(), AUTO_DUMP_SETTING_KEY, "off")
-    _configure_auto_dump(app, mode)
     _configure_learning_reminders(app)
     _configure_fsrs_reports(app)
+    _configure_access_reminders(app)
+    _configure_owner_digest(app)
     conv = ConversationHandler(
         entry_points=[
             CommandHandler("start", start),
             CommandHandler("undo", undo_steps),
+            # spec #5: "🔧 open word" from the inline inbox enters the clarify card.
+            # An entry_point (fires when the owner isn't mid-conversation); the global
+            # ^inb: handler covers the rest of the inbox.
+            CallbackQueryHandler(open_report_word, pattern=r"^inb:open:"),
             MessageHandler(filters.Regex(f"^{START_TEXT}$") & ~filters.COMMAND, start),
+            # spec #13: any OTHER stale text with no active conversation (e.g. a
+            # restart wiped in-memory state and the user taps an old keyboard
+            # button) enters here — approved -> MENU + heads-up, guest -> onboarding.
+            # As an entry_point it only fires when idle (never mid-conversation),
+            # and the state it returns actually re-enters the conversation (a
+            # standalone handler's return is ignored — that was the bug). Keep it
+            # LAST so /start and the start button match first.
+            MessageHandler(filters.TEXT & ~filters.COMMAND, rescue_handler),
         ],
-        states={
-            MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, menu_choice)],
+        states=_with_inbox_open({
+            MENU: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, menu_choice),
+                MessageHandler(filters.Document.ALL, vf_review_document),  # spec #2: apply an edited VF review file
+            ],
+            VF_APPLY_CONFIRM: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, vf_apply_confirm),
+                MessageHandler(filters.Document.ALL, vf_apply_confirm),
+            ],
             SELECT_UI_LANG: [MessageHandler(filters.TEXT & ~filters.COMMAND, select_ui_lang)],
             SELECT_DICT_LANG: [MessageHandler(filters.TEXT & ~filters.COMMAND, select_dict_lang)],
+            ACCESS_REJECTED: [MessageHandler(filters.TEXT & ~filters.COMMAND, access_rejected_choice)],
+            ACCESS_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, access_message_input)],
+            FEEDBACK_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, feedback_input)],
+            DONATE_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, donate_amount_choice)],
+            DONATE_CUSTOM: [MessageHandler(filters.TEXT & ~filters.COMMAND, donate_custom_input)],
             TESTS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, tests_menu_choice)],
             DB_SEARCH: [MessageHandler(filters.TEXT & ~filters.COMMAND, db_search_input)],
             DB_SEARCH_VIEW: [MessageHandler(filters.TEXT & ~filters.COMMAND, db_search_view)],
             LEARNING_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, learning_menu_choice)],
             LEARNING_QUIZ: [MessageHandler(filters.TEXT & ~filters.COMMAND, learning_quiz)],
+            CONJUGATION_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, conjugation_input)],
             QUIZ_RU_DE_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_ru_de_menu_choice)],
             SETTINGS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, settings_menu_choice)],
+            LANGUAGE_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, language_menu_choice)],
+            OWNER_REVIEW_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, owner_review_menu_choice)],
+            BROADCAST_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, broadcast_input)],
+            BROADCAST_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, broadcast_confirm)],
             ALGO_SETTINGS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, algo_settings_menu_choice)],
+            FSRS_SETTINGS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, fsrs_settings_menu_choice)],
             DRILL_SETTINGS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, drill_settings_menu_choice)],
             LEARNING_SETTINGS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, learning_settings_menu_choice)],
             ALGO_SETTINGS_EDIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, algo_settings_edit)],
             ALGO_SETTINGS_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, algo_settings_confirm)],
             TOPIC_FILTER_EDIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, topic_filter_edit)],
             DUMP_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, dump_menu_choice)],
-            AUTO_DUMP_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, auto_dump_choice)],
+            ADD_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_menu_choice)],
+            VF_ADD_INPUT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, vf_add_input),
+                MessageHandler(filters.Document.ALL, vf_add_document),
+            ],
             ADD_INPUT: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, add_input),
                 MessageHandler(filters.Document.ALL, add_document),
@@ -401,11 +542,33 @@ def main():
             SYN_REMOVE_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, synonyms_remove_input)],
             SYN_AUTO_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, synonyms_auto_confirm)],
             SYN_CLEAR_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, synonyms_clear_confirm)],
-        },
+        }),
         fallbacks=[CommandHandler("start", start), CommandHandler("undo", undo_steps)],
     )
 
     app.add_handler(conv)
+    # Global handler for the owner's inline decisions on access requests (P3.1).
+    app.add_handler(CallbackQueryHandler(access_decision_callback, pattern=r"^access:"))
+    # Global handler for the CEFR/book-topics filter drill (spec_topics_levels.md).
+    app.add_handler(CallbackQueryHandler(word_filter_callback, pattern=r"^wf:"))
+    # Global handler for the conjugation card's inline "hide forms" toggle (Feature B).
+    app.add_handler(CallbackQueryHandler(conjugation_card_callback, pattern=r"^conj:"))
+    # Global handler for the "menu" button attached to owner broadcasts (spec #12).
+    app.add_handler(
+        CallbackQueryHandler(broadcast_menu_callback, pattern=f"^{BROADCAST_MENU_CALLBACK}$")
+    )
+    # Global handler for the owner's [progress]/[users] stat toggle (spec #11).
+    app.add_handler(CallbackQueryHandler(stat_toggle_callback, pattern=r"^stat:"))
+    # Global handler for the owner inbox — inline reports/feedback navigation (spec #5).
+    app.add_handler(CallbackQueryHandler(owner_inbox_callback, pattern=r"^inb:"))
+    # spec #2: VF-add job controls (pause/resume/stop/details) on the progress msg.
+    app.add_handler(CallbackQueryHandler(vf_add_callback, pattern=r"^vfadd:"))
+    # Telegram Stars donation (P6.4): pre-checkout approval + post-payment thanks.
+    app.add_handler(PreCheckoutQueryHandler(precheckout_callback))
+    app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
+    # Rescue (spec #13) is wired as the LAST entry_point of `conv` above (not a
+    # standalone handler) so the state it returns actually re-enters the
+    # conversation; a stale text with no active conversation lands there.
     app.run_polling()
 
 

@@ -3,23 +3,25 @@ weak / topics / verbs / learning-queue), free-text word lookup -> word card ->
 clarify_fields entry, and the DB_SEARCH / DB_SEARCH_VIEW state handlers.
 """
 
+import re
+from datetime import date
+
 from telegram import ReplyKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
-from ..app_config import DB_SEARCH, DB_SEARCH_VIEW, MENU, get_db_path
-from ..common.lang import _mode_l1_de, _user_dict_lang, _user_interface_lang
+from ..app_config import ADD_EDIT, DB_SEARCH, DB_SEARCH_VIEW, MENU, get_db_path, is_owner
+from ..common.lang import _user_dict_lang, _user_interface_lang
 from ..common.navigation import _action_key_from_text
 from ..common.settings import _learning_daily_qty, _learning_schedule_seconds
-from ..handlers.clarify_fields import clarify_fields_input
+from ..common.topics import sorted_topics
 from ..i18n import t
-from ..labels import QUIZ_FIELDS_TEXT, SEND_LEARN_TEXT
 from ..storage import (
     _safe_text,
-    get_synonym_group_id,
+    map_synonym_group_ids,
     learning_add_word_by_id,
     learning_get_or_create_batch,
     list_all_words,
-    list_fsrs_weak_words,
+    list_weak_form_words,
     list_learning_queue_words,
     list_topics,
     list_words_by_topic,
@@ -38,7 +40,7 @@ from ..ui.formatting import (
     _format_topic_learning_line,
     _format_word_card,
 )
-from ..ui.keyboards import _clarify_root_markup, _main_menu_markup
+from ..ui.keyboards import _clarify_fields_markup, _main_menu_markup
 
 
 def _db_search_markup(user_id):
@@ -70,23 +72,15 @@ def _db_search_words_lists_markup(user_id):
 
 
 def _db_search_weak_markup(user_id):
-    """Handle db search weak markup."""
+    """Weak-words list keyboard: "send to learning" + back."""
     lang = _user_interface_lang(user_id)
-    return ReplyKeyboardMarkup([[SEND_LEARN_TEXT, t(lang, "back")]], resize_keyboard=True)
-
-
-def _topic_sort_key(token):
-    """Handle topic sort key with numeric priority."""
-    value = str(token or "").strip()
-    if value.isdigit():
-        return (0, int(value), value)
-    return (1, value.lower(), value)
+    return ReplyKeyboardMarkup([[t(lang, "send_learn"), t(lang, "back")]], resize_keyboard=True)
 
 
 def _db_search_topic_markup(user_id):
     """Handle db search topic selector markup."""
     lang = _user_interface_lang(user_id)
-    topics = sorted(list_topics(get_db_path()), key=_topic_sort_key)
+    topics = sorted_topics(list_topics(get_db_path()))
     rows = []
     row = []
     for item in topics:
@@ -274,8 +268,12 @@ def _list_match_pairs(entries, dict_lang):
     """Handle list match pairs."""
     if not entries:
         return []
+    # One query for all group ids: grouping criterion #3 (below) and the
+    # "✅ linked" tag both need them for every entry.
+    syn_groups = map_synonym_group_ids(get_db_path())
     by_base = {}
     by_translation = {}
+    by_syn_group = {}
     for entry in entries:
         entry_type = _low_word(entry.get("type", ""))
         if entry_type == "verb":
@@ -283,10 +281,28 @@ def _list_match_pairs(entries, dict_lang):
         else:
             base = _normalize_lookup_text(entry.get("german", ""))
         if base:
-            by_base.setdefault((entry_type or "word", base), []).append(entry)
+            base_key = (entry_type or "word", base)
+            if entry_type == "praeposition":
+                # spec #1: same-spelling prepositions with a different
+                # (preposition_type, case_type) are intentional distinct words, not
+                # duplicates — fold both into the key so they don't surface as a
+                # "match pair". Only an exact triple match still groups (real dup).
+                base_key = (
+                    entry_type,
+                    base,
+                    _normalize_lookup_text(entry.get("preposition_type", "")),
+                    _normalize_lookup_text(entry.get("case_type", "")),
+                )
+            by_base.setdefault(base_key, []).append(entry)
         translation = _normalize_lookup_text(_entry_translation(entry, dict_lang))
         if translation:
             by_translation.setdefault(("translation", translation), []).append(entry)
+        # T3: manually linked synonyms (senden/schicken) share neither spelling
+        # nor translation text, so the two criteria above never surface them —
+        # the synonym group itself is a third grouping criterion.
+        gid = syn_groups.get(entry.get("id"))
+        if gid:
+            by_syn_group.setdefault(gid, []).append(entry)
 
     groups = []
     for group in by_base.values():
@@ -295,38 +311,75 @@ def _list_match_pairs(entries, dict_lang):
     for group in by_translation.values():
         if len(group) > 1:
             groups.append(group)
+    for group in by_syn_group.values():
+        if len(group) > 1:
+            groups.append(group)
 
     blocks = []
-    group_cache = {}
+    seen_pairs = set()
     for group in groups:
         for idx in range(0, len(group), 2):
             pair = group[idx:idx + 2]
             if len(pair) < 2:
                 continue
+            # The same pair can qualify by translation AND by synonym group —
+            # show it once.
+            pair_key = frozenset((pair[0].get("id"), pair[1].get("id")))
+            if pair_key in seen_pairs:
+                continue
+            seen_pairs.add(pair_key)
             lines = [_format_match_line(pair[0], dict_lang), _format_match_line(pair[1], dict_lang)]
-            gid_a = group_cache.get(pair[0].get("id"))
-            if gid_a is None:
-                gid_a = get_synonym_group_id(get_db_path(), pair[0].get("id"))
-                group_cache[pair[0].get("id")] = gid_a
-            gid_b = group_cache.get(pair[1].get("id"))
-            if gid_b is None:
-                gid_b = get_synonym_group_id(get_db_path(), pair[1].get("id"))
-                group_cache[pair[1].get("id")] = gid_b
+            gid_a = syn_groups.get(pair[0].get("id"))
+            gid_b = syn_groups.get(pair[1].get("id"))
             if gid_a and gid_b and gid_a == gid_b:
                 lines.append("✅ linked")
             blocks.append("\n".join(lines))
     return blocks
 
 
-def _format_fsrs_weak_line(entry, dict_lang):
-    """Handle format fsrs weak line."""
-    streak = int(entry.get("wrong_streak") or 0)
-    return f"{_format_match_line(entry, dict_lang)} | wrong_streak={streak}"
+def _format_weak_form_line(entry):
+    """spec #6: `word — weak forms` (e.g. `Haus — artikel, plural`)."""
+    # Nouns are capitalized (German orthography); verbs stay lowercase.
+    if _low_word(entry.get("type", "")) == "nomen":
+        word = _cap_word(entry.get("german") or "")
+    else:
+        word = entry.get("german") or entry.get("infinitive") or ""
+    forms = ", ".join(entry.get("weak_forms") or [])
+    return f"{word} — {forms}"
+
+
+def _list_filename(list_name):
+    """db_<list>_<date>.txt with a filesystem-safe list token."""
+    safe = re.sub(r"[^\w.-]+", "_", str(list_name).strip()) or "list"
+    return f"db_{safe}_{date.today().isoformat()}.txt"
+
+
+async def _send_lines_or_file(message, body, list_name, markup, caption=None):
+    """Send a db_search listing inline or as a file (T6, owner decision 11.07).
+
+    Short output (fits one message) stays inline as before; anything that would
+    need 2+ messages goes as ONE .txt document instead of a message series
+    (rate-limiter friendly, easier to scroll on a PC). The reply keyboard rides
+    on the same message either way."""
+    chunks = _split_text_chunks(body)
+    if len(chunks) <= 1:
+        await message.reply_text(
+            f"```text\n{body}\n```",
+            reply_markup=markup,
+            parse_mode="Markdown",
+        )
+        return
+    await message.reply_document(
+        document=body.encode("utf-8"),
+        filename=_list_filename(list_name),
+        caption=caption or body.split("\n", 1)[0].strip()[:200],
+        reply_markup=markup,
+    )
 
 
 async def _send_db_search_prompt(update: Update, user_id, prefix_text=None):
     """Handle send db search prompt."""
-    text = "Send a word to search in DB:"
+    text = t(_user_interface_lang(user_id), "search_prompt")
     if prefix_text:
         text = f"{prefix_text}\n\n{text}"
     await update.message.reply_text(text, reply_markup=_db_search_markup(user_id))
@@ -334,7 +387,7 @@ async def _send_db_search_prompt(update: Update, user_id, prefix_text=None):
 
 
 async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle db search input."""
+    """Handle input/buttons in DB search (queries and search sub-modes)."""
     text = update.message.text.strip()
     user_id = update.effective_user.id
     action = _action_key_from_text(text, user_id)
@@ -343,7 +396,7 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("db_search_topic_pick", None)
         context.user_data.pop("db_search_type_pick", None)
         if in_words_lists:
-            await update.message.reply_text("words_lists:", reply_markup=_db_search_words_lists_markup(user_id))
+            await update.message.reply_text(t(_user_interface_lang(user_id), "words_lists"), reply_markup=_db_search_words_lists_markup(user_id))
             return DB_SEARCH
         return await _send_db_search_prompt(update, user_id, None)
     if action == "back":
@@ -357,67 +410,46 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get("db_search_topic_pick"):
         markup, topics = _db_search_topic_markup(user_id)
         if text not in topics:
-            await update.message.reply_text("Choose topic:", reply_markup=markup)
+            await update.message.reply_text(t(_user_interface_lang(user_id), "choose_topic"), reply_markup=markup)
             return DB_SEARCH
         context.user_data.pop("db_search_weak_ids", None)
         entries = list_words_by_topic(get_db_path(), text)
         if not entries:
-            await update.message.reply_text(f"No words in topic {text}.", reply_markup=markup)
+            await update.message.reply_text(t(_user_interface_lang(user_id), "no_words_in_topic").format(topic=text), reply_markup=markup)
             return DB_SEARCH
         lines = [f"topic {text}: {len(entries)} words", ""]
         lines.extend(_format_topic_words_line(entry) for entry in entries)
-        chunks = _split_text_chunks("\n".join(lines))
-        for idx, chunk in enumerate(chunks):
-            reply_markup = markup if idx == len(chunks) - 1 else None
-            await update.message.reply_text(
-                f"```text\n{chunk}\n```",
-                reply_markup=reply_markup,
-                parse_mode="Markdown",
-            )
+        await _send_lines_or_file(update.message, "\n".join(lines), f"topic_{text}", markup)
         return DB_SEARCH
     if context.user_data.get("db_search_type_pick"):
         markup, types = _db_search_type_markup(user_id)
         chosen = text.strip().lower()
         if chosen not in types:
-            await update.message.reply_text("Choose type:", reply_markup=markup)
+            await update.message.reply_text(t(_user_interface_lang(user_id), "choose_type"), reply_markup=markup)
             return DB_SEARCH
         context.user_data.pop("db_search_weak_ids", None)
         entries = [x for x in list_all_words(get_db_path()) if (x.get("type") or "").strip().lower() == chosen]
         if not entries:
-            await update.message.reply_text(f"No {chosen} words.", reply_markup=markup)
+            await update.message.reply_text(t(_user_interface_lang(user_id), "no_type_words").format(type=chosen), reply_markup=markup)
             return DB_SEARCH
         lines = [f"{chosen}: {len(entries)} words", ""]
         lines.extend(_format_topic_words_line(entry) for entry in entries)
-        chunks = _split_text_chunks("\n".join(lines))
-        for idx, chunk in enumerate(chunks):
-            reply_markup = markup if idx == len(chunks) - 1 else None
-            await update.message.reply_text(
-                f"```text\n{chunk}\n```",
-                reply_markup=reply_markup,
-                parse_mode="Markdown",
-            )
+        await _send_lines_or_file(update.message, "\n".join(lines), f"type_{chosen}", markup)
         return DB_SEARCH
     if action == "db_search_topics_lern":
         context.user_data.pop("db_search_topic_pick", None)
         context.user_data.pop("db_search_weak_ids", None)
         entries = list_learning_queue_words(get_db_path(), user_id=user_id)
         if not entries:
-            return await _send_db_search_prompt(update, user_id, "No new queued words for learning.")
+            return await _send_db_search_prompt(update, user_id, t(_user_interface_lang(user_id), "no_queued_learning"))
         lines = [f"learning queue: {len(entries)} words", ""]
         lines.extend(_format_topic_learning_line(entry) for entry in entries)
-        chunks = _split_text_chunks("\n".join(lines))
-        for idx, chunk in enumerate(chunks):
-            markup = _db_search_markup(user_id) if idx == len(chunks) - 1 else None
-            await update.message.reply_text(
-                f"```text\n{chunk}\n```",
-                reply_markup=markup,
-                parse_mode="Markdown",
-            )
+        await _send_lines_or_file(update.message, "\n".join(lines), "learning_queue", _db_search_markup(user_id))
         return DB_SEARCH
-    if text == SEND_LEARN_TEXT and context.user_data.get("db_search_weak_ids"):
+    if action == "send_learn" and context.user_data.get("db_search_weak_ids"):
         ids = list(dict.fromkeys(context.user_data.get("db_search_weak_ids") or []))
         db_path = get_db_path()
-        batch_id = learning_get_or_create_batch(db_path, user_id=user_id, daily_qty=_learning_daily_qty(db_path))
+        batch_id = learning_get_or_create_batch(db_path, user_id=user_id, daily_qty=_learning_daily_qty(db_path, user_id))
         added = 0
         for wid in ids:
             added += int(
@@ -426,26 +458,22 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     user_id=user_id,
                     word_id=wid,
                     batch_id=batch_id,
-                    first_delay_seconds=_learning_schedule_seconds(db_path)[0],
+                    first_delay_seconds=_learning_schedule_seconds(db_path, user_id)[0],
                 )
             )
         context.user_data.pop("db_search_weak_ids", None)
-        return await _send_db_search_prompt(update, user_id, f"Added to learning: {added}")
+        return await _send_db_search_prompt(update, user_id, t(_user_interface_lang(user_id), "added_to_learning_n").format(added=added))
     if action == "db_search_matches":
         context.user_data.pop("db_search_topic_pick", None)
         context.user_data.pop("db_search_weak_ids", None)
         entries = list_all_words(get_db_path())
         blocks = _list_match_pairs(entries, _user_dict_lang(user_id))
         if not blocks:
-            return await _send_db_search_prompt(update, user_id, "No matches found.")
-        chunks = _split_text_chunks("\n\n".join(blocks))
-        for idx, chunk in enumerate(chunks):
-            markup = _db_search_markup(user_id) if idx == len(chunks) - 1 else None
-            await update.message.reply_text(
-                f"```text\n{chunk}\n```",
-                reply_markup=markup,
-                parse_mode="Markdown",
-            )
+            return await _send_db_search_prompt(update, user_id, t(_user_interface_lang(user_id), "no_matches_found"))
+        await _send_lines_or_file(
+            update.message, "\n\n".join(blocks), "matches", _db_search_markup(user_id),
+            caption=f"matches: {len(blocks)} pairs",
+        )
         return DB_SEARCH
     if action == "db_search_plural_match":
         context.user_data.pop("db_search_topic_pick", None)
@@ -459,62 +487,51 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if sg and pl and sg == pl:
                 entries.append(row)
         if not entries:
-            return await _send_db_search_prompt(update, user_id, "No plural==singular words found.")
+            return await _send_db_search_prompt(update, user_id, t(_user_interface_lang(user_id), "no_plural_singular"))
         lines = [f"plural_match: {len(entries)}", ""]
         for e in entries:
             article = (e.get("article") or "").strip()
             german = _cap_word(e.get("german", ""))
             lines.append(f"{article} {german}".strip())
-        chunks = _split_text_chunks("\n".join(lines))
-        for idx, chunk in enumerate(chunks):
-            markup = _db_search_markup(user_id) if idx == len(chunks) - 1 else None
-            await update.message.reply_text(
-                f"```text\n{chunk}\n```",
-                reply_markup=markup,
-                parse_mode="Markdown",
-            )
+        await _send_lines_or_file(update.message, "\n".join(lines), "plural_match", _db_search_markup(user_id))
         return DB_SEARCH
     if action == "db_search_weak_words":
         context.user_data.pop("db_search_topic_pick", None)
-        mode = _mode_l1_de(user_id)
-        entries = list_fsrs_weak_words(get_db_path(), user_id=user_id, mode=mode, min_wrong_streak=4)
+        # spec #6: real weak words = active weak-form episodes (#18A), not FSRS streaks.
+        entries = list_weak_form_words(get_db_path(), user_id=user_id)
         if not entries:
             context.user_data.pop("db_search_weak_ids", None)
-            return await _send_db_search_prompt(update, user_id, "No weak words found.")
+            return await _send_db_search_prompt(update, user_id, t(_user_interface_lang(user_id), "no_weak_words"))
         context.user_data["db_search_weak_ids"] = [x.get("id") for x in entries if x.get("id")]
-        lines = [_format_fsrs_weak_line(entry, _user_dict_lang(user_id)) for entry in entries]
-        chunks = _split_text_chunks("\n\n".join(lines))
-        for idx, chunk in enumerate(chunks):
-            markup = _db_search_weak_markup(user_id) if idx == len(chunks) - 1 else None
-            await update.message.reply_text(
-                f"```text\n{chunk}\n```",
-                reply_markup=markup,
-                parse_mode="Markdown",
-            )
+        lines = [_format_weak_form_line(entry) for entry in entries]
+        await _send_lines_or_file(
+            update.message, "\n\n".join(lines), "weak_words", _db_search_weak_markup(user_id),
+            caption=f"weak words: {len(entries)}",
+        )
         return DB_SEARCH
     if action == "db_search_topic_words":
         context.user_data["db_search_words_lists_menu"] = True
-        await update.message.reply_text("words_lists:", reply_markup=_db_search_words_lists_markup(user_id))
+        await update.message.reply_text(t(_user_interface_lang(user_id), "words_lists"), reply_markup=_db_search_words_lists_markup(user_id))
         return DB_SEARCH
     if action == "db_search_topics_lists":
         context.user_data.pop("db_search_weak_ids", None)
         context.user_data["db_search_words_lists_menu"] = True
         markup, topics = _db_search_topic_markup(user_id)
         if not topics:
-            await update.message.reply_text("No topics found in DB.", reply_markup=_db_search_words_lists_markup(user_id))
+            await update.message.reply_text(t(_user_interface_lang(user_id), "no_topics_in_db"), reply_markup=_db_search_words_lists_markup(user_id))
             return DB_SEARCH
         context.user_data["db_search_topic_pick"] = True
-        await update.message.reply_text("Choose topic:", reply_markup=markup)
+        await update.message.reply_text(t(_user_interface_lang(user_id), "choose_topic"), reply_markup=markup)
         return DB_SEARCH
     if action == "db_search_type_lists":
         context.user_data.pop("db_search_weak_ids", None)
         context.user_data["db_search_words_lists_menu"] = True
         markup, types = _db_search_type_markup(user_id)
         if not types:
-            await update.message.reply_text("No words found in DB.", reply_markup=_db_search_words_lists_markup(user_id))
+            await update.message.reply_text(t(_user_interface_lang(user_id), "no_words_in_db"), reply_markup=_db_search_words_lists_markup(user_id))
             return DB_SEARCH
         context.user_data["db_search_type_pick"] = True
-        await update.message.reply_text("Choose type:", reply_markup=markup)
+        await update.message.reply_text(t(_user_interface_lang(user_id), "choose_type"), reply_markup=markup)
         return DB_SEARCH
     context.user_data.pop("db_search_topic_pick", None)
     context.user_data.pop("db_search_type_pick", None)
@@ -522,7 +539,7 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop("db_search_weak_ids", None)
     entry = _select_db_search_primary(text)
     if not entry:
-        return await _send_db_search_prompt(update, user_id, "Not found.")
+        return await _send_db_search_prompt(update, user_id, t(_user_interface_lang(user_id), "not_found"))
     phrase_matches = _find_phrase_side_matches(text, entry)
     await update.message.reply_text(
         f"```text\n{_format_word_card(entry, title='Word card:', user_id=user_id)}\n```",
@@ -538,20 +555,27 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 lines.append(f"- {phrase}")
         await update.message.reply_text(f"```text\n{chr(10).join(lines)}\n```", parse_mode="Markdown")
-    await update.message.reply_text(
-        "Choose edit action:",
-        reply_markup=_clarify_root_markup(user_id),
-    )
     context.user_data["quiz_entry"] = entry
     context.user_data["quiz_edit_entry"] = entry
     context.user_data["edit_source"] = "quiz"
-    context.user_data["edit_stage"] = "pick_scope"
+    context.user_data["edit_stage"] = "pick_field"
     context.user_data["edit_return_state"] = DB_SEARCH_VIEW
-    return DB_SEARCH_VIEW
+    # P6: the card is one screen now (fields + report + send-to-learning); hand the
+    # conversation to the clarify (ADD_EDIT) handler directly.
+    # bug #26: pass is_prep so a preposition opened from db_search gets its
+    # preposition_type/case_type buttons on the FIRST screen too (spec #1), matching
+    # the quiz path — otherwise they only appeared after a re-render via _clarify_screen.
+    from .clarify_fields import _is_prep_entry
+
+    await update.message.reply_text(
+        t(_user_interface_lang(user_id), "clarify_choose_action"),
+        reply_markup=_clarify_fields_markup("quiz", user_id, in_search=True, is_prep=_is_prep_entry(entry)),
+    )
+    return ADD_EDIT
 
 
 async def db_search_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle db search view."""
+    """Handle buttons in the DB-search results view mode."""
     text = update.message.text.strip()
     user_id = update.effective_user.id
     action = _action_key_from_text(text, user_id)
@@ -571,7 +595,6 @@ async def db_search_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "db_search_topics_lern",
     }:
         return await db_search_input(update, context)
-    if text in {QUIZ_FIELDS_TEXT, SEND_LEARN_TEXT, "delete"}:
-        return await clarify_fields_input(update, context)
-    # Any other text is treated as a new search query.
+    # Any other text is treated as a new search query. (Editing a found word now
+    # happens on the unified card screen handled by the ADD_EDIT clarify handler.)
     return await db_search_input(update, context)

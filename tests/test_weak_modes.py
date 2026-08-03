@@ -7,6 +7,7 @@ import warnings
 
 from bot.storage import (
     add_word,
+    apply_weak_input_err,
     get_form_review_stage,
     get_form_state,
     get_statistics_snapshot,
@@ -121,6 +122,70 @@ class WeakModesTests(unittest.TestCase):
         self.assertEqual(update_weak_review_state(db_path, 1, entry["id"], "article", True), 2)
         self.assertEqual(update_weak_review_state(db_path, 1, entry["id"], "article", True), 3)
         self.assertEqual(update_weak_review_state(db_path, 1, entry["id"], "article", True), 0)
+
+    def test_two_non_consecutive_errors_do_not_make_weak(self):
+        # #18: wrong-correct-wrong (2 unrelated errors) must NOT enter weak —
+        # entry now needs errors>=3 total OR 2 wrong in a row.
+        db_path = _mk_db()
+        self.addCleanup(lambda: os.unlink(db_path))
+        init_db(db_path)
+        entry = _add_noun(db_path)
+        update_form_stats(db_path, 1, entry["id"], {"article": False})
+        update_form_stats(db_path, 1, entry["id"], {"article": True})
+        update_form_stats(db_path, 1, entry["id"], {"article": False})
+        self.assertFalse(get_form_state(db_path, 1, entry["id"], "article")["active"])
+        self.assertEqual(list_weak_words(db_path, 1, "article", word_type="nomen"), [])
+
+    def test_three_total_errors_enter_weak(self):
+        # #18: three errors in total (even spread out) cross the entry threshold.
+        db_path = _mk_db()
+        self.addCleanup(lambda: os.unlink(db_path))
+        init_db(db_path)
+        entry = _add_noun(db_path)
+        update_form_stats(db_path, 1, entry["id"], {"article": False})
+        update_form_stats(db_path, 1, entry["id"], {"article": True})
+        update_form_stats(db_path, 1, entry["id"], {"article": False})
+        update_form_stats(db_path, 1, entry["id"], {"article": True})
+        update_form_stats(db_path, 1, entry["id"], {"article": False})
+        self.assertTrue(get_form_state(db_path, 1, entry["id"], "article")["active"])
+        self.assertEqual(len(list_weak_words(db_path, 1, "article", word_type="nomen")), 1)
+
+    def test_entered_word_is_held_until_three_correct_in_a_row(self):
+        # #18 core: a word entered via 2-wrong-in-a-row must stay weak after a
+        # single correct (the bug the episode flag fixes), and only leave the
+        # quiz once it earns 3 correct in a row → review ladder.
+        db_path = _mk_db()
+        self.addCleanup(lambda: os.unlink(db_path))
+        init_db(db_path)
+        entry = _add_noun(db_path)
+        update_form_stats(db_path, 1, entry["id"], {"article": False})
+        update_form_stats(db_path, 1, entry["id"], {"article": False})
+        self.assertTrue(get_form_state(db_path, 1, entry["id"], "article")["active"])
+        # one correct: still held (would have dropped under the old errors-only rule)
+        update_form_stats(db_path, 1, entry["id"], {"article": True})
+        self.assertTrue(get_form_state(db_path, 1, entry["id"], "article")["active"])
+        self.assertEqual(len(list_weak_words(db_path, 1, "article", word_type="nomen")), 1)
+        # two correct: still held
+        update_form_stats(db_path, 1, entry["id"], {"article": True})
+        self.assertTrue(get_form_state(db_path, 1, entry["id"], "article")["active"])
+        # third correct in a row: clears the episode and promotes to ladder
+        update_form_stats(db_path, 1, entry["id"], {"article": True})
+        self.assertFalse(get_form_state(db_path, 1, entry["id"], "article")["active"])
+        self.assertEqual(get_form_review_stage(db_path, 1, entry["id"], "article"), 1)
+
+    def test_input_err_backs_out_a_wrongly_entered_episode(self):
+        # #18: input_err reverses the last (mis-matched) wrong → if the reverted
+        # counters no longer meet the entry threshold, the word leaves weak.
+        db_path = _mk_db()
+        self.addCleanup(lambda: os.unlink(db_path))
+        init_db(db_path)
+        entry = _add_noun(db_path)
+        update_form_stats(db_path, 1, entry["id"], {"article": False})
+        update_form_stats(db_path, 1, entry["id"], {"article": False})
+        self.assertTrue(get_form_state(db_path, 1, entry["id"], "article")["active"])
+        self.assertTrue(apply_weak_input_err(db_path, 1, entry["id"], "article"))
+        self.assertFalse(get_form_state(db_path, 1, entry["id"], "article")["active"])
+        self.assertEqual(list_weak_words(db_path, 1, "article", word_type="nomen"), [])
 
     def test_statistics_weak_breakdown_active_has_priority_over_review_stages(self):
         db_path = _mk_db()

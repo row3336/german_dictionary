@@ -7,15 +7,21 @@ see bot/ctx_keys.py for the centralized names to migrate to gradually).
 
 import random
 
-from ..app_config import get_db_path
+from ..app_config import (
+    CONFETTI_MESSAGE_EFFECT_ID,
+    FIRE_MESSAGE_EFFECT_ID,
+    POOP_MESSAGE_EFFECT_ID,
+    SESSION_EFFECT_GOOD_THRESHOLD_PCT,
+    get_db_path,
+)
 from ..common.lang import _mode_de_l1, _mode_l1_de, _mode_pl_sg
 from ..common.settings import (
     _session_retry_gap,
     _session_retry_iterations,
-    _topic_filter_for_query,
     _weak_drill_gap,
     _weak_drill_repeats,
 )
+from ..common.word_filter import resolve_quiz_filter
 from ..retry_logic import maybe_take_retry_entry, register_retry_result
 from ..storage import get_word_by_id, select_due
 
@@ -27,11 +33,24 @@ def _session_key(mode):
     return f"session_seen_{mode}"
 
 
+def _session_correct_key(mode):
+    """Handle session correct key."""
+    return f"session_correct_{mode}"
+
+
+def _session_wrong_key(mode):
+    """Handle session wrong key."""
+    return f"session_wrong_{mode}"
+
+
 def _reset_session(context, mode):
     """Handle reset session."""
     context.user_data["session_mode"] = mode
     context.user_data[_session_key(mode)] = set()
+    context.user_data[_session_correct_key(mode)] = 0
+    context.user_data[_session_wrong_key(mode)] = 0
     _reset_fsrs_cycle_state(context, mode)
+    _reset_answer_streak(context)
 
 
 def _ensure_session_mode(context, mode):
@@ -58,6 +77,90 @@ def _session_count(context, mode):
     return 0
 
 
+def _bump_session_result(context, mode, ok, is_retry=False):
+    """Tally one correct/wrong RESULT PER WORD for `mode` this session (spec #9
+    summary). Only the first answer to a word counts — in-session FSRS retries are
+    NOT re-tallied — so correct+wrong always equals the number of distinct words
+    seen ('session words'), matching the daily/weekly first-touch report."""
+    if is_retry:
+        return
+    _ensure_session_mode(context, mode)
+    key = _session_correct_key(mode) if ok else _session_wrong_key(mode)
+    context.user_data[key] = int(context.user_data.get(key) or 0) + 1
+
+
+def _flip_session_result_to_correct(context, mode):
+    """input_err correction: the last first-touch answer was a typo, not a real
+    miss — move it from the wrong tally to the correct tally so the session summary
+    treats it as correct (mirrors the report fix)."""
+    _ensure_session_mode(context, mode)
+    wrong_key = _session_wrong_key(mode)
+    wrong = int(context.user_data.get(wrong_key) or 0)
+    if wrong <= 0:
+        return
+    context.user_data[wrong_key] = wrong - 1
+    correct_key = _session_correct_key(mode)
+    context.user_data[correct_key] = int(context.user_data.get(correct_key) or 0) + 1
+
+
+def _session_correct_count(context, mode):
+    """Handle session correct count."""
+    return int(context.user_data.get(_session_correct_key(mode)) or 0)
+
+
+def _session_wrong_count(context, mode):
+    """Handle session wrong count."""
+    return int(context.user_data.get(_session_wrong_key(mode)) or 0)
+
+
+def _session_effect_id(context, mode):
+    """Message-effect id for the session-end summary (spec #9 part B): a perfect
+    session (100% correct) gets confetti, 80-99% gets fire, below 80% gets the
+    poop effect. No answers this session at all -> no effect (nothing to judge)."""
+    correct = _session_correct_count(context, mode)
+    wrong = _session_wrong_count(context, mode)
+    total = correct + wrong
+    if total == 0:
+        return None
+    pct = (correct / total) * 100
+    if pct >= 100:
+        return CONFETTI_MESSAGE_EFFECT_ID
+    if pct >= SESSION_EFFECT_GOOD_THRESHOLD_PCT:
+        return FIRE_MESSAGE_EFFECT_ID
+    return POOP_MESSAGE_EFFECT_ID
+
+
+# --- Answer-reaction streak (spec #9) ---
+# Consecutive-correct-answer counter that only decides which emoji reacts to the
+# user's answer message (decorative). Session-scoped, in-memory only (never
+# written to the DB); resets on any wrong answer or whenever a new session starts.
+
+def _reset_answer_streak(context):
+    """Handle reset answer streak."""
+    context.user_data["quiz_correct_streak"] = 0
+
+
+def _bump_answer_streak(context, ok):
+    """Update the consecutive-correct-answer streak; returns the new value."""
+    if not ok:
+        _reset_answer_streak(context)
+        return 0
+    streak = int(context.user_data.get("quiz_correct_streak") or 0) + 1
+    context.user_data["quiz_correct_streak"] = streak
+    return streak
+
+
+def _reaction_emoji_for_streak(streak):
+    """Correct-answer reaction emoji by consecutive-streak threshold (spec #9):
+    1-9 -> thumbs up, 10-19 -> hundred points, 20+ -> fire. All three are valid
+    Telegram reaction emoji (telegram.constants.ReactionEmoji)."""
+    if streak >= 20:
+        return "\U0001F525"  # 🔥
+    if streak >= 10:
+        return "\U0001F4AF"  # 💯
+    return "\U0001F44D"  # 👍
+
+
 # --- FSRS cycle queue ---
 
 def _reset_fsrs_cycle_state(context, mode=None):
@@ -76,12 +179,14 @@ def _pick_due_entry(context, user_id, mode, word_type=None):
     is_fsrs_mode = mode in {_mode_l1_de(user_id), _mode_de_l1(user_id), _mode_pl_sg(user_id)}
 
     def _fetch_due():
+        qf = resolve_quiz_filter(user_id)
         return select_due(
             get_db_path(),
             user_id=user_id,
             mode=mode,
             word_type=word_type,
-            topics=_topic_filter_for_query(),
+            topics=qf.topics,
+            cefr_levels=qf.cefr_levels,
             exclude_correct_today=is_fsrs_mode,
         )
 
@@ -168,13 +273,13 @@ def _set_retry_since_last(context, mode, value):
     counters[mode] = int(value)
 
 
-def _maybe_take_retry_entry(context, mode):
+def _maybe_take_retry_entry(context, mode, user_id):
     """Handle maybe take retry entry."""
     queue = _retry_queue(context, mode)
     if not queue:
         return None
     counts = _retry_counts(context, mode)
-    gap = _session_retry_gap(get_db_path())
+    gap = _session_retry_gap(get_db_path(), user_id)
     since_last = _retry_since_last(context, mode)
     entry, new_since, took = maybe_take_retry_entry(
         queue,
@@ -216,11 +321,11 @@ def _force_take_retry_entry(context, mode):
     return None
 
 
-def _register_retry_result(context, mode, word_id, ok, was_retry):
+def _register_retry_result(context, mode, word_id, ok, was_retry, user_id):
     """Handle register retry result."""
     queue = _retry_queue(context, mode)
     counts = _retry_counts(context, mode)
-    max_repeats = _session_retry_iterations(get_db_path())
+    max_repeats = _session_retry_iterations(get_db_path(), user_id)
     register_retry_result(queue, counts, word_id, ok, was_retry, max_repeats)
     if not was_retry and not ok:
         _set_retry_since_last(context, mode, 0)
@@ -283,7 +388,7 @@ def _reset_weak_drill_state(context, mode=None):
     context.user_data.pop("quiz_is_weak_drill", None)
 
 
-def _maybe_take_weak_drill_entry(context, mode, avoid_id=None, force=False):
+def _maybe_take_weak_drill_entry(context, mode, user_id, avoid_id=None, force=False):
     """Take the next due drill word for `mode`, never returning `avoid_id` (no two in a row).
 
     Drill words are queued only after wrong answers (see `_enqueue_weak_drill`). Each serve
@@ -293,7 +398,7 @@ def _maybe_take_weak_drill_entry(context, mode, avoid_id=None, force=False):
     queue = _weak_drill_queue(context, mode)
     if not queue:
         return None
-    if not force and _weak_drill_since_last(context, mode) < _weak_drill_gap(get_db_path()):
+    if not force and _weak_drill_since_last(context, mode) < _weak_drill_gap(get_db_path(), user_id):
         return None
     counts = _weak_drill_counts(context, mode)
     pos = next((i for i, wid in enumerate(queue) if avoid_id is None or wid != avoid_id), None)
@@ -303,7 +408,7 @@ def _maybe_take_weak_drill_entry(context, mode, avoid_id=None, force=False):
     entry = get_word_by_id(get_db_path(), word_id)
     if not entry:
         counts.pop(word_id, None)
-        return _maybe_take_weak_drill_entry(context, mode, avoid_id=avoid_id, force=True)
+        return _maybe_take_weak_drill_entry(context, mode, user_id, avoid_id=avoid_id, force=True)
     remaining = int(counts.get(word_id, 1)) - 1
     if remaining > 0:
         counts[word_id] = remaining
@@ -315,11 +420,11 @@ def _maybe_take_weak_drill_entry(context, mode, avoid_id=None, force=False):
     return entry
 
 
-def _enqueue_weak_drill(context, mode, word_id):
-    """Queue a word for in-session drilling after a WRONG answer (budget = repeats setting)."""
+def _enqueue_weak_drill(context, mode, word_id, user_id):
+    """Queue a word for drilling after a WRONG answer (budget = the repeats setting)."""
     if not word_id:
         return
-    repeats = _weak_drill_repeats(get_db_path())
+    repeats = _weak_drill_repeats(get_db_path(), user_id)
     if repeats <= 0:
         return
     queue = _weak_drill_queue(context, mode)

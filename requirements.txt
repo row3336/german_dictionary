@@ -1,4 +1,16 @@
-# python-telegram-bot 20+ (async)
-python-telegram-bot==20.7
+# python-telegram-bot async. [rate-limiter]=AIORateLimiter (P5); [job-queue]=reminders/reports.
+# 21.x required for Telegram Stars / XTR donations (P6.4; Stars support since 21.3).
+# 22.8 (2026-06-12): native InlineKeyboardButton(style=...) for topic-filter (spec #8);
+#   requires Python >= 3.10 (bumped in 22.6). Breaking-change audit: no code changes needed.
+python-telegram-bot[job-queue,rate-limiter]==22.8
 python-dotenv==1.0.1
 openai==1.40.0
+# Transitive of openai/PTB — pin the tested version. httpx>=0.28 removed the
+# `proxies=` kwarg that openai<1.55 passes into its default httpx client, which
+# broke OpenAI() init. We pass our own http_client (bot/ai.py) so we're version-
+# safe regardless, but pinning keeps deploys deterministic.
+httpx==0.28.1
+
+# Off-site backup encryption (spec #4): libsodium sealed boxes (asymmetric).
+# Server holds only the public key; the private key stays with the owner.
+PyNaCl==1.6.2

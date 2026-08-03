@@ -1,13 +1,23 @@
 import os
 
-from openai import OpenAI
-
 
 def _get_client():
+    # Import openai lazily: importing this module (and its importers, e.g.
+    # add_words) must not require the openai package — only actually generating
+    # fields does. Keeps non-AI code paths (and their tests) dependency-free.
+    import httpx  # ships with openai
+    from openai import OpenAI
+
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY is missing in .env")
-    return OpenAI(api_key=api_key)
+    # openai<1.55 builds its default httpx.Client with a `proxies=` kwarg, which
+    # httpx>=0.28 removed -> `Client.__init__() got an unexpected keyword argument
+    # 'proxies'` at client init (breaks every AI call). Passing our own http_client
+    # is the SDK-sanctioned path and bypasses that default-client construction
+    # entirely. No proxy is used for AI requests (the VF proxy is unrelated).
+    http_client = httpx.Client(timeout=httpx.Timeout(60.0, connect=10.0))
+    return OpenAI(api_key=api_key, http_client=http_client)
 
 
 def _get_model():
@@ -36,3 +46,36 @@ def generate_fields(prompt_text):
 
     response = client.chat.completions.create(**kwargs)
     return response.choices[0].message.content
+
+
+def _extract_json_object(text):
+    """Best-effort slice of the first {...} block in `text` (AI replies sometimes wrap it in prose)."""
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1 or end < start:
+        return "{}"
+    return text[start : end + 1]
+
+
+def translate_broadcast(russian_text):
+    """Translate a free-text owner broadcast (Russian) into Ukrainian and English.
+
+    Unlike dictionary-entry translation (single words, force-lowercased), this is
+    a full service message: preserve line breaks, punctuation and casing so the
+    tone/meaning of the announcement carries over.
+    """
+    import json
+
+    prompt = (
+        "Translate the following Russian announcement message into Ukrainian and English. "
+        "Keep the same tone, line breaks and punctuation; do not add or omit information. "
+        'Return only JSON: {"ukrainian":"...","english":"..."}.\n\n'
+        f"Russian:\n{russian_text}"
+    )
+    response_text = generate_fields(prompt)
+    data = json.loads(_extract_json_object(response_text))
+    ukrainian = str(data.get("ukrainian", "")).strip()
+    english = str(data.get("english", "")).strip()
+    if not ukrainian or not english:
+        raise ValueError("AI translation returned an empty ukrainian/english field")
+    return {"ru": russian_text, "uk": ukrainian, "en": english}

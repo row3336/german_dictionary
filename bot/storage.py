@@ -1,19 +1,33 @@
 import math
 import json
+import random
 import sqlite3
 import uuid
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-from .text_utils import cap_word
+from .app_config import CASE_TYPES, CEFR_LEVELS, PREPOSITION_TYPES, get_owner_id, is_owner
+from .common.conjugation import parse_conjugation, takes_praeteritum
+from .text_utils import ABSENT_PLURAL_MARKERS, cap_word, split_plural_forms
 
 DEFAULT_EASE = 2.5
 MIN_EASE = 1.3
 MAX_EASE = 3.5
-WEAK_ACTIVE_MIN_ERRORS = 2
+# A word ENTERS a weak episode when, on a wrong answer, total errors reach
+# WEAK_ACTIVE_MIN_ERRORS or it has WEAK_ACTIVE_MIN_STREAK_WRONG wrong in a row.
+# Entry only flips the persistent per-form `*_active` flag; once set, the word is
+# HELD in the quiz regardless of how the counters move, until it gets
+# WEAK_ACTIVE_CLEAR_STREAK correct in a row (which clears the flag and promotes
+# it to the day-based review ladder). Separating entry from hold is why the flag
+# exists: a single correct must not drop a freshly-entered word before it can
+# earn its 3-in-a-row (see docs/multiuser_test_bugs.md #18).
+WEAK_ACTIVE_MIN_ERRORS = 3
 WEAK_ACTIVE_MIN_STREAK_WRONG = 2
 WEAK_ACTIVE_CLEAR_STREAK = 3
+# Old (pre-flag) entry rule, kept only to backfill the `*_active` flag for words
+# that were already in an episode when the v4->v5 migration ran.
+WEAK_LEGACY_ACTIVE_MIN_ERRORS = 2
 WEAK_REVIEW_DAYS_STAGE1 = 1
 WEAK_REVIEW_DAYS_STAGE2 = 2
 WEAK_REVIEW_DAYS_STAGE3 = 5
@@ -39,12 +53,22 @@ def default_srs(today=None):
 
 @contextmanager
 def _connect(db_path):
-    """Handle connect."""
+    """Open a SQLite connection with concurrency-friendly pragmas.
+
+    WAL + busy_timeout let multiple users read/write without "database is locked"
+    under the single-process bot: writers no longer block readers, and write
+    contention waits (up to busy_timeout) instead of failing immediately.
+    synchronous=NORMAL is the safe+faster setting under WAL. journal_mode=WAL is
+    persisted in the DB header (set once, harmless to re-assert each connect).
+    """
     path = Path(db_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     try:
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA busy_timeout = 5000")
+        conn.execute("PRAGMA synchronous = NORMAL")
         conn.execute("PRAGMA foreign_keys = ON")
         yield conn
         conn.commit()
@@ -69,6 +93,7 @@ def _ensure_indexes(conn):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_learning_items_batch_status ON learning_items(batch_id, status)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_transaction_log_user_id ON transaction_log(user_id, id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_transaction_log_created_at ON transaction_log(created_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_conjugation_progress_user ON conjugation_progress(user_id, word_id)")
 
 
 def _repair_word_fk_tables(conn):
@@ -178,21 +203,25 @@ def _repair_word_fk_tables(conn):
             article_streak_correct INTEGER NOT NULL DEFAULT 0,
             article_review_stage INTEGER NOT NULL DEFAULT 0,
             article_next_review TEXT DEFAULT NULL,
+            article_active INTEGER NOT NULL DEFAULT 0,
             plural_errors INTEGER NOT NULL DEFAULT 0,
             plural_streak_wrong INTEGER NOT NULL DEFAULT 0,
             plural_streak_correct INTEGER NOT NULL DEFAULT 0,
             plural_review_stage INTEGER NOT NULL DEFAULT 0,
             plural_next_review TEXT DEFAULT NULL,
+            plural_active INTEGER NOT NULL DEFAULT 0,
             prateritum_errors INTEGER NOT NULL DEFAULT 0,
             prateritum_streak_wrong INTEGER NOT NULL DEFAULT 0,
             prateritum_streak_correct INTEGER NOT NULL DEFAULT 0,
             prateritum_review_stage INTEGER NOT NULL DEFAULT 0,
             prateritum_next_review TEXT DEFAULT NULL,
+            prateritum_active INTEGER NOT NULL DEFAULT 0,
             partizip2_errors INTEGER NOT NULL DEFAULT 0,
             partizip2_streak_wrong INTEGER NOT NULL DEFAULT 0,
             partizip2_streak_correct INTEGER NOT NULL DEFAULT 0,
             partizip2_review_stage INTEGER NOT NULL DEFAULT 0,
             partizip2_next_review TEXT DEFAULT NULL,
+            partizip2_active INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY (user_id, word_id),
             FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
         )
@@ -236,6 +265,7 @@ def init_db(db_path):
                 image TEXT NOT NULL DEFAULT '',
                 example TEXT NOT NULL DEFAULT '',
                 topic TEXT NOT NULL DEFAULT '1',
+                cefr_level TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -271,11 +301,31 @@ def init_db(db_path):
                 value TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS user_settings (
+                user_id INTEGER NOT NULL,
+                key TEXT NOT NULL,
+                value TEXT NOT NULL,
+                PRIMARY KEY (user_id, key)
+            );
+
             CREATE TABLE IF NOT EXISTS user_levels (
                 user_id INTEGER NOT NULL,
                 level TEXT NOT NULL,
                 PRIMARY KEY (user_id, level),
                 FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS user_word_media (
+                user_id INTEGER NOT NULL,
+                word_id TEXT NOT NULL,
+                image TEXT NOT NULL DEFAULT '',
+                example TEXT NOT NULL DEFAULT '',
+                russian TEXT NOT NULL DEFAULT '',
+                ukrainian TEXT NOT NULL DEFAULT '',
+                english TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (user_id, word_id),
+                FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
             );
 
             CREATE TABLE IF NOT EXISTS word_flags (
@@ -288,6 +338,34 @@ def init_db(db_path):
                 reviewed_at TEXT NOT NULL DEFAULT '',
                 FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
             );
+
+            -- P6: user error/fix report on a word card, with a small trace of where
+            -- it happened (mode/state/last_action). Modeled on word_flags.
+            CREATE TABLE IF NOT EXISTS error_reports (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                word_id TEXT NOT NULL,
+                user_id INTEGER NOT NULL,
+                mode TEXT NOT NULL DEFAULT '',
+                state TEXT NOT NULL DEFAULT '',
+                last_action TEXT NOT NULL DEFAULT '',
+                comment TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                reviewed_at TEXT NOT NULL DEFAULT '',
+                FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_error_reports_status_created ON error_reports(status, created_at);
+
+            -- P6: general user feedback about the bot (not word-specific).
+            CREATE TABLE IF NOT EXISTS feedback (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                text TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                reviewed_at TEXT NOT NULL DEFAULT ''
+            );
+            CREATE INDEX IF NOT EXISTS idx_feedback_status_created ON feedback(status, created_at);
 
             CREATE TABLE IF NOT EXISTS quiz_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -315,21 +393,25 @@ def init_db(db_path):
                 article_streak_correct INTEGER NOT NULL DEFAULT 0,
                 article_review_stage INTEGER NOT NULL DEFAULT 0,
                 article_next_review TEXT DEFAULT NULL,
+                article_active INTEGER NOT NULL DEFAULT 0,
                 plural_errors INTEGER NOT NULL DEFAULT 0,
                 plural_streak_wrong INTEGER NOT NULL DEFAULT 0,
                 plural_streak_correct INTEGER NOT NULL DEFAULT 0,
                 plural_review_stage INTEGER NOT NULL DEFAULT 0,
                 plural_next_review TEXT DEFAULT NULL,
+                plural_active INTEGER NOT NULL DEFAULT 0,
                 prateritum_errors INTEGER NOT NULL DEFAULT 0,
                 prateritum_streak_wrong INTEGER NOT NULL DEFAULT 0,
                 prateritum_streak_correct INTEGER NOT NULL DEFAULT 0,
                 prateritum_review_stage INTEGER NOT NULL DEFAULT 0,
                 prateritum_next_review TEXT DEFAULT NULL,
+                prateritum_active INTEGER NOT NULL DEFAULT 0,
                 partizip2_errors INTEGER NOT NULL DEFAULT 0,
                 partizip2_streak_wrong INTEGER NOT NULL DEFAULT 0,
                 partizip2_streak_correct INTEGER NOT NULL DEFAULT 0,
                 partizip2_review_stage INTEGER NOT NULL DEFAULT 0,
                 partizip2_next_review TEXT DEFAULT NULL,
+                partizip2_active INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (user_id, word_id),
                 FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
             );
@@ -380,6 +462,11 @@ def init_db(db_path):
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS topics (
+                name TEXT PRIMARY KEY,
+                description TEXT NOT NULL DEFAULT ''
+            );
+
             CREATE TABLE IF NOT EXISTS vf_checks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
@@ -396,6 +483,18 @@ def init_db(db_path):
                 applied INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
+            );
+
+            -- spec #3: passive conjugation drill progress, per user (no FSRS).
+            -- seen_count / last_seen_at drive the weighted-rotation order; guests
+            -- get their own rows (isolated by user_id).
+            CREATE TABLE IF NOT EXISTS conjugation_progress (
+                user_id INTEGER NOT NULL,
+                word_id TEXT NOT NULL,
+                seen_count INTEGER NOT NULL DEFAULT 0,
+                last_seen_at TEXT DEFAULT NULL,
+                PRIMARY KEY (user_id, word_id),
                 FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
             );
             """
@@ -431,46 +530,6 @@ def _ensure_schema(conn):
         row["name"] if isinstance(row, sqlite3.Row) else row[1]
         for row in conn.execute("PRAGMA table_info(words)").fetchall()
     }
-    if "cefr_level" in word_cols:
-        conn.execute("PRAGMA foreign_keys = OFF")
-        conn.executescript(
-            """
-            CREATE TABLE words_new (
-                id TEXT PRIMARY KEY,
-                type TEXT NOT NULL,
-                article TEXT NOT NULL DEFAULT '',
-                german TEXT NOT NULL DEFAULT '',
-                plural TEXT NOT NULL DEFAULT '',
-                infinitive TEXT NOT NULL DEFAULT '',
-                prateritum TEXT NOT NULL DEFAULT '',
-                partizip2 TEXT NOT NULL DEFAULT '',
-                komparativ TEXT NOT NULL DEFAULT '',
-                superlativ TEXT NOT NULL DEFAULT '',
-                russian TEXT NOT NULL DEFAULT '',
-                ukrainian TEXT NOT NULL DEFAULT '',
-                english TEXT NOT NULL DEFAULT '',
-                image TEXT NOT NULL DEFAULT '',
-                example TEXT NOT NULL DEFAULT '',
-                topic TEXT NOT NULL DEFAULT '1',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-            INSERT INTO words_new (
-                id, type, article, german, plural, infinitive, prateritum, partizip2, komparativ, superlativ,
-                russian, ukrainian, english, image, example, topic, created_at
-            )
-            SELECT
-                id, type, article, german, plural, infinitive, prateritum, partizip2, '', '',
-                russian, ukrainian, english, '', '', '1', created_at
-            FROM words;
-            DROP TABLE words;
-            ALTER TABLE words_new RENAME TO words;
-            """
-        )
-        conn.execute("PRAGMA foreign_keys = ON")
-        word_cols = {
-            row["name"] if isinstance(row, sqlite3.Row) else row[1]
-            for row in conn.execute("PRAGMA table_info(words)").fetchall()
-        }
     if "ukrainian" not in word_cols:
         conn.execute("ALTER TABLE words ADD COLUMN ukrainian TEXT NOT NULL DEFAULT ''")
     if "english" not in word_cols:
@@ -490,7 +549,103 @@ def _ensure_schema(conn):
         # backfill existing rows to their created_at (unedited == created time).
         conn.execute("ALTER TABLE words ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''")
         conn.execute("UPDATE words SET updated_at = created_at WHERE updated_at = ''")
+    # spec #1 (v6 -> v7): preposition semantic category + governed case. Additive,
+    # DEFAULT '' so every existing row (and an older/rolled-back build) stays valid;
+    # values are a controlled vocabulary validated on write, never free text here.
+    if "preposition_type" not in word_cols:
+        conn.execute("ALTER TABLE words ADD COLUMN preposition_type TEXT NOT NULL DEFAULT ''")
+    if "case_type" not in word_cols:
+        conn.execute("ALTER TABLE words ADD COLUMN case_type TEXT NOT NULL DEFAULT ''")
+    # spec #3 (v7 -> v8): conjugation blocks stored inline on the word (the block
+    # is treated as one entity, no separate table). Additive, DEFAULT '' so every
+    # existing row stays valid; content is validated by common.conjugation on write.
+    if "conjugation_praesens" not in word_cols:
+        conn.execute("ALTER TABLE words ADD COLUMN conjugation_praesens TEXT NOT NULL DEFAULT ''")
+    if "conjugation_praeteritum" not in word_cols:
+        conn.execute("ALTER TABLE words ADD COLUMN conjugation_praeteritum TEXT NOT NULL DEFAULT ''")
+    # v11 -> v12: per-word CEFR level (A1..C2), parsed from verbformen.de. Additive,
+    # DEFAULT '' so every existing row (unknown level) and an older/rolled-back build
+    # stay valid; the value is a controlled vocabulary (CEFR_LEVELS) validated on
+    # write. Feeds the level-aware topic filters (chosen levels -> eligible words).
+    if "cefr_level" not in word_cols:
+        conn.execute("ALTER TABLE words ADD COLUMN cefr_level TEXT NOT NULL DEFAULT ''")
+    # v12 -> v13 (spec #2 recheck): timestamp of the last successful VF recheck for this
+    # word. Additive, DEFAULT '' so every existing row (never rechecked) and an older/
+    # rolled-back build stay valid. Set when a recheck item parses OK; an 'unchecked'
+    # recheck then skips words whose mark is non-empty, so already-verified words don't
+    # go through the fetch loop again. Errors leave it '' so they retry next run.
+    if "vf_checked_at" not in word_cols:
+        conn.execute("ALTER TABLE words ADD COLUMN vf_checked_at TEXT NOT NULL DEFAULT ''")
     conn.execute("UPDATE words SET topic = '1' WHERE trim(coalesce(topic, '')) = ''")
+    # spec #8: topics registry. Defensive create (mirrors vf_checks above) + idempotent
+    # seed of every DISTINCT topic in use, with empty description. INSERT OR IGNORE keeps
+    # existing descriptions (name is PK), so re-runs never clobber curated text and new
+    # topics that appear in words are picked up automatically.
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS topics (name TEXT PRIMARY KEY, description TEXT NOT NULL DEFAULT '')"
+    )
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO topics (name)
+        SELECT DISTINCT trim(topic) FROM words WHERE trim(coalesce(topic, '')) != ''
+        """
+    )
+    # v13 -> v14: per-topic "book level" (A1..C2), independent of words.cefr_level.
+    # Additive, DEFAULT '' so every existing topic (unassigned) and an older/rolled-back
+    # build stay valid. Column-only on purpose: assigning A1 to current topics is a
+    # deliberate one-off backfill, never a blanket UPDATE here (so future B1/B2 levels
+    # are never clobbered on a re-run). '' topics are hidden from the "book topics" filter.
+    topic_cols = {row["name"] for row in conn.execute("PRAGMA table_info(topics)").fetchall()}
+    if "level" not in topic_cols:
+        conn.execute("ALTER TABLE topics ADD COLUMN level TEXT NOT NULL DEFAULT ''")
+    # spec #2: persisted VF-add batch job (survives restart). A job holds the
+    # owner's word list; each item is fetched/parsed one at a time (slow-drip),
+    # partial results stored so a restart resumes instead of starting over.
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS vf_add_jobs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            chat_id INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'running',
+            topic TEXT NOT NULL DEFAULT '',
+            total INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS vf_add_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id INTEGER NOT NULL,
+            position INTEGER NOT NULL DEFAULT 0,
+            word TEXT NOT NULL,
+            word_id TEXT NOT NULL DEFAULT '',
+            type_hint TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'pending',
+            result_json TEXT NOT NULL DEFAULT '',
+            flags TEXT NOT NULL DEFAULT '',
+            error TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    # spec #2 (v11): word_id links a recheck item back to the existing word it verifies.
+    vf_item_cols = {
+        row["name"] if isinstance(row, sqlite3.Row) else row[1]
+        for row in conn.execute("PRAGMA table_info(vf_add_items)").fetchall()
+    }
+    if "word_id" not in vf_item_cols:
+        conn.execute("ALTER TABLE vf_add_items ADD COLUMN word_id TEXT NOT NULL DEFAULT ''")
+    # spec #2: type_hint carries the caller's known word type (owner's [type] on add,
+    # existing word's type on recheck) so a lookup routes to the right type page.
+    if "type_hint" not in vf_item_cols:
+        conn.execute("ALTER TABLE vf_add_items ADD COLUMN type_hint TEXT NOT NULL DEFAULT ''")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_vf_add_items_job ON vf_add_items(job_id, status)")
+
     _repair_word_fk_tables(conn)
     _ensure_indexes(conn)
 
@@ -510,10 +665,21 @@ def _ensure_schema(conn):
     for field in ("article", "plural", "prateritum", "partizip2"):
         stage_col = f"{field}_review_stage"
         next_col = f"{field}_next_review"
+        active_col = f"{field}_active"
         if stage_col not in form_cols:
             conn.execute(f"ALTER TABLE form_stats ADD COLUMN {stage_col} INTEGER NOT NULL DEFAULT 0")
         if next_col not in form_cols:
             conn.execute(f"ALTER TABLE form_stats ADD COLUMN {next_col} TEXT DEFAULT NULL")
+        # v4 -> v5: persistent weak-episode flag. Backfill rows that were already
+        # in an episode under the legacy (pre-flag) entry rule so the migration
+        # never drops a word that was active when it ran (docs §0.2 item 1).
+        if active_col not in form_cols:
+            conn.execute(f"ALTER TABLE form_stats ADD COLUMN {active_col} INTEGER NOT NULL DEFAULT 0")
+            conn.execute(
+                f"UPDATE form_stats SET {active_col} = 1 "
+                f"WHERE {field}_errors >= {WEAK_LEGACY_ACTIVE_MIN_ERRORS} "
+                f"OR {field}_streak_wrong >= {WEAK_ACTIVE_MIN_STREAK_WRONG}"
+            )
 
     quiz_cols = {
         row["name"] if isinstance(row, sqlite3.Row) else row[1]
@@ -542,6 +708,17 @@ def _ensure_schema(conn):
         conn.execute("ALTER TABLE learning_items ADD COLUMN preview_done INTEGER NOT NULL DEFAULT 0")
     if learning_cols and "updated_at" not in learning_cols:
         conn.execute("ALTER TABLE learning_items ADD COLUMN updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP")
+
+    # spec #7 (v8 -> v9): per-user personal translation overrides live in the SAME
+    # user_word_media row as personal image/example (no new table/rows). A user
+    # overrides only their dict_lang's translation; '' = no personal version.
+    media_cols = {
+        row["name"] if isinstance(row, sqlite3.Row) else row[1]
+        for row in conn.execute("PRAGMA table_info(user_word_media)").fetchall()
+    }
+    for _tr_col in ("russian", "ukrainian", "english"):
+        if _tr_col not in media_cols:
+            conn.execute(f"ALTER TABLE user_word_media ADD COLUMN {_tr_col} TEXT NOT NULL DEFAULT ''")
 
     # Migrate legacy SM2-named settings keys to FSRS names, preserving values.
     for _old_key, _new_key in (
@@ -596,32 +773,6 @@ def _safe_text(value):
     return str(value)
 
 
-def _vf_source_hash(entry):
-    """Build deterministic hash source for VF checks."""
-    entry_type = _safe_text(entry.get("type")).strip().lower()
-    if entry_type == "nomen":
-        raw = "|".join(
-            [
-                entry_type,
-                _safe_text(entry.get("article")).strip().lower(),
-                _safe_text(entry.get("german")).strip().lower(),
-                _safe_text(entry.get("plural")).strip().lower(),
-            ]
-        )
-    elif entry_type == "verb":
-        raw = "|".join(
-            [
-                entry_type,
-                _safe_text(entry.get("infinitive")).strip().lower(),
-                _safe_text(entry.get("prateritum")).strip().lower(),
-                _safe_text(entry.get("partizip2")).strip().lower(),
-            ]
-        )
-    else:
-        raw = entry_type
-    return str(abs(hash(raw)))
-
-
 def _safe_int(value, default=0):
     """Handle safe int."""
     try:
@@ -657,7 +808,16 @@ def _row_to_entry(row):
         "image": row["image"] if "image" in row.keys() else "",
         "example": row["example"] if "example" in row.keys() else "",
         "topic": row["topic"] or "",
+        "preposition_type": row["preposition_type"] if "preposition_type" in row.keys() else "",
+        "case_type": row["case_type"] if "case_type" in row.keys() else "",
+        "conjugation_praesens": row["conjugation_praesens"] if "conjugation_praesens" in row.keys() else "",
+        "conjugation_praeteritum": row["conjugation_praeteritum"] if "conjugation_praeteritum" in row.keys() else "",
+        "cefr_level": row["cefr_level"] if "cefr_level" in row.keys() else "",
     }
+    if "seen_count" in row.keys():
+        entry["seen_count"] = int(row["seen_count"] or 0)
+    if "last_seen_at" in row.keys():
+        entry["last_seen_at"] = row["last_seen_at"]
     if "review_stage" in row.keys():
         entry["review_stage"] = int(row["review_stage"] or 0)
     if "next_review" in row.keys():
@@ -694,11 +854,113 @@ def load_words(db_path):
     return [_row_to_entry(row) for row in rows]
 
 
+# --- spec #3: conjugation storage + carousel selection ------------------------
+
+# A verb enters the conjugation carousel once its L1>De FSRS row has at least
+# this many repetitions (i.e. it's past the "new word" stage). Selection uses the
+# exact L1>De mode string, which is language-dependent, so the caller passes it.
+CONJUGATION_MIN_REPETITIONS = 2
+
+
+def set_word_conjugation(db_path, word_id, praesens, praeteritum=""):
+    """Write a verb's conjugation blocks, validating both against the canonical
+    format. Empty string clears a block; any non-empty value must be a valid
+    6-line block or ValueError is raised (single validator for every write path).
+    """
+    stored_praesens = parse_conjugation(praesens) if str(praesens or "").strip() else ""
+    stored_praeteritum = parse_conjugation(praeteritum) if str(praeteritum or "").strip() else ""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        # spec #3 invariant enforced at the single write chokepoint: only the closed
+        # Präteritum list keeps a Präteritum block. Force-blank it for any other verb,
+        # whatever the caller (apply script, VF parser, clarify) supplied.
+        if stored_praeteritum:
+            row = conn.execute("SELECT infinitive FROM words WHERE id = ?", (word_id,)).fetchone()
+            if not takes_praeteritum(row["infinitive"] if row else ""):
+                stored_praeteritum = ""
+        conn.execute(
+            "UPDATE words SET conjugation_praesens = ?, conjugation_praeteritum = ? WHERE id = ?",
+            (stored_praesens, stored_praeteritum, word_id),
+        )
+
+
+def next_conjugation_word(db_path, user_id, mode, min_repetitions=CONJUGATION_MIN_REPETITIONS):
+    """Return the next verb to show in the conjugation carousel, or None.
+
+    Eligible = a verb with a non-empty Präsens block whose L1>De FSRS row for
+    this user has repetitions >= min_repetitions (topic filter is intentionally
+    NOT applied — spec #3). Order is a weighted rotation: unseen words first,
+    then the one with the highest ``elapsed / (1 + seen_count)`` score, so a verb
+    seen many times resurfaces proportionally less often. Endless, no daily cap.
+    """
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum,
+                   w.partizip2, w.komparativ, w.superlativ, w.russian, w.ukrainian, w.english,
+                   w.image, w.example, w.topic, w.preposition_type, w.case_type,
+                   w.conjugation_praesens, w.conjugation_praeteritum,
+                   COALESCE(cp.seen_count, 0) AS seen_count, cp.last_seen_at AS last_seen_at
+            FROM words w
+            JOIN progress p
+              ON p.word_id = w.id AND p.user_id = ? AND p.mode = ? AND p.repetitions >= ?
+            LEFT JOIN conjugation_progress cp
+              ON cp.word_id = w.id AND cp.user_id = ?
+            WHERE w.type = 'verb' AND trim(COALESCE(w.conjugation_praesens, '')) != ''
+            ORDER BY (cp.last_seen_at IS NULL) DESC,
+                     (julianday('now') - julianday(cp.last_seen_at)) / (1 + COALESCE(cp.seen_count, 0)) DESC,
+                     COALESCE(cp.seen_count, 0) ASC,
+                     w.id ASC
+            LIMIT 1
+            """,
+            (user_id, mode, min_repetitions, user_id),
+        ).fetchone()
+    return _row_to_entry(row) if row is not None else None
+
+
+def record_conjugation_shown(db_path, user_id, word_id):
+    """Mark a verb as shown to this user (the "далее" action): bump seen_count
+    and stamp last_seen_at. Per-user row, created on first show.
+    """
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO conjugation_progress (user_id, word_id, seen_count, last_seen_at)
+            VALUES (?, ?, 1, CURRENT_TIMESTAMP)
+            ON CONFLICT(user_id, word_id) DO UPDATE SET
+                seen_count = seen_count + 1,
+                last_seen_at = CURRENT_TIMESTAMP
+            """,
+            (user_id, word_id),
+        )
+
+
 def count_words(db_path):
     """Handle count words."""
     init_db(db_path)
     with _connect(db_path) as conn:
         row = conn.execute("SELECT COUNT(*) AS cnt FROM words").fetchone()
+    return int(row["cnt"])
+
+
+def count_words_for_topics(db_path, topics=None):
+    """Number of words matching a topic filter (spec #8).
+
+    topics=None/empty means 'all' (no filter) -> every word. Used to tell 'no words
+    under the selected topics at all' apart from 'words exist but none are due'.
+    """
+    init_db(db_path)
+    clean = [_safe_text(x) for x in (topics or []) if _safe_text(x)]
+    with _connect(db_path) as conn:
+        if not clean:
+            row = conn.execute("SELECT COUNT(*) AS cnt FROM words").fetchone()
+        else:
+            placeholders = ",".join("?" for _ in clean)
+            row = conn.execute(
+                f"SELECT COUNT(*) AS cnt FROM words WHERE topic IN ({placeholders})", clean
+            ).fetchone()
     return int(row["cnt"])
 
 
@@ -715,6 +977,166 @@ def list_topics(db_path):
             """
         ).fetchall()
     return [row["topic"] for row in rows]
+
+
+def list_topics_with_desc(db_path):
+    """Topics registry (spec #8): list of (name, description) for every known topic.
+
+    Superset of topics currently in use (init_db re-seeds DISTINCT words.topic on every
+    call), so callers get the full button set plus any curated German descriptions.
+    Unsorted here — the shared UI sort helper (_sorted_topics) orders name/buttons.
+    """
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        rows = conn.execute("SELECT name, description FROM topics").fetchall()
+    return [(row["name"], row["description"]) for row in rows]
+
+
+def get_topic_description(db_path, name):
+    """Curated description for a topic name, or '' if unknown/blank."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT description FROM topics WHERE name = ?", (str(name).strip(),)
+        ).fetchone()
+    return row["description"] if row else ""
+
+
+def insert_topic_if_absent(db_path, name, description):
+    """Add a new topic with its description; no-op if the name already exists.
+
+    Returns True if a row was inserted (new topic), False if it already existed.
+    Existing descriptions are never overwritten here (spec #8: descriptions are edited
+    only by the one-off review script, never through the add-flow).
+    """
+    init_db(db_path)
+    name = str(name).strip()
+    if not name:
+        return False
+    with _connect(db_path) as conn:
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO topics (name, description) VALUES (?, ?)",
+            (name, str(description or "").strip()),
+        )
+        return cur.rowcount > 0
+
+
+# --- Topic "book level" (v14): per-topic A1..C2, independent of words.cefr_level. ---
+
+def get_topic_level(db_path, name):
+    """This topic's book-level (A1..C2), or '' if unassigned/unknown."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT level FROM topics WHERE name = ?", (str(name).strip(),)
+        ).fetchone()
+    return row["level"] if row else ""
+
+
+def set_topic_level(db_path, name, level):
+    """Assign a topic's book-level. `level` must be a valid CEFR level (else ValueError).
+
+    Creates the topic row if absent (no description). Used by the add-flow (new topic)
+    and the owner level-management UI.
+    """
+    init_db(db_path)
+    name = str(name).strip()
+    level = _safe_cefr_level(level)
+    if not name:
+        raise ValueError("Empty topic name.")
+    if not level:
+        raise ValueError("Invalid CEFR level.")
+    with _connect(db_path) as conn:
+        conn.execute("INSERT OR IGNORE INTO topics (name) VALUES (?)", (name,))
+        conn.execute("UPDATE topics SET level = ? WHERE name = ?", (level, name))
+
+
+def list_topics_with_level(db_path):
+    """Every known topic as (name, description, level); level '' = unassigned."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        rows = conn.execute("SELECT name, description, level FROM topics").fetchall()
+    return [(row["name"], row["description"], row["level"]) for row in rows]
+
+
+def list_topics_for_level(db_path, level):
+    """Topic names assigned to the given book-level (unsorted; UI orders them)."""
+    init_db(db_path)
+    level = _safe_cefr_level(level)
+    if not level:
+        return []
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT name FROM topics WHERE level = ?", (level,)
+        ).fetchall()
+    return [row["name"] for row in rows]
+
+
+def list_book_levels(db_path):
+    """Book-levels that actually have >=1 word, in CEFR order (dynamic S2 list).
+
+    A level shows only if some topic of that level holds at least one word — empty
+    levels never clutter the "book topics" menu.
+    """
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT t.level
+            FROM topics t
+            JOIN words w ON w.topic = t.name
+            WHERE trim(coalesce(t.level, '')) != ''
+            """
+        ).fetchall()
+    present = {row["level"] for row in rows}
+    return [lvl for lvl in CEFR_LEVELS if lvl in present]
+
+
+def count_words_for_book_level(db_path, level):
+    """Number of words whose topic is assigned to the given book-level."""
+    init_db(db_path)
+    level = _safe_cefr_level(level)
+    if not level:
+        return 0
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT COUNT(*) AS cnt
+            FROM words w
+            JOIN topics t ON t.name = w.topic
+            WHERE t.level = ?
+            """,
+            (level,),
+        ).fetchone()
+    return int(row["cnt"])
+
+
+def list_cefr_levels_with_words(db_path):
+    """Word CEFR levels present in the dictionary, in CEFR order (dynamic S1 list).
+
+    Empty/unknown cefr_level is excluded — the CEFR filter menu lists only levels
+    that some word actually has.
+    """
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT cefr_level FROM words WHERE trim(coalesce(cefr_level, '')) != ''"
+        ).fetchall()
+    present = {row["cefr_level"] for row in rows}
+    return [lvl for lvl in CEFR_LEVELS if lvl in present]
+
+
+def count_words_for_cefr(db_path, level):
+    """Number of words with the given CEFR level (S1 per-level counter)."""
+    init_db(db_path)
+    level = _safe_cefr_level(level)
+    if not level:
+        return 0
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM words WHERE cefr_level = ?", (level,)
+        ).fetchone()
+    return int(row["cnt"])
 
 
 def get_statistics_snapshot(db_path, user_id, mode):
@@ -800,7 +1222,7 @@ def get_statistics_snapshot(db_path, user_id, mode):
             SELECT
                 SUM(
                     CASE
-                        WHEN w.type = 'nomen' AND (fs.article_errors >= 2 OR fs.article_streak_wrong >= 2) THEN 1
+                        WHEN w.type = 'nomen' AND fs.article_active = 1 THEN 1
                         ELSE 0
                     END
                 ) AS article_active,
@@ -808,7 +1230,7 @@ def get_statistics_snapshot(db_path, user_id, mode):
                     CASE
                         WHEN w.type = 'nomen'
                          AND fs.article_review_stage = 1
-                         AND NOT (fs.article_errors >= 2 OR fs.article_streak_wrong >= 2) THEN 1
+                         AND fs.article_active = 0 THEN 1
                         ELSE 0
                     END
                 ) AS article_stage1,
@@ -816,7 +1238,7 @@ def get_statistics_snapshot(db_path, user_id, mode):
                     CASE
                         WHEN w.type = 'nomen'
                          AND fs.article_review_stage = 2
-                         AND NOT (fs.article_errors >= 2 OR fs.article_streak_wrong >= 2) THEN 1
+                         AND fs.article_active = 0 THEN 1
                         ELSE 0
                     END
                 ) AS article_stage2,
@@ -824,14 +1246,14 @@ def get_statistics_snapshot(db_path, user_id, mode):
                     CASE
                         WHEN w.type = 'nomen'
                          AND fs.article_review_stage = 3
-                         AND NOT (fs.article_errors >= 2 OR fs.article_streak_wrong >= 2) THEN 1
+                         AND fs.article_active = 0 THEN 1
                         ELSE 0
                     END
                 ) AS article_stage3,
 
                 SUM(
                     CASE
-                        WHEN w.type = 'nomen' AND (fs.plural_errors >= 2 OR fs.plural_streak_wrong >= 2) THEN 1
+                        WHEN w.type = 'nomen' AND fs.plural_active = 1 THEN 1
                         ELSE 0
                     END
                 ) AS plural_active,
@@ -839,7 +1261,7 @@ def get_statistics_snapshot(db_path, user_id, mode):
                     CASE
                         WHEN w.type = 'nomen'
                          AND fs.plural_review_stage = 1
-                         AND NOT (fs.plural_errors >= 2 OR fs.plural_streak_wrong >= 2) THEN 1
+                         AND fs.plural_active = 0 THEN 1
                         ELSE 0
                     END
                 ) AS plural_stage1,
@@ -847,7 +1269,7 @@ def get_statistics_snapshot(db_path, user_id, mode):
                     CASE
                         WHEN w.type = 'nomen'
                          AND fs.plural_review_stage = 2
-                         AND NOT (fs.plural_errors >= 2 OR fs.plural_streak_wrong >= 2) THEN 1
+                         AND fs.plural_active = 0 THEN 1
                         ELSE 0
                     END
                 ) AS plural_stage2,
@@ -855,14 +1277,14 @@ def get_statistics_snapshot(db_path, user_id, mode):
                     CASE
                         WHEN w.type = 'nomen'
                          AND fs.plural_review_stage = 3
-                         AND NOT (fs.plural_errors >= 2 OR fs.plural_streak_wrong >= 2) THEN 1
+                         AND fs.plural_active = 0 THEN 1
                         ELSE 0
                     END
                 ) AS plural_stage3,
 
                 SUM(
                     CASE
-                        WHEN w.type = 'verb' AND (fs.partizip2_errors >= 2 OR fs.partizip2_streak_wrong >= 2) THEN 1
+                        WHEN w.type = 'verb' AND fs.partizip2_active = 1 THEN 1
                         ELSE 0
                     END
                 ) AS partizip2_active,
@@ -870,7 +1292,7 @@ def get_statistics_snapshot(db_path, user_id, mode):
                     CASE
                         WHEN w.type = 'verb'
                          AND fs.partizip2_review_stage = 1
-                         AND NOT (fs.partizip2_errors >= 2 OR fs.partizip2_streak_wrong >= 2) THEN 1
+                         AND fs.partizip2_active = 0 THEN 1
                         ELSE 0
                     END
                 ) AS partizip2_stage1,
@@ -878,7 +1300,7 @@ def get_statistics_snapshot(db_path, user_id, mode):
                     CASE
                         WHEN w.type = 'verb'
                          AND fs.partizip2_review_stage = 2
-                         AND NOT (fs.partizip2_errors >= 2 OR fs.partizip2_streak_wrong >= 2) THEN 1
+                         AND fs.partizip2_active = 0 THEN 1
                         ELSE 0
                     END
                 ) AS partizip2_stage2,
@@ -886,14 +1308,14 @@ def get_statistics_snapshot(db_path, user_id, mode):
                     CASE
                         WHEN w.type = 'verb'
                          AND fs.partizip2_review_stage = 3
-                         AND NOT (fs.partizip2_errors >= 2 OR fs.partizip2_streak_wrong >= 2) THEN 1
+                         AND fs.partizip2_active = 0 THEN 1
                         ELSE 0
                     END
                 ) AS partizip2_stage3,
 
                 SUM(
                     CASE
-                        WHEN w.type = 'verb' AND (fs.prateritum_errors >= 2 OR fs.prateritum_streak_wrong >= 2) THEN 1
+                        WHEN w.type = 'verb' AND fs.prateritum_active = 1 THEN 1
                         ELSE 0
                     END
                 ) AS prateritum_active,
@@ -901,7 +1323,7 @@ def get_statistics_snapshot(db_path, user_id, mode):
                     CASE
                         WHEN w.type = 'verb'
                          AND fs.prateritum_review_stage = 1
-                         AND NOT (fs.prateritum_errors >= 2 OR fs.prateritum_streak_wrong >= 2) THEN 1
+                         AND fs.prateritum_active = 0 THEN 1
                         ELSE 0
                     END
                 ) AS prateritum_stage1,
@@ -909,7 +1331,7 @@ def get_statistics_snapshot(db_path, user_id, mode):
                     CASE
                         WHEN w.type = 'verb'
                          AND fs.prateritum_review_stage = 2
-                         AND NOT (fs.prateritum_errors >= 2 OR fs.prateritum_streak_wrong >= 2) THEN 1
+                         AND fs.prateritum_active = 0 THEN 1
                         ELSE 0
                     END
                 ) AS prateritum_stage2,
@@ -917,7 +1339,7 @@ def get_statistics_snapshot(db_path, user_id, mode):
                     CASE
                         WHEN w.type = 'verb'
                          AND fs.prateritum_review_stage = 3
-                         AND NOT (fs.prateritum_errors >= 2 OR fs.prateritum_streak_wrong >= 2) THEN 1
+                         AND fs.prateritum_active = 0 THEN 1
                         ELSE 0
                     END
                 ) AS prateritum_stage3
@@ -974,8 +1396,13 @@ def get_statistics_snapshot(db_path, user_id, mode):
             ).fetchone()
             return int((row["cnt"] if row else 0) or 0)
 
-        today_complete_fsrs_ru_de = _today_mode_count("ru_de")
-        today_complete_fsrs_de_ru = _today_mode_count("de_ru")
+        # Count today's FSRS events for the user's OWN quiz direction, not a
+        # hardcoded ru_de/de_ru: a uk/en-dictionary user answers under uk_de/de_uk
+        # etc., so hardcoding ru_de would always show 0 for them. `mode` is the
+        # user's L1>De mode (e.g. "uk_de"); derive the De>L1 mode from it.
+        de_l1_mode = "de_" + mode[:-3] if mode.endswith("_de") else mode
+        today_complete_fsrs_ru_de = _today_mode_count(mode)
+        today_complete_fsrs_de_ru = _today_mode_count(de_l1_mode)
         today_complete_pl_sg = _today_mode_prefix_count("pl_sg_")
         today_complete_weak_article = _today_mode_count("weak_article")
         today_complete_weak_plural = _today_mode_count("weak_plural")
@@ -1336,9 +1763,18 @@ def restore_user_word_state(db_path, snapshot):
     progress_rows = snapshot.get("progress") or {}
     event_counts = snapshot.get("event_counts") or {}
     with _connect(db_path) as conn:
+        # progress/form_stats/learning_items all FK-reference words(id) ON DELETE
+        # CASCADE. If the word was deleted after the snapshot was taken, its child
+        # rows were cascade-removed and re-inserting them would raise
+        # "FOREIGN KEY constraint failed". There is nothing meaningful left to
+        # restore, so skip the INSERTs (the DELETE branches stay harmless no-ops).
+        word_exists = bool(word_id) and conn.execute(
+            "SELECT 1 FROM words WHERE id = ?", (word_id,)
+        ).fetchone() is not None
+
         for mode in modes:
             row = progress_rows.get(mode)
-            if row:
+            if row and word_exists:
                 conn.execute(
                     """
                     INSERT INTO progress (user_id, word_id, mode, interval, repetitions, ease, due, updated_at)
@@ -1368,7 +1804,7 @@ def restore_user_word_state(db_path, snapshot):
                 )
 
         fs_row = snapshot.get("form_stats")
-        if fs_row:
+        if fs_row and word_exists:
             cols = [c for c in fs_row.keys()]
             placeholders = ",".join("?" for _ in cols)
             update_cols = ",".join(f"{c}=excluded.{c}" for c in cols if c not in {"user_id", "word_id"})
@@ -1387,7 +1823,13 @@ def restore_user_word_state(db_path, snapshot):
             )
 
         li_row = snapshot.get("learning_item")
-        if li_row:
+        # learning_items additionally FK-references learning_batches(id) ON DELETE
+        # CASCADE, so its parent batch must also still exist to re-insert the row.
+        batch_id = _safe_text(li_row.get("batch_id")) if li_row else ""
+        batch_exists = bool(batch_id) and conn.execute(
+            "SELECT 1 FROM learning_batches WHERE id = ?", (batch_id,)
+        ).fetchone() is not None
+        if li_row and word_exists and batch_exists:
             cols = [c for c in li_row.keys()]
             placeholders = ",".join("?" for _ in cols)
             update_cols = ",".join(f"{c}=excluded.{c}" for c in cols if c not in {"user_id", "word_id"})
@@ -1432,7 +1874,9 @@ def restore_user_word_state(db_path, snapshot):
                         f"DELETE FROM quiz_events WHERE id IN ({placeholders})",
                         tuple(int(r["id"]) for r in ids),
                     )
-    return True
+    # False when the parent word is gone: nothing meaningful was restored (its
+    # child rows were cascade-deleted and cannot be re-created).
+    return word_exists
 
 
 def add_transaction_log(db_path, user_id, action, payload):
@@ -1497,6 +1941,16 @@ def cleanup_transaction_logs(db_path, days=7):
         )
 
 
+def _initial_user_status(user_id):
+    """Status for a freshly-created users row: 'pending', EXCEPT the owner, who is
+    never pending (#11). is_owner() overrides status everywhere, and a pending
+    owner row used to surface in the access-requests digest — spamming the owner
+    with a request to approve himself. Any upsert that may create the owner's row
+    (language/registration) goes through this so the owner row is born 'approved'.
+    """
+    return "approved" if is_owner(user_id) else "pending"
+
+
 def register_or_update_user(db_path, user_id, username="", first_name=""):
     """Handle register or update user."""
     init_db(db_path)
@@ -1517,17 +1971,18 @@ def register_or_update_user(db_path, user_id, username="", first_name=""):
             _ensure_default_user_levels(conn, int(user_id))
             return existing["status"]
 
+        status = _initial_user_status(user_id)
         conn.execute(
             """
             INSERT INTO users (
                 user_id, username, first_name, status, interface_lang, dict_lang, created_at, updated_at
             )
-            VALUES (?, ?, ?, 'pending', '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            VALUES (?, ?, ?, ?, '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
-            (int(user_id), _safe_text(username), _safe_text(first_name)),
+            (int(user_id), _safe_text(username), _safe_text(first_name), status),
         )
         _ensure_default_user_levels(conn, int(user_id))
-    return "pending"
+    return status
 
 
 def get_user_status(db_path, user_id):
@@ -1622,6 +2077,30 @@ def toggle_user_level(db_path, user_id, level):
     return True, get_user_levels(db_path, user_id)
 
 
+def set_user_levels(db_path, user_id, levels):
+    """Replace the CEFR selection outright (bug #28).
+
+    toggle_user_level flips one level against whatever is stored, which cannot
+    express "the user starts from an empty screen and picks one". The filter UI
+    needs that when the CEFR branch is entered while the topic branch is active.
+    """
+    wanted = []
+    for level in levels:
+        normalized = _normalize_level(level)
+        if normalized and normalized not in wanted:
+            wanted.append(normalized)
+    if not wanted:
+        raise ValueError("At least one CEFR level is required.")
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        conn.execute("DELETE FROM user_levels WHERE user_id = ?", (int(user_id),))
+        conn.executemany(
+            "INSERT OR IGNORE INTO user_levels (user_id, level) VALUES (?, ?)",
+            [(int(user_id), level) for level in wanted],
+        )
+    return get_user_levels(db_path, user_id)
+
+
 def get_user_info(db_path, user_id):
     """Handle get user info."""
     init_db(db_path)
@@ -1645,6 +2124,197 @@ def get_user_info(db_path, user_id):
         "created_at": row["created_at"] or "",
         "updated_at": row["updated_at"] or "",
     }
+
+
+def list_pending_users(db_path):
+    """Users with status 'pending' (awaiting the owner's approval).
+
+    The owner is always excluded (#11): is_owner overrides status, so the owner is
+    never a real applicant — and a stray pending owner row must not show up in the
+    access-requests digest/reminder (it would ask the owner to approve himself).
+    """
+    init_db(db_path)
+    owner_id = int(get_owner_id() or 0)
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT user_id, username, first_name, created_at
+            FROM users WHERE status = 'pending' AND user_id != ?
+            ORDER BY created_at
+            """,
+            (owner_id,),
+        ).fetchall()
+    return [
+        {
+            "user_id": _safe_int(row["user_id"]),
+            "username": row["username"] or "",
+            "first_name": row["first_name"] or "",
+            "created_at": row["created_at"] or "",
+        }
+        for row in rows
+    ]
+
+
+def list_active_users(db_path):
+    """User ids that should receive broadcasts (P5): every 'approved' user plus
+    the owner (who may not have an 'approved' row). Distinct, owner included,
+    sorted; 0/empty ids dropped.
+    """
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT user_id FROM users WHERE status = 'approved'",
+        ).fetchall()
+    ids = {_safe_int(row["user_id"]) for row in rows}
+    owner_id = get_owner_id()
+    if owner_id:
+        ids.add(int(owner_id))
+    ids.discard(0)
+    return sorted(ids)
+
+
+def list_user_activity(db_path):
+    """Approved users with their activity counters (spec #11 owner [users] view):
+    total `quiz_events` (every action, the "big number" already surfaced on the
+    owner's own stat screen) and words moved from learning into FSRS
+    (`learning_items.status IN ('completed','skipped')` — both count, skipped
+    included per the owner's decision 2026-07-03). Sorted by quiz_events count
+    descending (most active first); pending/blocked users are excluded. The
+    owner shows up here too, as a normal row, if their own users-row is approved.
+    """
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                u.user_id AS user_id,
+                u.username AS username,
+                u.first_name AS first_name,
+                COALESCE(qe.cnt, 0) AS quiz_events_count,
+                COALESCE(li.cnt, 0) AS learning_done_count
+            FROM users u
+            LEFT JOIN (
+                SELECT user_id, COUNT(*) AS cnt FROM quiz_events GROUP BY user_id
+            ) qe ON qe.user_id = u.user_id
+            LEFT JOIN (
+                SELECT user_id, COUNT(*) AS cnt FROM learning_items
+                WHERE status IN ('completed', 'skipped')
+                GROUP BY user_id
+            ) li ON li.user_id = u.user_id
+            WHERE u.status = 'approved'
+            ORDER BY quiz_events_count DESC, u.user_id ASC
+            """
+        ).fetchall()
+    return [
+        {
+            "user_id": _safe_int(row["user_id"]),
+            "username": row["username"] or "",
+            "first_name": row["first_name"] or "",
+            "quiz_events_count": int(row["quiz_events_count"] or 0),
+            "learning_done_count": int(row["learning_done_count"] or 0),
+        }
+        for row in rows
+    ]
+
+
+# --- Personal example/image (P4): a guest's per-word value, owner edits stay in
+# the shared `words`. A guest sees ONLY their personal image/example (blank when
+# unset) — never the owner's shared values. The owner sees the shared word. ---
+
+# spec #7: which words-translation column a user's dict_lang overrides.
+_DICT_TRANSLATION_COLUMN = {"ru": "russian", "uk": "ukrainian", "en": "english"}
+
+
+def get_user_word_media(db_path, user_id, word_id):
+    """This user's personal image/example (+ per-lang translations) for a word; {} if none set."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT image, example, russian, ukrainian, english FROM user_word_media "
+            "WHERE user_id = ? AND word_id = ?",
+            (int(user_id), str(word_id)),
+        ).fetchone()
+    if not row:
+        return {}
+    return {
+        "image": row["image"] or "",
+        "example": row["example"] or "",
+        "russian": row["russian"] or "",
+        "ukrainian": row["ukrainian"] or "",
+        "english": row["english"] or "",
+    }
+
+
+def set_user_word_translation(db_path, user_id, word_id, dict_lang, value):
+    """Upsert this user's personal translation into their dict_lang column (spec #7).
+
+    Writes to the column matching dict_lang (ru->russian, uk->ukrainian, en->english);
+    '' clears the override (reverts to the shared dictionary). Reuses the existing
+    user_word_media row (same one as personal image/example) — no new rows.
+    """
+    col = _DICT_TRANSLATION_COLUMN.get(_normalize_dict_lang(dict_lang))
+    if not col:
+        raise ValueError("Invalid dict language for personal translation.")
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO user_word_media (user_id, word_id) VALUES (?, ?)",
+            (int(user_id), str(word_id)),
+        )
+        conn.execute(
+            f"UPDATE user_word_media SET {col} = ?, updated_at = CURRENT_TIMESTAMP "
+            f"WHERE user_id = ? AND word_id = ?",
+            (_safe_text(value), int(user_id), str(word_id)),
+        )
+
+
+def set_user_word_media(db_path, user_id, word_id, image=None, example=None):
+    """Upsert this user's personal image/example for a word (only given fields)."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO user_word_media (user_id, word_id) VALUES (?, ?)",
+            (int(user_id), str(word_id)),
+        )
+        sets, params = [], []
+        if image is not None:
+            sets.append("image = ?")
+            params.append(_safe_text(image))
+        if example is not None:
+            sets.append("example = ?")
+            params.append(_safe_text(example))
+        if sets:
+            params.extend([int(user_id), str(word_id)])
+            conn.execute(
+                f"UPDATE user_word_media SET {', '.join(sets)}, updated_at = CURRENT_TIMESTAMP "
+                f"WHERE user_id = ? AND word_id = ?",
+                params,
+            )
+
+
+def apply_user_word_media(db_path, user_id, entry):
+    """Apply the per-user view of image/example to a word entry.
+
+    The owner sees the shared word as-is. A guest sees ONLY their personal
+    image/example (blank when unset) — the owner's shared image/example are never
+    shown to a guest. The input entry is left unchanged.
+    """
+    if not user_id or not entry or not entry.get("id"):
+        return entry
+    if is_owner(user_id):
+        return entry
+    media = get_user_word_media(db_path, user_id, entry.get("id"))
+    out = dict(entry)
+    out["image"] = media.get("image", "")
+    out["example"] = media.get("example", "")
+    # spec #7: personal translation override for the user's dict_lang. Kept in a
+    # SEPARATE 'my_translation' key so the base russian/ukrainian/english fields
+    # stay intact — display prefers my_translation, while the De>L1 checker can
+    # still accept the base translation too (both count, per owner's decision).
+    _, dict_lang = get_user_languages(db_path, user_id)
+    col = _DICT_TRANSLATION_COLUMN.get(dict_lang)
+    out["my_translation"] = media.get(col, "") if col else ""
+    return out
 
 
 def _normalize_interface_lang(value):
@@ -1682,12 +2352,12 @@ def set_user_interface_lang(db_path, user_id, interface_lang):
         conn.execute(
             """
             INSERT INTO users (user_id, username, first_name, status, interface_lang, dict_lang, created_at, updated_at)
-            VALUES (?, '', '', 'pending', ?, '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            VALUES (?, '', '', ?, ?, '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             ON CONFLICT(user_id) DO UPDATE SET
                 interface_lang = excluded.interface_lang,
                 updated_at = CURRENT_TIMESTAMP
             """,
-            (int(user_id), value),
+            (int(user_id), _initial_user_status(user_id), value),
         )
         _ensure_default_user_levels(conn, int(user_id))
 
@@ -1702,12 +2372,12 @@ def set_user_dict_lang(db_path, user_id, dict_lang):
         conn.execute(
             """
             INSERT INTO users (user_id, username, first_name, status, interface_lang, dict_lang, created_at, updated_at)
-            VALUES (?, '', '', 'pending', '', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            VALUES (?, '', '', ?, '', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             ON CONFLICT(user_id) DO UPDATE SET
                 dict_lang = excluded.dict_lang,
                 updated_at = CURRENT_TIMESTAMP
             """,
-            (int(user_id), value),
+            (int(user_id), _initial_user_status(user_id), value),
         )
         _ensure_default_user_levels(conn, int(user_id))
 
@@ -1757,11 +2427,64 @@ def get_setting(db_path, key, default=None):
     return row["value"]
 
 
-def reset_periodicity(db_path):
-    """Handle reset periodicity."""
+def set_user_setting(db_path, user_id, key, value):
+    """Upsert a per-user setting (user_settings table)."""
     init_db(db_path)
     with _connect(db_path) as conn:
-        conn.execute("DELETE FROM progress")
+        conn.execute(
+            """
+            INSERT INTO user_settings (user_id, key, value) VALUES (?, ?, ?)
+            ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value
+            """,
+            (int(user_id), _safe_text(key), _safe_text(value)),
+        )
+
+
+def get_user_setting(db_path, user_id, key, default=None):
+    """This user's setting value, or `default` if they have none set.
+
+    Per-user override layer over global defaults: the caller passes the global
+    default; an unset key simply falls back to it. Strictly user-scoped — never
+    sees another user's value.
+    """
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT value FROM user_settings WHERE user_id = ? AND key = ?",
+            (int(user_id), _safe_text(key)),
+        ).fetchone()
+    if not row:
+        return default
+    return row["value"]
+
+
+def reset_user_settings(db_path, user_id, keys=None):
+    """Reset some (keys given) or ALL of a user's settings to defaults.
+
+    Deletes only that user's rows → the getter then falls back to the global
+    default. Strictly user-scoped (never touches another user / the owner).
+    """
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        if keys:
+            clean = [_safe_text(k) for k in keys]
+            placeholders = ",".join("?" for _ in clean)
+            conn.execute(
+                f"DELETE FROM user_settings WHERE user_id = ? AND key IN ({placeholders})",
+                (int(user_id), *clean),
+            )
+        else:
+            conn.execute("DELETE FROM user_settings WHERE user_id = ?", (int(user_id),))
+
+
+def reset_periodicity(db_path, user_id):
+    """Reset the SR schedule for ONE user — deletes only their progress rows.
+
+    Multiuser-safe: scoped by user_id so a reset never wipes other users' progress.
+    """
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        conn.execute("DELETE FROM progress WHERE user_id = ?", (int(user_id),))
 
 
 def add_banned_word(db_path, raw_word):
@@ -1809,7 +2532,7 @@ def find_existing_word(db_path, raw_word):
         row = conn.execute(
             """
             SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian,
-            ukrainian, english, topic
+            ukrainian, english, topic, preposition_type, case_type
             FROM words
             WHERE lower(trim(german)) = ?
                OR lower(trim(infinitive)) = ?
@@ -1853,6 +2576,22 @@ def _dedupe_entry(conn, entry):
             "SELECT id FROM words WHERE type = 'verb' AND lower(trim(infinitive)) = ? LIMIT 1",
             (key_value,),
         ).fetchone()
+    elif key_type == "praeposition":
+        # spec #1: the same preposition spelling can be several distinct words, one
+        # per (preposition_type, case_type) meaning — each with its own translation
+        # and FSRS progress. So a duplicate is only an EXACT triple match; a new
+        # (type, case) pair is intentionally allowed through.
+        row = conn.execute(
+            "SELECT id FROM words WHERE type = 'praeposition' "
+            "AND lower(trim(german)) = ? "
+            "AND lower(trim(coalesce(preposition_type, ''))) = ? "
+            "AND lower(trim(coalesce(case_type, ''))) = ? LIMIT 1",
+            (
+                key_value,
+                _normalize_text(entry.get("preposition_type", "")),
+                _normalize_text(entry.get("case_type", "")),
+            ),
+        ).fetchone()
     else:
         row = conn.execute(
             "SELECT id FROM words WHERE lower(trim(german)) = ? LIMIT 1",
@@ -1860,6 +2599,36 @@ def _dedupe_entry(conn, entry):
         ).fetchone()
     if row:
         raise ValueError("Already in database.")
+
+
+def _safe_cefr_level(value):
+    """Normalize a CEFR level to the controlled vocabulary or '' (unknown/invalid).
+
+    Uppercased so 'a1' -> 'A1'; anything outside CEFR_LEVELS becomes '' rather than
+    being stored as free text (defense in depth behind the VF parser's own guard).
+    """
+    level = _safe_text(value).strip().upper()
+    return level if level in CEFR_LEVELS else ""
+
+
+# toggle_user_level (defined earlier) validates a level through this name: a valid CEFR
+# level normalizes to itself, anything else -> '' so the caller rejects it.
+_normalize_level = _safe_cefr_level
+
+
+def _cefr_filter_sql(cefr_levels):
+    """Build the CEFR level restriction for a word query (spec_topics_levels.md §3).
+
+    Returns ('w.cefr_level IN (?,?)', [levels]) for a non-empty valid selection, else
+    ('', []). None/empty means NO restriction — the caller adds nothing (in CEFR mode
+    that is the 'all six levels selected' case, which by design shows every word,
+    including those with an empty cefr_level).
+    """
+    clean = [_safe_cefr_level(x) for x in (cefr_levels or []) if _safe_cefr_level(x)]
+    if not clean:
+        return "", []
+    placeholders = ",".join("?" for _ in clean)
+    return f"w.cefr_level IN ({placeholders})", clean
 
 
 def _normalize_word_entry_for_storage(entry):
@@ -1876,6 +2645,10 @@ def _normalize_word_entry_for_storage(entry):
 
     if word_type == "nomen":
         result["german"] = cap_word(result.get("german", ""))
+        # Each plural form is a noun too (T1); "Pizzas, Pizzen" caps both.
+        plural = _safe_text(result.get("plural", "")).strip()
+        if plural:
+            result["plural"] = ", ".join(cap_word(p) for p in split_plural_forms(plural))
     else:
         for field in ("german", "infinitive", "prateritum", "partizip2", "komparativ", "superlativ"):
             value = _safe_text(result.get(field, "")).strip().lower()
@@ -1888,6 +2661,13 @@ def _normalize_word_entry_for_storage(entry):
             result[field] = value
 
     return result
+
+
+def normalize_word_entry(entry):
+    """Public entry point for the casing rules above (T1): manual edits
+    (clarify) must land in the shared dictionary with the same casing as the
+    AI add path — nomen capitalized, everything else and translations lower."""
+    return _normalize_word_entry_for_storage(entry)
 
 
 def add_word(db_path, entry):
@@ -1903,8 +2683,8 @@ def add_word(db_path, entry):
             """
             INSERT INTO words (
                 id, type, article, german, plural, infinitive, prateritum, partizip2, komparativ, superlativ,
-                russian, ukrainian, english, image, example, topic, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                russian, ukrainian, english, image, example, topic, preposition_type, case_type, cefr_level, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             """,
             (
                 entry["id"],
@@ -1923,6 +2703,9 @@ def add_word(db_path, entry):
                 _safe_text(entry.get("image", "")),
                 _safe_text(entry.get("example", "")),
                 _safe_text(entry.get("topic", "1")) or "1",
+                _safe_text(entry.get("preposition_type", "")),
+                _safe_text(entry.get("case_type", "")),
+                _safe_cefr_level(entry.get("cefr_level", "")),
             ),
         )
     return entry
@@ -1946,10 +2729,15 @@ def select_due(
     mode,
     word_type=None,
     topics=None,
+    cefr_levels=None,
     today=None,
     exclude_correct_today=False,
 ):
-    """Handle select due."""
+    """Handle select due.
+
+    `topics` and `cefr_levels` are the two mutually-exclusive quiz filters
+    (spec_topics_levels.md): the resolver passes at most one of them.
+    """
     if today is None:
         today = date.today()
     due_today = today.isoformat()
@@ -1994,6 +2782,10 @@ def select_due(
             placeholders = ",".join("?" for _ in clean_topics)
             where_clauses.append(f"w.topic IN ({placeholders})")
             where_params.extend(clean_topics)
+    cefr_clause, cefr_params = _cefr_filter_sql(cefr_levels)
+    if cefr_clause:
+        where_clauses.append(cefr_clause)
+        where_params.extend(cefr_params)
     if exclude_correct_today:
         where_clauses.append(
             """NOT EXISTS (
@@ -2013,7 +2805,7 @@ def select_due(
     query = f"""
         SELECT
             w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ, w.russian,
-            w.ukrainian, w.english, w.image, w.example, w.topic, ldone.done_at AS learning_done_at,
+            w.ukrainian, w.english, w.image, w.example, w.topic, w.preposition_type, w.case_type, ldone.done_at AS learning_done_at,
             CASE WHEN EXISTS (
                 SELECT 1
                 FROM quiz_events qe
@@ -2094,6 +2886,40 @@ def update_fsrs(srs, quality, today=None, interval_divisor=1.0):
         "repetitions": repetitions,
         "ease": round(ease, 2),
         "due": due.isoformat(),
+    }
+
+
+def simulate_fsrs_advance(srs, n, today=None, interval_divisor=1.0):
+    """N consecutive perfect answers (quality=5) applied to `srs` WITHOUT writing.
+
+    The add_int card action (spec #15 / T5): the owner/user pushes a word's next
+    show further out exactly as if they had answered it right n times in a row —
+    same growth curve, no shortcut math."""
+    result = dict(srs) if srs else default_srs(today)
+    for _ in range(max(0, int(n))):
+        result = update_fsrs(result, 5, today=today, interval_divisor=interval_divisor)
+    return result
+
+
+def get_progress(db_path, user_id, word_id, mode):
+    """Current SRS state for (user, word, mode); default_srs() when absent."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT interval, repetitions, ease, due
+            FROM progress
+            WHERE user_id = ? AND word_id = ? AND mode = ?
+            """,
+            (int(user_id), word_id, mode),
+        ).fetchone()
+    if not row:
+        return default_srs()
+    return {
+        "interval": int(row["interval"]),
+        "repetitions": int(row["repetitions"]),
+        "ease": float(row["ease"]),
+        "due": row["due"],
     }
 
 
@@ -2224,8 +3050,52 @@ def learning_active_count(db_path, user_id, batch_id=None):
     return int(row["cnt"] or 0) if row else 0
 
 
-def learning_pick_new_words(db_path, user_id, limit, topics=None):
-    """Handle learning pick new words."""
+def _mix_by_topic_proportional(entries, limit):
+    """Interleave candidate words across topics proportionally to bucket size.
+
+    Weighted round-robin: each step picks a topic at random with probability
+    proportional to how many words that topic still has, avoiding two picks from
+    the same topic back-to-back when another topic is available. In-topic order
+    is preserved (later-round show randomization is a separate concern handled by
+    the show layer, see handlers/learning.py:_pick_learning_due_entry). A single
+    topic (or a single distinct topic among candidates) simply yields that
+    topic's words in order — no division, no special case.
+    """
+    buckets = {}
+    for entry in entries:
+        topic = str(entry.get("topic") or "").strip() or "-"
+        buckets.setdefault(topic, []).append(entry)
+    mixed = []
+    last_topic = None
+    while len(mixed) < limit:
+        candidates = [(topic, values) for topic, values in buckets.items() if values]
+        if not candidates:
+            break
+        pool = candidates
+        if last_topic and len(candidates) > 1:
+            alt = [(topic, values) for topic, values in candidates if topic != last_topic]
+            if alt:
+                pool = alt
+        topics = [topic for topic, _ in pool]
+        weights = [len(values) for _, values in pool]
+        chosen = random.choices(topics, weights=weights, k=1)[0]
+        mixed.append(buckets[chosen].pop(0))
+        last_topic = chosen
+    return mixed
+
+
+def learning_pick_new_words(db_path, user_id, limit, topics=None, cefr_levels=None, mix=False):
+    """Pick new (never-seen, not-yet-in-learning) words to enqueue for learning.
+
+    This is the *selection* layer for the learning queue — the only place mix
+    mode acts. Mix mode never reorders the running queue's shows (that rule is
+    static, see handlers/learning.py:_pick_learning_due_entry); it only shapes
+    which words get drawn into the queue from the selected topic filter(s):
+      - mix OFF: words taken in their natural (added) order across the filter;
+      - mix ON: words drawn proportionally from each topic present, so a
+        multi-topic filter yields a balanced mix (weighted by queue size).
+    A single selected topic degrades to plain in-order selection from it.
+    """
     init_db(db_path)
     if int(limit) <= 0:
         return []
@@ -2237,6 +3107,9 @@ def learning_pick_new_words(db_path, user_id, limit, topics=None):
             placeholders = ",".join("?" for _ in clean_topics)
             where_topics = f" AND w.topic IN ({placeholders})"
             params.extend(clean_topics)
+    cefr_clause, cefr_params = _cefr_filter_sql(cefr_levels)
+    where_cefr = f" AND {cefr_clause}" if cefr_clause else ""
+    params.extend(cefr_params)
     with _connect(db_path) as conn:
         rows = conn.execute(
             """
@@ -2251,13 +3124,15 @@ def learning_pick_new_words(db_path, user_id, limit, topics=None):
                 SELECT 1 FROM learning_items li
                 WHERE li.user_id = ? AND li.word_id = w.id
               )
-            {where_topics}
-            ORDER BY RANDOM()
-            LIMIT ?
-            """.format(where_topics=where_topics),
-            (*params, int(limit)),
+            {where_topics}{where_cefr}
+            ORDER BY w.created_at ASC, w.id ASC
+            """.format(where_topics=where_topics, where_cefr=where_cefr),
+            (*params,),
         ).fetchall()
-    return [_row_to_entry(row) for row in rows]
+    entries = [_row_to_entry(row) for row in rows]
+    if not mix:
+        return entries[: int(limit)]
+    return _mix_by_topic_proportional(entries, int(limit))
 
 
 def learning_add_words(db_path, user_id, words, batch_id, first_delay_seconds):
@@ -2941,7 +3816,32 @@ def log_quiz_event(db_path, user_id, word_id, mode, is_correct, review_stage_sna
         )
 
 
- 
+def mark_last_quiz_event_correct(db_path, user_id, word_id, mode):
+    """Flip the most recent quiz_event for (user, word, mode) to correct in place.
+
+    Used by input_err: the last answer was a typo, not a real miss. Updating the
+    existing event (instead of appending a new correct one) means the daily/weekly
+    first-touch retention counts that word as correct — a later appended event
+    would be ignored because the report keys off the first answer of the day.
+    Returns True if a row was updated."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        cur = conn.execute(
+            """
+            UPDATE quiz_events
+            SET is_correct = 1
+            WHERE id = (
+                SELECT id FROM quiz_events
+                WHERE user_id = ? AND word_id = ? AND mode = ?
+                ORDER BY id DESC
+                LIMIT 1
+            )
+            """,
+            (int(user_id), _safe_text(word_id), _safe_text(mode)),
+        )
+        return cur.rowcount > 0
+
+
 def list_words_for_translations_backfill(db_path, limit=0):
     """Handle list words for translations backfill."""
     init_db(db_path)
@@ -2999,6 +3899,9 @@ def update_word_fields(db_path, word_id, fields):
         "image",
         "example",
         "topic",
+        "preposition_type",
+        "case_type",
+        "cefr_level",
     }
     init_db(db_path)
     with _connect(db_path) as conn:
@@ -3011,6 +3914,19 @@ def update_word_fields(db_path, word_id, fields):
         if key not in allowed:
             continue
         if key not in existing_cols:
+            continue
+        # spec #1: the two preposition columns are a controlled vocabulary. Guard the
+        # storage layer too (defense in depth behind the clarify/AI validation): only
+        # a known value or '' (clears the field) is ever written — never free text.
+        if key in ("preposition_type", "case_type"):
+            normalized = _safe_text(value).strip().lower()
+            allowed_vocab = PREPOSITION_TYPES if key == "preposition_type" else CASE_TYPES
+            if normalized and normalized not in allowed_vocab:
+                continue
+            values[key] = normalized
+            continue
+        if key == "cefr_level":
+            values[key] = _safe_cefr_level(value)
             continue
         values[key] = _safe_text(value)
     if not values:
@@ -3060,25 +3976,23 @@ def update_form_stats(db_path, user_id, word_id, checks):
         today_iso = (date.today() + timedelta(days=WEAK_REVIEW_DAYS_STAGE1)).isoformat()
         for field in fields:
             ok = safe_checks[field]
+            pre_row = conn.execute(
+                f"""
+                SELECT
+                    {field}_errors AS errors,
+                    {field}_streak_wrong AS streak_wrong,
+                    {field}_review_stage AS stage,
+                    {field}_active AS active
+                FROM form_stats
+                WHERE user_id = ? AND word_id = ?
+                """,
+                (int(user_id), _safe_text(word_id)),
+            ).fetchone()
+            pre_errors = int(pre_row["errors"] or 0) if pre_row else 0
+            pre_streak_wrong = int(pre_row["streak_wrong"] or 0) if pre_row else 0
+            pre_stage = int(pre_row["stage"] or 0) if pre_row else 0
+            was_active_before = bool(pre_row["active"]) if pre_row else False
             if ok:
-                pre_row = conn.execute(
-                    f"""
-                    SELECT
-                        {field}_errors AS errors,
-                        {field}_streak_wrong AS streak_wrong,
-                        {field}_review_stage AS stage
-                    FROM form_stats
-                    WHERE user_id = ? AND word_id = ?
-                    """,
-                    (int(user_id), _safe_text(word_id)),
-                ).fetchone()
-                pre_errors = int(pre_row["errors"] or 0) if pre_row else 0
-                pre_streak_wrong = int(pre_row["streak_wrong"] or 0) if pre_row else 0
-                pre_stage = int(pre_row["stage"] or 0) if pre_row else 0
-                was_active_before = (
-                    pre_errors >= WEAK_ACTIVE_MIN_ERRORS
-                    or pre_streak_wrong >= WEAK_ACTIVE_MIN_STREAK_WRONG
-                )
                 conn.execute(
                     f"""
                     UPDATE form_stats
@@ -3097,13 +4011,17 @@ def update_form_stats(db_path, user_id, word_id, checks):
                     (int(user_id), _safe_text(word_id)),
                 ).fetchone()
                 streak = int(row["s"] or 0) if row else 0
+                # A single correct must NOT clear the episode flag: a freshly-entered
+                # word is held in the quiz until it earns WEAK_ACTIVE_CLEAR_STREAK in a
+                # row — only then the flag drops and the word promotes to the ladder.
                 if streak >= WEAK_ACTIVE_CLEAR_STREAK:
                     conn.execute(
                         f"""
                         UPDATE form_stats
                         SET {field}_errors = 0,
                             {field}_streak_wrong = 0,
-                            {field}_streak_correct = 0
+                            {field}_streak_correct = 0,
+                            {field}_active = 0
                         WHERE user_id = ? AND word_id = ?
                         """,
                         (int(user_id), _safe_text(word_id)),
@@ -3129,6 +4047,20 @@ def update_form_stats(db_path, user_id, word_id, checks):
                     """,
                     (int(user_id), _safe_text(word_id)),
                 )
+                # Entry: flip the episode flag once the wrong answer reaches the
+                # entry threshold (total errors) or the wrong-streak threshold.
+                if (
+                    pre_errors + 1 >= WEAK_ACTIVE_MIN_ERRORS
+                    or pre_streak_wrong + 1 >= WEAK_ACTIVE_MIN_STREAK_WRONG
+                ):
+                    conn.execute(
+                        f"""
+                        UPDATE form_stats
+                        SET {field}_active = 1
+                        WHERE user_id = ? AND word_id = ?
+                        """,
+                        (int(user_id), _safe_text(word_id)),
+                    )
 
 
 def update_weak_review_state(db_path, user_id, word_id, field, ok):
@@ -3143,9 +4075,8 @@ def update_weak_review_state(db_path, user_id, word_id, field, ok):
         row = conn.execute(
             f"""
             SELECT
-                {field}_errors AS errors,
-                {field}_streak_wrong AS streak_wrong,
-                {field}_review_stage AS stage
+                {field}_review_stage AS stage,
+                {field}_active AS active
             FROM form_stats
             WHERE user_id = ? AND word_id = ?
             """,
@@ -3153,10 +4084,8 @@ def update_weak_review_state(db_path, user_id, word_id, field, ok):
         ).fetchone()
         if not row:
             return 0
-        errors = int(row["errors"] or 0)
-        streak_wrong = int(row["streak_wrong"] or 0)
         stage = int(row["stage"] or 0)
-        active = errors >= WEAK_ACTIVE_MIN_ERRORS or streak_wrong >= WEAK_ACTIVE_MIN_STREAK_WRONG
+        active = bool(row["active"])
         if active or stage <= 0:
             return stage
         if ok:
@@ -3233,15 +4162,21 @@ def apply_weak_input_err(db_path, user_id, word_id, field):
         new_errors = max(0, errors - 1)
         new_streak_wrong = max(0, streak_wrong - 1)
         new_streak_correct = streak_correct + 1
+        # input_err explicitly reverses the last (mis-matched) wrong answer, so it
+        # may pull a word back OUT of an episode it never should have entered — if
+        # the reverted counters no longer meet the entry threshold, drop the flag.
+        # (The normal-correct path keeps the flag; only this manual undo clears it.)
+        active = new_errors >= WEAK_ACTIVE_MIN_ERRORS or new_streak_wrong >= WEAK_ACTIVE_MIN_STREAK_WRONG
         conn.execute(
             f"""
             UPDATE form_stats
             SET {field}_errors = ?,
                 {field}_streak_wrong = ?,
-                {field}_streak_correct = ?
+                {field}_streak_correct = ?,
+                {field}_active = ?
             WHERE user_id = ? AND word_id = ?
             """,
-            (new_errors, new_streak_wrong, new_streak_correct, int(user_id), _safe_text(word_id)),
+            (new_errors, new_streak_wrong, new_streak_correct, 1 if active else 0, int(user_id), _safe_text(word_id)),
         )
     return True
 
@@ -3258,7 +4193,8 @@ def get_form_state(db_path, user_id, word_id, field):
             SELECT
                 {field}_errors AS errors,
                 {field}_streak_wrong AS streak_wrong,
-                {field}_review_stage AS stage
+                {field}_review_stage AS stage,
+                {field}_active AS active
             FROM form_stats
             WHERE user_id = ? AND word_id = ?
             """,
@@ -3269,7 +4205,7 @@ def get_form_state(db_path, user_id, word_id, field):
     errors = int(row["errors"] or 0)
     streak_wrong = int(row["streak_wrong"] or 0)
     stage = int(row["stage"] or 0)
-    active = errors >= WEAK_ACTIVE_MIN_ERRORS or streak_wrong >= WEAK_ACTIVE_MIN_STREAK_WRONG
+    active = bool(row["active"])
     return {"errors": errors, "streak_wrong": streak_wrong, "review_stage": stage, "active": active}
 
 
@@ -3291,23 +4227,24 @@ def get_form_review_stage(db_path, user_id, word_id, field):
     return int(row["stage"] or 0) if row else 0
 
 
-def list_weak_words(db_path, user_id, weak_field, word_type=None, topics=None, limit=200):
+def list_weak_words(db_path, user_id, weak_field, word_type=None, topics=None, cefr_levels=None, limit=200):
     """Handle list weak words."""
     weak_field = _safe_text(weak_field).strip().lower()
     if weak_field not in {"article", "plural", "prateritum", "partizip2"}:
         return []
     init_db(db_path)
     today = date.today().isoformat()
-    active_cond = (
-        f"(fs.{weak_field}_errors >= {WEAK_ACTIVE_MIN_ERRORS} "
-        f"OR fs.{weak_field}_streak_wrong >= {WEAK_ACTIVE_MIN_STREAK_WRONG})"
-    )
+    active_cond = f"(fs.{weak_field}_active = 1)"
     review_cond = f"(fs.{weak_field}_review_stage > 0 AND date(fs.{weak_field}_next_review) <= date(?))"
     where = [
         "fs.user_id = ?",
         f"({active_cond} OR {review_cond})",
     ]
     params = [int(user_id), today]
+    if weak_field == "plural":
+        placeholders = ",".join("?" for _ in ABSENT_PLURAL_MARKERS)
+        where.append(f"TRIM(COALESCE(w.plural, '')) NOT IN ({placeholders})")
+        params.extend(ABSENT_PLURAL_MARKERS)
     if word_type:
         where.append("w.type = ?")
         params.append(_safe_text(word_type))
@@ -3317,6 +4254,10 @@ def list_weak_words(db_path, user_id, weak_field, word_type=None, topics=None, l
             placeholders = ",".join("?" for _ in clean_topics)
             where.append(f"w.topic IN ({placeholders})")
             params.extend(clean_topics)
+    cefr_clause, cefr_params = _cefr_filter_sql(cefr_levels)
+    if cefr_clause:
+        where.append(cefr_clause)
+        params.extend(cefr_params)
     query = f"""
         SELECT
             w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ, w.russian,
@@ -3421,6 +4362,17 @@ def get_synonym_group(db_path, word_id):
     return [_row_to_entry(x) for x in rows]
 
 
+def map_synonym_group_ids(db_path):
+    """word_id -> group_id for every synonym-linked word, in one query.
+
+    Feeds the db_search matches list (T3): grouping by synonym group needs the
+    ids for ALL words at once — per-word lookups would be a query per row."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        rows = conn.execute("SELECT word_id, group_id FROM word_synonyms").fetchall()
+    return {row["word_id"]: int(row["group_id"]) for row in rows}
+
+
 def get_synonym_group_id(db_path, word_id):
     """Handle get synonym group id."""
     wid = _safe_text(word_id)
@@ -3489,7 +4441,7 @@ def list_synonym_candidates_by_ru(db_path, anchor_word_id):
         rows = conn.execute(
             """
             SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian
-            , ukrainian, english, image, example, topic
+            , ukrainian, english, image, example, topic, preposition_type, case_type
             FROM words
             WHERE lower(trim(type)) = ?
             """,
@@ -3513,7 +4465,7 @@ def get_word_by_id(db_path, word_id):
         row = conn.execute(
             """
             SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian
-            , ukrainian, english, image, example, topic
+            , ukrainian, english, image, example, topic, preposition_type, case_type, cefr_level
             FROM words
             WHERE id = ?
             LIMIT 1
@@ -3532,7 +4484,7 @@ def list_all_words(db_path):
         rows = conn.execute(
             """
             SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian
-            , ukrainian, english, image, example, topic
+            , ukrainian, english, image, example, topic, preposition_type, case_type
             FROM words
             ORDER BY created_at ASC
             """
@@ -3547,7 +4499,7 @@ def list_words_by_topic(db_path, topic):
         rows = conn.execute(
             """
             SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian
-            , ukrainian, english, image, example, topic
+            , ukrainian, english, image, example, topic, preposition_type, case_type
             FROM words
             WHERE topic = ?
             ORDER BY created_at ASC
@@ -3635,7 +4587,7 @@ def get_word_study_status(db_path, user_id, word_id):
     return "fsrs 0"
 
 
-def list_learning_queue_words(db_path, user_id, topics=None):
+def list_learning_queue_words(db_path, user_id, topics=None, cefr_levels=None):
     """Handle new words that have no first touch and are not completed in learning."""
     init_db(db_path)
     where_topics = ""
@@ -3646,6 +4598,9 @@ def list_learning_queue_words(db_path, user_id, topics=None):
             placeholders = ",".join("?" for _ in clean_topics)
             where_topics = f" AND w.topic IN ({placeholders})"
             params.extend(clean_topics)
+    cefr_clause, cefr_params = _cefr_filter_sql(cefr_levels)
+    where_cefr = f" AND {cefr_clause}" if cefr_clause else ""
+    params.extend(cefr_params)
     with _connect(db_path) as conn:
         rows = conn.execute(
             """
@@ -3661,59 +4616,61 @@ def list_learning_queue_words(db_path, user_id, topics=None):
                 SELECT 1 FROM learning_items li
                 WHERE li.user_id = ? AND li.word_id = w.id AND li.status = 'completed'
               )
-            {where_topics}
+            {where_topics}{where_cefr}
             ORDER BY
                 CASE WHEN trim(coalesce(w.topic, '')) GLOB '[0-9]*' THEN 0 ELSE 1 END ASC,
                 CASE WHEN trim(coalesce(w.topic, '')) GLOB '[0-9]*' THEN CAST(trim(w.topic) AS INTEGER) ELSE NULL END ASC,
                 w.topic ASC,
                 w.created_at ASC
-            """.format(where_topics=where_topics),
+            """.format(where_topics=where_topics, where_cefr=where_cefr),
             tuple(params),
         ).fetchall()
     return [_row_to_entry(row) for row in rows]
 
 
-def list_fsrs_weak_words(db_path, user_id, mode, min_wrong_streak=4):
-    """Handle list fsrs weak words."""
+# spec #6: display label -> the form's active-episode flag column in form_stats.
+_WEAK_FORM_COLUMNS = (
+    ("artikel", "article_active"),
+    ("plural", "plural_active"),
+    ("präteritum", "prateritum_active"),
+    ("partizip2", "partizip2_active"),
+)
+
+
+def list_weak_form_words(db_path, user_id):
+    """Words with an ACTIVE weak-form episode for this user (spec #6).
+
+    A word is listed when any weak-form flag (#18A `*_active`) is set — the exact
+    same episode mechanics that the weak quizzes use (3 correct in a row clears a
+    flag, dropping the word). Each entry carries a `weak_forms` list of the active
+    forms. Ordered worst-first (most active forms), then alphabetically. Replaces
+    the old wrong-streak list (which was unrelated to the weak-form modes).
+    """
     init_db(db_path)
     with _connect(db_path) as conn:
         rows = conn.execute(
             """
-            WITH ordered AS (
-                SELECT
-                    e.word_id AS word_id,
-                    e.is_correct AS is_correct,
-                    e.id AS id,
-                    SUM(CASE WHEN e.is_correct = 1 THEN 1 ELSE 0 END)
-                        OVER (
-                            PARTITION BY e.word_id
-                            ORDER BY e.id DESC
-                            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-                        ) AS seen_correct
-                FROM quiz_events e
-                WHERE e.user_id = ? AND e.mode = ?
-            ),
-            streaks AS (
-                SELECT
-                    o.word_id AS word_id,
-                    COUNT(*) AS wrong_streak
-                FROM ordered o
-                WHERE o.seen_correct = 0
-                  AND o.is_correct = 0
-                GROUP BY o.word_id
-                HAVING COUNT(*) >= ?
-            )
             SELECT
-                w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ, w.russian,
-                w.ukrainian, w.english, w.topic,
-                s.wrong_streak AS wrong_streak
-            FROM streaks s
-            JOIN words w ON w.id = s.word_id
-            ORDER BY s.wrong_streak DESC, w.created_at ASC
+                w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum,
+                w.partizip2, w.komparativ, w.superlativ, w.russian, w.ukrainian, w.english, w.topic,
+                fs.article_active AS article_active, fs.plural_active AS plural_active,
+                fs.prateritum_active AS prateritum_active, fs.partizip2_active AS partizip2_active
+            FROM form_stats fs
+            JOIN words w ON w.id = fs.word_id
+            WHERE fs.user_id = ?
+              AND (fs.article_active = 1 OR fs.plural_active = 1
+                   OR fs.prateritum_active = 1 OR fs.partizip2_active = 1)
             """,
-            (int(user_id), _safe_text(mode), int(min_wrong_streak)),
+            (int(user_id),),
         ).fetchall()
-    return [_row_to_entry(row) for row in rows]
+    out = []
+    for row in rows:
+        entry = _row_to_entry(row)
+        entry["weak_forms"] = [label for label, col in _WEAK_FORM_COLUMNS if row[col]]
+        out.append(entry)
+    # worst first (most active forms), then alphabetical by German lemma
+    out.sort(key=lambda e: (-len(e["weak_forms"]), (e.get("german") or e.get("infinitive") or "").lower()))
+    return out
 
 
 def find_word_by_value(db_path, token):
@@ -3726,7 +4683,7 @@ def find_word_by_value(db_path, token):
         row = conn.execute(
             """
             SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian
-            , ukrainian, english, image, example, topic
+            , ukrainian, english, image, example, topic, preposition_type, case_type
             FROM words
             WHERE id = ?
                OR lower(trim(german)) = ?
@@ -3780,7 +4737,7 @@ def search_word(db_path, token):
         row = conn.execute(
             """
             SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian
-            , ukrainian, english, image, example, topic
+            , ukrainian, english, image, example, topic, preposition_type, case_type
             FROM words
             WHERE id = ?
                OR lower(trim(german)) IN (?, ?)
@@ -3821,7 +4778,7 @@ def search_word(db_path, token):
         rows = conn.execute(
             """
             SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian
-            , ukrainian, english, image, example, topic
+            , ukrainian, english, image, example, topic, preposition_type, case_type
             FROM words
             WHERE lower(german) LIKE ? OR lower(german) LIKE ?
                OR lower(infinitive) LIKE ? OR lower(infinitive) LIKE ?
@@ -3967,6 +4924,175 @@ def list_pending_word_flags(db_path, limit=0):
     return result
 
 
+# --- P6: user error/fix reports + general feedback. Users write their own rows;
+# the owner reviews all and closes (status -> reviewed) or deletes via buttons. ---
+
+def add_error_report(db_path, user_id, word_id, comment, mode="", state="", last_action=""):
+    """Store a user's error/fix report on a word, with a small where-it-happened trace."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO error_reports
+                (word_id, user_id, mode, state, last_action, comment, status, created_at, reviewed_at)
+            VALUES (?, ?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP, '')
+            """,
+            (
+                _safe_text(word_id), int(user_id), _safe_text(mode),
+                _safe_text(state), _safe_text(last_action), _safe_text(comment),
+            ),
+        )
+        return int(cur.lastrowid)
+
+
+def list_error_reports(db_path, status="pending", limit=0):
+    """Reports for owner review (default: pending), newest last; joins word + username."""
+    init_db(db_path)
+    query = """
+        SELECT r.id, r.word_id, r.user_id, r.mode, r.state, r.last_action,
+               r.comment, r.status, r.created_at,
+               w.german AS german, u.username AS username, u.first_name AS first_name
+        FROM error_reports r
+        LEFT JOIN words w ON w.id = r.word_id
+        LEFT JOIN users u ON u.user_id = r.user_id
+        WHERE r.status = ?
+        ORDER BY r.created_at ASC
+    """
+    params = [_safe_text(status)]
+    if int(limit) > 0:
+        query += " LIMIT ?"
+        params.append(int(limit))
+    with _connect(db_path) as conn:
+        rows = conn.execute(query, tuple(params)).fetchall()
+    return [
+        {
+            "id": int(row["id"]),
+            "word_id": row["word_id"] or "",
+            "user_id": int(row["user_id"]),
+            "mode": row["mode"] or "",
+            "state": row["state"] or "",
+            "last_action": row["last_action"] or "",
+            "comment": row["comment"] or "",
+            "status": row["status"] or "",
+            "created_at": row["created_at"] or "",
+            "german": row["german"] or "",
+            "username": row["username"] or "",
+            "first_name": row["first_name"] or "",
+        }
+        for row in rows
+    ]
+
+
+def set_error_report_status(db_path, report_id, status):
+    """Mark a report reviewed/pending."""
+    safe = _safe_text(status).strip().lower()
+    if safe not in {"pending", "reviewed"}:
+        raise ValueError("Invalid report status.")
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        conn.execute(
+            """
+            UPDATE error_reports
+            SET status = ?, reviewed_at = CASE WHEN ? = 'reviewed' THEN CURRENT_TIMESTAMP ELSE '' END
+            WHERE id = ?
+            """,
+            (safe, safe, int(report_id)),
+        )
+
+
+def delete_error_report(db_path, report_id):
+    """Remove a report row entirely."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        conn.execute("DELETE FROM error_reports WHERE id = ?", (int(report_id),))
+
+
+def delete_all_error_reports(db_path, status=None):
+    """Delete every report (or only those with `status` when given)."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        if status is None:
+            conn.execute("DELETE FROM error_reports")
+        else:
+            conn.execute("DELETE FROM error_reports WHERE status = ?", (_safe_text(status),))
+
+
+def add_feedback(db_path, user_id, text):
+    """Store a user's general feedback about the bot."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO feedback (user_id, text, status, created_at, reviewed_at)
+            VALUES (?, ?, 'pending', CURRENT_TIMESTAMP, '')
+            """,
+            (int(user_id), _safe_text(text)),
+        )
+        return int(cur.lastrowid)
+
+
+def list_feedback(db_path, status="pending", limit=0):
+    """Feedback for owner review (default: pending), newest last; joins username."""
+    init_db(db_path)
+    query = """
+        SELECT f.id, f.user_id, f.text, f.status, f.created_at,
+               u.username AS username, u.first_name AS first_name
+        FROM feedback f
+        LEFT JOIN users u ON u.user_id = f.user_id
+        WHERE f.status = ?
+        ORDER BY f.created_at ASC
+    """
+    params = [_safe_text(status)]
+    if int(limit) > 0:
+        query += " LIMIT ?"
+        params.append(int(limit))
+    with _connect(db_path) as conn:
+        rows = conn.execute(query, tuple(params)).fetchall()
+    return [
+        {
+            "id": int(row["id"]),
+            "user_id": int(row["user_id"]),
+            "text": row["text"] or "",
+            "status": row["status"] or "",
+            "created_at": row["created_at"] or "",
+            "username": row["username"] or "",
+            "first_name": row["first_name"] or "",
+        }
+        for row in rows
+    ]
+
+
+def set_feedback_status(db_path, feedback_id, status):
+    """Mark feedback reviewed/pending."""
+    safe = _safe_text(status).strip().lower()
+    if safe not in {"pending", "reviewed"}:
+        raise ValueError("Invalid feedback status.")
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        conn.execute(
+            """
+            UPDATE feedback
+            SET status = ?, reviewed_at = CASE WHEN ? = 'reviewed' THEN CURRENT_TIMESTAMP ELSE '' END
+            WHERE id = ?
+            """,
+            (safe, safe, int(feedback_id)),
+        )
+
+
+def delete_feedback(db_path, feedback_id):
+    """Remove a feedback row entirely."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        conn.execute("DELETE FROM feedback WHERE id = ?", (int(feedback_id),))
+
+
+def delete_all_feedback(db_path):
+    """Delete every feedback row."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        conn.execute("DELETE FROM feedback")
+
+
 def create_template_from_word(raw_word):
     """Handle create template from word."""
     raw_word = raw_word.strip()
@@ -3994,40 +5120,70 @@ def create_template_from_word(raw_word):
     }
 
 
-def list_vf_candidates(db_path, user_id, only_unchecked=True, limit=0):
-    """List noun/verb words for VF check with optional unchanged skip."""
+def reset_vf_checks(db_path):
+    """Clear all stored verbformen check results (spec #2 recheck).
+
+    The old vf_checks rows (from the .com verify flow) are stale now that the .de
+    parser fills more columns — wipe them so a recheck starts clean.
+    """
     init_db(db_path)
-    candidates = []
+    with _connect(db_path) as conn:
+        conn.execute("DELETE FROM vf_checks")
+
+
+def list_words_for_vf_recheck(db_path, only_unchecked=False):
+    """Existing words to re-verify against the .de parser:
+    (word_id, lookup, type, article) for every type EXCEPT ``phrase`` (multi-word,
+    no single dictionary page). The type is carried so the recheck lookup routes by
+    it — function words go to their verben.de type page instead of a homonym card.
+    lookup = infinitive for verbs, else german; article is '' for non-nouns (used
+    by the recheck UI to match an owner who typed the noun with its article).
+
+    With ``only_unchecked=True`` words already marked (``vf_checked_at`` set by a prior
+    successful recheck) are skipped, so an incremental recheck doesn't re-fetch what a
+    previous run already verified (spec #2 v13)."""
+    init_db(db_path)
     with _connect(db_path) as conn:
         rows = conn.execute(
             """
-            SELECT id, type, article, german, plural, infinitive, prateritum, partizip2
-            , russian, ukrainian, english, topic
+            SELECT id, type, article, german, infinitive, vf_checked_at
             FROM words
-            WHERE type IN ('nomen', 'verb')
             ORDER BY created_at ASC
             """
         ).fetchall()
-        for row in rows:
-            entry = _row_to_entry(row)
-            source_hash = _vf_source_hash(entry)
-            last = conn.execute(
-                """
-                SELECT source_hash
-                FROM vf_checks
-                WHERE user_id = ? AND word_id = ?
-                ORDER BY id DESC
-                LIMIT 1
-                """,
-                (int(user_id), _safe_text(entry.get("id"))),
-            ).fetchone()
-            if only_unchecked and last and _safe_text(last["source_hash"]) == source_hash:
-                continue
-            entry["vf_source_hash"] = source_hash
-            candidates.append(entry)
-            if limit and len(candidates) >= int(limit):
-                break
-    return candidates
+    out = []
+    for r in rows:
+        wtype = _safe_text(r["type"]).strip().lower()
+        if not wtype or wtype == "phrase":
+            continue
+        if only_unchecked and _safe_text(r["vf_checked_at"]).strip():
+            continue
+        lookup = _safe_text(r["infinitive"] if wtype == "verb" else r["german"]).strip()
+        if lookup:
+            out.append((r["id"], lookup, wtype, _safe_text(r["article"]).strip()))
+    return out
+
+
+def mark_word_vf_checked(db_path, word_id, when=None):
+    """Stamp a word as successfully rechecked against verbformen (spec #2 v13).
+
+    Called when a recheck item parses OK; ``list_words_for_vf_recheck(only_unchecked=True)``
+    then skips it. ``when`` (an explicit timestamp) is used by the backfill of an existing
+    job's already-parsed items; live marking passes None -> CURRENT_TIMESTAMP. Errors never
+    call this, so a failed word keeps ``vf_checked_at=''`` and retries next run."""
+    with _connect(db_path) as conn:
+        conn.execute(
+            "UPDATE words SET vf_checked_at = COALESCE(?, CURRENT_TIMESTAMP) WHERE id = ?",
+            (_safe_text(when) or None, word_id),
+        )
+
+
+def reset_word_vf_checks(db_path):
+    """Clear every word's recheck mark (spec #2 v13) — a full 'all' re-scan re-verifies
+    everything from scratch. Distinct from ``reset_vf_checks`` (the legacy .com table)."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        conn.execute("UPDATE words SET vf_checked_at = ''")
 
 
 def save_vf_check_result(
@@ -4068,122 +5224,3 @@ def save_vf_check_result(
             ),
         )
 
-
-def list_latest_vf_mismatches(db_path, user_id, limit=200):
-    """Return latest mismatch rows per word."""
-    init_db(db_path)
-    with _connect(db_path) as conn:
-        rows = conn.execute(
-            """
-            WITH latest AS (
-                SELECT MAX(id) AS id
-                FROM vf_checks
-                WHERE user_id = ?
-                GROUP BY word_id
-            )
-            SELECT c.*
-            FROM vf_checks c
-            JOIN latest l ON l.id = c.id
-            WHERE c.status = 'mismatch'
-            ORDER BY c.id DESC
-            LIMIT ?
-            """,
-            (int(user_id), int(limit)),
-        ).fetchall()
-    items = []
-    for row in rows:
-        item = dict(row)
-        for key in ("local_payload", "remote_payload", "diff_payload"):
-            raw = item.get(key)
-            try:
-                item[key] = json.loads(raw) if raw else {}
-            except Exception:
-                item[key] = {}
-        items.append(item)
-    return items
-
-
-def approve_vf_checks(db_path, user_id, ids):
-    """Mark selected vf check rows as approved."""
-    clean_ids = [int(x) for x in ids if str(x).strip().isdigit()]
-    if not clean_ids:
-        return 0
-    init_db(db_path)
-    placeholders = ",".join("?" for _ in clean_ids)
-    with _connect(db_path) as conn:
-        cur = conn.execute(
-            f"""
-            UPDATE vf_checks
-            SET approved = 1, updated_at = CURRENT_TIMESTAMP
-            WHERE user_id = ? AND id IN ({placeholders})
-            """,
-            (int(user_id), *clean_ids),
-        )
-    return int(cur.rowcount or 0)
-
-
-def list_approved_vf_checks(db_path, user_id, only_not_applied=True):
-    """List approved checks to apply."""
-    init_db(db_path)
-    where = "WHERE user_id = ? AND approved = 1"
-    if only_not_applied:
-        where += " AND applied = 0"
-    with _connect(db_path) as conn:
-        rows = conn.execute(
-            f"""
-            SELECT *
-            FROM vf_checks
-            {where}
-            ORDER BY id ASC
-            """,
-            (int(user_id),),
-        ).fetchall()
-    items = []
-    for row in rows:
-        item = dict(row)
-        for key in ("local_payload", "remote_payload", "diff_payload"):
-            raw = item.get(key)
-            try:
-                item[key] = json.loads(raw) if raw else {}
-            except Exception:
-                item[key] = {}
-        items.append(item)
-    return items
-
-
-def mark_vf_check_applied(db_path, check_id):
-    """Mark VF check row as applied."""
-    init_db(db_path)
-    with _connect(db_path) as conn:
-        conn.execute(
-            """
-            UPDATE vf_checks
-            SET applied = 1, updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-            """,
-            (int(check_id),),
-        )
-
-
-def list_latest_vf_retryable(db_path, user_id, limit=200):
-    """List latest retryable failures."""
-    init_db(db_path)
-    with _connect(db_path) as conn:
-        rows = conn.execute(
-            """
-            WITH latest AS (
-                SELECT MAX(id) AS id
-                FROM vf_checks
-                WHERE user_id = ?
-                GROUP BY word_id
-            )
-            SELECT c.*
-            FROM vf_checks c
-            JOIN latest l ON l.id = c.id
-            WHERE c.retryable = 1
-            ORDER BY c.id DESC
-            LIMIT ?
-            """,
-            (int(user_id), int(limit)),
-        ).fetchall()
-    return [dict(row) for row in rows]

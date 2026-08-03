@@ -9,9 +9,7 @@ from telegram import ReplyKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from ..app_config import (
-    AI_CLARIFY_FIELD,
     FLAG_TEXT,
-    INPUT_ERR_TEXT,
     I_DONT_KNOW_TEXT,
     QUIZ_ARTICLE_WEAK,
     QUIZ_PARTIZIP2_WEAK,
@@ -22,7 +20,7 @@ from ..app_config import (
     get_db_path,
     is_owner,
 )
-from ..common.lang import _user_dict_lang, _user_interface_lang
+from ..common.lang import _quiz_dir_labels, _user_dict_lang, _user_interface_lang
 from ..common.navigation import _action_key_from_text, _reply_text_with_retry
 from ..common.session import (
     _enqueue_weak_drill,
@@ -33,12 +31,12 @@ from ..common.session import (
     _set_weak_drill_since_last,
     _weak_drill_since_last,
 )
-from ..common.settings import _topic_filter_for_query
+from ..common.word_filter import resolve_quiz_filter
 from ..common.txlog import _capture_transaction_snapshot, _log_transaction
 from ..handlers.quiz import _plural_matches, _stop_with_summary
 from ..i18n import t
-from ..labels import QUIZ_RU_DE_TEXT, TEST_PARTIZIP2_WEAK_TEXT, TEST_PRATERITUM_WEAK_TEXT
 from ..storage import (
+    apply_user_word_media,
     apply_weak_input_err,
     get_form_review_stage,
     get_form_state,
@@ -105,28 +103,33 @@ def _apply_input_err_weak(update, context, field):
 
 
 async def quiz_verb_weak_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle quiz verb weak menu choice."""
+    """Choice in the verb weak-mode submenu (Prateritum / Partizip2)."""
     text = update.message.text.strip()
-    if _action_key_from_text(text, update.effective_user.id) == "back":
+    action = _action_key_from_text(text, update.effective_user.id)
+    lang = _user_interface_lang(update.effective_user.id)
+    if action == "back":
+        l1de, _ = _quiz_dir_labels(update.effective_user.id)
         await _reply_text_with_retry(
             update.message,
-            f"{QUIZ_RU_DE_TEXT}:",
+            f"{l1de}:",
             reply_markup=ReplyKeyboardMarkup(_ru_de_menu_keys(update.effective_user.id), resize_keyboard=True),
         )
         return QUIZ_RU_DE_MENU
-    if text == TEST_PRATERITUM_WEAK_TEXT:
+    if action == "weak_prateritum":
         _reset_weak_drill_state(context, "weak_prateritum")
         _reset_session(context, "weak_prateritum")
         return await _send_prateritum_weak_prompt(update, context, None)
-    if text == TEST_PARTIZIP2_WEAK_TEXT:
+    if action == "weak_partizip2":
         _reset_weak_drill_state(context, "weak_partizip2")
         _reset_session(context, "weak_partizip2")
         return await _send_partizip2_weak_prompt(update, context, None)
-        await _reply_text_with_retry(
-            update.message,
-            "Use verb weak mode buttons.",
-            reply_markup=ReplyKeyboardMarkup([[TEST_PRATERITUM_WEAK_TEXT, TEST_PARTIZIP2_WEAK_TEXT], [t(_user_interface_lang(update.effective_user.id), "back")]], resize_keyboard=True),
-        )
+    # Invalid input in the submenu: re-show the buttons (was dead code nested under
+    # the weak_partizip2 branch, so it never fired — and the text was hardcoded EN).
+    await _reply_text_with_retry(
+        update.message,
+        t(lang, "weak_use_mode_buttons"),
+        reply_markup=ReplyKeyboardMarkup([[t(lang, "weak_prateritum_mode"), t(lang, "weak_partizip2_mode")], [t(lang, "back")]], resize_keyboard=True),
+    )
     return QUIZ_VERB_WEAK_MENU
 
 
@@ -138,13 +141,14 @@ async def quiz_article_weak(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "stop":
         return await _stop_with_summary(update, context, "weak_article")
-    if text == INPUT_ERR_TEXT:
+    if _action_key_from_text(text, update.effective_user.id) == "input_err":
         applied = _apply_input_err_weak(update, context, "article")
-        prefix = "✅ Fixed previous answer." if applied else "Nothing to fix."
+        lang = _user_interface_lang(update.effective_user.id)
+        prefix = t(lang, "input_err_fixed") if applied else t(lang, "input_err_nothing")
         return await _send_article_weak_prompt(update, context, prefix, force_entry=context.user_data.get("quiz_entry"))
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_ARTICLE_WEAK)
-    if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
+    if _action_key_from_text(text, update.effective_user.id) == "clarify_fields":
         return await _start_clarify_fields(update, context, QUIZ_ARTICLE_WEAK)
 
     entry = context.user_data.get("quiz_entry")
@@ -174,8 +178,8 @@ async def quiz_article_weak(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _mark_session_word(context, "weak_article", entry.get("id"))
         _log_transaction(update.effective_user.id, "quiz:weak_article", snapshot)
         if not ok:
-            _enqueue_weak_drill(context, "weak_article", entry.get("id"))
-    feedback = _format_feedback_article(entry, ok, _user_dict_lang(update.effective_user.id))
+            _enqueue_weak_drill(context, "weak_article", entry.get("id"), update.effective_user.id)
+    feedback = _format_feedback_article(entry, ok, _user_dict_lang(update.effective_user.id), lang=_user_interface_lang(update.effective_user.id))
     return await _send_article_weak_prompt(update, context, feedback)
 
 
@@ -187,13 +191,14 @@ async def quiz_plural_weak(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "stop":
         return await _stop_with_summary(update, context, "weak_plural")
-    if text == INPUT_ERR_TEXT:
+    if _action_key_from_text(text, update.effective_user.id) == "input_err":
         applied = _apply_input_err_weak(update, context, "plural")
-        prefix = "✅ Fixed previous answer." if applied else "Nothing to fix."
+        lang = _user_interface_lang(update.effective_user.id)
+        prefix = t(lang, "input_err_fixed") if applied else t(lang, "input_err_nothing")
         return await _send_plural_weak_prompt(update, context, prefix, force_entry=context.user_data.get("quiz_entry"))
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_PLURAL_WEAK)
-    if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
+    if _action_key_from_text(text, update.effective_user.id) == "clarify_fields":
         return await _start_clarify_fields(update, context, QUIZ_PLURAL_WEAK)
 
     entry = context.user_data.get("quiz_entry")
@@ -225,8 +230,8 @@ async def quiz_plural_weak(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _mark_session_word(context, "weak_plural", entry.get("id"))
         _log_transaction(update.effective_user.id, "quiz:weak_plural", snapshot)
         if not ok:
-            _enqueue_weak_drill(context, "weak_plural", entry.get("id"))
-    feedback = _format_feedback_plural_weak(entry, ok)
+            _enqueue_weak_drill(context, "weak_plural", entry.get("id"), update.effective_user.id)
+    feedback = _format_feedback_plural_weak(entry, ok, lang=_user_interface_lang(update.effective_user.id))
     return await _send_plural_weak_prompt(update, context, feedback)
 
 
@@ -238,13 +243,14 @@ async def quiz_prateritum_weak(update: Update, context: ContextTypes.DEFAULT_TYP
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "stop":
         return await _stop_with_summary(update, context, "weak_prateritum")
-    if text == INPUT_ERR_TEXT:
+    if _action_key_from_text(text, update.effective_user.id) == "input_err":
         applied = _apply_input_err_weak(update, context, "prateritum")
-        prefix = "✅ Fixed previous answer." if applied else "Nothing to fix."
+        lang = _user_interface_lang(update.effective_user.id)
+        prefix = t(lang, "input_err_fixed") if applied else t(lang, "input_err_nothing")
         return await _send_prateritum_weak_prompt(update, context, prefix, force_entry=context.user_data.get("quiz_entry"))
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_PRATERITUM_WEAK)
-    if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
+    if _action_key_from_text(text, update.effective_user.id) == "clarify_fields":
         return await _start_clarify_fields(update, context, QUIZ_PRATERITUM_WEAK)
 
     entry = context.user_data.get("quiz_entry")
@@ -276,8 +282,8 @@ async def quiz_prateritum_weak(update: Update, context: ContextTypes.DEFAULT_TYP
         _mark_session_word(context, "weak_prateritum", entry.get("id"))
         _log_transaction(update.effective_user.id, "quiz:weak_prateritum", snapshot)
         if not ok:
-            _enqueue_weak_drill(context, "weak_prateritum", entry.get("id"))
-    feedback = _format_feedback_prateritum_weak(entry, ok)
+            _enqueue_weak_drill(context, "weak_prateritum", entry.get("id"), update.effective_user.id)
+    feedback = _format_feedback_prateritum_weak(entry, ok, lang=_user_interface_lang(update.effective_user.id))
     return await _send_prateritum_weak_prompt(update, context, feedback)
 
 
@@ -289,13 +295,14 @@ async def quiz_partizip2_weak(update: Update, context: ContextTypes.DEFAULT_TYPE
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "stop":
         return await _stop_with_summary(update, context, "weak_partizip2")
-    if text == INPUT_ERR_TEXT:
+    if _action_key_from_text(text, update.effective_user.id) == "input_err":
         applied = _apply_input_err_weak(update, context, "partizip2")
-        prefix = "✅ Fixed previous answer." if applied else "Nothing to fix."
+        lang = _user_interface_lang(update.effective_user.id)
+        prefix = t(lang, "input_err_fixed") if applied else t(lang, "input_err_nothing")
         return await _send_partizip2_weak_prompt(update, context, prefix, force_entry=context.user_data.get("quiz_entry"))
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_PARTIZIP2_WEAK)
-    if text == AI_CLARIFY_FIELD and is_owner(update.effective_user.id):
+    if _action_key_from_text(text, update.effective_user.id) == "clarify_fields":
         return await _start_clarify_fields(update, context, QUIZ_PARTIZIP2_WEAK)
 
     entry = context.user_data.get("quiz_entry")
@@ -327,19 +334,21 @@ async def quiz_partizip2_weak(update: Update, context: ContextTypes.DEFAULT_TYPE
         _mark_session_word(context, "weak_partizip2", entry.get("id"))
         _log_transaction(update.effective_user.id, "quiz:weak_partizip2", snapshot)
         if not ok:
-            _enqueue_weak_drill(context, "weak_partizip2", entry.get("id"))
-    feedback = _format_feedback_partizip2_weak(entry, ok)
+            _enqueue_weak_drill(context, "weak_partizip2", entry.get("id"), update.effective_user.id)
+    feedback = _format_feedback_partizip2_weak(entry, ok, lang=_user_interface_lang(update.effective_user.id))
     return await _send_partizip2_weak_prompt(update, context, feedback)
 
 
 def _pick_weak_entry(context, user_id, weak_field, word_type=None):
     """Handle pick weak entry."""
+    qf = resolve_quiz_filter(user_id)
     due = list_weak_words(
         get_db_path(),
         user_id=user_id,
         weak_field=weak_field,
         word_type=word_type,
-        topics=_topic_filter_for_query(),
+        topics=qf.topics,
+        cefr_levels=qf.cefr_levels,
         limit=300,
     )
     if not due:
@@ -362,16 +371,16 @@ def _pick_weak_or_drill_entry(context, user_id, weak_field, word_type=None):
     last_id = last_ids.get(mode)
     fresh = _pick_weak_entry(context, user_id, weak_field, word_type=word_type)
 
-    drill = _maybe_take_weak_drill_entry(context, mode, avoid_id=last_id, force=False)
+    drill = _maybe_take_weak_drill_entry(context, mode, user_id, avoid_id=last_id, force=False)
     if drill:
         entry, is_drill = drill, True
     elif fresh:
         entry, is_drill = fresh, False
     else:
         # No fresh due word left — fall back to a drill (still avoid consecutive if possible).
-        drill = _maybe_take_weak_drill_entry(context, mode, avoid_id=last_id, force=True)
+        drill = _maybe_take_weak_drill_entry(context, mode, user_id, avoid_id=last_id, force=True)
         if not drill:
-            drill = _maybe_take_weak_drill_entry(context, mode, avoid_id=None, force=True)
+            drill = _maybe_take_weak_drill_entry(context, mode, user_id, avoid_id=None, force=True)
         entry, is_drill = (drill, True) if drill else (None, False)
 
     if not entry:
@@ -392,10 +401,11 @@ async def _send_article_weak_prompt(update: Update, context: ContextTypes.DEFAUL
             await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
         await _reply_text_with_retry(
             update.message,
-            "No weak article words.",
+            t(_user_interface_lang(update.effective_user.id), "no_weak_form_words").format(form="artikel"),
             reply_markup=ReplyKeyboardMarkup(_ru_de_menu_keys(update.effective_user.id), resize_keyboard=True),
         )
         return QUIZ_RU_DE_MENU
+    entry = apply_user_word_media(get_db_path(), update.effective_user.id, entry)  # personal media (P4)
     context.user_data["quiz_entry"] = entry
     text = f">>    {_normalize_russian_singular(_entry_translation(entry, _user_dict_lang(update.effective_user.id)))} -> ____ {_cap_word(entry.get('german', ''))}?"
     text = _md_escape(text)
@@ -419,10 +429,11 @@ async def _send_plural_weak_prompt(update: Update, context: ContextTypes.DEFAULT
             await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
         await _reply_text_with_retry(
             update.message,
-            "No weak plural words.",
+            t(_user_interface_lang(update.effective_user.id), "no_weak_form_words").format(form="plural"),
             reply_markup=ReplyKeyboardMarkup(_ru_de_menu_keys(update.effective_user.id), resize_keyboard=True),
         )
         return QUIZ_RU_DE_MENU
+    entry = apply_user_word_media(get_db_path(), update.effective_user.id, entry)  # personal media (P4)
     context.user_data["quiz_entry"] = entry
     article = (entry.get("article", "") or "").strip()
     text = f">>    {article} {_cap_word(entry.get('german', ''))} -> plural?"
@@ -440,17 +451,19 @@ async def _send_plural_weak_prompt(update: Update, context: ContextTypes.DEFAULT
 
 
 async def _send_prateritum_weak_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text, force_entry=None):
-    """Handle send prateritum weak prompt."""
+    """Show the Prateritum weak-mode question (or return to submenu if no words)."""
     entry = force_entry or _pick_weak_or_drill_entry(context, update.effective_user.id, "prateritum", word_type="verb")
     if not entry:
         if prefix_text:
             await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
+        lang = _user_interface_lang(update.effective_user.id)
         await _reply_text_with_retry(
             update.message,
-            "No weak prateritum words.",
-            reply_markup=ReplyKeyboardMarkup([[TEST_PRATERITUM_WEAK_TEXT, TEST_PARTIZIP2_WEAK_TEXT], [t(_user_interface_lang(update.effective_user.id), "back")]], resize_keyboard=True),
+            t(_user_interface_lang(update.effective_user.id), "no_weak_form_words").format(form="präteritum"),
+            reply_markup=ReplyKeyboardMarkup([[t(lang, "weak_prateritum_mode"), t(lang, "weak_partizip2_mode")], [t(lang, "back")]], resize_keyboard=True),
         )
         return QUIZ_VERB_WEAK_MENU
+    entry = apply_user_word_media(get_db_path(), update.effective_user.id, entry)  # personal media (P4)
     context.user_data["quiz_entry"] = entry
     text = f">>    {_low_word(entry.get('infinitive', ''))} -> Prateritum?"
     text = _md_escape(text)
@@ -467,17 +480,19 @@ async def _send_prateritum_weak_prompt(update: Update, context: ContextTypes.DEF
 
 
 async def _send_partizip2_weak_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text, force_entry=None):
-    """Handle send partizip2 weak prompt."""
+    """Show the Partizip2 weak-mode question (or return to submenu if no words)."""
     entry = force_entry or _pick_weak_or_drill_entry(context, update.effective_user.id, "partizip2", word_type="verb")
     if not entry:
         if prefix_text:
             await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
+        lang = _user_interface_lang(update.effective_user.id)
         await _reply_text_with_retry(
             update.message,
-            "No weak partizip2 words.",
-            reply_markup=ReplyKeyboardMarkup([[TEST_PRATERITUM_WEAK_TEXT, TEST_PARTIZIP2_WEAK_TEXT], [t(_user_interface_lang(update.effective_user.id), "back")]], resize_keyboard=True),
+            t(_user_interface_lang(update.effective_user.id), "no_weak_form_words").format(form="partizip2"),
+            reply_markup=ReplyKeyboardMarkup([[t(lang, "weak_prateritum_mode"), t(lang, "weak_partizip2_mode")], [t(lang, "back")]], resize_keyboard=True),
         )
         return QUIZ_VERB_WEAK_MENU
+    entry = apply_user_word_media(get_db_path(), update.effective_user.id, entry)  # personal media (P4)
     context.user_data["quiz_entry"] = entry
     text = f">>    {_low_word(entry.get('infinitive', ''))} -> Partizip2?"
     text = _md_escape(text)

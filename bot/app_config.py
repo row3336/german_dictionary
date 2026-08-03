@@ -2,7 +2,10 @@ import os
 import re
 from pathlib import Path
 
-MENU, TESTS_MENU, SETTINGS_MENU, DUMP_MENU, AUTO_DUMP_MENU, LEVELS_MENU, ADD_INPUT, ADD_PRECHECK, ADD_PRECHECK_EDIT, ADD_CONFIRM, ADD_CLARIFY, ADD_EDIT, FLAG_COMMENT, REVIEW_FLAGS, QUIZ_RU_DE, QUIZ_DE_RU, QUIZ_PL_SG, QUIZ_ARTICLE, SELECT_UI_LANG, SELECT_DICT_LANG, SYN_MENU, SYN_ADD_INPUT, SYN_REMOVE_INPUT, SYN_AUTO_CONFIRM, SYN_CLEAR_CONFIRM, QUIZ_ARTICLE_WEAK, QUIZ_PLURAL_WEAK, QUIZ_VERB_WEAK_MENU, QUIZ_PRATERITUM_WEAK, QUIZ_PARTIZIP2_WEAK, QUIZ_RU_DE_MENU, ALGO_SETTINGS_MENU, ALGO_SETTINGS_EDIT, ALGO_SETTINGS_CONFIRM, TOPIC_FILTER_EDIT, DRILL_SETTINGS_MENU, LEARNING_MENU, LEARNING_QUIZ, LEARNING_SETTINGS_MENU, DB_SEARCH, DB_SEARCH_VIEW = range(41)
+MENU, TESTS_MENU, SETTINGS_MENU, DUMP_MENU, LEVELS_MENU, ADD_INPUT, ADD_PRECHECK, ADD_PRECHECK_EDIT, ADD_CONFIRM, ADD_CLARIFY, ADD_EDIT, FLAG_COMMENT, REVIEW_FLAGS, QUIZ_RU_DE, QUIZ_DE_RU, QUIZ_PL_SG, QUIZ_ARTICLE, SELECT_UI_LANG, SELECT_DICT_LANG, SYN_MENU, SYN_ADD_INPUT, SYN_REMOVE_INPUT, SYN_AUTO_CONFIRM, SYN_CLEAR_CONFIRM, QUIZ_ARTICLE_WEAK, QUIZ_PLURAL_WEAK, QUIZ_VERB_WEAK_MENU, QUIZ_PRATERITUM_WEAK, QUIZ_PARTIZIP2_WEAK, QUIZ_RU_DE_MENU, ALGO_SETTINGS_MENU, ALGO_SETTINGS_EDIT, ALGO_SETTINGS_CONFIRM, TOPIC_FILTER_EDIT, DRILL_SETTINGS_MENU, LEARNING_MENU, LEARNING_QUIZ, LEARNING_SETTINGS_MENU, DB_SEARCH, DB_SEARCH_VIEW, ACCESS_REJECTED, ACCESS_MESSAGE, FEEDBACK_INPUT, LANGUAGE_MENU, \
+    OWNER_REVIEW_MENU, REVIEW_REPORTS, REVIEW_FEEDBACK, DONATE_AMOUNT, DONATE_CUSTOM, FSRS_SETTINGS_MENU, \
+    BROADCAST_INPUT, BROADCAST_CONFIRM, CONJUGATION_MENU, ADD_MENU, VF_ADD_INPUT, \
+    VF_APPLY_CONFIRM = range(56)
 
 BACK_TEXT = "back"
 STOP_TEXT = "stop"
@@ -21,9 +24,6 @@ PRECHECK_KEYS = [[PRECHECK_CONFIRM, PRECHECK_EDIT, PRECHECK_REJECT], [STOP_TEXT]
 REVIEW_FLAGS_TEXT = "Review Flags \u26A0\uFE0F"
 FLAG_TEXT = "\u26A0\uFE0F"
 I_DONT_KNOW_TEXT = "idk ;("
-INPUT_ERR_TEXT = "input_err"
-AUTO_DUMP_SETTING_KEY = "auto_dump_mode"
-AUTO_DUMP_JOB_NAME = "auto_db_dump"
 SESSION_RETRY_GAP_KEY = "session_retry_gap"
 SESSION_RETRY_IT_KEY = "session_retry_iterations"
 TOPIC_FILTER_KEY = "topic_filter"
@@ -36,7 +36,6 @@ LEARNING_REMINDER_COOLDOWN_KEY = "learning_reminder_cooldown_sec"
 LEARNING_READY_QUORUM_KEY = "learning_ready_quorum_pct"
 FSRS_REPORT_HOUR_KEY = "fsrs_report_utc_hour"
 FSRS_REPORT_DATE_KEY = "fsrs_report_date"
-FSRS_PEAK_NOTIFY_DATE_KEY = "fsrs_peak_notify_date"
 FSRS_WEEKLY_REPORT_WEEK_KEY = "fsrs_weekly_report_week"
 
 OWNER_INTERFACE_LANG_KEY = "owner_interface_lang"
@@ -54,10 +53,31 @@ LEARNING_READY_QUORUM_DEFAULT = 70
 LEARNING_MIX_MODE_DEFAULT = "0"
 LEARNING_REMINDER_JOB_NAME = "learning_reminder_job"
 FSRS_AFTERNOON_REMINDER_JOB_NAME = "fsrs_afternoon_reminder_job"
+# Owner reminders about pending access requests (P3.1).
+ACCESS_REMINDER_JOB_NAME = "access_pending_reminder_job"
+# Access-requests digest cadence (spec #5: a config-constant stub — moving to
+# 3x/day later is just changing this value). The old #user_confirmation_* hashtags
+# were removed (replaced by the inline [show requests] flow).
+ACCESS_REMINDER_INTERVAL_SECONDS = 2 * 60 * 60  # every 2 hours
+# callback_data prefix of approval inline buttons: "access:approve:<uid>" / "access:reject:<uid>".
+ACCESS_CALLBACK_PREFIX = "access"
 FSRS_REPORT_UTC_HOUR_DEFAULT = 3
-FSRS_REPORT_JOB_NAME = "fsrs_daily_report_job"
-FSRS_PEAK_JOB_NAME = "fsrs_peak_notify_job"
 LEARNING_WARMUP_INTERVALS = (0, 0, 0)
+
+# Spec #9: static Telegram message-effect ids for the FSRS session-end summary
+# (core.telegram.org/api/effects has no published static list; these are the
+# well-known "animated effect" ids for the fixed 6-effect set every client shows).
+CONFETTI_MESSAGE_EFFECT_ID = "5046509860389126442"  # 🎉 party popper - perfect session (100%)
+FIRE_MESSAGE_EFFECT_ID = "5104841245755180586"  # 🔥 fire - good session (80-99%)
+POOP_MESSAGE_EFFECT_ID = "5046589136895476101"  # 💩 pile of poo - rough session (<80%)
+SESSION_EFFECT_GOOD_THRESHOLD_PCT = 80
+
+# Spec #14: vMAJOR.MINOR versioning. Single source of truth - bump this constant
+# (+ commit) and tag the same commit `vX.Y` at deploy time (v1.0 = frozen
+# single-user, v2.0 = multiuser release, v2.1+ = each shipped batch of
+# features/fixes, v3.0 = next global redesign). Shown on the stat screen (all
+# users) so a bug report can name the version without asking the owner.
+APP_VERSION = "2.0"
 
 ARTICLE_SET = {
     "der",
@@ -129,6 +149,15 @@ ALLOWED_AI_TYPES = {
     "konjunktion",
     "partikel",
 }
+# spec #1: a preposition carries a semantic category + the case it governs. Both
+# are owner-curated controlled vocabularies — validated to these sets on EVERY
+# write path (clarify buttons/text, AI parsing); free text is never stored.
+# '' means "not a preposition / not yet annotated". 'final' is intentionally
+# omitted (owner hasn't met that category yet; add later if needed). Order is the
+# button layout order in the clarify cascade.
+PREPOSITION_TYPES = ("local", "temporal", "modal", "kausal")
+# 'wechsel' = two-way (Wechselpräposition): Dativ on Wo?, Akkusativ on Wohin?.
+CASE_TYPES = ("dativ", "akkusativ", "genitiv", "wechsel")
 CEFR_LEVELS = ("A1", "A2", "B1", "B2", "C1", "C2")
 
 
@@ -146,10 +175,6 @@ def get_log_path():
     """Handle get log path."""
     return Path(os.getenv("LOG_PATH", "./data/bot.log"))
 
-
-def get_suggestions_path():
-    """Handle get suggestions path."""
-    return Path(os.getenv("SUGGESTIONS_PATH", "./data/suggested_words.txt"))
 
 
 def get_info_path():

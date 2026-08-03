@@ -2,6 +2,14 @@ import json
 import re
 
 
+ABSENT_PLURAL_MARKERS = ("", "-", "–", "—", "―")
+
+
+def has_plural_form(value):
+    """Return whether a noun has an actual plural rather than an absence marker."""
+    return str(value or "").strip() not in ABSENT_PLURAL_MARKERS
+
+
 def normalize_answer(text):
     return " ".join(text.strip().lower().split())
 
@@ -40,10 +48,22 @@ def type_label(raw_type):
 
 
 def cap_word(word):
+    """Capitalize a noun for storage.
+
+    A mixed-case tail (uppercase AND lowercase after the first letter, e.g.
+    "KFZ-Mechaniker") is intentional casing — keep it, only raise the first
+    letter. A mono-case word ("haus", "HAUS") is a typo/caps input — classic
+    first-upper + rest-lower. (Owner rule, todo T1, 2026-07-11.)
+    """
     word = str(word or "").strip()
     if not word:
         return ""
-    return word[:1].upper() + word[1:].lower()
+    tail = word[1:]
+    has_upper = any(c.isupper() for c in tail)
+    has_lower = any(c.islower() for c in tail)
+    if has_upper and has_lower:
+        return word[:1].upper() + tail
+    return word[:1].upper() + tail.lower()
 
 
 def low_word(word):
@@ -62,6 +82,8 @@ def split_plural_forms(plural):
 
 def cap_plural(plural):
     """Capitalize every plural form (German plurals are nouns)."""
+    if not has_plural_form(plural):
+        return ""
     forms = split_plural_forms(plural)
     if not forms:
         return cap_word(plural)
