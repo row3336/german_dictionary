@@ -27,7 +27,12 @@ from collections import namedtuple
 
 from ..app_config import get_db_path
 from ..common.input_err import apply_weak_input_err
-from ..common.session import _session_count, _session_has_seen, _reset_session, _reset_weak_drill_state
+from ..common.session import (
+    _reset_session,
+    _reset_weak_drill_state,
+    _session_count,
+    _session_has_seen,
+)
 from ..common.weak_core import (
     WEAK_FIELDS,
     WEAK_WORD_TYPES,
