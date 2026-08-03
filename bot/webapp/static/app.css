@@ -1,0 +1,639 @@
+/* Mini App stylesheet (miniapp.md §8.3, §8.4, §8.5b).
+   Telegram draws its own header bar and back button - nothing here reproduces
+   chrome the client already provides. */
+
+:root {
+  /* Telegram overrides these at runtime (app.js) with tg.themeParams; the
+     values below are only what a plain, non-Telegram browser sees in dev. */
+  --bg: #ffffff;
+  --text: #12100e;
+  --hint: #79736c;
+  --secondary-bg: #f0eee9; /* Cloud Dancer 11-4201 */
+  --separator: #e2ded5;
+  --app-height: 100vh;
+}
+
+[data-theme="light"] {
+  --accent: #d97757;
+  --accent-soft: #f7e6de;
+  --accent-text: #ffffff;
+  --ok: #15803d;
+  --ok-soft: #e7f5ec;
+  --err: #c81e3a;
+  --err-soft: #fce9ec;
+  --g-m: #2563eb;
+  --g-m-soft: #e8effc;
+  --g-f: #c81e3a;
+  --g-f-soft: #fce9ec;
+  --g-n: #15803d;
+  --g-n-soft: #e7f5ec;
+}
+
+[data-theme="dark"] {
+  --accent: #e8926b;
+  --accent-soft: #3a2f2a;
+  --accent-text: #1a1714;
+  --ok: #4ade80;
+  --ok-soft: #16301f;
+  --err: #f87171;
+  --err-soft: #3a1f26;
+  --g-m: #60a5fa;
+  --g-m-soft: #1b2942;
+  --g-f: #f87171;
+  --g-f-soft: #3a1f26;
+  --g-n: #4ade80;
+  --g-n-soft: #16301f;
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  overflow-x: hidden;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  min-height: var(--app-height);
+  max-width: 520px;
+  margin: 0 auto;
+}
+
+.screen {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.scroll {
+  overflow-y: auto;
+  flex: 1;
+}
+
+.scroll::-webkit-scrollbar {
+  width: 0;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  text-align: inherit;
+}
+
+/* ── skeleton (§8.6: skeleton instead of a spinner) ── */
+.skeleton {
+  padding: 14px;
+}
+
+.sk-tiles {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 11px;
+}
+
+.sk-tile {
+  height: 78px;
+  border-radius: 14px;
+  background: var(--secondary-bg);
+  position: relative;
+  overflow: hidden;
+}
+
+.sk-tile::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.18), transparent);
+  animation: shimmer 1.3s infinite;
+}
+
+@keyframes shimmer {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+/* ── main screen: mode tiles ── */
+.tiles {
+  padding: 14px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 11px;
+}
+
+.tile {
+  background: var(--secondary-bg);
+  border-radius: 14px;
+  padding: 15px 14px;
+  width: 100%;
+}
+
+.tile .n {
+  font-size: clamp(20px, 6vw, 27px);
+  font-weight: 700;
+  line-height: 1;
+  color: var(--accent);
+}
+
+.tile .n.zero {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--hint);
+}
+
+.tile .l {
+  font-size: 13px;
+  margin-top: 7px;
+}
+
+.tile.wide {
+  grid-column: span 2;
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  position: relative;
+}
+
+.tabs {
+  margin-top: auto;
+  display: flex;
+  border-top: 1px solid var(--separator);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.tabs button {
+  flex: 1;
+  text-align: center;
+  padding: 11px 0 13px;
+  font-size: 12px;
+  color: var(--hint);
+}
+
+.tabs button.on {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.tabs .ic {
+  display: block;
+  font-size: 17px;
+  margin-bottom: 2px;
+}
+
+.tile-gear {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.08);
+  color: var(--hint);
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.chipbar {
+  padding: 12px 14px 0;
+}
+
+.chipbar .f {
+  display: inline-block;
+  font-size: 11.5px;
+  color: var(--hint);
+  background: var(--secondary-bg);
+  padding: 4px 11px;
+  border-radius: 20px;
+}
+
+/* ── word card head: article + word on one row (§8.4a) ── */
+.chead {
+  padding: 20px 18px 16px;
+}
+
+.chead.m {
+  --g: var(--g-m);
+}
+
+.chead.f {
+  --g: var(--g-f);
+}
+
+.chead.n {
+  --g: var(--g-n);
+}
+
+.crow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.artpill {
+  display: inline-block;
+  background: var(--g);
+  color: #fff;
+  font-size: 18px;
+  font-weight: 700;
+  padding: 4px 13px;
+  border-radius: 9px;
+  letter-spacing: 0.01em;
+  line-height: 1.25;
+  flex: none;
+}
+
+[data-theme="dark"] .artpill {
+  color: #11161c;
+}
+
+.cword {
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  font-size: clamp(19px, 6.4vw, 26px);
+  overflow-wrap: anywhere;
+}
+
+.csub {
+  color: var(--hint);
+  font-size: 15.5px;
+  margin-top: 7px;
+}
+
+.csub b {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.ctr {
+  font-size: 18px;
+  margin-top: 11px;
+}
+
+.chint {
+  display: inline-block;
+  margin-top: 9px;
+  font-size: 11.5px;
+  color: var(--hint);
+  background: var(--secondary-bg);
+  padding: 3px 10px;
+  border-radius: 20px;
+}
+
+/* ── conjugation table (§7.5, §8.4a) ── */
+.conj-cols {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(126px, 1fr));
+  gap: 8px 14px;
+}
+
+.conj-wrap {
+  background: var(--secondary-bg);
+  border-radius: 10px;
+  padding: 9px 11px 10px;
+}
+
+.conj {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0 8px;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.conj .p {
+  color: var(--hint);
+}
+
+.conj-h {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--hint);
+  font-weight: 700;
+  margin: 0 0 5px;
+}
+
+/* ── card sections ── */
+section.blk {
+  border-top: 1px solid var(--separator);
+  padding: 13px 18px;
+}
+
+section.blk h3 {
+  margin: 0 0 8px;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--hint);
+  font-weight: 700;
+}
+
+.chip {
+  display: inline-block;
+  padding: 5px 12px;
+  border-radius: 9px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 14.5px;
+  margin: 0 5px 5px 0;
+}
+
+.mine {
+  font-size: 14.5px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.study {
+  border-top: 1px solid var(--separator);
+  padding: 12px 18px 18px;
+  font-size: 12.5px;
+  color: var(--hint);
+}
+
+.study .r {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 2px 0;
+}
+
+.study .r b {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.foot-hint {
+  padding: 14px 18px 22px;
+  color: var(--hint);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.synnote {
+  padding: 12px 18px 0;
+  font-size: 12.5px;
+  color: var(--hint);
+}
+
+.synnote b {
+  color: var(--accent);
+}
+
+/* ── dictionary: search ── */
+.searchbar {
+  padding: 11px 13px;
+}
+
+.field {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  background: var(--secondary-bg);
+  border-radius: 11px;
+  padding: 10px 12px;
+}
+
+.field .mag {
+  color: var(--hint);
+  font-size: 14px;
+  flex: none;
+}
+
+.field input {
+  flex: 1;
+  font-size: 16px;
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--text);
+  min-width: 0;
+}
+
+.field input::placeholder {
+  color: var(--hint);
+}
+
+.field .clr {
+  color: var(--hint);
+  font-size: 14px;
+  flex: none;
+}
+
+.field .unit {
+  flex: none;
+  color: var(--hint);
+  font-size: 13px;
+}
+
+/* ── settings screens (learning-settings, §7.6a) ── */
+.thead {
+  padding: 16px 18px 4px;
+}
+
+.thead h4 {
+  margin: 0 0 5px;
+  font-size: 19px;
+  font-weight: 600;
+}
+
+.thead p {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--hint);
+  line-height: 1.45;
+}
+
+section.blk p.hint {
+  margin: 0 0 10px;
+  font-size: 12.5px;
+  color: var(--hint);
+  line-height: 1.45;
+}
+
+.stack {
+  padding: 12px 13px 18px;
+  padding-bottom: calc(18px + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin-top: auto;
+}
+
+.bigbtn {
+  border-radius: 12px;
+  padding: 13px 0;
+  text-align: center;
+  font-size: 15px;
+  font-weight: 600;
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.bigbtn.ghost {
+  background: var(--secondary-bg);
+  color: var(--text);
+  font-weight: 500;
+}
+
+.row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  border-bottom: 1px solid var(--separator);
+  padding: 12px 14px;
+  width: 100%;
+}
+
+.row .dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-top: 6px;
+  background: var(--hint);
+}
+
+.row.m .dot {
+  background: var(--g-m);
+}
+
+.row.f .dot {
+  background: var(--g-f);
+}
+
+.row.n .dot {
+  background: var(--g-n);
+}
+
+.row .body {
+  text-align: left;
+  min-width: 0;
+}
+
+.row .de {
+  font-size: 16px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.row .tr {
+  color: var(--hint);
+  font-weight: 400;
+}
+
+.row .ty {
+  color: var(--hint);
+  font-size: 11.5px;
+  margin-top: 2px;
+}
+
+.empty {
+  padding: 70px 34px;
+  text-align: center;
+  color: var(--hint);
+}
+
+.empty .ic {
+  font-size: 36px;
+  opacity: 0.5;
+  display: block;
+  margin-bottom: 12px;
+}
+
+.empty p {
+  margin: 0;
+  font-size: 13.5px;
+}
+
+/* ── full-screen states (§8.5, no access / offline / taken over / no due) ── */
+.state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  padding: 30px 34px;
+  text-align: center;
+}
+
+.state .ic {
+  font-size: 40px;
+  margin-bottom: 15px;
+}
+
+.state h4 {
+  margin: 0 0 8px;
+  font-size: 16.5px;
+  font-weight: 600;
+}
+
+.state p {
+  margin: 0;
+  color: var(--hint);
+  font-size: 13.5px;
+  line-height: 1.5;
+  max-width: 32ch;
+}
+
+.state .cta {
+  margin-top: 20px;
+  padding: 11px 22px;
+  border-radius: 10px;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: 14.5px;
+  font-weight: 600;
+}
+
+.state .cta2 {
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--hint);
+}
+
+/* ── toast (rate limit / transient errors) ── */
+#toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(20px + env(safe-area-inset-bottom));
+  transform: translate(-50%, 12px);
+  background: var(--text);
+  color: var(--bg);
+  padding: 9px 16px;
+  border-radius: 20px;
+  font-size: 13px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s, transform 0.2s;
+  max-width: 80%;
+  text-align: center;
+  z-index: 10;
+}
+
+#toast.show {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}

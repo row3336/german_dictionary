@@ -16,3 +16,6 @@ REGISTRY_KEY = web.AppKey("session_registry")
 # Access to the running PTB Application, or a disabled stand-in when the web layer
 # runs on its own (bot/webapp/bot_bridge.py).
 BRIDGE_KEY = web.AppKey("bot_bridge")
+
+# Per-user request counter for the §9.3 rate limit: one per running server.
+RATE_LIMITER_KEY = web.AppKey("rate_limiter")

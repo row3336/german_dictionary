@@ -18,11 +18,12 @@ import logging
 
 from aiohttp import web
 
-from . import dict_api, meta_api, session_api
+from . import dict_api, learning_settings_api, meta_api, session_api, static_app
 from .access import auth_middleware
-from .app_keys import BOT_TOKEN_KEY, BRIDGE_KEY, REGISTRY_KEY
+from .app_keys import BOT_TOKEN_KEY, BRIDGE_KEY, RATE_LIMITER_KEY, REGISTRY_KEY
 from .bot_bridge import BotBridge
 from .config import WEBAPP_HOST, get_webapp_port
+from .rate_limit import RateLimiter, rate_limit_middleware
 from .session_api import session_error_middleware
 from .sessions import SessionRegistry
 
@@ -54,7 +55,7 @@ async def error_middleware(request, handler):
         return web.json_response({"error": "internal_error"}, status=500)
 
 
-def create_app(bot_token, application=None, registry=None):
+def create_app(bot_token, application=None, registry=None, rate_limiter=None):
     """Build the aiohttp application. Pure — no sockets are opened here.
 
     `application` is the running PTB Application when the web layer lives inside
@@ -66,14 +67,23 @@ def create_app(bot_token, application=None, registry=None):
     event loop the bot is running on.
     """
     app = web.Application(
-        middlewares=[error_middleware, auth_middleware, session_error_middleware]
+        middlewares=[
+            error_middleware,
+            auth_middleware,
+            rate_limit_middleware,
+            session_error_middleware,
+        ]
     )
     app[BOT_TOKEN_KEY] = bot_token
     app[BRIDGE_KEY] = BotBridge(application)
     app[REGISTRY_KEY] = SessionRegistry() if registry is None else registry
+    app[RATE_LIMITER_KEY] = RateLimiter() if rate_limiter is None else rate_limiter
     app.add_routes(meta_api.routes)
     app.add_routes(session_api.routes)
     app.add_routes(dict_api.routes)
+    app.add_routes(learning_settings_api.routes)
+    app.add_routes(static_app.routes)
+    static_app.add_static(app)
     app.cleanup_ctx.append(_session_sweeper)
     return app
 
