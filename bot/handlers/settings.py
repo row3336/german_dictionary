@@ -8,6 +8,7 @@ import asyncio
 import os
 import re
 import subprocess
+import sys
 
 from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
 from telegram.ext import ContextTypes, ConversationHandler
@@ -211,7 +212,10 @@ def _run_unit_tests_report():
     env = dict(os.environ)
     env["PYTHONWARNINGS"] = "ignore::ResourceWarning"
 
-    cmd = ["python3", "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"]
+    # sys.executable, not a bare "python3": on the server the system interpreter is a
+    # different Python that cannot see the venv packages, so every test module importing
+    # telegram/httpx dies at import time and the button reports mass errors.
+    cmd = [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"]
     try:
         proc = subprocess.run(
             cmd, cwd=root_dir, capture_output=True, text=True, timeout=120, check=False, env=env
@@ -232,7 +236,7 @@ def _run_unit_tests_report():
         if not failed:
             lines += [f"  {t}" for t in out.strip().splitlines()[-5:]]
 
-    smoke_cmd = ["python3", "-m", "scripts.smoke_check_db", "--db", str(get_db_path())]
+    smoke_cmd = [sys.executable, "-m", "scripts.smoke_check_db", "--db", str(get_db_path())]
     try:
         sp = subprocess.run(
             smoke_cmd, cwd=root_dir, capture_output=True, text=True, timeout=60, check=False, env=env
