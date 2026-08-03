@@ -6,6 +6,7 @@ imports telegram/httpx then died at import time and the button reported
 "465/536 OK, 71 failed" while the suite was in fact green under the venv.
 """
 
+import os
 import subprocess
 import sys
 import unittest
@@ -60,12 +61,19 @@ class UnitTestsRunnerInterpreterTest(unittest.TestCase):
         self.assertEqual(discover_cmd[5], "tests")
 
     def test_runs_from_project_root(self):
-        """cwd must be the project root so that `tests` and `scripts` resolve."""
+        """cwd must be the project root so that `tests` and `scripts` resolve.
+
+        Derived from the package location, never from the directory name: the
+        deploy contours are checked out as german_dictionary_test (prod),
+        test_new_api (alpha) and german_dictionary_dev.
+        """
+        expected_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(S.__file__))))
+
         with mock.patch.object(subprocess, "run", self._fake_run):
             S._run_unit_tests_report()
 
         for _, kwargs in self.calls:
-            self.assertTrue(kwargs["cwd"].endswith("german_dictionary"), kwargs["cwd"])
+            self.assertEqual(kwargs["cwd"], expected_root)
 
     def test_green_run_is_reported_as_ok(self):
         with mock.patch.object(subprocess, "run", self._fake_run):
