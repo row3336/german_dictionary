@@ -21,9 +21,12 @@ install()
 from _webapp_helpers import TOKEN, TempDbMixin, auth_header  # noqa: E402
 from aiohttp.test_utils import AioHTTPTestCase  # noqa: E402
 
+import bot.handlers.learning as L  # noqa: E402
 import bot.handlers.quiz as Q  # noqa: E402
 import bot.handlers.weak as W  # noqa: E402
 from bot.app_config import I_DONT_KNOW_TEXT  # noqa: E402
+from bot.common.input_err import apply_learning_input_err  # noqa: E402
+from bot.common.learning_core import add_word_to_batch, mark_preview_next  # noqa: E402
 from bot.storage import (  # noqa: E402
     add_synonym_link,
     add_word,
@@ -447,6 +450,168 @@ class WeakParityTest(TempDbMixin, AioHTTPTestCase):
         self.assertTrue(applied["applied"])
         self.assertTrue(W._apply_input_err_weak(update, context, "prateritum"))
         self.assert_same_state("prateritum", word)
+
+
+# The same contract for learning (M6). Its own class again, because learning keeps
+# neither `progress` nor `form_stats`: what has to match is the `learning_items`
+# row — the ladder step and the status that says the word has left the batch — plus
+# the logged verdict. The questions themselves are L1→De ones, so the answer table
+# is the L1→De one.
+LEARNING_CASES = [
+    ("noun with its plural", NOUN, "{article} {german} {plural}"),
+    ("noun, wrong article", NOUN, "die {german} {plural}"),
+    ("noun that has no plural", NOUN_NO_PLURAL, "{article} {german}"),
+    ("verb, all three forms", VERB, "{infinitive} {prateritum} {partizip2}"),
+    ("verb, missing partizip", VERB, "{infinitive} {prateritum}"),
+    ("adjective, all degrees", ADJ, "{german} {komparativ} {superlativ}"),
+    ("empty answer", NOUN, ""),
+]
+
+
+class LearningParityTest(TempDbMixin, AioHTTPTestCase):
+    async def get_application(self):
+        self.setup_temp_db()
+        self.make_user(BOT_USER, "approved")
+        self.make_user(APP_USER, "approved")
+        from bot.webapp.server import create_app
+
+        return create_app(TOKEN)
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        original = L._send_learning_prompt
+        self.addCleanup(setattr, L, "_send_learning_prompt", original)
+        L._send_learning_prompt = _silent_prompt
+
+    # -- fixtures --------------------------------------------------------
+
+    def make_learning(self, fields, suffix=""):
+        """One word, in the running learning queue of both users at the same step."""
+        infinitive = fields.get("infinitive", "")
+        word = add_word(
+            self.db,
+            {
+                "id": "unique",
+                "article": "",
+                "plural": "",
+                "infinitive": "",
+                "prateritum": "",
+                "partizip2": "",
+                "ukrainian": "",
+                "english": "",
+                "topic": "1",
+                **fields,
+                "german": f"{fields['german']}{suffix}",
+                "russian": f"{fields['russian']}{suffix}",
+                "infinitive": f"{infinitive}{suffix}" if infinitive else "",
+            },
+        )
+        for user_id in (BOT_USER, APP_USER):
+            add_word_to_batch(user_id, word["id"])
+            # Past the preview phase for both: what is compared is the answer, and a
+            # preview card has no verdict to compare.
+            mark_preview_next(user_id, word["id"])
+        return word
+
+    # -- the two clients -------------------------------------------------
+
+    async def answer_in_the_chat(self, word, text):
+        """Run the real chat handler over a fake update; hand back its session."""
+        entry = apply_user_word_media(self.db, BOT_USER, word)
+        update = _FakeUpdate(BOT_USER, text)
+        context = _Ctx({"quiz_entry": entry, "learning_preview_mode": False})
+        await L.learning_quiz(update, context)
+        return update, context
+
+    async def answer_in_the_app(self, word, text, idk=False, stop=True):
+        """Open a session over HTTP and answer this word through the API."""
+        resp = await self.client.post(
+            f"{API_PREFIX}session/start", headers=auth_header(APP_USER), json={"mode": "learning"}
+        )
+        token = (await resp.json())["question"]["token"]
+        # Pin the word and the phase: the picker is free to hand out any due word,
+        # and what is being compared here is the verdict, not the pick order.
+        session = self.app[REGISTRY_KEY].require(APP_USER)
+        session.ctx.user_data["quiz_entry"] = apply_user_word_media(self.db, APP_USER, word)
+        session.ctx.user_data["learning_preview_mode"] = False
+        route = "idk" if idk else "answer"
+        resp = await self.client.post(
+            f"{API_PREFIX}session/{route}",
+            headers=auth_header(APP_USER),
+            json={"question_token": token, "text": text},
+        )
+        body = await resp.json()
+        if stop:
+            await self.client.post(f"{API_PREFIX}session/stop", headers=auth_header(APP_USER))
+        return body
+
+    # -- comparison ------------------------------------------------------
+
+    def learning_row(self, user_id, word_id):
+        """The learning_items row, minus whose it is and minus the clock."""
+        with sqlite3.connect(self.db) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT * FROM learning_items WHERE user_id = ? AND word_id = ?",
+                (user_id, word_id),
+            ).fetchone()
+        skip = ("id", "user_id", "word_id", "batch_id", "created_at", "updated_at", "next_due")
+        return {k: v for k, v in dict(row).items() if k not in skip}
+
+    def logged_verdicts(self, user_id, word_id):
+        return [
+            bool(row[0])
+            for row in sqlite3.connect(self.db).execute(
+                "SELECT is_correct FROM quiz_events "
+                "WHERE user_id = ? AND word_id = ? AND mode = 'learning' ORDER BY id",
+                (user_id, word_id),
+            )
+        ]
+
+    def assert_same_state(self, word):
+        """The ladder row and the logged verdicts, field for field (§5.4)."""
+        self.assertEqual(
+            self.learning_row(APP_USER, word["id"]), self.learning_row(BOT_USER, word["id"])
+        )
+        self.assertEqual(
+            self.logged_verdicts(APP_USER, word["id"]),
+            self.logged_verdicts(BOT_USER, word["id"]),
+        )
+
+    # -- tests -----------------------------------------------------------
+
+    async def test_the_verdict_and_the_ladder_step_match_the_chat(self):
+        for index, (label, fields, template) in enumerate(LEARNING_CASES):
+            with self.subTest(case=label):
+                word = self.make_learning(fields, suffix=str(index))
+                answer = template.format(**word)
+                body = await self.answer_in_the_app(word, answer)
+                await self.answer_in_the_chat(word, answer)
+                self.assert_same_state(word)
+                self.assertEqual(body["correct"], self.logged_verdicts(BOT_USER, word["id"])[0])
+
+    async def test_i_dont_know_is_the_same_wrong_answer(self):
+        word = self.make_learning(NOUN, suffix="idk")
+        body = await self.answer_in_the_app(word, "", idk=True)
+        await self.answer_in_the_chat(word, I_DONT_KNOW_TEXT)
+        self.assertFalse(body["correct"])
+        self.assert_same_state(word)
+
+    async def test_taking_back_a_typo_lands_in_the_same_state(self):
+        # The rollback re-advances the word from the step it was on before the wrong
+        # answer, so a divergence here would leave the two clients a step apart.
+        word = self.make_learning(NOUN, suffix="err")
+
+        await self.answer_in_the_app(word, "der Tishc Tische", stop=False)
+        applied = await (
+            await self.client.post(f"{API_PREFIX}session/input_err", headers=auth_header(APP_USER))
+        ).json()
+        await self.client.post(f"{API_PREFIX}session/stop", headers=auth_header(APP_USER))
+
+        _, context = await self.answer_in_the_chat(word, "der Tishc Tische")
+        self.assertTrue(applied["applied"])
+        self.assertTrue(apply_learning_input_err(context, BOT_USER))
+        self.assert_same_state(word)
 
 
 if __name__ == "__main__":
