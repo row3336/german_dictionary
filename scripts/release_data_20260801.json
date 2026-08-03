@@ -1238,27 +1238,19 @@
           "old": ""
         },
         "english": {
-          "new": "to send, send, broadcast, transmit, beam, despatch, dispatch, emit, post",
+          "new": "to send, send, despatch, dispatch, post",
           "old": "to send"
         },
         "example": {
-          "new": "Das Programm wird gerade gesendet.\nTom hat mir sein Bild gesendet.\nTom sendete ein Geschenk an Manja.",
+          "new": "Tom hat mir sein Bild gesandt.\nTom sandte ein Geschenk an Manja.",
           "old": ""
         },
-        "partizip2": {
-          "new": "gesendet, gesandt",
-          "old": "gesandt"
-        },
-        "prateritum": {
-          "new": "sendete, sandte",
-          "old": "sandte"
-        },
         "russian": {
-          "new": "отправлять, передавать, посылать, слать, послать, транслировать, отправить",
+          "new": "отправлять, передавать, посылать, слать, послать, отправить",
           "old": "отправлять"
         },
         "ukrainian": {
-          "new": "відправляти, передавати, надсилати, транслювати",
+          "new": "відправляти, передавати, надсилати",
           "old": "відправляти"
         }
       },

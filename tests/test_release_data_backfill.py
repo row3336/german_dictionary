@@ -99,7 +99,13 @@ class ReleaseDataBackfillTest(unittest.TestCase):
         self.assertEqual(patches["um"]["preposition_type"]["new"], "temporal")
         self.assertEqual(patches["um"]["ukrainian"]["new"], "о, об")
         self.assertEqual(patches["von"]["preposition_type"]["new"], "temporal")
-        self.assertEqual(patches["senden"]["prateritum"]["new"], "sendete, sandte")
+        # senden stays the "send a thing" verb: the broadcast reading would drag in
+        # the weak sendete/gesendet pair and its translations (owner call 03.08).
+        self.assertNotIn("prateritum", patches["senden"])
+        self.assertNotIn("partizip2", patches["senden"])
+        self.assertNotIn("транслировать", patches["senden"]["russian"]["new"])
+        self.assertNotIn("broadcast", patches["senden"]["english"]["new"])
+        self.assertNotIn("gesendet", patches["senden"]["example"]["new"])
         for verb in ("denken", "kosten", "spielen", "schwimmen", "geboren werden"):
             self.assertIn("conjugation_praesens", patches[verb])
             self.assertTrue(patches[verb]["conjugation_praesens"]["new"])
