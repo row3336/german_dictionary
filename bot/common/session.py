@@ -77,6 +77,12 @@ def _session_count(context, mode):
     return 0
 
 
+def _session_has_seen(context, mode, word_id):
+    """Whether this word has already been answered in `mode` this session."""
+    seen = context.user_data.get(_session_key(mode))
+    return bool(word_id) and isinstance(seen, set) and word_id in seen
+
+
 def _bump_session_result(context, mode, ok, is_retry=False):
     """Tally one correct/wrong RESULT PER WORD for `mode` this session (spec #9
     summary). Only the first answer to a word counts — in-session FSRS retries are
@@ -186,6 +192,14 @@ def _reset_fsrs_cycle_state(context, mode=None):
         bucket.pop(mode, None)
         return
     context.user_data.pop("fsrs_cycle_queue", None)
+
+
+def _fsrs_queue_length(context, mode):
+    """How many words this mode's FSRS cycle still holds (0 when not started)."""
+    bucket = context.user_data.get("fsrs_cycle_queue")
+    if not isinstance(bucket, dict):
+        return 0
+    return len(bucket.get(mode) or [])
 
 
 def _pick_due_entry(context, user_id, mode, word_type=None):
