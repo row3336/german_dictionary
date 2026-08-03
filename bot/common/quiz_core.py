@@ -14,11 +14,17 @@ import re
 
 from ..app_config import get_db_path
 from ..storage import QUIZ_RU_DE as MODE_RU_DE
-from ..storage import get_synonym_group, log_quiz_event, update_progress
+from ..storage import (
+    _DICT_TRANSLATION_COLUMN,
+    get_synonym_group,
+    log_quiz_event,
+    update_progress,
+)
 from ..text_utils import has_plural_form
 from ..text_utils import normalize_answer as _normalize_answer
+from ..text_utils import russian_variants as _russian_variants
 from ..text_utils import split_plural_forms
-from ..ui.formatting import _article_matches, _expected_partizip2
+from ..ui.formatting import _article_matches, _entry_translation, _expected_partizip2
 from .lang import _mode_de_l1, _mode_pl_sg
 from .txlog import _capture_transaction_snapshot, _log_transaction
 
@@ -233,3 +239,37 @@ def _check_ru_de_strict(entry, answer_text):
         for n in range(1, len(forms) + 1):
             expected_values.add(_collapse(" ".join(forms[:n])))
     return answer in expected_values, {}
+
+
+# --- answer checking (De>L1) ---
+
+def _check_de_l1(entry, answer_text, dict_lang):
+    """True when the answer names the same meaning as the entry, in `dict_lang`.
+
+    Meaning is matched through the variant sets, not by string equality: a
+    translation field holds several synonyms and each of them several forms.
+    """
+    answer_variants = set(_russian_variants(answer_text))
+    variants = set(_russian_variants(_entry_translation(entry, dict_lang)))
+    # spec #7: with a personal translation override, _entry_translation returns
+    # the personal one — but the base (shared) translation stays semantically
+    # correct, so accept BOTH (owner's decision, fork 1).
+    if str(entry.get("my_translation", "") or "").strip():
+        base_field = _DICT_TRANSLATION_COLUMN.get(dict_lang, "russian")
+        variants |= set(_russian_variants(entry.get(base_field, "")))
+    return bool(answer_variants & variants)
+
+
+# --- answer checking (pl>sg) ---
+
+def _check_pl_sg(entry, answer_text):
+    """True when the answer gives the singular of the shown plural, with its article."""
+    got = _normalize_answer(answer_text)
+    singular = _normalize_answer(entry.get("german", ""))
+    plural = _normalize_answer(entry.get("plural", ""))
+    if len(got.split()) >= 2:
+        got_article = got.split()[0]
+        got_word = " ".join(got.split()[1:])
+        return _article_matches(got_article, entry.get("article", "")) and got_word == singular
+    # If singular and plural are identical, allow answer with article only.
+    return singular == plural and _article_matches(got, entry.get("article", ""))

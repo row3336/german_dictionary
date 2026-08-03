@@ -28,22 +28,24 @@ from ..app_config import (
 )
 from ..common.lang import _mode_de_l1, _mode_l1_de, _mode_pl_sg, _user_dict_lang, _user_interface_lang
 from ..common.navigation import _action_key_from_text, _back_to_tests, _reply_text_with_retry
+from ..common.input_err import apply_fsrs_input_err
 from ..common.quiz_core import (
+    _check_de_l1,
+    _check_pl_sg,
     _check_ru_de_strict,
-    _interval_divisor_for_mode,
     _update_srs_for_entry,
 )
 from ..common.word_filter import count_words_for_filter
 from ..common.session import (
     _bump_answer_streak,
     _bump_session_result,
-    _flip_session_result_to_correct,
     _force_take_retry_entry,
     _mark_session_word,
     _maybe_take_retry_entry,
     _pick_due_entry,
     _reaction_emoji_for_streak,
     _register_retry_result,
+    _remember_last_answer,
     _remove_from_retry,
     _retry_since_last,
     _session_correct_count,
@@ -52,22 +54,11 @@ from ..common.session import (
     _session_wrong_count,
     _set_retry_since_last,
 )
-from ..common.txlog import _capture_transaction_snapshot, _log_transaction
 from ..i18n import t
 from ..storage import QUIZ_ARTICLE as MODE_ARTICLE
-from ..storage import (
-    _DICT_TRANSLATION_COLUMN,
-    apply_user_word_media,
-    mark_last_quiz_event_correct,
-    set_progress,
-    update_form_stats,
-    update_progress,
-)
-from ..text_utils import normalize_answer as _normalize_answer
-from ..text_utils import russian_variants as _russian_variants
+from ..storage import apply_user_word_media, update_form_stats
 from ..ui.formatting import (
     _article_matches,
-    _entry_translation,
     _format_article_question,
     _format_de_ru_question,
     _format_feedback_article,
@@ -88,17 +79,6 @@ def _no_words_key(user_id, due_key):
     if count_words_for_filter(user_id) == 0:
         return "topic_no_words_quiz"
     return due_key
-
-
-# --- answer-state + scoring helpers ---
-
-def _remember_last_answer(context, entry, mode, ok, message_id=None):
-    """Handle remember last answer."""
-    context.user_data["last_answered_entry"] = entry
-    context.user_data["last_answered_mode"] = mode
-    context.user_data["last_answered_ok"] = bool(ok)
-    context.user_data["last_answered_srs"] = dict(entry.get("srs") or {})
-    context.user_data["last_answered_message_id"] = message_id
 
 
 # --- reactions (spec #9) ---
@@ -125,41 +105,12 @@ async def _apply_answer_reaction(update, context, ok):
 
 
 async def _apply_input_err(update, context, mode):
-    """Handle apply input error correction."""
-    last_entry = context.user_data.get("last_answered_entry")
-    last_mode = context.user_data.get("last_answered_mode")
-    last_ok = context.user_data.get("last_answered_ok")
-    last_srs = context.user_data.get("last_answered_srs")
-    last_message_id = context.user_data.get("last_answered_message_id")
-    if not last_entry or last_mode != mode or last_ok is None:
+    """Apply the input_err rollback, then clear the reaction it invalidated."""
+    result = apply_fsrs_input_err(context, update.effective_user.id, mode)
+    if not result.applied:
         return False
-    if last_ok:
-        return False
-    if not last_srs:
-        return False
-    snapshot = _capture_transaction_snapshot(update.effective_user.id, last_entry.get("id"), [mode])
-    set_progress(get_db_path(), update.effective_user.id, last_entry.get("id"), mode, last_srs)
-    update_progress(
-        get_db_path(),
-        update.effective_user.id,
-        last_entry.get("id"),
-        mode,
-        quality=5,
-        interval_divisor=_interval_divisor_for_mode(update.effective_user.id, mode),
-    )
-    # Flip the just-logged wrong event to correct IN PLACE (not a new appended
-    # event): the daily/weekly first-touch report keys off the first answer, so an
-    # appended correct would be ignored — input_err (a typo, not a real miss) must
-    # actually count as correct in the reports.
-    mark_last_quiz_event_correct(get_db_path(), update.effective_user.id, last_entry.get("id"), mode)
-    # Mirror it in the in-session summary: move this word from wrong to correct.
-    _flip_session_result_to_correct(context, mode)
-    _log_transaction(update.effective_user.id, f"input_err:{mode}", snapshot)
-    _remove_from_retry(context, mode, last_entry.get("id"))
-    _set_retry_since_last(context, mode, _retry_since_last(context, mode) + 1)
-    context.user_data["last_answered_ok"] = True
     # spec #9: lift the 👎 reaction from the corrected answer; no new one is set.
-    await _set_reaction(context, update.effective_user.id, last_message_id, [])
+    await _set_reaction(context, update.effective_user.id, result.message_id, [])
     return True
 
 
@@ -501,16 +452,7 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == I_DONT_KNOW_TEXT:
         ok = False
     else:
-        dict_lang = _user_dict_lang(update.effective_user.id)
-        answer_variants = set(_russian_variants(text))
-        variants = set(_russian_variants(_entry_translation(entry, dict_lang)))
-        # spec #7: with a personal translation override, _entry_translation returns
-        # the personal one — but the base (shared) translation stays semantically
-        # correct, so accept BOTH (owner's decision, fork 1).
-        if str(entry.get("my_translation", "") or "").strip():
-            base_field = _DICT_TRANSLATION_COLUMN.get(dict_lang, "russian")
-            variants |= set(_russian_variants(entry.get(base_field, "")))
-        ok = bool(answer_variants & variants)
+        ok = _check_de_l1(entry, text, _user_dict_lang(update.effective_user.id))
     mode = _mode_de_l1(update.effective_user.id)
     if not is_retry:
         _remember_last_answer(context, entry, mode, ok, update.message.message_id)
@@ -563,20 +505,7 @@ async def quiz_pl_sg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == I_DONT_KNOW_TEXT:
         ok = False
     else:
-        got = _normalize_answer(text)
-        singular = _normalize_answer(entry.get("german", ""))
-        plural = _normalize_answer(entry.get("plural", ""))
-        article_ok = False
-        german_ok = False
-        if len(got.split()) >= 2:
-            got_article = got.split()[0]
-            got_word = " ".join(got.split()[1:])
-            article_ok = _article_matches(got_article, entry.get("article", ""))
-            german_ok = got_word == singular
-            ok = article_ok and german_ok
-        else:
-            # If singular and plural are identical, allow answer with article only.
-            ok = singular == plural and _article_matches(got, entry.get("article", ""))
+        ok = _check_pl_sg(entry, text)
     mode = _mode_pl_sg(update.effective_user.id)
     if not is_retry:
         _remember_last_answer(context, entry, mode, ok, update.message.message_id)

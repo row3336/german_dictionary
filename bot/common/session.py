@@ -103,6 +103,20 @@ def _flip_session_result_to_correct(context, mode):
     context.user_data[correct_key] = int(context.user_data.get(correct_key) or 0) + 1
 
 
+def _remember_last_answer(context, entry, mode, ok, message_id=None):
+    """Snapshot the answer just given, so input_err knows what to roll back.
+
+    The SRS state is copied BEFORE scoring writes over it — that copy is the only
+    way back to the pre-answer interval (see common/input_err.py). `message_id` is
+    the chat's; a web session leaves it None.
+    """
+    context.user_data["last_answered_entry"] = entry
+    context.user_data["last_answered_mode"] = mode
+    context.user_data["last_answered_ok"] = bool(ok)
+    context.user_data["last_answered_srs"] = dict(entry.get("srs") or {})
+    context.user_data["last_answered_message_id"] = message_id
+
+
 def _session_correct_count(context, mode):
     """Handle session correct count."""
     return int(context.user_data.get(_session_correct_key(mode)) or 0)

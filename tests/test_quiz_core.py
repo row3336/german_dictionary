@@ -24,6 +24,8 @@ PROBE = textwrap.dedent(
     import sys
 
     from bot.common.quiz_core import (
+        _check_de_l1,
+        _check_pl_sg,
         _check_ru_de_strict,
         _plural_matches,
         _verb_answer_candidates,
@@ -48,6 +50,22 @@ PROBE = textwrap.dedent(
     assert _plural_matches("Tische", "Tische")
     assert _plural_matches("die Tische", "Tische")
     assert not _plural_matches("Tischen", "Tische")
+
+    # De>L1: any synonym of the stored translation counts, and a personal override
+    # never invalidates the shared one (spec #7).
+    de_l1 = {"type": "nomen", "german": "Tisch", "russian": "стол, столик"}
+    assert _check_de_l1(de_l1, "столик", "ru")
+    assert not _check_de_l1(de_l1, "стул", "ru")
+    personal = dict(de_l1, my_translation="письменный стол")
+    assert _check_de_l1(personal, "письменный стол", "ru")
+    assert _check_de_l1(personal, "стол", "ru")
+
+    # pl>sg: article + singular; article alone only when the forms coincide.
+    assert _check_pl_sg(nomen, "der Tisch")
+    assert not _check_pl_sg(nomen, "die Tisch")
+    assert not _check_pl_sg(nomen, "der")
+    same_forms = {"type": "nomen", "article": "der", "german": "Lehrer", "plural": "Lehrer"}
+    assert _check_pl_sg(same_forms, "der")
 
     print("ok")
     """
