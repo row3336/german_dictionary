@@ -13,6 +13,10 @@ data/
 *.db-wal
 *.db-shm
 
+# Manual DB snapshots taken before risky operations (see backups/README.md).
+# Local only: they hold real user data and are large.
+backups/
+
 # Claude Code personal permissions (local, do not commit)
 .claude/settings.local.json
 .claude/settings.json
