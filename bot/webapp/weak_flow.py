@@ -43,6 +43,7 @@ from ..common.weak_core import (
     weak_verdict,
 )
 from ..storage import apply_user_word_media
+from .outcomes import EMPTY_NO_DUE
 
 WEAK_MODES = tuple(weak_mode(field) for field in WEAK_FIELDS)
 
@@ -51,9 +52,10 @@ WEAK_PLURAL = weak_mode("plural")
 WEAK_PRATERITUM = weak_mode("prateritum")
 WEAK_PARTIZIP2 = weak_mode("partizip2")
 
-# Weak answers carry no streak (see the module docstring); the field stays in the
-# result so the HTTP layer can serialize an FSRS and a weak verdict the same way.
-AnswerResult = namedtuple("AnswerResult", ("entry", "ok", "is_drill", "streak"))
+# Weak answers carry no streak (see the module docstring), and `completed` is
+# learning's own flag; both stay in the result so the HTTP layer can serialize any
+# flow's verdict the same way.
+AnswerResult = namedtuple("AnswerResult", ("entry", "ok", "is_drill", "streak", "completed"))
 
 
 def field_for(mode):
@@ -120,7 +122,7 @@ def submit_answer(session, user_id, text, dont_know=False):
     is_drill = bool(ctx.user_data.get("quiz_is_weak_drill"))
     ok = weak_verdict(entry, field, text, dont_know=dont_know)
     score_weak_answer(ctx, user_id, entry, field, ok)
-    return AnswerResult(entry=entry, ok=ok, is_drill=is_drill, streak=0)
+    return AnswerResult(entry=entry, ok=ok, is_drill=is_drill, streak=0, completed=False)
 
 
 def apply_input_err(session, user_id):
@@ -155,3 +157,8 @@ def progress(session, user_id):
 def summary(session, user_id):  # noqa: ARG001 - part of the flow interface
     """No summary in weak modes — the app inherits the chat here (see the docstring)."""
     return None
+
+
+def empty_info(session, user_id):  # noqa: ARG001 - part of the flow interface
+    """Why the queue is empty: a drained weak list, the same thing the chat says."""
+    return {"empty": EMPTY_NO_DUE}

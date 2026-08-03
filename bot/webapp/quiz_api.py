@@ -1,15 +1,17 @@
-"""Asking and answering quiz questions over HTTP (miniapp.md §7.2, M4.3 + M5.3).
+"""Asking and answering quiz questions over HTTP (miniapp.md §7.2, M4.3-M6.3).
 
 Three routes and one rule: every question the client is shown was minted here with
 a one-shot token, and every answer has to bring that token back (§4.4). Everything
 between the token and the database is a flow module — `quiz_flow` for the three
-FSRS directions, `weak_flow` for the four drilling modes — and both are the bot's
-own loop, so no verdict, no interval and no counter is computed in this file.
+FSRS directions, `weak_flow` for the four drilling modes, `learning_flow` for the
+batch — and all three are the bot's own loop, so no verdict, no interval and no
+counter is computed in this file.
 
-The two flows expose the same handful of functions on purpose: the routes pick one
-by mode and then stop caring which it is. What still differs is visible in the
+The flows expose the same handful of functions on purpose: the routes pick one by
+mode and then stop caring which it is. What still differs is visible in the
 payload rather than in the control flow — a weak session marks repeats as drills
-instead of retries, and ends without a summary.
+instead of retries, a learning session hands out preview cards before questions,
+and only the FSRS directions end with a summary.
 
 The answer response carries the next question with it. That is deliberate: the
 cycle in §8.5a is `answer → verdict → tap → next question`, and a second round trip
@@ -23,7 +25,7 @@ import logging
 from aiohttp import web
 
 from ..common.lang import _user_dict_lang
-from . import quiz_flow, weak_flow
+from . import learning_flow, quiz_flow, weak_flow
 from .access import API_PREFIX, REQUEST_USER_ID
 from .app_keys import REGISTRY_KEY
 from .dict_api import card_for
@@ -35,23 +37,18 @@ logger = logging.getLogger(__name__)
 
 routes = web.RouteTableDef()
 
-# A mode the app knows how to open but cannot yet run itself (learning, M6).
-# Reported as an outcome rather than an error: the session is real, there is simply
-# nothing for the app to ask, and the client has a screen for it.
-EMPTY_CHAT_ONLY = "chat_only"
-EMPTY_NO_DUE = "no_due"
-
-# Which loop drives which mode. A mode that is in neither is not runnable in the
-# app yet, and says so.
+# Which loop drives which mode. Every mode a session can be opened in is here
+# (session_api validates against the same list), so a lookup cannot miss.
 _FLOWS = dict(
     [(mode, quiz_flow) for mode in quiz_flow.FSRS_DIRECTIONS]
     + [(mode, weak_flow) for mode in weak_flow.WEAK_MODES]
+    + [(learning_flow.LEARNING, learning_flow)]
 )
 
 
 def _flow(session):
-    """The flow module that runs this session, or None when the app cannot."""
-    return _FLOWS.get(session.mode)
+    """The flow module that runs this session."""
+    return _FLOWS[session.mode]
 
 
 def ask_next(registry, session, user_id, advance=True):
@@ -85,37 +82,33 @@ def begin_session(registry, session, user_id):
     route stays about sessions and this stays about quizzes.
     """
     flow = _flow(session)
-    if flow is None:
-        return {"empty": EMPTY_CHAT_ONLY}
     flow.begin(session, user_id)
     question = ask_next(registry, session, user_id, advance=False)
-    return {"question": question} if question else {"empty": EMPTY_NO_DUE}
+    return {"question": question} if question else flow.empty_info(session, user_id)
 
 
 def session_summary(session, user_id):
     """The end-of-session tally, for /session/stop and for a drained queue.
 
-    None both for a mode the app cannot run and for weak modes, which have no
-    summary at all — the chat does not give one worth showing (bug #30), and the
-    app inherits that rather than inventing its own.
+    None for weak and learning, which have no summary at all — the chat does not
+    give one worth showing (bug #30), and the app inherits that rather than
+    inventing its own.
     """
-    flow = _flow(session)
-    if flow is None:
-        return None
-    return flow.summary(session, user_id)
+    return _flow(session).summary(session, user_id)
 
 
-def _next_step(registry, session, user_id):
-    """What follows the verdict: the next question, the summary, or a bare end.
+def next_step(registry, session, user_id):
+    """What follows the verdict: the next question, the summary, or why neither.
 
-    A weak session that runs out has nothing to report, so it ends with `no_due` —
-    the same thing the chat says when it has no weak words left to ask about.
+    A weak or learning session that runs out has nothing to tally, so it ends with
+    the flow's own reason — the same distinction the chat draws between "nothing
+    due right now" and "these topics hold no words".
     """
     question = ask_next(registry, session, user_id)
     if question:
         return {"question": question}
     summary = session_summary(session, user_id)
-    return {"summary": summary} if summary is not None else {"empty": EMPTY_NO_DUE}
+    return {"summary": summary} if summary is not None else _flow(session).empty_info(session, user_id)
 
 
 async def _answer(request, dont_know):
@@ -130,8 +123,6 @@ async def _answer(request, dont_know):
     user_id = request[REQUEST_USER_ID]
     session = registry.require(user_id)
     flow = _flow(session)
-    if flow is None:
-        return web.json_response({"empty": EMPTY_CHAT_ONLY})
 
     # Spends the token before anything is written: a double tap or a network retry
     # gets a 409 here rather than a second row in progress and quiz_events (§4.4).
@@ -141,17 +132,25 @@ async def _answer(request, dont_know):
     text = "" if dont_know else str(body.get("text") or "")
     result = flow.submit_answer(session, user_id, text, dont_know=dont_know)
     if result is None:
-        # The token matched but the word is gone — only reachable if the session was
-        # emptied between the two, and answering nothing must not look like success.
-        raise StaleQuestion("no question on screen")
+        # Either the word is gone (only reachable if the session was emptied between
+        # the token and the answer) or the client answered a learning preview card,
+        # which has no verdict. Neither must look like success.
+        raise StaleQuestion("no question to answer on screen")
 
     dict_lang = _user_dict_lang(user_id)
     card = card_for(user_id, result.entry.get("id"), dict_lang)
     return web.json_response(
         {
             "correct": result.ok,
-            "feedback": quiz_feedback(result.entry, session.mode, dict_lang, result.streak, card),
-            "next": _next_step(registry, session, user_id),
+            "feedback": quiz_feedback(
+                result.entry,
+                session.mode,
+                dict_lang,
+                result.streak,
+                card,
+                completed=result.completed,
+            ),
+            "next": next_step(registry, session, user_id),
         }
     )
 
@@ -180,10 +179,7 @@ async def input_err(request):
     registry = request.app[REGISTRY_KEY]
     user_id = request[REQUEST_USER_ID]
     session = registry.require(user_id)
-    flow = _flow(session)
-    if flow is None:
-        return web.json_response({"applied": False})
-    applied = flow.apply_input_err(session, user_id)
+    applied = _flow(session).apply_input_err(session, user_id)
     if applied:
         logger.info("webapp: input_err applied for %s in %s", user_id, session.mode)
     return web.json_response({"applied": applied})

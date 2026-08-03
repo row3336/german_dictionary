@@ -22,6 +22,7 @@ from bot.storage import add_word, get_progress, log_quiz_event, set_user_word_me
 from bot.webapp import quiz_flow, serializers
 from bot.webapp.access import API_PREFIX
 from bot.webapp.app_keys import REGISTRY_KEY
+from bot.webapp.overview import MODES
 
 USER = 707
 
@@ -129,12 +130,16 @@ class StartTest(QuizApiTestCase):
         self.assertEqual(body["empty"], "no_due")
         self.assertIsNone(body["question"])
 
-    async def test_a_mode_the_app_cannot_run_yet_says_so(self):
-        # learning (M6) can be opened but not asked here; the client has a screen
-        # for that, and it is not an error screen. Weak modes run since M5.
+    async def test_every_startable_mode_is_runnable_in_the_app(self):
+        # Since M6 there is no mode left that the app can open but not ask; an empty
+        # session is an empty queue, never "do this in the chat".
         self.make_due()
-        body = await self.start(mode="learning")
-        self.assertEqual(body["empty"], "chat_only")
+        for mode in MODES:
+            with self.subTest(mode=mode):
+                body = await self.start(mode=mode)
+                self.assertNotIn("error", body)
+                self.assertTrue("question" in body or "empty" in body)
+                self.assertIn(body.get("empty", "no_due"), ("no_due", "no_words"))
 
     async def test_reopening_the_app_gets_the_same_question_back(self):
         self.make_due()

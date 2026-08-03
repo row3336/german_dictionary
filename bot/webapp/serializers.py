@@ -33,6 +33,7 @@ from ..ui.formatting import (  # noqa: PLC2701 - the chat's own display rules, r
     _entry_translation,
     _expected_partizip2,
 )
+from .learning_flow import LEARNING, PHASE_PREVIEW
 from .quiz_flow import DE_L1, L1_DE, PL_SG
 from .weak_flow import WEAK_ARTICLE, WEAK_PARTIZIP2, WEAK_PLURAL, WEAK_PRATERITUM
 
@@ -192,9 +193,11 @@ def word_card(entry, dict_lang, synonyms=(), study=None):
 
 # The only answer kinds v1 knows. `article_choice` turns the answer row into three
 # der/die/das buttons and closes the keyboard — the weak-article subcycle in §8.5a,
-# where Enter plays no part because there is nothing to type.
+# where Enter plays no part because there is nothing to type. `none` is a learning
+# preview card: it is read, not answered, and the answer row is next/skip instead.
 ANSWER_TEXT = "text"
 ANSWER_ARTICLE_CHOICE = "article_choice"
+ANSWER_NONE = "none"
 
 # What the learner is expected to type, spelled out under the question (§8.5a-bis):
 # the forms and their order, no separators, and the case each form is written in.
@@ -229,6 +232,17 @@ def _word_type(entry):
     return _text(entry.get("type")).lower()
 
 
+def _grading_mode(mode):
+    """The mode whose rules apply when asking and grading this one.
+
+    A learning question is an L1→De question — the chat asks it with the same
+    prompt and checks it with the same `_check_ru_de_strict` — so everything the
+    question and the expected answer are built from follows `l1_de` rather than
+    gaining a parallel set of tables.
+    """
+    return L1_DE if mode == LEARNING else mode
+
+
 def de_headword(entry):
     """The German side as a question or an answer shows it: article included.
 
@@ -243,13 +257,22 @@ def de_headword(entry):
     return low_word(headword(entry))
 
 
-def answer_kind_for(mode):
-    """How this mode is answered: by typing, or by picking an article."""
+def answer_kind_for(mode, phase=""):
+    """How this question is answered: by typing, by picking an article, or not at all."""
+    if phase == PHASE_PREVIEW:
+        return ANSWER_NONE
     return ANSWER_ARTICLE_CHOICE if mode == WEAK_ARTICLE else ANSWER_TEXT
 
 
-def question_prompt(entry, mode, dict_lang):
-    """(prompt, prompt_lang) — the word being asked, and the language it is in."""
+def question_prompt(entry, mode, dict_lang, phase=""):
+    """(prompt, prompt_lang) — the word being asked, and the language it is in.
+
+    A preview card is the one question that shows the German word itself: it is
+    the word being introduced, not a word being tested.
+    """
+    if phase == PHASE_PREVIEW:
+        return de_headword(entry), "de"
+    mode = _grading_mode(mode)
     if mode == L1_DE:
         # Same normalization the chat applies: a translation stored in the plural
         # would otherwise ask for a form the checker does not accept.
@@ -299,7 +322,7 @@ def question_forms(entry):
     return out
 
 
-def question_hint(entry, mode):
+def question_hint(entry, mode, phase=""):
     """What the client needs to render the question correctly, beyond the word.
 
     `gender_known` is the permission to colour the word by gender (§8.4): in De→L1
@@ -312,8 +335,9 @@ def question_hint(entry, mode):
     if word_type == "nomen":
         # weak_plural shows the article in the question, so colouring by gender only
         # repeats what is already on screen; weak_article is the one mode where the
-        # gender IS the question.
-        hint["gender_known"] = mode in (DE_L1, WEAK_PLURAL)
+        # gender IS the question. A preview card shows the whole word, article
+        # included — there is nothing left to give away.
+        hint["gender_known"] = phase == PHASE_PREVIEW or mode in (DE_L1, WEAK_PLURAL)
     # A preposition is ambiguous without them — `in` is a different question with
     # +Dativ than with +D/A, and the chat shows the pair for exactly that reason.
     for field in ("preposition_type", "case_type"):
@@ -325,6 +349,7 @@ def question_hint(entry, mode):
 
 def answer_forms(entry, mode):
     """The "what to type" hint for this question, or {} when the answer is one word."""
+    mode = _grading_mode(mode)
     weak_hint = _WEAK_ANSWER_FORMS.get(mode)
     if weak_hint:
         return {"main": weak_hint}
@@ -346,6 +371,7 @@ def expected_answer(entry, mode, dict_lang):
     name a form the verdict would have rejected. Extra forms are comma-separated
     here, unlike the input hint (§8.5a-bis) — this is a thing to read, not to type.
     """
+    mode = _grading_mode(mode)
     if mode == DE_L1:
         return low_word(_entry_translation(entry, dict_lang))
     if mode in (PL_SG, WEAK_ARTICLE):
@@ -384,11 +410,12 @@ def quiz_question(
 ):
     """One question, ready to send (§7.4).
 
-    `answer_kind` follows from the mode, so callers do not have to remember that
-    weak_article is answered by button; passing it explicitly is for the client
-    tests that want to state it.
+    `answer_kind` follows from the mode and the phase, so callers do not have to
+    remember that weak_article is answered by button and a preview card is not
+    answered at all; passing it explicitly is for the client tests that want to
+    state it.
     """
-    prompt, prompt_lang = question_prompt(entry, mode, dict_lang)
+    prompt, prompt_lang = question_prompt(entry, mode, dict_lang, phase)
     payload = {
         "token": token,
         "mode": mode,
@@ -396,12 +423,19 @@ def quiz_question(
         "word_id": entry.get("id"),
         "prompt": prompt,
         "prompt_lang": prompt_lang,
-        "answer_kind": answer_kind or answer_kind_for(mode),
-        "hint": question_hint(entry, mode),
+        "answer_kind": answer_kind or answer_kind_for(mode, phase),
+        "hint": question_hint(entry, mode, phase),
         "is_retry": bool(is_retry),
         "is_drill": bool(is_drill),
         "progress": progress,
     }
+
+    # A preview card is read rather than answered, so it carries the whole word —
+    # the same card component the dictionary and the quiz feedback show — and none
+    # of the hints about what to type.
+    if phase == PHASE_PREVIEW:
+        payload["card"] = word_card(entry, dict_lang)
+        return payload
 
     translation = question_translation(entry, mode, dict_lang)
     if translation:
@@ -428,9 +462,17 @@ def quiz_question(
     return payload
 
 
-def quiz_feedback(entry, mode, dict_lang, streak, card=None):
-    """The verdict screen's payload: expected answer, streak, and the word card."""
+def quiz_feedback(entry, mode, dict_lang, streak, card=None, completed=False):
+    """The verdict screen's payload: expected answer, streak, and the word card.
+
+    `completed` is learning's own: this answer was the last step of the ladder, so
+    the word has left the batch and gone on to FSRS. The chat says so in words
+    ("learning_done_sent_fsrs"); the app sends the fact and lets the client phrase
+    it.
+    """
     payload = {"expected": expected_answer(entry, mode, dict_lang), "streak": int(streak or 0)}
     if card:
         payload["card"] = card
+    if completed:
+        payload["completed"] = True
     return payload

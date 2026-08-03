@@ -51,6 +51,7 @@ from ..common.session import (
 )
 from ..storage import apply_user_word_media, update_form_stats
 from ..ui.formatting import _is_pl_sg_eligible
+from .outcomes import EMPTY_NO_DUE
 
 L1_DE = "l1_de"
 DE_L1 = "de_l1"
@@ -76,7 +77,10 @@ _EFFECT_NAMES = {
     POOP_MESSAGE_EFFECT_ID: "poop",
 }
 
-AnswerResult = namedtuple("AnswerResult", ("entry", "ok", "is_retry", "streak"))
+# `completed` belongs to learning — a word leaving its batch for FSRS — and is
+# always False here; it stays in the tuple so the HTTP layer can serialize any
+# flow's verdict the same way.
+AnswerResult = namedtuple("AnswerResult", ("entry", "ok", "is_retry", "streak", "completed"))
 
 
 def mode_for(user_id, direction):
@@ -203,7 +207,7 @@ def submit_answer(session, user_id, text, dont_know=False):
         _set_retry_since_last(ctx, mode, _retry_since_last(ctx, mode) + 1)
     _bump_session_result(ctx, mode, ok, is_retry)
     streak = _bump_answer_streak(ctx, ok)
-    return AnswerResult(entry=entry, ok=ok, is_retry=is_retry, streak=streak)
+    return AnswerResult(entry=entry, ok=ok, is_retry=is_retry, streak=streak, completed=False)
 
 
 def apply_input_err(session, user_id):
@@ -230,6 +234,11 @@ def progress(session, user_id):
     # it again would make the total climb every time a word comes back.
     pending = 1 if entry and not _session_has_seen(ctx, mode, entry.get("id")) else 0
     return {"answered": answered, "total_due": answered + _fsrs_queue_length(ctx, mode) + pending}
+
+
+def empty_info(session, user_id):  # noqa: ARG001 - part of the flow interface
+    """Why the queue is empty. An FSRS queue only ever runs out of due words."""
+    return {"empty": EMPTY_NO_DUE}
 
 
 def summary(session, user_id):
