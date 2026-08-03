@@ -5,6 +5,10 @@ One inline message, edited in place as the user drills the fork:
     S0 fork ─▶ S1 CEFR levels          (tap = toggle, mode -> cefr)
            └▶ S2 book-levels ─▶ S3 topics of that level  (mode -> topics)
 
+Only the live branch renders its stored selection; the other one is drawn empty and
+its first tap selects from scratch (bug #28) — otherwise an inactive branch looks
+fully applied while filtering nothing.
+
 Inline `wf:` buttons drive the drill (a global CallbackQueryHandler, so they survive
 a restart — all state lives in the DB, nothing in memory). The reply keyboard carries
 only `back`, which returns to the calling menu (via `topic_return`) and prints a summary
@@ -40,6 +44,7 @@ from ..storage import (
     list_book_levels,
     list_cefr_levels_with_words,
     list_topics_with_level,
+    set_user_levels,
     set_user_setting,
     toggle_user_level,
 )
@@ -60,6 +65,17 @@ _TOPICS_PER_ROW = 5
 
 def _btn(text, data, active):
     return InlineKeyboardButton(text, callback_data=data, style="success" if active else None)
+
+
+def _branch_active(user_id, mode):
+    """Whether `mode` is the branch the quiz filter currently runs on (bug #28).
+
+    Each branch keeps its own stored selection regardless of which one is live, so
+    an inactive branch would render fully green while filtering nothing. Drawing it
+    empty keeps the screen honest: nothing is selected here *yet*, and the first tap
+    is a fresh choice rather than a toggle against invisible state.
+    """
+    return get_filter_mode(user_id) == mode
 
 
 def _level_topics_with_desc(db, level):
@@ -88,8 +104,9 @@ def render_cefr(user_id):
     lang = _user_interface_lang(user_id)
     db = get_db_path()
     levels = list_cefr_levels_with_words(db)  # dynamic: only levels that have words
-    selected = set(get_user_levels(db, user_id))
-    all_selected = len(selected) >= len(CEFR_LEVELS)
+    live = _branch_active(user_id, MODE_CEFR)
+    selected = set(get_user_levels(db, user_id)) if live else set()
+    all_selected = live and len(selected) >= len(CEFR_LEVELS)
     body = "\n".join(
         f"[{'✅' if lv in selected else '  '}] {lv} (words: {count_words_for_cefr(db, lv)})"
         for lv in levels
@@ -109,7 +126,7 @@ def render_booklevels(user_id):
     lang = _user_interface_lang(user_id)
     db = get_db_path()
     levels = list_book_levels(db)  # dynamic: only levels whose topics hold words
-    active = get_active_book_level(user_id)
+    active = get_active_book_level(user_id) if _branch_active(user_id, MODE_TOPICS) else None
     body = "\n".join(
         f"{lv} (words: {count_words_for_book_level(db, lv)})" for lv in levels
     ) or t(lang, "wf_booklevel_empty")
@@ -129,7 +146,9 @@ def render_topics(user_id):
     level = get_active_book_level(user_id)
     pairs = _level_topics_with_desc(db, level)
     names = [n for n, _ in pairs]
-    raw = get_user_setting(db, user_id, TOPIC_FILTER_KEY, "")
+    # An empty filter string resolves to an empty set, which is exactly the
+    # "nothing picked here yet" look the inactive branch needs.
+    raw = get_user_setting(db, user_id, TOPIC_FILTER_KEY, "") if _branch_active(user_id, MODE_TOPICS) else ""
     active = resolve_active(raw, names)
     body = "\n".join(
         f"[{'✅' if n in active else '  '}] [{n}] {(d or '').strip() or '—'}" for n, d in pairs
@@ -209,12 +228,15 @@ async def word_filter_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     elif data == CB_BACK + "blvl":
         render = render_booklevels
     elif data.startswith(CB_CEFR):
+        # The screen was drawn empty while this branch was inactive, so the first
+        # tap has to mean "select this", not "toggle it off" (bug #28).
+        fresh = not _branch_active(user_id, MODE_CEFR)
         set_filter_mode(user_id, MODE_CEFR)
         key = data[len(CB_CEFR):]
         if key == "all":
-            for lv in CEFR_LEVELS:
-                if lv not in set(get_user_levels(db, user_id)):
-                    toggle_user_level(db, user_id, lv)
+            set_user_levels(db, user_id, CEFR_LEVELS)
+        elif fresh:
+            set_user_levels(db, user_id, [key])
         else:
             ok, _ = toggle_user_level(db, user_id, key)
             if not ok:  # would drop the last level — keep at least one
@@ -228,12 +250,15 @@ async def word_filter_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         set_user_setting(db, user_id, TOPIC_FILTER_KEY, "all")  # fresh level -> all
         render = render_topics
     elif data.startswith(CB_TOPIC):
+        fresh = not _branch_active(user_id, MODE_TOPICS)  # see the CEFR branch above
         set_filter_mode(user_id, MODE_TOPICS)
         level = get_active_book_level(user_id)
         names = [n for n, _ in _level_topics_with_desc(db, level)]
         key = data[len(CB_TOPIC):]
         if key == "all":
             set_user_setting(db, user_id, TOPIC_FILTER_KEY, "all")
+        elif fresh and key in names:
+            set_user_setting(db, user_id, TOPIC_FILTER_KEY, key)
         elif key in names:
             raw = get_user_setting(db, user_id, TOPIC_FILTER_KEY, "")
             new, rejected = topic_toggle(raw, key, names)

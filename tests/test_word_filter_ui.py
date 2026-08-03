@@ -129,9 +129,58 @@ class WordFilterUITest(unittest.TestCase):
     # --- callback drill ---
 
     def test_cefr_toggle_sets_mode_and_levels(self):
-        _run(_Query(UI.CB_CEFR + "A1", U))  # default = all six; toggling A1 removes it
+        # bug #28: default mode is 'topics', so the first CEFR tap is a fresh pick
+        # (A1 alone), not a toggle against the invisible default-all selection.
+        _run(_Query(UI.CB_CEFR + "A1", U))
         self.assertEqual(wf.get_filter_mode(U), "cefr")
-        self.assertNotIn("A1", get_user_levels(self.db, U))
+        self.assertEqual(get_user_levels(self.db, U), ["A1"])
+        # now the branch is live, so the next tap toggles as before
+        _run(_Query(UI.CB_CEFR + "A2", U))
+        self.assertEqual(get_user_levels(self.db, U), ["A1", "A2"])
+
+    # --- bug #28: the inactive branch renders empty and its first tap is a fresh pick ---
+
+    def test_inactive_cefr_branch_renders_nothing_selected(self):
+        wf.set_filter_mode(U, "topics")
+        text, _ = UI.render_cefr(U)
+        self.assertNotIn("✅", text)
+
+    def test_active_cefr_branch_renders_its_selection(self):
+        wf.set_filter_mode(U, "cefr")
+        text, _ = UI.render_cefr(U)
+        self.assertIn("✅", text)  # default selection is every level
+
+    def test_inactive_topics_branch_renders_nothing_selected(self):
+        from bot.storage import set_user_setting
+        wf.set_active_book_level(U, "A1")
+        set_user_setting(self.db, U, TOPIC_FILTER_KEY, "all")
+        wf.set_filter_mode(U, "cefr")
+        text, _ = UI.render_topics(U)
+        self.assertNotIn("✅", text)
+
+    def test_inactive_booklevel_branch_highlights_nothing(self):
+        wf.set_active_book_level(U, "A1")
+        wf.set_filter_mode(U, "cefr")
+        _, kb = UI.render_booklevels(U)
+        styles = [getattr(b, "style", None) for row in kb.inline_keyboard for b in row]
+        self.assertEqual([s for s in styles if s], [])
+
+    def test_first_topic_tap_after_cefr_selects_only_that_topic(self):
+        from bot.storage import set_user_setting
+        wf.set_active_book_level(U, "A1")
+        set_user_setting(self.db, U, TOPIC_FILTER_KEY, "all")
+        wf.set_filter_mode(U, "cefr")
+        _run(_Query(UI.CB_TOPIC + "1", U))
+        self.assertEqual(wf.get_filter_mode(U), "topics")
+        self.assertEqual(get_user_setting(self.db, U, TOPIC_FILTER_KEY, ""), "1")
+
+    def test_entering_a_branch_without_tapping_changes_nothing(self):
+        wf.set_filter_mode(U, "topics")
+        before = get_user_levels(self.db, U)
+        _run(_Query(UI.CB_FORK_CEFR, U))   # just open the CEFR screen
+        _run(_Query(UI.CB_BACK + "fork", U))  # and walk back out
+        self.assertEqual(wf.get_filter_mode(U), "topics")
+        self.assertEqual(get_user_levels(self.db, U), before)
 
     def test_cefr_all_selects_everything(self):
         # first narrow to a subset, then tap 'all'

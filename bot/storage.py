@@ -2077,6 +2077,30 @@ def toggle_user_level(db_path, user_id, level):
     return True, get_user_levels(db_path, user_id)
 
 
+def set_user_levels(db_path, user_id, levels):
+    """Replace the CEFR selection outright (bug #28).
+
+    toggle_user_level flips one level against whatever is stored, which cannot
+    express "the user starts from an empty screen and picks one". The filter UI
+    needs that when the CEFR branch is entered while the topic branch is active.
+    """
+    wanted = []
+    for level in levels:
+        normalized = _normalize_level(level)
+        if normalized and normalized not in wanted:
+            wanted.append(normalized)
+    if not wanted:
+        raise ValueError("At least one CEFR level is required.")
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        conn.execute("DELETE FROM user_levels WHERE user_id = ?", (int(user_id),))
+        conn.executemany(
+            "INSERT OR IGNORE INTO user_levels (user_id, level) VALUES (?, ?)",
+            [(int(user_id), level) for level in wanted],
+        )
+    return get_user_levels(db_path, user_id)
+
+
 def get_user_info(db_path, user_id):
     """Handle get user info."""
     init_db(db_path)

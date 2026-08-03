@@ -90,8 +90,18 @@ class ReleaseDataBackfillTest(unittest.TestCase):
         payload = load_payload(DEFAULT_PAYLOAD)
         self.assertEqual(payload["source"]["word_count"], 907)
         self.assertEqual(len(payload["word_patches"]), 907)
-        self.assertEqual(len(payload["synonym_pairs"]), 2)
+        self.assertEqual(len(payload["synonym_pairs"]), 3)
+        self.assertIn(["dann", "danach"], [pair["labels"] for pair in payload["synonym_pairs"]])
         patches = {item["label"]: item["fields"] for item in payload["word_patches"]}
+        # was is only the interrogative "что"; the indefinite "что-то" reading was
+        # rejected by the owner 03.08. The patch runs backwards (old=long, new=short)
+        # so contours that already applied the earlier payload roll back on re-run.
+        self.assertEqual(patches["was"]["russian"]["new"], "что")
+        self.assertEqual(patches["was"]["russian"]["old"], "что, что-то")
+        self.assertEqual(patches["was"]["ukrainian"]["new"], "що")
+        self.assertEqual(patches["was"]["ukrainian"]["old"], "що, щось")
+        # dann carried the russian "затем" at the head of its ukrainian list.
+        self.assertNotIn("затем", patches["dann"]["ukrainian"]["new"])
         self.assertEqual(
             patches["Arbeitszeit"]["plural"]["new"],
             "Arbeitszeiten, Arbeitzeiten",
@@ -99,7 +109,13 @@ class ReleaseDataBackfillTest(unittest.TestCase):
         self.assertEqual(patches["um"]["preposition_type"]["new"], "temporal")
         self.assertEqual(patches["um"]["ukrainian"]["new"], "о, об")
         self.assertEqual(patches["von"]["preposition_type"]["new"], "temporal")
-        self.assertEqual(patches["senden"]["prateritum"]["new"], "sendete, sandte")
+        # senden stays the "send a thing" verb: the broadcast reading would drag in
+        # the weak sendete/gesendet pair and its translations (owner call 03.08).
+        self.assertNotIn("prateritum", patches["senden"])
+        self.assertNotIn("partizip2", patches["senden"])
+        self.assertNotIn("транслировать", patches["senden"]["russian"]["new"])
+        self.assertNotIn("broadcast", patches["senden"]["english"]["new"])
+        self.assertNotIn("gesendet", patches["senden"]["example"]["new"])
         for verb in ("denken", "kosten", "spielen", "schwimmen", "geboren werden"):
             self.assertIn("conjugation_praesens", patches[verb])
             self.assertTrue(patches[verb]["conjugation_praesens"]["new"])
