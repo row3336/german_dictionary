@@ -2,7 +2,7 @@
 
 Two independent layers, verified separately:
 
-* Show layer (handlers.learning._pick_learning_due_entry) — STATIC rule, never
+* Show layer (common.learning_core.pick_learning_due_entry) — STATIC rule, never
   affected by mix mode: first round (step 0) strictly in preview order; later
   rounds (step > 0) random but no word within the last two shows.
 * Selection layer (storage.learning_pick_new_words) — the ONLY place mix acts:
@@ -17,7 +17,7 @@ import types
 import unittest
 import warnings
 
-from bot.handlers.learning import _note_learning_shown, _pick_learning_due_entry
+from bot.common.learning_core import note_learning_shown, pick_learning_due_entry
 from bot.storage import (
     _mix_by_topic_proportional,
     add_word,
@@ -89,9 +89,9 @@ class LearningShowOrderTests(unittest.TestCase):
         ctx = _ctx()
         seen = []
         for _ in range(len(words)):
-            entry = _pick_learning_due_entry(ctx, user_id=1)
+            entry = pick_learning_due_entry(ctx, user_id=1)
             seen.append(entry["german"])
-            _note_learning_shown(ctx, entry["id"])
+            note_learning_shown(ctx, entry["id"])
             # answering advances the word out of the first round (step 0 -> 1)
             learning_update_result(self.db, user_id=1, word_id=entry["id"], ok=True, intervals_seconds=[0, 0, 0, 0])
         self.assertEqual(seen, ["Apfel", "Katze", "Haus", "Buch"])
@@ -106,9 +106,9 @@ class LearningShowOrderTests(unittest.TestCase):
         ctx = _ctx()
         seen = []
         for _ in range(len(words)):
-            entry = _pick_learning_due_entry(ctx, user_id=1)
+            entry = pick_learning_due_entry(ctx, user_id=1)
             seen.append(entry["german"])
-            _note_learning_shown(ctx, entry["id"])
+            note_learning_shown(ctx, entry["id"])
             learning_update_result(self.db, user_id=1, word_id=entry["id"], ok=True, intervals_seconds=[0, 0, 0, 0])
         self.assertEqual(seen, ["Apfel", "Katze", "Haus", "Buch"])
 
@@ -119,12 +119,12 @@ class LearningShowOrderTests(unittest.TestCase):
         ctx = _ctx()
         shown = []
         for _ in range(40):
-            entry = _pick_learning_due_entry(ctx, user_id=1)
+            entry = pick_learning_due_entry(ctx, user_id=1)
             wid = entry["id"]
             # invariant: not equal to either of the last two shows (>= once per three)
             self.assertNotIn(wid, shown[-2:])
             shown.append(wid)
-            _note_learning_shown(ctx, wid)
+            note_learning_shown(ctx, wid)
         # sanity: randomization actually happened (not a fixed cycle)
         self.assertGreater(len(set(shown)), 1)
 
@@ -136,13 +136,13 @@ class LearningShowOrderTests(unittest.TestCase):
         ctx = _ctx()
         prev = None
         for _ in range(20):
-            entry = _pick_learning_due_entry(ctx, user_id=1)
+            entry = pick_learning_due_entry(ctx, user_id=1)
             self.assertNotEqual(entry["id"], prev)
             prev = entry["id"]
-            _note_learning_shown(ctx, entry["id"])
+            note_learning_shown(ctx, entry["id"])
 
     def test_empty_queue_returns_none(self):
-        self.assertIsNone(_pick_learning_due_entry(_ctx(), user_id=1))
+        self.assertIsNone(pick_learning_due_entry(_ctx(), user_id=1))
 
 
 class LearningMixSelectionTests(unittest.TestCase):

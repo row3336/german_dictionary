@@ -1,12 +1,13 @@
-"""Learning mode: the learning menu, the preview/quiz flow, the static show
-order (first round in preview order, later rounds random with spacing) plus the
-separate topic-mix word selection, 👍/👎 answer reactions, the plain
-end-of-queue service message, batch top-up, input-err correction, and the helper
-that pushes a quiz entry into the learning batch (used by quiz / clarify_fields /
+"""Learning mode in the chat: the learning menu, the preview/quiz prompts, the
+👍/👎 answer reactions, the plain end-of-queue service message and the helper that
+pushes a quiz entry into the learning batch (used by quiz / clarify_fields /
 db_search).
+
+The rules themselves — the static show order, the verdict, the ladder writes, the
+batch top-up — live in `common/learning_core.py`, shared with the Mini App
+(miniapp.md §5.1). What stays here is what speaks Telegram.
 """
 
-import random
 from datetime import datetime, timezone
 
 from telegram import ReplyKeyboardMarkup, Update
@@ -19,39 +20,40 @@ from ..app_config import (
     TESTS_MENU,
     get_db_path,
 )
+from ..common.input_err import apply_learning_input_err
 from ..common.lang import _user_dict_lang, _user_interface_lang
+from ..common.learning_core import (
+    FILL_BATCH_FULL,
+    FILL_NO_NEW,
+    add_word_to_batch,
+    due_entries,
+    fill_batch,
+    forget_shown_history,
+    learning_verdict,
+    mark_preview_next,
+    note_learning_shown,
+    pick_learning_due_entry,
+    preview_entry,
+    score_learning_answer,
+    skip_word,
+)
 from ..common.navigation import _action_key_from_text, _reply_text_with_retry
 from ..common.settings import (
     _learning_daily_qty,
     _learning_intervals_text,
     _learning_mix_mode_enabled,
     _learning_ready_quorum,
-    _learning_schedule_seconds,
     _set_learning_mix_mode,
     _topic_filter_banner,
 )
-from ..common.word_filter import count_words_for_filter, resolve_quiz_filter
-from ..common.quiz_core import _check_ru_de_strict
-from ..common.txlog import _capture_transaction_snapshot, _log_transaction
+from ..common.word_filter import count_words_for_filter
 from ..handlers.quiz import _set_reaction
 from ..i18n import t
 from ..storage import (
     apply_user_word_media,
-    learning_active_count,
-    learning_add_word_by_id,
-    learning_add_words,
-    learning_apply_input_err,
-    learning_due_entries,
-    learning_get_or_create_batch,
-    learning_mark_preview_next,
-    learning_pick_new_words,
-    learning_preview_entry,
     learning_reset_session,
-    learning_skip_word,
     learning_status_snapshot,
-    learning_update_result,
     list_learning_active_words,
-    log_quiz_event,
 )
 from ..text_utils import cap_word as _cap_word
 from ..text_utils import low_word as _low_word
@@ -109,52 +111,6 @@ def _learning_empty_text(user_id):
     return f"{base}\nnext_due = {eta}"
 
 
-# A word must not reappear within this many consecutive shows (>= once per three).
-_LEARNING_RECENT_SHOWS = 2
-
-
-def _pick_learning_due_entry(context, user_id):
-    """Pick the next word to show in the running learning queue.
-
-    STATIC show rule — identical whether or not mix mode is on (mix only shapes
-    which words enter the queue, never their show order; see storage.py:
-    learning_pick_new_words):
-      - first round (freshly previewed, step_index == 0): strict preview order
-        (words as they were reviewed, i.e. created_at ASC from the query);
-      - later rounds (step_index > 0): random, but a word is not shown again
-        within the last two shows — at most once per three consecutive shows.
-    Recent shows are tracked in context ("learning_recent_ids"); when the pool is
-    too small to honour the spacing, it relaxes as far as needed.
-    """
-    due_entries = learning_due_entries(get_db_path(), user_id=user_id)
-    if not due_entries:
-        return None
-    recent = context.user_data.get("learning_recent_ids") or []
-    last_shown = recent[-1] if recent else None
-
-    first_round = [entry for entry in due_entries if int(entry.get("learning_step") or 0) == 0]
-    if first_round:
-        # already ordered by created_at ASC (preview order) in the query
-        for entry in first_round:
-            if entry.get("id") != last_shown:
-                return entry
-        return first_round[0]
-
-    pool = [entry for entry in due_entries if entry.get("id") not in recent]
-    if not pool:
-        pool = [entry for entry in due_entries if entry.get("id") != last_shown] or due_entries
-    return random.choice(pool)
-
-
-def _note_learning_shown(context, word_id):
-    """Record a shown word for the later-round spacing window (keep last N ids)."""
-    if not word_id:
-        return
-    recent = context.user_data.get("learning_recent_ids") or []
-    recent.append(word_id)
-    context.user_data["learning_recent_ids"] = recent[-_LEARNING_RECENT_SHOWS:]
-
-
 async def _apply_learning_reaction(update, context, ok):
     """React to the learning answer message: 👍 correct, 👎 wrong. Flat — no streak
     escalation — mirroring the FSRS quiz reaction contract. Best-effort. The
@@ -165,50 +121,11 @@ async def _apply_learning_reaction(update, context, ok):
 
 
 def _send_entry_to_learning(update: Update, context: ContextTypes.DEFAULT_TYPE, entry_key="quiz_entry"):
-    """Handle send entry to learning."""
+    """Send the word the user is looking at into the learning batch."""
     entry = context.user_data.get(entry_key)
     if not entry:
         return False
-    db_path = get_db_path()
-    user_id = update.effective_user.id
-    batch_id = learning_get_or_create_batch(db_path, user_id=user_id, daily_qty=_learning_daily_qty(db_path, user_id))
-    added = learning_add_word_by_id(
-        db_path,
-        user_id=user_id,
-        word_id=entry.get("id"),
-        batch_id=batch_id,
-        first_delay_seconds=_learning_schedule_seconds(db_path, user_id)[0],
-    )
-    return bool(added)
-
-
-def _apply_input_err_learning(update, context):
-    """Handle apply input error for learning mode."""
-    last_id = context.user_data.get("last_learning_entry_id")
-    last_ok = context.user_data.get("last_learning_ok")
-    last_prev_step = context.user_data.get("last_learning_prev_step")
-    if not last_id or last_ok is None:
-        return False
-    if last_ok:
-        return False
-    snapshot = _capture_transaction_snapshot(update.effective_user.id, last_id, ["learning"])
-    result = learning_apply_input_err(
-        get_db_path(),
-        user_id=update.effective_user.id,
-        word_id=last_id,
-        prev_step_index=last_prev_step,
-        intervals_seconds=_learning_schedule_seconds(get_db_path(), update.effective_user.id),
-    )
-    log_quiz_event(
-        get_db_path(),
-        user_id=update.effective_user.id,
-        word_id=last_id,
-        mode="learning",
-        is_correct=True,
-    )
-    _log_transaction(update.effective_user.id, "input_err:learning", snapshot)
-    context.user_data["last_learning_ok"] = True
-    return bool(result)
+    return add_word_to_batch(update.effective_user.id, entry.get("id"))
 
 
 async def _send_learning_menu(update: Update, user_id):
@@ -263,47 +180,19 @@ def _format_learning_preview_line(entry, dict_lang):
 
 
 async def _learning_add_words(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle learning add words."""
+    """Top the batch up and report what came of it."""
     user_id = update.effective_user.id
-    db_path = get_db_path()
-    daily_qty = _learning_daily_qty(db_path, user_id)
-    batch_id = learning_get_or_create_batch(db_path, user_id=user_id, daily_qty=daily_qty)
-    active_count = learning_active_count(db_path, user_id=user_id, batch_id=batch_id)
-    need = max(0, daily_qty - active_count)
-    if need <= 0:
-        await _reply_text_with_retry(
-            update.message,
-            t(_user_interface_lang(user_id), "learning_batch_full").format(active=active_count, daily=daily_qty),
-            reply_markup=ReplyKeyboardMarkup(_learning_menu_keys(user_id), resize_keyboard=True),
-        )
-        return LEARNING_MENU
-    qf = resolve_quiz_filter(user_id)
-    picked = learning_pick_new_words(
-        db_path,
-        user_id=user_id,
-        limit=need,
-        topics=qf.topics,
-        cefr_levels=qf.cefr_levels,
-        mix=_learning_mix_mode_enabled(user_id),
-    )
-    if not picked:
-        await _reply_text_with_retry(
-            update.message,
-            t(_user_interface_lang(user_id), "learning_no_new"),
-            reply_markup=ReplyKeyboardMarkup(_learning_menu_keys(user_id), resize_keyboard=True),
-        )
-        return LEARNING_MENU
-    first_delay = _learning_schedule_seconds(db_path, user_id)[0]
-    added = learning_add_words(
-        db_path,
-        user_id=user_id,
-        words=picked,
-        batch_id=batch_id,
-        first_delay_seconds=first_delay,
-    )
+    lang = _user_interface_lang(user_id)
+    result = fill_batch(user_id)
+    if result.reason == FILL_BATCH_FULL:
+        message = t(lang, "learning_batch_full").format(active=result.active, daily=result.daily)
+    elif result.reason == FILL_NO_NEW:
+        message = t(lang, "learning_no_new")
+    else:
+        message = t(lang, "learning_added").format(added=result.added)
     await _reply_text_with_retry(
         update.message,
-        t(_user_interface_lang(user_id), "learning_added").format(added=added),
+        message,
         reply_markup=ReplyKeyboardMarkup(_learning_menu_keys(user_id), resize_keyboard=True),
     )
     return LEARNING_MENU
@@ -312,12 +201,12 @@ async def _learning_add_words(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text, force_entry=None):
     """Show the next question/preview in the learning session."""
     user_id = update.effective_user.id
-    preview_entry = learning_preview_entry(get_db_path(), user_id=user_id)
-    if preview_entry:
-        preview_entry = apply_user_word_media(get_db_path(), user_id, preview_entry)  # personal media (P4)
-        context.user_data["quiz_entry"] = preview_entry
+    pending_preview = preview_entry(user_id)
+    if pending_preview:
+        pending_preview = apply_user_word_media(get_db_path(), user_id, pending_preview)  # personal media (P4)
+        context.user_data["quiz_entry"] = pending_preview
         context.user_data["learning_preview_mode"] = True
-        prompt_text = _format_learning_preview_prompt(preview_entry, _user_dict_lang(user_id))
+        prompt_text = _format_learning_preview_prompt(pending_preview, _user_dict_lang(user_id))
         if prefix_text:
             prompt_text = f"{prefix_text}\n\n{prompt_text}"
         await _reply_text_with_retry(
@@ -333,10 +222,10 @@ async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TY
 
     entry = force_entry
     if not entry:
-        entry = _pick_learning_due_entry(context, user_id)
+        entry = pick_learning_due_entry(context, user_id)
     if not entry:
         context.user_data["learning_preview_mode"] = False
-        context.user_data.pop("learning_recent_ids", None)
+        forget_shown_history(context)
         # Send the trailing feedback (Markdown) and the plain service tail as two
         # separate messages: the tail carries 'next_due', whose underscore would
         # break parse_mode='Markdown' (unterminated entity). Keep them apart so the
@@ -352,7 +241,7 @@ async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TY
     entry = apply_user_word_media(get_db_path(), user_id, entry)  # personal media (P4)
     context.user_data["quiz_entry"] = entry
     context.user_data["learning_preview_mode"] = False
-    _note_learning_shown(context, entry.get("id"))
+    note_learning_shown(context, entry.get("id"))
     prompt_text = _format_ru_question(entry, _user_dict_lang(user_id))
     if prefix_text:
         prompt_text = f"{prefix_text}\n\n{prompt_text}"
@@ -398,7 +287,7 @@ async def learning_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
         return await _send_learning_menu(update, user_id)
     if action == "learning_reset":
         learning_reset_session(get_db_path(), user_id=user_id)
-        context.user_data.pop("learning_recent_ids", None)
+        forget_shown_history(context)
         await _reply_text_with_retry(
             update.message,
             t(_user_interface_lang(user_id), "learning_session_reset"),
@@ -406,12 +295,12 @@ async def learning_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         return LEARNING_MENU
     if action == "learning_start":
-        context.user_data.pop("learning_recent_ids", None)
+        forget_shown_history(context)
         # Empty queue: nothing previewed and nothing due -> don't enter the session
         # (no lone Back button, no 🔥). Just show the service message and stay in the
         # menu, where the "add for learning" button is already in reach.
-        has_preview = learning_preview_entry(get_db_path(), user_id=user_id) is not None
-        has_due = bool(learning_due_entries(get_db_path(), user_id=user_id))
+        has_preview = preview_entry(user_id) is not None
+        has_due = bool(due_entries(user_id))
         if not has_preview and not has_due:
             await _reply_text_with_retry(
                 update.message,
@@ -447,19 +336,10 @@ async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     is_preview = bool(context.user_data.get("learning_preview_mode"))
     if is_preview:
         if action == "learning_skip":
-            snapshot = _capture_transaction_snapshot(user_id, entry.get("id"), ["learning"])
-            learning_skip_word(get_db_path(), user_id=user_id, word_id=entry.get("id"))
-            _log_transaction(user_id, "learning:skip", snapshot)
+            skip_word(user_id, entry.get("id"))
             return await _send_learning_prompt(update, context, t(_user_interface_lang(user_id), "learning_skipped"))
         if action == "learning_next":
-            snapshot = _capture_transaction_snapshot(user_id, entry.get("id"), ["learning"])
-            learning_mark_preview_next(
-                get_db_path(),
-                user_id=user_id,
-                word_id=entry.get("id"),
-                first_interval_seconds=_learning_schedule_seconds(get_db_path(), user_id)[0],
-            )
-            _log_transaction(user_id, "learning:preview_next", snapshot)
+            mark_preview_next(user_id, entry.get("id"))
             return await _send_learning_prompt(update, context, t(_user_interface_lang(user_id), "learning_saved_next"))
         await _reply_text_with_retry(
             update.message,
@@ -469,7 +349,7 @@ async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return LEARNING_QUIZ
 
     if action == "input_err":
-        applied = _apply_input_err_learning(update, context)
+        applied = apply_learning_input_err(context, user_id)
         lang = _user_interface_lang(user_id)
         prefix = t(lang, "input_err_fixed") if applied else t(lang, "input_err_nothing")
         if applied:
@@ -484,35 +364,12 @@ async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await _send_learning_prompt(update, context, prefix)
 
     if action == "learning_skip":
-        snapshot = _capture_transaction_snapshot(user_id, entry.get("id"), ["learning"])
-        learning_skip_word(get_db_path(), user_id=user_id, word_id=entry.get("id"))
-        _log_transaction(user_id, "learning:skip", snapshot)
+        skip_word(user_id, entry.get("id"))
         return await _send_learning_prompt(update, context, t(_user_interface_lang(user_id), "learning_skipped"))
 
-    if text == I_DONT_KNOW_TEXT:
-        ok = False
-    else:
-        ok, _ = _check_ru_de_strict(entry, text)
-    context.user_data["last_learning_entry_id"] = entry.get("id")
-    context.user_data["last_learning_ok"] = bool(ok)
-    context.user_data["last_learning_prev_step"] = int(entry.get("learning_step") or 0)
+    ok = learning_verdict(entry, text, dont_know=text == I_DONT_KNOW_TEXT)
     await _apply_learning_reaction(update, context, ok)
-    log_quiz_event(
-        get_db_path(),
-        user_id=user_id,
-        word_id=entry.get("id"),
-        mode="learning",
-        is_correct=ok,
-    )
-    snapshot = _capture_transaction_snapshot(user_id, entry.get("id"), ["learning"])
-    result = learning_update_result(
-        get_db_path(),
-        user_id=user_id,
-        word_id=entry.get("id"),
-        ok=ok,
-        intervals_seconds=_learning_schedule_seconds(get_db_path(), user_id),
-    )
-    _log_transaction(user_id, "learning:answer", snapshot)
+    result = score_learning_answer(context, user_id, entry, ok)
     feedback = _format_feedback_ru_de(entry, ok, lang=_user_interface_lang(user_id))
     if result.get("completed"):
         feedback = f"{feedback}\n\n{t(_user_interface_lang(user_id), 'learning_done_sent_fsrs')}"

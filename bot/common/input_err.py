@@ -1,18 +1,21 @@
 """input_err — undo an answer that was a typo, not a miss (business_logic.md §7a).
 
-FSRS and weak quizzes; the learning variant has its own rollback in storage.py.
-Kept apart from quiz_core.py / weak_core.py on purpose: everything there is a pure
-verdict or a forward scoring step, while this one reaches back into the session
-(`context.user_data`) and rewrites what the previous answer already recorded.
+FSRS, weak and learning quizzes. Kept apart from quiz_core.py / weak_core.py /
+learning_core.py on purpose: everything there is a pure verdict or a forward
+scoring step, while this one reaches back into the session (`context.user_data`)
+and rewrites what the previous answer already recorded.
 
-Split out of handlers/quiz.py and handlers/weak.py so the Mini App corrects an
-answer through the very same rollback as the chat (miniapp.md §5.1). Correcting
-differently is worse than not correcting at all: the two clients would disagree
-about an interval the user cannot see, and nobody could tell which one is right.
+Split out of handlers/quiz.py, handlers/weak.py and handlers/learning.py so the
+Mini App corrects an answer through the very same rollback as the chat
+(miniapp.md §5.1). Correcting differently is worse than not correcting at all:
+the two clients would disagree about an interval the user cannot see, and nobody
+could tell which one is right.
 
-The two rollbacks undo different things because the two modes record different
-things — FSRS restores the interval it overwrote, weak un-does one tally in
-`form_stats` and, when the word was in the review ladder, the step it just lost.
+The three rollbacks undo different things because the three modes record
+different things — FSRS restores the interval it overwrote, weak un-does one
+tally in `form_stats` and, when the word was in the review ladder, the step it
+just lost, and learning re-advances the ladder step from where the wrong answer
+found it.
 """
 
 from collections import namedtuple
@@ -22,13 +25,16 @@ from ..storage import apply_weak_input_err as _rollback_weak_form
 from ..storage import (
     get_form_review_stage,
     get_form_state,
+    learning_apply_input_err,
     log_quiz_event,
     mark_last_quiz_event_correct,
     set_progress,
     update_progress,
     update_weak_review_state,
 )
+from .learning_core import LEARNING_MODE
 from .quiz_core import _interval_divisor_for_mode
+from .settings import _learning_schedule_seconds
 from .session import (
     _flip_session_result_to_correct,
     _remove_from_retry,
@@ -125,3 +131,37 @@ def apply_weak_input_err(context, user_id, field):
     _log_transaction(user_id, f"input_err:{mode}", snapshot)
     context.user_data["last_weak_answered_ok"] = True
     return True
+
+
+def apply_learning_input_err(context, user_id):
+    """Turn the last wrong learning answer into a correct one.
+
+    Same three conditions as the other two rollbacks — there has to be a last
+    answer and it has to have been wrong. What differs is the undo: the wrong
+    answer dropped the word back to step 0, and `learning_apply_input_err`
+    re-advances it one step from where it stood BEFORE the answer, which is why
+    that step is part of the snapshot rather than read from the database.
+
+    Returns True when a correction was actually applied.
+    """
+    word_id = context.user_data.get("last_learning_entry_id")
+    last_ok = context.user_data.get("last_learning_ok")
+    prev_step = context.user_data.get("last_learning_prev_step")
+    if not word_id or last_ok is None:
+        return False
+    if last_ok:
+        return False
+
+    db = get_db_path()
+    snapshot = _capture_transaction_snapshot(user_id, word_id, [LEARNING_MODE])
+    result = learning_apply_input_err(
+        db,
+        user_id=user_id,
+        word_id=word_id,
+        prev_step_index=prev_step,
+        intervals_seconds=_learning_schedule_seconds(db, user_id),
+    )
+    log_quiz_event(db, user_id=user_id, word_id=word_id, mode=LEARNING_MODE, is_correct=True)
+    _log_transaction(user_id, f"input_err:{LEARNING_MODE}", snapshot)
+    context.user_data["last_learning_ok"] = True
+    return bool(result)

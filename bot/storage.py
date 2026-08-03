@@ -3057,7 +3057,7 @@ def _mix_by_topic_proportional(entries, limit):
     proportional to how many words that topic still has, avoiding two picks from
     the same topic back-to-back when another topic is available. In-topic order
     is preserved (later-round show randomization is a separate concern handled by
-    the show layer, see handlers/learning.py:_pick_learning_due_entry). A single
+    the show layer, see common/learning_core.py:pick_learning_due_entry). A single
     topic (or a single distinct topic among candidates) simply yields that
     topic's words in order — no division, no special case.
     """
@@ -3089,7 +3089,7 @@ def learning_pick_new_words(db_path, user_id, limit, topics=None, cefr_levels=No
 
     This is the *selection* layer for the learning queue — the only place mix
     mode acts. Mix mode never reorders the running queue's shows (that rule is
-    static, see handlers/learning.py:_pick_learning_due_entry); it only shapes
+    static, see common/learning_core.py:pick_learning_due_entry); it only shapes
     which words get drawn into the queue from the selected topic filter(s):
       - mix OFF: words taken in their natural (added) order across the filter;
       - mix ON: words drawn proportionally from each topic present, so a
