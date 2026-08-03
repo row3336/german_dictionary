@@ -34,6 +34,7 @@ from ..ui.formatting import (  # noqa: PLC2701 - the chat's own display rules, r
     _expected_partizip2,
 )
 from .quiz_flow import DE_L1, L1_DE, PL_SG
+from .weak_flow import WEAK_ARTICLE, WEAK_PARTIZIP2, WEAK_PLURAL, WEAK_PRATERITUM
 
 # Colour of the noun is carried by the article, and the article is always shown as
 # text next to it — never colour alone (§8.4, colour-blindness).
@@ -189,8 +190,9 @@ def word_card(entry, dict_lang, synonyms=(), study=None):
 
 # --- quiz question and feedback (§7.4) ---------------------------------------
 
-# The only answer kinds v1 knows. `article_choice` is what turns the answer row
-# into three der/die/das buttons; it belongs to weak_article and arrives with M5.
+# The only answer kinds v1 knows. `article_choice` turns the answer row into three
+# der/die/das buttons and closes the keyboard — the weak-article subcycle in §8.5a,
+# where Enter plays no part because there is nothing to type.
 ANSWER_TEXT = "text"
 ANSWER_ARTICLE_CHOICE = "article_choice"
 
@@ -204,6 +206,14 @@ _ANSWER_FORMS = {
     (L1_DE, "verb"): ("infinitiv partizip II", "infinitiv präteritum partizip II"),
     (L1_DE, "adjektiv"): ("adjektiv", "adjektiv komparativ superlativ"),
     (PL_SG, "nomen"): ("artikel Singular", ""),
+}
+
+# The same table for the weak modes, which ask for one named form regardless of the
+# word type. weak_article is absent on purpose: it is answered by button.
+_WEAK_ANSWER_FORMS = {
+    WEAK_PLURAL: "Plural",
+    WEAK_PRATERITUM: "präteritum",
+    WEAK_PARTIZIP2: "partizip II",
 }
 
 # Extra forms printed under a De→L1 question, per word type — the chat shows them
@@ -233,6 +243,11 @@ def de_headword(entry):
     return low_word(headword(entry))
 
 
+def answer_kind_for(mode):
+    """How this mode is answered: by typing, or by picking an article."""
+    return ANSWER_ARTICLE_CHOICE if mode == WEAK_ARTICLE else ANSWER_TEXT
+
+
 def question_prompt(entry, mode, dict_lang):
     """(prompt, prompt_lang) — the word being asked, and the language it is in."""
     if mode == L1_DE:
@@ -241,7 +256,27 @@ def question_prompt(entry, mode, dict_lang):
         return normalize_russian_singular(_entry_translation(entry, dict_lang)), dict_lang
     if mode == PL_SG:
         return f"die {cap_plural(entry.get('plural', ''))}".strip(), "de"
+    if mode == WEAK_ARTICLE:
+        # The bare noun: its article is the answer, so it cannot be in the question.
+        return cap_word(entry.get("german", "")), "de"
+    if mode in (WEAK_PRATERITUM, WEAK_PARTIZIP2):
+        # The infinitive, as the chat asks it; `headword` is where the fallback for
+        # a row that stores the verb only in `german` already lives.
+        return low_word(headword(entry)), "de"
     return de_headword(entry), "de"
+
+
+def question_translation(entry, mode, dict_lang):
+    """The translation shown beside a weak-article question, or "".
+
+    Not decoration: the gender of a German noun can depend on which word it is
+    (`der See` is a lake, `die See` is the sea), so without the translation the
+    question sometimes has two right answers. The chat prints it for exactly this
+    reason (`_send_article_weak_prompt`).
+    """
+    if mode != WEAK_ARTICLE:
+        return ""
+    return normalize_russian_singular(_entry_translation(entry, dict_lang))
 
 
 def question_forms(entry):
@@ -275,7 +310,10 @@ def question_hint(entry, mode):
     word_type = _word_type(entry)
     hint = {"type": word_type}
     if word_type == "nomen":
-        hint["gender_known"] = mode == DE_L1
+        # weak_plural shows the article in the question, so colouring by gender only
+        # repeats what is already on screen; weak_article is the one mode where the
+        # gender IS the question.
+        hint["gender_known"] = mode in (DE_L1, WEAK_PLURAL)
     # A preposition is ambiguous without them — `in` is a different question with
     # +Dativ than with +D/A, and the chat shows the pair for exactly that reason.
     for field in ("preposition_type", "case_type"):
@@ -287,6 +325,9 @@ def question_hint(entry, mode):
 
 def answer_forms(entry, mode):
     """The "what to type" hint for this question, or {} when the answer is one word."""
+    weak_hint = _WEAK_ANSWER_FORMS.get(mode)
+    if weak_hint:
+        return {"main": weak_hint}
     word_type = _word_type(entry)
     main, alt = _ANSWER_FORMS.get((mode, word_type), ("", ""))
     if not main:
@@ -307,8 +348,16 @@ def expected_answer(entry, mode, dict_lang):
     """
     if mode == DE_L1:
         return low_word(_entry_translation(entry, dict_lang))
-    if mode == PL_SG:
+    if mode in (PL_SG, WEAK_ARTICLE):
+        # Both ask for the article; showing it on the noun is how the chat's own
+        # feedback spells the answer out.
         return de_headword(entry)
+    if mode == WEAK_PLURAL:
+        return f"die {cap_plural(entry.get('plural', ''))}".strip()
+    if mode == WEAK_PRATERITUM:
+        return low_word(entry.get("prateritum", ""))
+    if mode == WEAK_PARTIZIP2:
+        return _expected_partizip2(entry)
 
     word_type = _word_type(entry)
     parts = [de_headword(entry)]
@@ -331,9 +380,14 @@ def quiz_question(
     phase="quiz",
     is_retry=False,
     is_drill=False,
-    answer_kind=ANSWER_TEXT,
+    answer_kind=None,
 ):
-    """One question, ready to send (§7.4)."""
+    """One question, ready to send (§7.4).
+
+    `answer_kind` follows from the mode, so callers do not have to remember that
+    weak_article is answered by button; passing it explicitly is for the client
+    tests that want to state it.
+    """
     prompt, prompt_lang = question_prompt(entry, mode, dict_lang)
     payload = {
         "token": token,
@@ -342,12 +396,16 @@ def quiz_question(
         "word_id": entry.get("id"),
         "prompt": prompt,
         "prompt_lang": prompt_lang,
-        "answer_kind": answer_kind,
+        "answer_kind": answer_kind or answer_kind_for(mode),
         "hint": question_hint(entry, mode),
         "is_retry": bool(is_retry),
         "is_drill": bool(is_drill),
         "progress": progress,
     }
+
+    translation = question_translation(entry, mode, dict_lang)
+    if translation:
+        payload["translation"] = translation
 
     forms_hint = answer_forms(entry, mode)
     if forms_hint:

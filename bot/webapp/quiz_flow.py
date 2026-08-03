@@ -157,6 +157,11 @@ def current_entry(session):
     return session.ctx.user_data.get("quiz_entry")
 
 
+def question_flags(session):
+    """How the client should mark this question (§7.4). FSRS repeats are retries."""
+    return {"is_retry": bool(session.ctx.user_data.get("quiz_is_retry")), "is_drill": False}
+
+
 # --- answering ---
 
 def _verdict(direction, entry, text, user_id):

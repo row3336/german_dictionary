@@ -1,15 +1,21 @@
-"""Asking and answering FSRS questions over HTTP (miniapp.md §7.2, M4.3).
+"""Asking and answering quiz questions over HTTP (miniapp.md §7.2, M4.3 + M5.3).
 
 Three routes and one rule: every question the client is shown was minted here with
 a one-shot token, and every answer has to bring that token back (§4.4). Everything
-between the token and the database is `quiz_flow`, which is the bot's own loop — no
-verdict, no interval and no counter is computed in this file.
+between the token and the database is a flow module — `quiz_flow` for the three
+FSRS directions, `weak_flow` for the four drilling modes — and both are the bot's
+own loop, so no verdict, no interval and no counter is computed in this file.
+
+The two flows expose the same handful of functions on purpose: the routes pick one
+by mode and then stop caring which it is. What still differs is visible in the
+payload rather than in the control flow — a weak session marks repeats as drills
+instead of retries, and ends without a summary.
 
 The answer response carries the next question with it. That is deliberate: the
 cycle in §8.5a is `answer → verdict → tap → next question`, and a second round trip
 between the tap and the next word is exactly the delay the app exists to remove.
-When the queue runs out, the summary comes in the same slot instead, and the
-session stays open until /session/stop so the user can read it.
+When the queue runs out, the summary (if the mode has one) comes in the same slot
+instead, and the session stays open until /session/stop so the user can read it.
 """
 
 import logging
@@ -17,7 +23,7 @@ import logging
 from aiohttp import web
 
 from ..common.lang import _user_dict_lang
-from . import quiz_flow
+from . import quiz_flow, weak_flow
 from .access import API_PREFIX, REQUEST_USER_ID
 from .app_keys import REGISTRY_KEY
 from .dict_api import card_for
@@ -29,16 +35,23 @@ logger = logging.getLogger(__name__)
 
 routes = web.RouteTableDef()
 
-# A mode the app knows how to open but cannot yet run itself (weak drills M5,
-# learning M6). Reported as an outcome rather than an error: the session is real,
-# there is simply nothing for the app to ask, and the client has a screen for it.
+# A mode the app knows how to open but cannot yet run itself (learning, M6).
+# Reported as an outcome rather than an error: the session is real, there is simply
+# nothing for the app to ask, and the client has a screen for it.
 EMPTY_CHAT_ONLY = "chat_only"
 EMPTY_NO_DUE = "no_due"
 
+# Which loop drives which mode. A mode that is in neither is not runnable in the
+# app yet, and says so.
+_FLOWS = dict(
+    [(mode, quiz_flow) for mode in quiz_flow.FSRS_DIRECTIONS]
+    + [(mode, weak_flow) for mode in weak_flow.WEAK_MODES]
+)
 
-def _direction(session):
-    """The session's mode as an FSRS direction, or None when it is not one."""
-    return session.mode if session.mode in quiz_flow.FSRS_DIRECTIONS else None
+
+def _flow(session):
+    """The flow module that runs this session, or None when the app cannot."""
+    return _FLOWS.get(session.mode)
 
 
 def ask_next(registry, session, user_id, advance=True):
@@ -48,7 +61,8 @@ def ask_next(registry, session, user_id, advance=True):
     and reopened is handed back the same one (§7.2) — and mints the token here,
     where the question is actually shown, rather than wherever it is asked for.
     """
-    entry = quiz_flow.next_question(session, user_id) if advance else quiz_flow.current_entry(session)
+    flow = _flow(session)
+    entry = flow.next_question(session, user_id) if advance else flow.current_entry(session)
     if not entry:
         session.question = None
         session.question_token = ""
@@ -58,8 +72,8 @@ def ask_next(registry, session, user_id, advance=True):
         session.mode,
         _user_dict_lang(user_id),
         registry.issue_question(session),
-        quiz_flow.progress(session, user_id),
-        is_retry=bool(session.ctx.user_data.get("quiz_is_retry")),
+        flow.progress(session, user_id),
+        **flow.question_flags(session),
     )
     return session.question
 
@@ -70,26 +84,38 @@ def begin_session(registry, session, user_id):
     Returns the `{question: …}` / `{empty: …}` half of the start response, so the
     route stays about sessions and this stays about quizzes.
     """
-    if _direction(session) is None:
+    flow = _flow(session)
+    if flow is None:
         return {"empty": EMPTY_CHAT_ONLY}
-    quiz_flow.begin(session, user_id)
+    flow.begin(session, user_id)
     question = ask_next(registry, session, user_id, advance=False)
     return {"question": question} if question else {"empty": EMPTY_NO_DUE}
 
 
 def session_summary(session, user_id):
-    """The end-of-session tally, for /session/stop and for a drained queue."""
-    if _direction(session) is None:
+    """The end-of-session tally, for /session/stop and for a drained queue.
+
+    None both for a mode the app cannot run and for weak modes, which have no
+    summary at all — the chat does not give one worth showing (bug #30), and the
+    app inherits that rather than inventing its own.
+    """
+    flow = _flow(session)
+    if flow is None:
         return None
-    return quiz_flow.summary(session, user_id)
+    return flow.summary(session, user_id)
 
 
 def _next_step(registry, session, user_id):
-    """What follows the verdict: the next question, or the summary."""
+    """What follows the verdict: the next question, the summary, or a bare end.
+
+    A weak session that runs out has nothing to report, so it ends with `no_due` —
+    the same thing the chat says when it has no weak words left to ask about.
+    """
     question = ask_next(registry, session, user_id)
     if question:
         return {"question": question}
-    return {"summary": session_summary(session, user_id)}
+    summary = session_summary(session, user_id)
+    return {"summary": summary} if summary is not None else {"empty": EMPTY_NO_DUE}
 
 
 async def _answer(request, dont_know):
@@ -103,7 +129,8 @@ async def _answer(request, dont_know):
     registry = request.app[REGISTRY_KEY]
     user_id = request[REQUEST_USER_ID]
     session = registry.require(user_id)
-    if _direction(session) is None:
+    flow = _flow(session)
+    if flow is None:
         return web.json_response({"empty": EMPTY_CHAT_ONLY})
 
     # Spends the token before anything is written: a double tap or a network retry
@@ -112,7 +139,7 @@ async def _answer(request, dont_know):
     session.question = None
 
     text = "" if dont_know else str(body.get("text") or "")
-    result = quiz_flow.submit_answer(session, user_id, text, dont_know=dont_know)
+    result = flow.submit_answer(session, user_id, text, dont_know=dont_know)
     if result is None:
         # The token matched but the word is gone — only reachable if the session was
         # emptied between the two, and answering nothing must not look like success.
@@ -147,15 +174,16 @@ async def input_err(request):
 
     Not guarded by a question token, and it must not be: by the time the user
     presses it the next question has already been issued, while the correction
-    applies to the answer before it. `apply_fsrs_input_err` is the guard — it fires
-    once, for the last answer only, and only when that answer was wrong.
+    applies to the answer before it. The rollback itself is the guard — FSRS and
+    weak alike fire once, for the last answer only, and only when it was wrong.
     """
     registry = request.app[REGISTRY_KEY]
     user_id = request[REQUEST_USER_ID]
     session = registry.require(user_id)
-    if _direction(session) is None:
+    flow = _flow(session)
+    if flow is None:
         return web.json_response({"applied": False})
-    applied = quiz_flow.apply_input_err(session, user_id)
+    applied = flow.apply_input_err(session, user_id)
     if applied:
         logger.info("webapp: input_err applied for %s in %s", user_id, session.mode)
     return web.json_response({"applied": applied})
