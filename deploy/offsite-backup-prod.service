@@ -1,0 +1,33 @@
+# Off-site DB backup for the PRODUCTION deploy (spec #4, phase 1). Oneshot: ship
+# one gzipped, WAL-safe snapshot of words.db to the private backup channel via
+# the dedicated backup bot. Triggered by offsite-backup-prod.timer — NOT run from
+# inside the main bot, so a dead/banned main bot does not stop backups.
+#
+# Sibling of offsite-backup.service, which carries the alpha paths. Two separate
+# unit pairs (rather than one edited in place) so either contour can be switched
+# on or off without touching the other.
+#
+# Install (server, owner):
+#   1. BACKUP_BOT_TOKEN + BACKUP_CHANNEL_ID + BACKUP_PUBLIC_KEY must be in the
+#      prod .env — NEVER commit these. (Done 03.08.)
+#   2. PyNaCl must be in the prod venv, otherwise this service dies importing
+#      nacl: venv/bin/pip install -r requirements.txt
+#   3. cp deploy/offsite-backup-prod.{service,timer} /etc/systemd/system/
+#      systemctl daemon-reload && systemctl enable --now offsite-backup-prod.timer
+#   4. Dry-run once now:
+#      systemctl start offsite-backup-prod.service
+#      journalctl -u offsite-backup-prod -n 30 --no-pager
+
+[Unit]
+Description=Off-site DB backup (prod) — ship a gzipped snapshot to the backup channel
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/tests/german_dictionary_test
+EnvironmentFile=/root/tests/german_dictionary_test/.env
+ExecStart=/root/tests/german_dictionary_test/venv/bin/python3 -m scripts.offsite_backup
+# DB_PATH is left unset on purpose: the default ./data/words.db resolves against
+# WorkingDirectory to the live prod database.
+# non-zero exit (send failed / fatal) is surfaced by journal + the script's own alert

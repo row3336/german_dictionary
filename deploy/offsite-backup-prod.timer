@@ -1,0 +1,22 @@
+# Trigger for offsite-backup-prod.service — twice a day, 03:00 and 15:00 UTC.
+# Same schedule the alpha timer used before it was disabled on 03.08, so the
+# channel keeps one uninterrupted cadence when prod takes over.
+#
+# The UTC suffix in OnCalendar is documented as needing systemd >= v252, but the
+# current VPS (systemd 249, Timezone=Etc/UTC) parses it fine — verified 03.08 with
+# `systemd-analyze calendar '*-*-* 03:00:00 UTC'`. On a box where it does not
+# parse, drop " UTC" and keep the server clock on UTC, or adjust the hours to
+# local time. Persistent=true runs a missed backup after downtime (e.g. a reboot
+# spanning a trigger time).
+
+[Unit]
+Description=Off-site DB backup (prod) twice daily at 03:00 and 15:00 UTC
+
+[Timer]
+Unit=offsite-backup-prod.service
+OnCalendar=*-*-* 03:00:00 UTC
+OnCalendar=*-*-* 15:00:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target
