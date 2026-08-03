@@ -100,6 +100,8 @@ class ReleaseDataBackfillTest(unittest.TestCase):
         self.assertEqual(patches["was"]["russian"]["old"], "что, что-то")
         self.assertEqual(patches["was"]["ukrainian"]["new"], "що")
         self.assertEqual(patches["was"]["ukrainian"]["old"], "що, щось")
+        # dann carried the russian "затем" at the head of its ukrainian list.
+        self.assertNotIn("затем", patches["dann"]["ukrainian"]["new"])
         self.assertEqual(
             patches["Arbeitszeit"]["plural"]["new"],
             "Arbeitszeiten, Arbeitzeiten",
