@@ -31,8 +31,9 @@ from ..common.settings import (
     _topic_filter_banner,
 )
 from ..common.word_filter import count_words_for_filter, resolve_quiz_filter
+from ..common.quiz_core import _check_ru_de_strict
 from ..common.txlog import _capture_transaction_snapshot, _log_transaction
-from ..handlers.quiz import _check_ru_de_strict, _set_reaction
+from ..handlers.quiz import _set_reaction
 from ..i18n import t
 from ..storage import (
     apply_user_word_media,

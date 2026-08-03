@@ -32,8 +32,9 @@ from ..common.session import (
     _weak_drill_since_last,
 )
 from ..common.word_filter import resolve_quiz_filter
+from ..common.quiz_core import _plural_matches
 from ..common.txlog import _capture_transaction_snapshot, _log_transaction
-from ..handlers.quiz import _plural_matches, _stop_with_summary
+from ..handlers.quiz import _stop_with_summary
 from ..i18n import t
 from ..storage import (
     apply_user_word_media,

@@ -8,7 +8,7 @@ from _telegram_stub import install
 
 install()
 
-from bot.handlers.quiz import _check_ru_de_strict  # noqa: E402
+from bot.common.quiz_core import _check_ru_de_strict  # noqa: E402
 from bot.storage import add_word, init_db, list_weak_words, update_form_stats  # noqa: E402
 from bot.text_utils import cap_plural, has_plural_form  # noqa: E402
 from bot.ui.formatting import _format_feedback_ru_de, _is_pl_sg_eligible  # noqa: E402

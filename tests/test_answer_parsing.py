@@ -14,7 +14,7 @@ from _telegram_stub import install
 
 install()
 
-from bot.handlers.quiz import _check_ru_de_strict, _split_answer_parts  # noqa: E402
+from bot.common.quiz_core import _check_ru_de_strict, _split_answer_parts  # noqa: E402
 
 NOMEN = {"type": "nomen", "article": "die", "german": "Bankverbindung", "plural": "Bankverbindungen"}
 

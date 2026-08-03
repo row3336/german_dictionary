@@ -43,9 +43,9 @@ from ..common.lang import (
     _user_interface_lang,
 )
 from ..common.navigation import _action_key_from_text, _back_to_main_menu, _back_to_tests, _reply_text_with_retry
+from ..common.quiz_core import _interval_divisor_for_mode
 from ..common.txlog import _capture_transaction_snapshot, _log_transaction
 from ..handlers.quiz import (
-    _interval_divisor_for_mode,
     _send_article_prompt,
     _send_de_ru_prompt,
     _send_pl_sg_prompt,
