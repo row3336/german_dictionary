@@ -18,7 +18,7 @@ import logging
 
 from aiohttp import web
 
-from . import dict_api, learning_settings_api, meta_api, session_api, static_app
+from . import dict_api, learning_settings_api, meta_api, quiz_api, session_api, static_app
 from .access import auth_middleware
 from .app_keys import BOT_TOKEN_KEY, BRIDGE_KEY, RATE_LIMITER_KEY, REGISTRY_KEY
 from .bot_bridge import BotBridge
@@ -80,6 +80,7 @@ def create_app(bot_token, application=None, registry=None, rate_limiter=None):
     app[RATE_LIMITER_KEY] = RateLimiter() if rate_limiter is None else rate_limiter
     app.add_routes(meta_api.routes)
     app.add_routes(session_api.routes)
+    app.add_routes(quiz_api.routes)
     app.add_routes(dict_api.routes)
     app.add_routes(learning_settings_api.routes)
     app.add_routes(static_app.routes)

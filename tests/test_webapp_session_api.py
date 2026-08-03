@@ -152,7 +152,11 @@ class SessionApiTest(TempDbMixin, AioHTTPTestCase):
         await self.start()
         resp = await self.client.post(f"{API_PREFIX}session/stop", headers=auth_header(USER))
         self.assertEqual(resp.status, 200)
-        self.assertEqual(await resp.json(), {"stopped": True})
+        body = await resp.json()
+        self.assertTrue(body["stopped"])
+        # Since M4 the closing response also carries the tally (§7.4); an untouched
+        # session reports zeroes rather than nothing at all.
+        self.assertEqual(body["summary"]["answered"], 0)
         self.assertEqual(len(self.registry), 0)
 
     async def test_stopping_twice_is_a_409_not_a_silent_success(self):

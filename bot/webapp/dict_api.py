@@ -27,8 +27,13 @@ routes = web.RouteTableDef()
 WORD_NOT_FOUND = "word_not_found"
 
 
-def _card_for(user_id, word_id, dict_lang):
-    """Assemble one word's card, or None when the word is gone."""
+def card_for(user_id, word_id, dict_lang):
+    """Assemble one word's card, or None when the word is gone.
+
+    Public because the quiz feedback shows the same card as the dictionary (§8.5),
+    and a second assembly path would be a second set of rules about what a card
+    contains.
+    """
     sources = load_card_sources(get_db_path(), user_id, word_id)
     if not sources:
         return None
@@ -65,7 +70,7 @@ async def search(request):
     if not matches:
         return web.json_response({"result": "empty", "query": query})
     if len(matches) == 1:
-        card = _card_for(user_id, matches[0].get("id"), dict_lang)
+        card = card_for(user_id, matches[0].get("id"), dict_lang)
         if card:
             return web.json_response({"result": "card", "query": query, "card": card})
         return web.json_response({"result": "empty", "query": query})
@@ -82,7 +87,7 @@ async def search(request):
 async def word(request):
     """The full card for one word, by id."""
     user_id = request[REQUEST_USER_ID]
-    card = _card_for(user_id, request.match_info["word_id"], _user_dict_lang(user_id))
+    card = card_for(user_id, request.match_info["word_id"], _user_dict_lang(user_id))
     if not card:
         return web.json_response({"error": WORD_NOT_FOUND}, status=404)
     return web.json_response({"card": card})

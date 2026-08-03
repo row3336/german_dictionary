@@ -34,7 +34,7 @@ from ..common.settings import (
 )
 from ..storage import _parse_learning_intervals, set_user_setting  # noqa: PLC2701 - deliberate reuse, see module docstring
 from .access import API_PREFIX, REQUEST_USER_ID
-from .session_api import _json_body  # noqa: PLC2701 - deliberate reuse, see module docstring
+from .http_json import json_body
 
 routes = web.RouteTableDef()
 
@@ -86,7 +86,7 @@ async def get_learning_settings(request):
 @routes.post(f"{API_PREFIX}learning/settings")
 async def update_learning_settings(request):
     """Partial update: any subset of the five fields, same shape as GET back."""
-    body = await _json_body(request)
+    body = await json_body(request)
     user_id = request[REQUEST_USER_ID]
     db = get_db_path()
 
