@@ -11,6 +11,7 @@ and afterwards `progress` and `quiz_events` are compared row for row. Nothing is
 mocked between the answer and the database.
 """
 
+import sqlite3
 import unittest
 
 from _telegram_stub import install
@@ -21,6 +22,7 @@ from _webapp_helpers import TOKEN, TempDbMixin, auth_header  # noqa: E402
 from aiohttp.test_utils import AioHTTPTestCase  # noqa: E402
 
 import bot.handlers.quiz as Q  # noqa: E402
+import bot.handlers.weak as W  # noqa: E402
 from bot.app_config import I_DONT_KNOW_TEXT  # noqa: E402
 from bot.storage import (  # noqa: E402
     add_synonym_link,
@@ -28,6 +30,7 @@ from bot.storage import (  # noqa: E402
     apply_user_word_media,
     get_progress,
     log_quiz_event,
+    update_form_stats,
 )
 from bot.webapp import quiz_flow  # noqa: E402
 from bot.webapp.access import API_PREFIX  # noqa: E402
@@ -255,6 +258,195 @@ class ParityTest(TempDbMixin, AioHTTPTestCase):
         self.assertTrue(body["correct"])
         self.assertEqual(quiz_flow.mode_for(APP_USER, quiz_flow.DE_L1), "de_uk")
         self.assert_same_state(quiz_flow.DE_L1, word)
+
+
+# The same contract for the four weak modes (M5). It needs its own class because
+# weak keeps no `progress` row: what has to match is the `form_stats` row — the
+# error counters, the streaks, the active flag and the review ladder — plus the
+# event that was logged for it.
+WEAK_CASES = [
+    ("article, right", "article", NOUN, "{article}"),
+    ("article, wrong", "article", NOUN, "die"),
+    ("plural, right", "plural", NOUN, "{plural}"),
+    ("plural, with article", "plural", NOUN, "die {plural}"),
+    ("plural, wrong", "plural", NOUN, "Tischen"),
+    ("präteritum, right", "prateritum", VERB, "{prateritum}"),
+    ("präteritum, wrong", "prateritum", VERB, "gehte"),
+    ("partizip II, right", "partizip2", VERB, "{partizip2}"),
+    ("partizip II, wrong", "partizip2", VERB, "gegeht"),
+]
+
+WEAK_HANDLERS = {
+    "article": "quiz_article_weak",
+    "plural": "quiz_plural_weak",
+    "prateritum": "quiz_prateritum_weak",
+    "partizip2": "quiz_partizip2_weak",
+}
+
+# Two wrong answers is what flags a form as weak; both users start from there so
+# the answer under test is the first one either of them gives in the app/chat.
+ERRORS_TO_WEAK = 2
+
+
+class WeakParityTest(TempDbMixin, AioHTTPTestCase):
+    async def get_application(self):
+        self.setup_temp_db()
+        self.make_user(BOT_USER, "approved")
+        self.make_user(APP_USER, "approved")
+        from bot.webapp.server import create_app
+
+        return create_app(TOKEN)
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        for name in (
+            "_send_article_weak_prompt",
+            "_send_plural_weak_prompt",
+            "_send_prateritum_weak_prompt",
+            "_send_partizip2_weak_prompt",
+        ):
+            original = getattr(W, name)
+            self.addCleanup(setattr, W, name, original)
+            setattr(W, name, _silent_prompt)
+
+    # -- fixtures --------------------------------------------------------
+
+    def make_weak(self, field, fields, suffix=""):
+        """One word, flagged weak in `field` for both users."""
+        infinitive = fields.get("infinitive", "")
+        word = add_word(
+            self.db,
+            {
+                "id": "unique",
+                "article": "",
+                "plural": "",
+                "infinitive": "",
+                "prateritum": "",
+                "partizip2": "",
+                "ukrainian": "",
+                "english": "",
+                "topic": "1",
+                **fields,
+                "german": f"{fields['german']}{suffix}",
+                "russian": f"{fields['russian']}{suffix}",
+                "infinitive": f"{infinitive}{suffix}" if infinitive else "",
+            },
+        )
+        for user_id in (BOT_USER, APP_USER):
+            for _ in range(ERRORS_TO_WEAK):
+                update_form_stats(self.db, user_id, word["id"], {field: False})
+        return word
+
+    # -- the two clients -------------------------------------------------
+
+    async def answer_in_the_chat(self, field, word, text):
+        """Run the real chat handler over a fake update; hand back its session.
+
+        The context is returned rather than thrown away because input_err reads it:
+        what may be rolled back is whatever this answer stored in it.
+        """
+        entry = apply_user_word_media(self.db, BOT_USER, word)
+        update = _FakeUpdate(BOT_USER, text)
+        context = _Ctx({"quiz_entry": entry})
+        await getattr(W, WEAK_HANDLERS[field])(update, context)
+        return update, context
+
+    async def answer_in_the_app(self, field, word, text, idk=False, stop=True):
+        """Open a session over HTTP and answer this word through the API."""
+        mode = f"weak_{field}"
+        resp = await self.client.post(
+            f"{API_PREFIX}session/start", headers=auth_header(APP_USER), json={"mode": mode}
+        )
+        token = (await resp.json())["question"]["token"]
+        # Pin the word: the picker is free to hand out any weak word, and what is
+        # being compared here is the verdict, not the pick order.
+        session = self.app[REGISTRY_KEY].require(APP_USER)
+        session.ctx.user_data["quiz_entry"] = apply_user_word_media(self.db, APP_USER, word)
+        route = "idk" if idk else "answer"
+        resp = await self.client.post(
+            f"{API_PREFIX}session/{route}",
+            headers=auth_header(APP_USER),
+            json={"question_token": token, "text": text},
+        )
+        body = await resp.json()
+        if stop:
+            await self.client.post(f"{API_PREFIX}session/stop", headers=auth_header(APP_USER))
+        return body
+
+    # -- comparison ------------------------------------------------------
+
+    def form_row(self, user_id, word_id):
+        """The whole form_stats row, minus the keys that name whose it is."""
+        with sqlite3.connect(self.db) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT * FROM form_stats WHERE user_id = ? AND word_id = ?",
+                (user_id, word_id),
+            ).fetchone()
+        return {k: v for k, v in dict(row).items() if k not in ("user_id", "word_id")}
+
+    def logged_verdicts(self, user_id, word_id, mode):
+        return [
+            bool(row[0])
+            for row in sqlite3.connect(self.db).execute(
+                "SELECT is_correct FROM quiz_events "
+                "WHERE user_id = ? AND word_id = ? AND mode = ? ORDER BY id",
+                (user_id, word_id, mode),
+            )
+        ]
+
+    def assert_same_state(self, field, word):
+        """form_stats and the logged verdicts, field for field (§5.4)."""
+        mode = f"weak_{field}"
+        self.assertEqual(
+            self.form_row(APP_USER, word["id"]), self.form_row(BOT_USER, word["id"])
+        )
+        self.assertEqual(
+            self.logged_verdicts(APP_USER, word["id"], mode),
+            self.logged_verdicts(BOT_USER, word["id"], mode),
+        )
+
+    # -- tests -----------------------------------------------------------
+
+    async def test_the_verdict_and_the_weak_state_match_the_chat(self):
+        for index, (label, field, fields, template) in enumerate(WEAK_CASES):
+            with self.subTest(case=label, field=field):
+                word = self.make_weak(field, fields, suffix=str(index))
+                answer = template.format(**word)
+                body = await self.answer_in_the_app(field, word, answer)
+                await self.answer_in_the_chat(field, word, answer)
+                self.assert_same_state(field, word)
+                # The chat's verdict is the event it logged for this answer.
+                self.assertEqual(
+                    body["correct"],
+                    self.logged_verdicts(BOT_USER, word["id"], f"weak_{field}")[0],
+                )
+
+    async def test_i_dont_know_is_the_same_wrong_answer(self):
+        # The chat types its button's text; the app has a route. Same outcome.
+        word = self.make_weak("plural", NOUN, suffix="idk")
+        body = await self.answer_in_the_app("plural", word, "", idk=True)
+        await self.answer_in_the_chat("plural", word, I_DONT_KNOW_TEXT)
+        self.assertFalse(body["correct"])
+        self.assert_same_state("plural", word)
+
+    async def test_taking_back_a_typo_lands_in_the_same_state(self):
+        # input_err is the one step that reaches backwards, so a divergence here
+        # would quietly undo different things in the two clients. Both sessions stay
+        # open across the two calls, because the rollback reads the session the
+        # answer was given in.
+        word = self.make_weak("prateritum", VERB, suffix="err")
+
+        await self.answer_in_the_app("prateritum", word, "gnig", stop=False)
+        applied = await (
+            await self.client.post(f"{API_PREFIX}session/input_err", headers=auth_header(APP_USER))
+        ).json()
+        await self.client.post(f"{API_PREFIX}session/stop", headers=auth_header(APP_USER))
+
+        update, context = await self.answer_in_the_chat("prateritum", word, "gnig")
+        self.assertTrue(applied["applied"])
+        self.assertTrue(W._apply_input_err_weak(update, context, "prateritum"))
+        self.assert_same_state("prateritum", word)
 
 
 if __name__ == "__main__":

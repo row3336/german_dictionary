@@ -130,10 +130,10 @@ class StartTest(QuizApiTestCase):
         self.assertIsNone(body["question"])
 
     async def test_a_mode_the_app_cannot_run_yet_says_so(self):
-        # weak drills (M5) and learning (M6) can be opened but not asked here; the
-        # client has a screen for that, and it is not an error screen.
+        # learning (M6) can be opened but not asked here; the client has a screen
+        # for that, and it is not an error screen. Weak modes run since M5.
         self.make_due()
-        body = await self.start(mode="weak_article")
+        body = await self.start(mode="learning")
         self.assertEqual(body["empty"], "chat_only")
 
     async def test_reopening_the_app_gets_the_same_question_back(self):
