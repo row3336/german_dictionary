@@ -3,9 +3,12 @@
    sends and hardcodes no human-readable text of its own - every label below is
    `S.some_key`, resolved once /me has answered.
 
-   Quiz screens are out of scope here (blocked on M4-M6, claude_docs/current.md):
-   a mode tile either points at the "not in the app yet" state or, when nothing is
-   due, the "nothing to repeat" state - both real screens, neither one fake. */
+   The quiz screens live next door in quiz.js, which is a separate file for the
+   same reason the backend splits its flows: the quiz cycle is a state machine
+   with its own rules (a session, a one-shot token, an input that must never lose
+   focus), and none of that belongs in the shell. What the two share is exported
+   through `window.App` at the bottom of this file - the shell's building blocks,
+   nothing of the shell's own state. */
 
 (() => {
   "use strict";
@@ -125,11 +128,27 @@
     toastTimer = setTimeout(() => toastEl.classList.remove("show"), 2200);
   }
 
+  // A screen that owns something outside the DOM - a live quiz session - leaves it
+  // here, and it runs once, whichever way the screen is left. Without it the
+  // BackButton would strand an open session on the server (§4.2).
+  let leaveHook = null;
+
+  function setLeaveHook(fn) {
+    leaveHook = fn;
+  }
+
+  function runLeaveHook() {
+    const hook = leaveHook;
+    leaveHook = null;
+    if (hook) hook();
+  }
+
   // goTo(fn) runs `fn` and remembers the screen we were on, so the Telegram
   // BackButton returns to it. goTo(fn, {root: true}) starts a fresh stack - for
   // tab switches and anything else with no meaningful "back" (§8.2: there is no
   // in-app back arrow, only the system BackButton).
   function goTo(renderFn, opts) {
+    runLeaveHook();
     if ((opts && opts.root) || !currentScreen) {
       navStack = [];
     } else {
@@ -144,6 +163,7 @@
   }
 
   function goBack() {
+    runLeaveHook();
     const prev = navStack.pop();
     if (prev) {
       currentScreen = prev;
@@ -419,6 +439,11 @@
     ["weak_partizip2", "mode_weak_partizip2"],
   ];
 
+  // Every mode's own label key, for the tiles here and for the quiz header.
+  const MODE_LABEL = Object.fromEntries(
+    FSRS_TILES.concat(WEAK_TILES, [["learning", "mode_learning"]])
+  );
+
   function tileHtml(mode, labelKey, due) {
     const shown = due > 0 ? `<div class="n">${due}</div>` : `<div class="n zero">${escapeHtml(t("due_none"))}</div>`;
     return `<div class="tile" data-mode="${mode}" data-due="${due}" role="button" tabindex="0">${shown}<div class="l">${escapeHtml(t(labelKey))}</div></div>`;
@@ -475,12 +500,23 @@
       });
     }
     screen.querySelectorAll(".tile[data-mode]").forEach((tile) => {
-      tile.addEventListener("click", () => {
-        const due = Number(tile.dataset.due || 0);
-        if (due > 0) goTo(renderChatOnly);
-        else goTo(renderNoDue);
-      });
+      tile.addEventListener("click", () => openMode(tile.dataset.mode, Number(tile.dataset.due || 0)));
     });
+  }
+
+  // An empty tile does not open a session. Starting one takes the quiz away from
+  // the chat (§4.2 п.1), and doing that only to be told "nothing due" would end a
+  // conversation the user is in the middle of.
+  function openMode(mode, due) {
+    if (due > 0) {
+      window.App.quiz.start(mode);
+    } else if (mode === "learning") {
+      // An empty batch is not "nothing to repeat": it is a batch waiting to be
+      // filled, and that screen offers the top-up instead of a dead end.
+      goTo(() => window.App.quiz.renderLearningEmpty({}));
+    } else {
+      goTo(renderNoDue);
+    }
   }
 
   function renderNoDue() {
@@ -488,17 +524,6 @@
       icon: "✅",
       title: t("state_no_due"),
       hint: t("state_no_due_hint"),
-      ctaLabel: t("back_to_menu"),
-      onCta: () => goBack(),
-    });
-    mount(screen);
-  }
-
-  function renderChatOnly() {
-    const screen = stateScreen({
-      icon: "💬",
-      title: t("state_chat_only"),
-      hint: t("state_chat_only_hint"),
       ctaLabel: t("back_to_menu"),
       onCta: () => goBack(),
     });
@@ -674,6 +699,39 @@
       goTo(() => renderGenericError(boot), { root: true });
     }
   }
+
+  // ---------------------------------------------------------------------
+  // Shared core, for quiz.js (§8.1: separate files, no module bundler)
+  // ---------------------------------------------------------------------
+
+  // Only what a second screen file genuinely needs: the API client, navigation,
+  // the string table and the card component. `quiz` is filled in by quiz.js when
+  // it loads, and is read at click time rather than at wiring time so the load
+  // order of the two <script> tags cannot matter.
+  window.App = {
+    tg,
+    state,
+    api,
+    ApiError,
+    t,
+    el,
+    escapeHtml,
+    mount,
+    toast,
+    goTo,
+    goBack,
+    setLeaveHook,
+    stateScreen,
+    renderWordCard,
+    renderCardHead,
+    renderCardBody,
+    renderMain,
+    renderNoDue,
+    handleApiError,
+    GENDER_CLASS,
+    MODE_LABEL,
+    quiz: null,
+  };
 
   // ---------------------------------------------------------------------
   // Boot

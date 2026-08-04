@@ -226,6 +226,356 @@ button {
   border-radius: 20px;
 }
 
+/* ── quiz: header, question, answer bar (§8.5, §8.5a) ── */
+.qtop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 11px 15px 0;
+  font-size: 12px;
+  color: var(--hint);
+}
+
+.bar {
+  height: 3px;
+  background: var(--separator);
+  margin: 9px 15px 0;
+  border-radius: 2px;
+}
+
+.bar i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 0.15s linear;
+}
+
+/* The body is the only part swapped between a question and its verdict; the
+   header above and the answer bar below outlive both (§8.5a). */
+.qbody {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.qmain {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  padding: 20px 22px;
+  text-align: center;
+}
+
+.qword {
+  font-size: clamp(26px, 8.8vw, 36px);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+/* The article is coloured only where the gender is already on screen (§8.4). */
+.art.m {
+  color: var(--g-m);
+  font-weight: 700;
+}
+
+.art.f {
+  color: var(--g-f);
+  font-weight: 700;
+}
+
+.art.n {
+  color: var(--g-n);
+  font-weight: 700;
+}
+
+.qforms {
+  color: var(--hint);
+  font-size: 15px;
+  margin-top: 8px;
+  overflow-wrap: anywhere;
+}
+
+.qmeta {
+  color: var(--hint);
+  font-size: 13px;
+  margin-top: 9px;
+}
+
+.qalt {
+  color: var(--hint);
+  font-size: 11.5px;
+  margin-top: 4px;
+  opacity: 0.75;
+}
+
+.qretry {
+  display: inline-block;
+  margin-top: 12px;
+  font-size: 11.5px;
+  color: var(--hint);
+  background: var(--secondary-bg);
+  padding: 3px 10px;
+  border-radius: 20px;
+}
+
+.qaid {
+  margin-top: 18px;
+  padding: 11px 13px;
+  background: var(--secondary-bg);
+  border-radius: 11px;
+  font-size: 13px;
+  color: var(--hint);
+  line-height: 1.5;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.qaid div + div {
+  margin-top: 6px;
+}
+
+.answerbar {
+  flex: none;
+  padding: 10px 13px;
+  padding-bottom: calc(10px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--separator);
+}
+
+.answerbar form {
+  margin: 0;
+}
+
+.inp {
+  display: flex;
+  align-items: center;
+  background: var(--secondary-bg);
+  border-radius: 11px;
+  padding: 11px 13px;
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.inp input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 16px; /* below 16px iOS zooms the whole viewport on focus */
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--text);
+}
+
+.inp input::placeholder {
+  color: var(--hint);
+}
+
+.qacts {
+  display: flex;
+  gap: 7px;
+  margin-top: 9px;
+}
+
+.qact {
+  flex: 1;
+  text-align: center;
+  font-size: 12px;
+  color: var(--hint);
+  background: var(--secondary-bg);
+  border-radius: 9px;
+  padding: 11px 0; /* ≥ 44px tall together with the row gap (§8.5b п.7) */
+}
+
+.qact.primary {
+  background: var(--accent);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+.tapnext {
+  flex: none;
+  text-align: center;
+  padding: 11px 0;
+  color: var(--hint);
+  font-size: 12.5px;
+  border-top: 1px solid var(--separator);
+}
+
+/* ── verdict (§8.5a) ── */
+.verdict {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 15px 18px;
+}
+
+.verdict.ok {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.verdict.err {
+  background: var(--err-soft);
+  color: var(--err);
+}
+
+.verdict .ic {
+  font-size: 24px;
+}
+
+.verdict .tt {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.verdict .x {
+  margin-left: auto;
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+.expected {
+  padding: 13px 18px;
+  border-bottom: 1px solid var(--separator);
+}
+
+.expected .lbl {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--hint);
+  font-weight: 700;
+  margin-bottom: 5px;
+}
+
+.expected .v {
+  font-size: 17px;
+  overflow-wrap: anywhere;
+}
+
+/* learning: this answer was the last rung of the ladder (`completed`) */
+.donenote {
+  padding: 11px 18px;
+  font-size: 12.5px;
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* ── weak-article buttons: neutral, accent only on the pick (§8.4) ── */
+.artbtns {
+  flex: none;
+  padding: 12px 13px 18px;
+  padding-bottom: calc(18px + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.artbtn {
+  border-radius: 14px;
+  padding: 17px 0;
+  text-align: center;
+  font-size: 22px;
+  font-weight: 600;
+  background: var(--secondary-bg);
+  color: var(--text);
+  border: 1px solid var(--separator);
+  width: 100%;
+}
+
+.artbtn.pressed {
+  background: var(--accent);
+  color: var(--accent-text);
+  border-color: var(--accent);
+}
+
+.artbtn.right {
+  background: var(--ok);
+  color: #fff;
+  border-color: var(--ok);
+}
+
+[data-theme="dark"] .artbtn.right {
+  color: #11161c;
+}
+
+.artbtn.dim {
+  opacity: 0.35;
+}
+
+.artbtn .sub {
+  font-size: 10.5px;
+  font-weight: 500;
+  opacity: 0.85;
+  margin-left: 9px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  vertical-align: 2px;
+}
+
+/* ── session summary (§7.4) ── */
+.sum {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  padding: 26px;
+  text-align: center;
+}
+
+.sum .fire {
+  font-size: 46px;
+  margin-bottom: 6px;
+}
+
+.sum .big {
+  font-size: 42px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.sum .big small {
+  font-size: 20px;
+  color: var(--hint);
+  font-weight: 500;
+}
+
+.sum .lbl {
+  color: var(--hint);
+  font-size: 13px;
+  margin-top: 4px;
+}
+
+.sum .grid {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 22px;
+  margin-top: 24px;
+}
+
+.sum .grid div {
+  text-align: center;
+}
+
+.sum .grid b {
+  display: block;
+  font-size: 21px;
+  font-weight: 700;
+}
+
+.sum .grid span {
+  font-size: 11px;
+  color: var(--hint);
+}
+
 /* ── word card head: article + word on one row (§8.4a) ── */
 .chead {
   padding: 20px 18px 16px;
