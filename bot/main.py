@@ -211,6 +211,7 @@ from .handlers.quiz import (
     quiz_pl_sg,
     quiz_ru_de,
 )
+from .webapp.integration import build_post_init, build_post_shutdown
 from .jobs.access_reminders import _configure_access_reminders
 from .jobs.reminders import _configure_learning_reminders
 from .jobs.reports import _configure_fsrs_reports
@@ -451,7 +452,11 @@ def main():
         .write_timeout(20)
         .pool_timeout(10)
         .connection_pool_size(8)
-        .post_init(resume_jobs)  # spec #2: resume any in-flight VF-add job after a restart
+        # spec #2: resume any in-flight VF-add job after a restart. The Mini App
+        # server (miniapp.md §3.3) is layered on top: resume_jobs still runs first
+        # and unchanged, and with WEBAPP_ENABLED off nothing else happens at all.
+        .post_init(build_post_init(resume_jobs))
+        .post_shutdown(build_post_shutdown())
         .build()
     )
     app.add_error_handler(_on_error)

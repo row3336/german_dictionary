@@ -8,6 +8,7 @@ it.
 """
 
 import asyncio
+import inspect
 import os
 import unittest
 from unittest import mock
@@ -171,6 +172,26 @@ class PostShutdownTest(WebappFlagCase):
         with self.assertLogs("bot.webapp.integration", level="ERROR"):
             asyncio.run(build_post_shutdown(inner)(app))
         self.assertEqual(calls, [app])
+
+
+class BuilderWiringTest(unittest.TestCase):
+    """The wrappers above are worthless unless the builder actually uses them, and
+    a real PTB Application can't be built here (telegram is stubbed process-wide).
+    So the invariant is guarded against bot.main's source, as in test_rescue.py:
+
+    1. post_init goes through build_post_init and still carries resume_jobs — the
+       bot's own startup (spec #2) must not be dropped while wiring the web layer;
+    2. post_shutdown is registered too, otherwise the port stays held on restart.
+    """
+
+    def test_builder_wraps_post_init_and_registers_post_shutdown(self):
+        import bot.main as M
+
+        src = inspect.getsource(M.main)
+        self.assertIn(".post_init(build_post_init(resume_jobs))", src)
+        self.assertIn(".post_shutdown(build_post_shutdown())", src)
+        # the bare form must be gone: it would silently keep the app down
+        self.assertNotIn(".post_init(resume_jobs)", src)
 
 
 if __name__ == "__main__":
