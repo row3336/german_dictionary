@@ -3114,7 +3114,7 @@ def learning_pick_new_words(db_path, user_id, limit, topics=None, cefr_levels=No
         rows = conn.execute(
             """
             SELECT w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ,
-                   w.russian, w.ukrainian, w.english, w.topic
+                   w.russian, w.ukrainian, w.english, w.topic, w.preposition_type, w.case_type
             FROM words w
             WHERE NOT EXISTS (
                 SELECT 1 FROM quiz_events e
@@ -3204,7 +3204,7 @@ def learning_preview_entry(db_path, user_id):
             """
             SELECT
                 w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ,
-                w.russian, w.ukrainian, w.english, w.image, w.example, w.topic,
+                w.russian, w.ukrainian, w.english, w.image, w.example, w.topic, w.preposition_type, w.case_type,
                 li.step_index AS learning_step,
                 li.next_due AS learning_due,
                 li.batch_id AS learning_batch_id
@@ -3280,7 +3280,7 @@ def learning_due_entries(db_path, user_id, exclude_word_id=None):
     base_query = """
             SELECT
                 w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ,
-                w.russian, w.ukrainian, w.english, w.image, w.example, w.topic,
+                w.russian, w.ukrainian, w.english, w.image, w.example, w.topic, w.preposition_type, w.case_type,
                 li.step_index AS learning_step,
                 li.next_due AS learning_due,
                 li.batch_id AS learning_batch_id
@@ -4261,7 +4261,7 @@ def list_weak_words(db_path, user_id, weak_field, word_type=None, topics=None, c
     query = f"""
         SELECT
             w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ, w.russian,
-            w.ukrainian, w.english, w.topic,
+            w.ukrainian, w.english, w.topic, w.preposition_type, w.case_type,
             fs.{weak_field}_review_stage AS review_stage,
             fs.{weak_field}_next_review AS next_review,
             p.interval AS p_interval, p.repetitions AS p_repetitions, p.ease AS p_ease, p.due AS p_due,
@@ -4351,7 +4351,7 @@ def get_synonym_group(db_path, word_id):
         rows = conn.execute(
             """
             SELECT w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ, w.russian
-            , w.ukrainian, w.english, w.topic
+            , w.ukrainian, w.english, w.topic, w.preposition_type, w.case_type
             FROM word_synonyms s
             JOIN words w ON w.id = s.word_id
             WHERE s.group_id = ?
@@ -4517,7 +4517,7 @@ def list_learning_active_words(db_path, user_id):
             """
             SELECT
                 w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.russian
-                , w.ukrainian, w.english, w.topic
+                , w.ukrainian, w.english, w.topic, w.preposition_type, w.case_type
             FROM learning_items li
             JOIN words w ON w.id = li.word_id
             WHERE li.user_id = ?
@@ -4606,7 +4606,7 @@ def list_learning_queue_words(db_path, user_id, topics=None, cefr_levels=None):
             """
             SELECT
                 w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.russian
-                , w.ukrainian, w.english, w.topic
+                , w.ukrainian, w.english, w.topic, w.preposition_type, w.case_type
             FROM words w
             WHERE NOT EXISTS (
                 SELECT 1 FROM quiz_events e
@@ -4653,6 +4653,7 @@ def list_weak_form_words(db_path, user_id):
             SELECT
                 w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum,
                 w.partizip2, w.komparativ, w.superlativ, w.russian, w.ukrainian, w.english, w.topic,
+                w.preposition_type, w.case_type,
                 fs.article_active AS article_active, fs.plural_active AS plural_active,
                 fs.prateritum_active AS prateritum_active, fs.partizip2_active AS partizip2_active
             FROM form_stats fs
@@ -4898,7 +4899,7 @@ def list_pending_word_flags(db_path, limit=0):
             f.comment AS flag_comment,
             f.created_at AS flag_created_at,
             w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ, w.russian
-            , w.ukrainian, w.english, w.topic
+            , w.ukrainian, w.english, w.topic, w.preposition_type, w.case_type
         FROM word_flags f
         JOIN words w ON w.id = f.word_id
         WHERE f.status = 'pending'

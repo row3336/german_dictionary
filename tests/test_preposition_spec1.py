@@ -8,7 +8,9 @@ Covers the non-migration surface (migration itself is in test_migrations.py
   - controlled-vocabulary validation on every write path (AI normalize,
     _set_entry_field text path, update_word_fields storage guard);
   - owner-only clarify gating of the two fields + the preset cascade;
-  - db_search match-pairs never pairs two different-meaning prepositions.
+  - db_search match-pairs never pairs two different-meaning prepositions;
+  - every entry-returning storage query carries the two columns, so the hint
+    survives outside FSRS as well (learning/weak/menu lists).
 """
 
 import asyncio
@@ -29,7 +31,21 @@ from bot.handlers.clarify_fields import (  # noqa: E402
     clarify_fields_input,
 )
 from bot.handlers.db_search import _list_match_pairs  # noqa: E402
-from bot.storage import add_word, init_db, list_all_words, update_word_fields  # noqa: E402
+from bot.storage import (  # noqa: E402
+    add_word,
+    init_db,
+    learning_add_words,
+    learning_due_entries,
+    learning_get_or_create_batch,
+    learning_mark_preview_next,
+    learning_pick_new_words,
+    learning_preview_entry,
+    list_all_words,
+    list_learning_active_words,
+    list_learning_queue_words,
+    list_weak_form_words,
+    update_word_fields,
+)
 from bot.ui.formatting import (  # noqa: E402
     _format_de_ru_question,
     _format_ru_question,
@@ -338,6 +354,67 @@ class ClarifyCascadeTest(_DBTest):
         # stays on the category step, nothing persisted
         self.assertEqual(ctx.user_data["edit_field"], "preposition_type")
         self.assertEqual(self._prep_row(), ("", ""))
+
+
+class EntryQueryContractTest(_DBTest):
+    """The hint is built from the entry, so every query that feeds `_row_to_entry`
+    must select both columns. Learning and weak used to omit them, and the hint
+    silently collapsed to '(praeposition)' everywhere outside FSRS."""
+
+    def _seed(self):
+        add_word(self.db, _prep("aus", "local", "dativ", russian="из, с"))
+        return next(e for e in list_all_words(self.db) if e.get("german") == "aus")["id"]
+
+    def _assert_annotated(self, entries, where):
+        entry = next((e for e in entries if e.get("type") == "praeposition"), None)
+        self.assertIsNotNone(entry, f"{where}: preposition not returned")
+        self.assertEqual(entry["preposition_type"], "local", where)
+        self.assertEqual(entry["case_type"], "dativ", where)
+        self.assertIn("(praeposition, local, +Dativ)", _format_ru_question(entry, "ru"), where)
+
+    def test_learning_pick_preview_and_due_carry_the_fields(self):
+        word_id = self._seed()
+        picked = learning_pick_new_words(self.db, user_id=GUEST, limit=5)
+        self._assert_annotated(picked, "learning_pick_new_words")
+
+        batch_id = learning_get_or_create_batch(self.db, user_id=GUEST, daily_qty=5)
+        learning_add_words(self.db, user_id=GUEST, words=picked, batch_id=batch_id, first_delay_seconds=0)
+        self._assert_annotated([learning_preview_entry(self.db, GUEST)], "learning_preview_entry")
+        self._assert_annotated(list_learning_active_words(self.db, GUEST), "list_learning_active_words")
+
+        learning_mark_preview_next(self.db, user_id=GUEST, word_id=word_id, first_interval_seconds=0)
+        self._assert_annotated(learning_due_entries(self.db, GUEST), "learning_due_entries")
+
+    def test_learning_queue_list_carries_the_fields(self):
+        self._seed()
+        self._assert_annotated(list_learning_queue_words(self.db, GUEST), "list_learning_queue_words")
+
+    def test_weak_form_words_carry_the_fields(self):
+        word_id = self._seed()
+        conn = sqlite3.connect(self.db)
+        try:
+            conn.execute(
+                "INSERT INTO form_stats (user_id, word_id, article_active) VALUES (?, ?, 1)",
+                (GUEST, word_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        self._assert_annotated(list_weak_form_words(self.db, GUEST), "list_weak_form_words")
+
+    def test_no_entry_query_forgets_the_columns(self):
+        """Source-level sweep: a new `_row_to_entry` query must not repeat the bug."""
+        source = open(os.path.join(os.path.dirname(__file__), "..", "bot", "storage.py")).read()
+        lines = source.split("\n")
+        starts = [(i, ln) for i, ln in enumerate(lines) if ln.startswith("def ")]
+        missing = []
+        for idx, (start, ln) in enumerate(starts):
+            end = starts[idx + 1][0] if idx + 1 < len(starts) else len(lines)
+            body = "\n".join(lines[start:end])
+            builds_entries = "_row_to_entry" in body and ("JOIN words w" in body or "FROM words w" in body)
+            if builds_entries and "preposition_type" not in body:
+                missing.append(ln.split("(")[0][4:])
+        self.assertEqual(missing, [], f"queries feeding _row_to_entry without the hint columns: {missing}")
 
 
 if __name__ == "__main__":
