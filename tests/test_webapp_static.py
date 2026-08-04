@@ -23,17 +23,21 @@ import unittest
 from aiohttp.test_utils import AioHTTPTestCase
 
 from bot.common.learning_core import FILL_BATCH_FULL, FILL_NO_NEW
+from bot.common.word_filter import MODE_CEFR
 from bot.webapp.i18n_strings import APP_TEXTS, app_strings
 from bot.webapp.learning_flow import PHASE_PREVIEW
 from bot.webapp.outcomes import EMPTY_NO_WORDS
 from bot.webapp.overview import MODES
 from bot.webapp.serializers import ANSWER_ARTICLE_CHOICE, ANSWER_NONE, ANSWER_TEXT
 from bot.webapp.server import create_app
+from bot.webapp.topics_api import EMPTY_TOPICS, UNKNOWN_TOPICS
 
 TOKEN = "123456:AAH-token"
 
 STATIC_DIR = pathlib.Path(__file__).resolve().parent.parent / "bot" / "webapp" / "static"
-SCRIPTS = ("app.js", "quiz.js")
+SCRIPTS = ("app.js", "quiz.js", "topics.js")
+# The screen files that take their helpers from window.App instead of importing.
+SATELLITES = ("quiz.js", "topics.js")
 
 # `t(...)` as the frontend writes it, including the branching forms — a ternary or
 # an `|| "fallback"` inside the call still names keys that have to exist.
@@ -85,6 +89,14 @@ class StaticAppTest(AioHTTPTestCase):
         resp = await self.client.get("/static/quiz.js")
         self.assertEqual(resp.status, 200)
 
+    async def test_topics_script_is_served_and_loaded_by_the_shell(self):
+        # §7.6 part 2: same contract for the topic screen - the chip on the main
+        # screen calls into it, so an unloaded file is a dead tap.
+        page = await (await self.client.get("/app")).text()
+        self.assertIn("/static/topics.js", page)
+        resp = await self.client.get("/static/topics.js")
+        self.assertEqual(resp.status, 200)
+
     async def test_directory_listing_is_not_exposed(self):
         # §9.2 п.7: no directory listing on prod. show_index=False in static_app.py.
         resp = await self.client.get("/static/")
@@ -123,9 +135,9 @@ class FrontendStringsTest(unittest.TestCase):
 
 
 class FrontendModuleContractTest(unittest.TestCase):
-    """quiz.js reaches into app.js only through what app.js publishes.
+    """The satellite screens reach into app.js only through what app.js publishes.
 
-    The two files share a `window.App` object instead of a module system (§8.1: no
+    The files share a `window.App` object instead of a module system (§8.1: no
     build step), so nothing checks the seam at load time — a helper renamed on one
     side of it fails only when the user opens the screen that needs it.
     """
@@ -136,15 +148,17 @@ class FrontendModuleContractTest(unittest.TestCase):
         self.assertIsNotNone(block, "app.js no longer exports a window.App literal")
         return set(re.findall(r"^\s*([a-zA-Z_]+)[,:]", block.group(1), re.M))
 
-    def test_every_shared_helper_quiz_js_uses_is_exported(self):
-        source = script_text("quiz.js")
-        used = set(re.findall(r"App\.([a-zA-Z_]+)", source))
-        destructured = re.search(r"const \{([^}]*)\} = App;", source)
-        self.assertIsNotNone(destructured, "quiz.js no longer takes its helpers from App")
-        used.update(name.strip() for name in destructured.group(1).split(",") if name.strip())
-        for name in sorted(used):
-            with self.subTest(name=name):
-                self.assertIn(name, self.exported_names())
+    def test_every_shared_helper_a_satellite_uses_is_exported(self):
+        exported = self.exported_names()
+        for name in SATELLITES:
+            source = script_text(name)
+            used = set(re.findall(r"App\.([a-zA-Z_]+)", source))
+            destructured = re.search(r"const \{([^}]*)\} = App;", source)
+            self.assertIsNotNone(destructured, f"{name} no longer takes its helpers from App")
+            used.update(part.strip() for part in destructured.group(1).split(",") if part.strip())
+            for helper in sorted(used):
+                with self.subTest(script=name, helper=helper):
+                    self.assertIn(helper, exported)
 
     def test_the_shell_hands_every_mode_over_to_the_quiz_module(self):
         # The M8 part 1 placeholder ("this mode is done in the chat") is gone: with
@@ -152,6 +166,20 @@ class FrontendModuleContractTest(unittest.TestCase):
         source = script_text("app.js")
         self.assertNotIn("renderChatOnly", source)
         self.assertIn("window.App.quiz.start(mode)", source)
+
+    def test_the_topics_chip_opens_the_topics_screen(self):
+        # §7.6 is the one setting the app writes, and the chip is its only door.
+        # Until part 2 the chip was a static label saying "changed in the chat".
+        source = script_text("app.js")
+        self.assertNotIn("topics_bot_only", source)
+        self.assertIn("data-topics", source)
+        self.assertIn("window.App.topics.open()", source)
+
+    def test_applying_a_filter_refetches_the_filtered_numbers(self):
+        # Every due count on the main screen is filtered by topic, so the tiles are
+        # stale the moment the filter changes - patching only the chip would leave
+        # the user looking at counts for the filter they just left.
+        self.assertIn("App.refreshMe()", script_text("topics.js"))
 
 
 class FrontendWireContractTest(unittest.TestCase):
@@ -169,6 +197,14 @@ class FrontendWireContractTest(unittest.TestCase):
         for reason in (FILL_BATCH_FULL, FILL_NO_NEW):
             with self.subTest(reason=reason):
                 self.assertIn(reason, source)
+
+    def test_the_topic_screen_uses_the_filter_s_own_words(self):
+        # The refusals it recovers from and the branch name it warns about all come
+        # from Python: a rename there has to fail here, not in front of a user.
+        source = script_text("topics.js")
+        for value in (MODE_CEFR, EMPTY_TOPICS, UNKNOWN_TOPICS):
+            with self.subTest(value=value):
+                self.assertIn(f'"{value}"', source)
 
 
 if __name__ == "__main__":

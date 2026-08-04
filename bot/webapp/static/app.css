@@ -798,7 +798,7 @@ section.blk h3 {
   font-size: 13px;
 }
 
-/* ── settings screens (learning-settings, §7.6a) ── */
+/* ── settings screens (learning-settings §7.6a, topic filter §7.6) ── */
 .thead {
   padding: 16px 18px 4px;
 }
@@ -816,11 +816,74 @@ section.blk h3 {
   line-height: 1.45;
 }
 
+.thead p.warn {
+  margin-top: 7px;
+  color: var(--text);
+  background: var(--accent-soft);
+  border-radius: 9px;
+  padding: 8px 10px;
+}
+
 section.blk p.hint {
   margin: 0 0 10px;
   font-size: 12.5px;
   color: var(--hint);
   line-height: 1.45;
+}
+
+/* ── topic filter (§7.6): tap to toggle, one Apply, no per-tap round trip ── */
+.tools {
+  padding: 4px 16px 0;
+  display: flex;
+  gap: 16px;
+  font-size: 12.5px;
+  color: var(--accent);
+}
+
+.tgrid {
+  padding: 14px 14px 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tchip {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 9px 13px;
+  border-radius: 11px;
+  background: var(--secondary-bg);
+  color: var(--text);
+  font-size: 15px;
+  border: 1px solid transparent;
+}
+
+.tchip i {
+  font-style: normal;
+  font-size: 11.5px;
+  color: var(--hint);
+}
+
+.tchip.on {
+  background: var(--accent);
+  color: var(--accent-text);
+  border-color: var(--accent);
+}
+
+.tchip.on i {
+  color: var(--accent-text);
+  opacity: 0.8;
+}
+
+.tchip.all {
+  font-weight: 600;
+}
+
+.tsum {
+  padding: 12px 16px 18px;
+  font-size: 12px;
+  color: var(--hint);
 }
 
 .stack {

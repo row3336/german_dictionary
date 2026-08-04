@@ -449,11 +449,13 @@
     return `<div class="tile" data-mode="${mode}" data-due="${due}" role="button" tabindex="0">${shown}<div class="l">${escapeHtml(t(labelKey))}</div></div>`;
   }
 
+  // The chip is the way into the topic screen (§7.6): the filter is changed right
+  // before a session, which is exactly why it is not left to the chat.
   function topicsChipHtml(me) {
     const value = me.topic_filter === "all" ? t("topics_all") : me.topic_filter;
-    return `<div class="chipbar"><span class="f">${escapeHtml(t("topics_label"))}: ${escapeHtml(value)} · ${escapeHtml(
-      t("topics_bot_only")
-    )}</span></div>`;
+    return `<div class="chipbar"><button class="f" data-topics>${escapeHtml(t("topics_label"))}: ${escapeHtml(
+      value
+    )} ›</button></div>`;
   }
 
   function tabBarHtml(active) {
@@ -492,6 +494,10 @@
       </div>`);
     mount(screen);
     wireTabBar(screen);
+    const topicsChip = screen.querySelector("[data-topics]");
+    if (topicsChip) {
+      topicsChip.addEventListener("click", () => goTo(() => window.App.topics.open()));
+    }
     const gear = screen.querySelector("[data-learning-settings]");
     if (gear) {
       gear.addEventListener("click", (ev) => {
@@ -727,30 +733,39 @@
     renderCardBody,
     renderMain,
     renderNoDue,
+    refreshMe,
     handleApiError,
     GENDER_CLASS,
     MODE_LABEL,
     quiz: null,
+    topics: null,
   };
 
   // ---------------------------------------------------------------------
   // Boot
   // ---------------------------------------------------------------------
 
+  // Every number the main screen shows is filtered, so anything that changes the
+  // filter refetches the lot through here rather than patching state.me by hand.
+  // Throws on failure: the caller decides whether that is a screen or a toast.
+  async function refreshMe() {
+    const me = await api("me");
+    state.me = me;
+    S = me.strings || {};
+    return me;
+  }
+
   async function boot() {
     mount(el(`<div class="skeleton"><div class="sk-tiles">
       <div class="sk-tile"></div><div class="sk-tile"></div>
       <div class="sk-tile"></div><div class="sk-tile"></div>
     </div></div>`));
-    let me;
     try {
-      me = await api("me");
+      await refreshMe();
     } catch (err) {
       handleApiError(err);
       return;
     }
-    state.me = me;
-    S = me.strings || {};
     document.title = t("app_title");
     goTo(renderMain, { root: true });
   }
