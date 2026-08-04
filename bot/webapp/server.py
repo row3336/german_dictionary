@@ -26,6 +26,7 @@ from . import (
     quiz_api,
     session_api,
     static_app,
+    topics_api,
 )
 from .access import auth_middleware
 from .app_keys import BOT_TOKEN_KEY, BRIDGE_KEY, RATE_LIMITER_KEY, REGISTRY_KEY
@@ -92,6 +93,7 @@ def create_app(bot_token, application=None, registry=None, rate_limiter=None):
     app.add_routes(learning_api.routes)
     app.add_routes(dict_api.routes)
     app.add_routes(learning_settings_api.routes)
+    app.add_routes(topics_api.routes)
     app.add_routes(static_app.routes)
     static_app.add_static(app)
     app.cleanup_ctx.append(_session_sweeper)

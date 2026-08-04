@@ -964,6 +964,25 @@ def count_words_for_topics(db_path, topics=None):
     return int(row["cnt"])
 
 
+def count_words_by_topic(db_path):
+    """{topic name -> word count} in one pass, for screens that show every count.
+
+    The per-topic chips in the Mini App's filter (miniapp.md §7.6) would otherwise
+    be one count_words_for_topics call per topic.
+    """
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT topic, COUNT(*) AS cnt
+            FROM words
+            WHERE trim(coalesce(topic, '')) != ''
+            GROUP BY topic
+            """
+        ).fetchall()
+    return {row["topic"]: int(row["cnt"]) for row in rows}
+
+
 def list_topics(db_path):
     """Handle list topics."""
     init_db(db_path)
