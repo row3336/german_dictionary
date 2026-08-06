@@ -24,6 +24,7 @@ from . import (
     learning_settings_api,
     meta_api,
     quiz_api,
+    robots,
     session_api,
     static_app,
     topics_api,
@@ -73,10 +74,12 @@ def create_app(bot_token, application=None, registry=None, rate_limiter=None):
 
     Middleware order matters: the error net is outermost, so a failure inside the
     auth middleware itself still comes back as a 500 rather than escaping into the
-    event loop the bot is running on.
+    event loop the bot is running on. Only the robots stamp sits further out, so
+    that it lands on those 500s too.
     """
     app = web.Application(
         middlewares=[
+            robots.robots_middleware,
             error_middleware,
             auth_middleware,
             rate_limit_middleware,
@@ -94,6 +97,7 @@ def create_app(bot_token, application=None, registry=None, rate_limiter=None):
     app.add_routes(dict_api.routes)
     app.add_routes(learning_settings_api.routes)
     app.add_routes(topics_api.routes)
+    app.add_routes(robots.routes)
     app.add_routes(static_app.routes)
     static_app.add_static(app)
     app.cleanup_ctx.append(_session_sweeper)
