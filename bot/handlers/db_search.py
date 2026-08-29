@@ -37,6 +37,7 @@ from ..text_utils import type_label as _type_label
 from ..ui.formatting import (
     _entry_translation,
     _expected_partizip2,
+    _case_label,
     _format_topic_learning_line,
     _format_word_card,
 )
@@ -132,6 +133,15 @@ def _format_topic_words_line(entry):
     if entry_type == "nomen":
         article = str(entry.get("article", "")).strip()
         base = f"{article} {base}".strip() if article else base
+    if entry_type == "praeposition":
+        parts = [entry_type]
+        ptype = str(entry.get("preposition_type", "")).strip()
+        if ptype:
+            parts.append(ptype)
+        label = _case_label(entry.get("case_type", ""))
+        if label:
+            parts.append(label)
+        return f"{base} [{', '.join(parts)}]"
     return f"{base} [{entry_type}]"
 
 
