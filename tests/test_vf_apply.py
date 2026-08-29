@@ -26,6 +26,13 @@ def _conjugation_of(db, word_id):
     conn.close()
     return row[0] if row else None
 
+
+def _separable_of(db, word_id):
+    conn = sqlite3.connect(db)
+    row = conn.execute("SELECT is_separable FROM words WHERE id = ?", (word_id,)).fetchone()
+    conn.close()
+    return row[0] if row else None
+
 GEHEN_CONJ = "ich gehe\ndu gehst\ner/sie/es geht\nwir gehen\nihr geht\nsie/Sie gehen"
 
 
@@ -115,6 +122,38 @@ class ApplyTest(unittest.TestCase):
         # applying again -> both duplicates
         added2, updated2, dups2, _ = AF.apply_batch(self.db, entries)
         self.assertEqual((added2, updated2, dups2), (0, 0, 2))
+
+    def test_apply_batch_preserves_separable_tristate_for_add_and_recheck(self):
+        entries = [
+            {
+                "type": "verb",
+                "infinitive": f"verb-{index}",
+                "russian": "глагол",
+                "topic": "1",
+                "is_separable": value,
+            }
+            for index, value in enumerate((None, 0, 1))
+        ]
+        added, updated, dups, errors = AF.apply_batch(self.db, entries)
+        self.assertEqual((added, updated, dups, errors), (3, 0, 0, 0))
+        words = sorted(list_all_words(self.db), key=lambda word: word["infinitive"])
+        self.assertEqual([word["is_separable"] for word in words], [None, 0, 1])
+
+        target = words[0]
+        added, updated, dups, errors = AF.apply_batch(
+            self.db,
+            [
+                {
+                    "id": target["id"],
+                    "type": "verb",
+                    "infinitive": target["infinitive"],
+                    "russian": target["russian"],
+                    "is_separable": 1,
+                }
+            ],
+        )
+        self.assertEqual((added, updated, dups, errors), (0, 1, 0, 0))
+        self.assertEqual(_separable_of(self.db, target["id"]), 1)
 
     def test_backup_with_event_creates_tagged_file(self):
         path = backup_db_with_event(self.db, self.dump, "vfadd_apply")

@@ -36,6 +36,13 @@ _H1_TYPE_MARKERS = (
 
 _QUOTE_CHARS = " „“”\"'»«"
 
+# VF exposes separability as a grammatical metadata element. Match the exact
+# title attribute, not visible prose or any inference from prefixes/forms.
+_SEPARABLE_MARKER_RE = re.compile(
+    r"<[^>]+\btitle\s*=\s*(['\"])trennbares Verb\1[^>]*>",
+    re.I,
+)
+
 
 def _h1_text(html):
     """Plain text of the page's <h1>, tags stripped and whitespace collapsed."""
@@ -420,6 +427,18 @@ def parse_de(summary_html, conj_html=None, query=None, topic="", type_hint=None)
         # no dedicated card (search page) or an unrecognised type: keep what we
         # have (word + any translations) for the owner to finish by hand.
         entry["german"] = headword or (query or "")
+
+    unreliable = {
+        "no_card",
+        "headword_mismatch",
+        "type_mismatch",
+        "conjugation_parse_error",
+        "conjugation_missing",
+    }
+    if wtype == "verb" and info["has_entry"] and not unreliable.intersection(flags):
+        entry["is_separable"] = 1 if _SEPARABLE_MARKER_RE.search(summary_html or "") else 0
+    else:
+        entry["is_separable"] = None
 
     entry["_headword"] = headword
     entry["_query"] = query

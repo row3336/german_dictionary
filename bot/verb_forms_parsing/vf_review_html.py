@@ -157,10 +157,12 @@ const NL_FIELDS = new Set(["example"]);
 // Multiline blocks (owner 11.07): shown/edited as a whole — the Präsens block
 // must stay a valid 6-line unit, so no per-line chips.
 const BLOCK_FIELDS = new Set(["conjugation_praesens"]);
+// Nullable integer status: null = unknown, 0 = no, 1 = yes.
+const TRI_STATE_FIELDS = new Set(["is_separable"]);
 // Field order used to synthesize a diff for ADD jobs (new cards have no diff).
 const CARD_FIELDS = ["type", "article", "german", "plural", "infinitive", "prateritum",
   "partizip2", "komparativ", "superlativ", "russian", "ukrainian", "english",
-  "example", "cefr_level", "conjugation_praesens"];
+  "example", "cefr_level", "conjugation_praesens", "is_separable"];
 
 const norm = s => s.trim().toLowerCase();
 const splitVal = (field, v) =>
@@ -174,11 +176,19 @@ const model = DATA.words.map((w, i) => {
   // so it renders (and can be partially accepted) the same way as a recheck.
   if (!Object.keys(diff).length && r.status === "done") {
     diff = {};
-    for (const f of CARD_FIELDS)
-      if (String(w[f] || "").trim()) diff[f] = { current: "", vf: String(w[f]) };
+    for (const f of CARD_FIELDS) {
+      if (TRI_STATE_FIELDS.has(f) && Object.prototype.hasOwnProperty.call(w, f))
+        diff[f] = { current: null, vf: w[f] };
+      else if (String(w[f] || "").trim())
+        diff[f] = { current: "", vf: String(w[f]) };
+    }
   }
   const isPending = r.status !== "done" || !Object.keys(diff).length;
   const fields = Object.entries(diff).map(([fname, d]) => {
+    if (TRI_STATE_FIELDS.has(fname)) {
+      return { name: fname, kind: "triState", current: triStateValue(d.current),
+        value: triStateValue(d.vf), accepted: true };
+    }
     if (BLOCK_FIELDS.has(fname)) {
       return { name: fname, kind: "block", current: d.current, value: d.vf, accepted: true };
     }
@@ -253,11 +263,18 @@ function render() {
 
         const tdCur = document.createElement("td"); tdCur.className = "cur";
         tdCur.innerHTML = `<span class="lbl">было</span>`;
-        tdCur.appendChild(multiline(f.current || "—"));
+        tdCur.appendChild(multiline(f.kind === "triState" ? triStateLabel(f.current) : (f.current || "—")));
 
         const tdNew = document.createElement("td"); tdNew.className = "new";
         tdNew.innerHTML = `<span class="lbl">станет</span>`;
-        if (f.kind === "chips") {
+        if (f.kind === "triState") {
+          const sel = document.createElement("select");
+          sel.innerHTML = '<option value="unknown">неизвестно</option>' +
+            '<option value="0">нет</option>' +
+            '<option value="1">да</option>';
+          wireTriState(sel, f);
+          tdNew.appendChild(sel);
+        } else if (f.kind === "chips") {
           f.chips.forEach(ch => tdNew.appendChild(makeChip(f, ch)));
         } else if (f.kind === "block") {
           // multiline unit (Präsens conjugation): edited as a whole, lines kept
@@ -319,6 +336,22 @@ function setChipEnabled(ch, el, enabled) {
   ch.on = enabled;
   el.classList.toggle("offc", !enabled);
   updateCounters();
+}
+
+function triStateValue(value) {
+  return value === 0 || value === 1 ? value : null;
+}
+
+function triStateLabel(value) {
+  return value === 1 ? "да" : value === 0 ? "нет" : "неизвестно";
+}
+
+function wireTriState(select, f) {
+  select.value = f.value === null ? "unknown" : String(f.value);
+  select.onchange = () => {
+    f.value = select.value === "unknown" ? null : Number(select.value);
+    updateCounters();
+  };
 }
 
 function wireEditable(el, f, multilineValue) {

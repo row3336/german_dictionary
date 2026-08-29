@@ -217,6 +217,34 @@ class RecheckTest(unittest.TestCase):
         self.assertEqual(get_word_by_id(self.db, self.gehen)["russian"], "идти, уходить")
         self.assertEqual(before, len(list_all_words(self.db)))  # updated in place, not inserted
 
+    def test_separable_diff_json_apply_round_trip_preserves_zero(self):
+        jid = JS.create_recheck_job(self.db, 7, 100, [("gehen", self.gehen, "verb")])
+        item = JS.list_items(self.db, jid)[0]
+        JS.save_item_result(
+            self.db,
+            item["id"],
+            "done",
+            result={
+                "type": "verb",
+                "infinitive": "gehen",
+                "russian": "идти",
+                "is_separable": 0,
+                "_headword": "gehen",
+                "_flags": [],
+            },
+        )
+        doc = build_review_document(self.db, jid)
+        diff = doc["words"][0]["_review"]["diff"]["is_separable"]
+        self.assertIsNone(diff["current"])
+        self.assertEqual(diff["vf"], 0)
+
+        import json
+        entries, issues = parse_review_document(json.dumps(doc))
+        self.assertEqual(issues, [])
+        self.assertEqual(entries[0]["is_separable"], 0)
+        self.assertEqual(AF.apply_batch(self.db, entries), (0, 1, 0, 0))
+        self.assertEqual(get_word_by_id(self.db, self.gehen)["is_separable"], 0)
+
     def test_start_recheck_all_launches_job(self):
         real = AF.run_job
         AF.run_job = _fake_run

@@ -18,7 +18,7 @@ from .job_store import get_job, list_items
 _DIFF_FIELDS = (
     "type", "article", "german", "plural", "infinitive", "prateritum", "partizip2",
     "komparativ", "superlativ", "russian", "ukrainian", "english", "example", "cefr_level",
-    "conjugation_praesens",
+    "conjugation_praesens", "is_separable",
 )
 
 INSTRUCTIONS = (
@@ -56,6 +56,12 @@ def _card_from_item(item, current=None):
         if isinstance(current, dict):
             diff = {}
             for field in _DIFF_FIELDS:
+                if field == "is_separable":
+                    cur = current.get(field) if field in current else None
+                    new = card.get(field) if field in card else None
+                    if cur != new:
+                        diff[field] = {"current": cur, "vf": new}
+                    continue
                 cur = str(current.get(field, "") or "")
                 new = str(card.get(field, "") or "")
                 if new and cur != new:

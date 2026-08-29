@@ -39,7 +39,9 @@ from pathlib import Path
 # 14 = topic book-level (+ topics.level, DEFAULT ''): per-topic A1..C2 level, independent
 #      of words.cefr_level, groups the "book topics" filter. '' = unassigned (hidden from
 #      that filter until set). Migration is column-only; A1 backfill is a deliberate step.
-SCHEMA_VERSION = 14
+# 15 = VF separable status (+ words.is_separable, DEFAULT NULL): NULL means VF
+#      has not produced a reliable answer; 0/1 are reviewed non-separable/separable.
+SCHEMA_VERSION = 15
 
 # Tables whose row counts we snapshot before/after a migration (must not shrink).
 _COUNT_TABLES = (

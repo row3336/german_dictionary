@@ -7,6 +7,7 @@ and the headword-mismatch guard.
 
 import os
 import unittest
+from unittest.mock import patch
 
 from bot.verb_forms_parsing.de_parser import (
     detect_type_and_headword,
@@ -242,6 +243,50 @@ class ExamplesTest(unittest.TestCase):
 
 
 class ParseDeAssemblyTest(unittest.TestCase):
+    def test_valid_separable_verb_marker_maps_to_one(self):
+        html = load("gehen_summary.html").replace(
+            '<h1 class="rClear">Konjugation des Verbs gehen</h1>',
+            '<h1 class="rClear">Konjugation des Verbs gehen</h1>'
+            '<span title="trennbares Verb">trennbar</span>',
+        )
+        e = parse_de(html, load("gehen_conj.html"), query="gehen")
+        self.assertEqual(e["is_separable"], 1)
+
+    def test_valid_non_separable_verb_without_marker_maps_to_zero(self):
+        e = parse_de(load("gehen_summary.html"), load("gehen_conj.html"), query="gehen")
+        self.assertEqual(e["is_separable"], 0)
+
+    def test_visible_marker_words_without_structural_attribute_do_not_count(self):
+        html = load("gehen_summary.html").replace(
+            '<h1 class="rClear">Konjugation des Verbs gehen</h1>',
+            '<h1 class="rClear">Konjugation des Verbs gehen</h1>'
+            '<p>trennbares Verb</p>',
+        )
+        e = parse_de(html, load("gehen_conj.html"), query="gehen")
+        self.assertEqual(e["is_separable"], 0)
+
+    def test_untrusted_or_non_verb_card_maps_to_unknown(self):
+        cases = (
+            parse_de(load("weil_summary.html"), load("gehen_conj.html"), query="weil"),
+            parse_de(load("mit_summary.html"), query="mit"),
+            parse_de(load("Haus_summary.html"), query="Haus"),
+        )
+        for entry in cases:
+            self.assertIsNone(entry["is_separable"])
+
+    def test_conjugation_parse_error_maps_to_unknown(self):
+        html = load("gehen_summary.html").replace(
+            '<h1 class="rClear">Konjugation des Verbs gehen</h1>',
+            '<h1 class="rClear">Konjugation des Verbs gehen</h1>'
+            '<span title="trennbares Verb">trennbar</span>',
+        )
+        with patch(
+            "bot.verb_forms_parsing.de_parser.parse_praesens_conjugation",
+            side_effect=ValueError("broken table"),
+        ):
+            e = parse_de(html, load("gehen_conj.html"), query="gehen")
+        self.assertIsNone(e["is_separable"])
+
     def test_verb_full_card(self):
         e = parse_de(load("gehen_summary.html"), load("gehen_conj.html"), query="gehen")
         self.assertEqual(e["type"], "verb")

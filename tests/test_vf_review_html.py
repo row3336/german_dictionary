@@ -107,6 +107,49 @@ class RenderReviewHtmlTest(unittest.TestCase):
         self.assertIn("ich fliege", html)
         self.assertIn("BLOCK_FIELDS", html)  # rendered as a whole multiline unit
 
+    def test_separable_status_uses_explicit_unknown_no_yes_control(self):
+        card = {
+            "type": "verb",
+            "infinitive": "aufstehen",
+            "russian": "вставать",
+            "is_separable": 1,
+            "_review": {
+                "query": "aufstehen",
+                "status": "done",
+                "flags": [],
+                "error": "",
+                "headword": "aufstehen",
+                "word_id": "w-2",
+                "diff": {"is_separable": {"current": None, "vf": 1}},
+            },
+        }
+        html = render_review_html(_doc([card]))
+        self.assertIn('kind: "triState"', html)
+        self.assertIn('<option value="unknown">неизвестно</option>', html)
+        self.assertIn('<option value="0">нет</option>', html)
+        self.assertIn('<option value="1">да</option>', html)
+        self.assertIn("wireTriState", html)
+        body = _function_body(html, "wireTriState")
+        self.assertIn('select.value === "unknown" ? null : Number(select.value)', body)
+        self.assertIn("updateCounters()", body)
+        self.assertNotIn("render()", body)
+
+    def test_apply_json_parser_preserves_all_separable_states(self):
+        exported = {
+            "words": [
+                {
+                    "type": "verb",
+                    "infinitive": f"verb-{index}",
+                    "russian": "глагол",
+                    "is_separable": value,
+                }
+                for index, value in enumerate((None, 0, 1))
+            ]
+        }
+        entries, issues = parse_review_document(json.dumps(exported))
+        self.assertEqual(issues, [])
+        self.assertEqual([entry["is_separable"] for entry in entries], [None, 0, 1])
+
     def test_html_export_shape_is_apply_compatible(self):
         # The page exports {job_id, topic, generated_at, edited_in, words:[card]}
         # where each card keeps _review (word_id) and carries the chosen values.

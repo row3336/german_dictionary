@@ -788,5 +788,85 @@ class TopicLevelMigrationTest(unittest.TestCase):
         self.assertIn("level", _schema(db)["topics"])
 
 
+class SeparableStatusMigrationTest(unittest.TestCase):
+    """v14 -> v15 adds nullable words.is_separable without a data backfill."""
+
+    def _seed_v14(self, directory):
+        db = os.path.join(directory, "words.db")
+        init_db(db)
+        conn = sqlite3.connect(db)
+        try:
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(words)")}
+            if "is_separable" in columns:
+                conn.execute("ALTER TABLE words DROP COLUMN is_separable")
+            conn.execute(
+                "INSERT INTO words (id, type, infinitive, russian, topic) "
+                "VALUES ('v1', 'verb', 'gehen', 'идти', '1')"
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        set_user_version(db, 14)
+        return db
+
+    def test_v14_to_v15_adds_nullable_column_and_keeps_existing_unknown(self):
+        directory = tempfile.mkdtemp()
+        db = self._seed_v14(directory)
+
+        report = apply_migrations_safely(db, os.path.join(directory, "backups"))
+
+        self.assertTrue(report["migrated"])
+        self.assertEqual(report["from_version"], 14)
+        self.assertEqual(report["to_version"], SCHEMA_VERSION)
+        self.assertGreaterEqual(SCHEMA_VERSION, 15)
+        self.assertIn("is_separable", _schema(db)["words"])
+        conn = sqlite3.connect(db)
+        try:
+            value = conn.execute(
+                "SELECT is_separable FROM words WHERE id = 'v1'"
+            ).fetchone()[0]
+        finally:
+            conn.close()
+        self.assertIsNone(value)
+        self.assertTrue(report["healthcheck"]["ok"])
+        self.assertEqual(get_user_version(db), SCHEMA_VERSION)
+
+    def test_fresh_db_column_default_is_null(self):
+        directory = tempfile.mkdtemp()
+        db = os.path.join(directory, "words.db")
+        apply_migrations_safely(db, os.path.join(directory, "backups"))
+        conn = sqlite3.connect(db)
+        try:
+            info = {
+                row[1]: row
+                for row in conn.execute("PRAGMA table_info(words)").fetchall()
+            }
+        finally:
+            conn.close()
+        self.assertEqual(info["is_separable"][2].upper(), "INTEGER")
+        self.assertEqual(info["is_separable"][4].upper(), "NULL")
+
+    def test_migration_is_idempotent_and_preserves_reviewed_value(self):
+        directory = tempfile.mkdtemp()
+        db = self._seed_v14(directory)
+        apply_migrations_safely(db, os.path.join(directory, "backups"))
+        conn = sqlite3.connect(db)
+        conn.execute("UPDATE words SET is_separable = 1 WHERE id = 'v1'")
+        conn.commit()
+        conn.close()
+
+        report = apply_migrations_safely(db, os.path.join(directory, "backups"))
+
+        self.assertFalse(report["migrated"])
+        conn = sqlite3.connect(db)
+        try:
+            value = conn.execute(
+                "SELECT is_separable FROM words WHERE id = 'v1'"
+            ).fetchone()[0]
+        finally:
+            conn.close()
+        self.assertEqual(value, 1)
+
+
 if __name__ == "__main__":
     unittest.main()

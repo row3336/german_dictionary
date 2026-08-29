@@ -266,6 +266,7 @@ def init_db(db_path):
                 example TEXT NOT NULL DEFAULT '',
                 topic TEXT NOT NULL DEFAULT '1',
                 cefr_level TEXT NOT NULL DEFAULT '',
+                is_separable INTEGER DEFAULT NULL,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -576,6 +577,10 @@ def _ensure_schema(conn):
     # go through the fetch loop again. Errors leave it '' so they retry next run.
     if "vf_checked_at" not in word_cols:
         conn.execute("ALTER TABLE words ADD COLUMN vf_checked_at TEXT NOT NULL DEFAULT ''")
+    # v14 -> v15: reviewed VF separability. Existing rows deliberately stay NULL
+    # until a future recheck/review/apply; there is no spelling-based backfill.
+    if "is_separable" not in word_cols:
+        conn.execute("ALTER TABLE words ADD COLUMN is_separable INTEGER DEFAULT NULL")
     conn.execute("UPDATE words SET topic = '1' WHERE trim(coalesce(topic, '')) = ''")
     # spec #8: topics registry. Defensive create (mirrors vf_checks above) + idempotent
     # seed of every DISTINCT topic in use, with empty description. INSERT OR IGNORE keeps
@@ -787,6 +792,15 @@ def _safe_int(value, default=0):
         return default
 
 
+def _safe_is_separable(value):
+    """Validate the nullable integer tri-state used by VF separability."""
+    if value is None:
+        return None
+    if type(value) is int and value in (0, 1):
+        return value
+    raise ValueError("is_separable must be None, 0, or 1")
+
+
 def _entry_key(entry):
     """Handle entry key."""
     entry_type = _normalize_text(entry.get("type", ""))
@@ -819,6 +833,11 @@ def _row_to_entry(row):
         "conjugation_praesens": row["conjugation_praesens"] if "conjugation_praesens" in row.keys() else "",
         "conjugation_praeteritum": row["conjugation_praeteritum"] if "conjugation_praeteritum" in row.keys() else "",
         "cefr_level": row["cefr_level"] if "cefr_level" in row.keys() else "",
+        "is_separable": (
+            _safe_is_separable(row["is_separable"])
+            if "is_separable" in row.keys()
+            else None
+        ),
     }
     if "seen_count" in row.keys():
         entry["seen_count"] = int(row["seen_count"] or 0)
@@ -906,14 +925,16 @@ def next_conjugation_word(db_path, user_id, mode, min_repetitions=CONJUGATION_MI
             SELECT w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum,
                    w.partizip2, w.komparativ, w.superlativ, w.russian, w.ukrainian, w.english,
                    w.image, w.example, w.topic, w.preposition_type, w.case_type,
-                   w.conjugation_praesens, w.conjugation_praeteritum,
+                   w.conjugation_praesens, w.conjugation_praeteritum, w.is_separable,
                    COALESCE(cp.seen_count, 0) AS seen_count, cp.last_seen_at AS last_seen_at
             FROM words w
             JOIN progress p
               ON p.word_id = w.id AND p.user_id = ? AND p.mode = ? AND p.repetitions >= ?
             LEFT JOIN conjugation_progress cp
               ON cp.word_id = w.id AND cp.user_id = ?
-            WHERE w.type = 'verb' AND trim(COALESCE(w.conjugation_praesens, '')) != ''
+            WHERE w.type = 'verb'
+              AND trim(COALESCE(w.conjugation_praesens, '')) != ''
+              AND COALESCE(w.is_separable, 0) != 1
             ORDER BY (cp.last_seen_at IS NULL) DESC,
                      (julianday('now') - julianday(cp.last_seen_at)) / (1 + COALESCE(cp.seen_count, 0)) DESC,
                      COALESCE(cp.seen_count, 0) ASC,
@@ -2680,6 +2701,7 @@ def add_word(db_path, entry):
     """Handle add word."""
     init_db(db_path)
     entry = _normalize_word_entry_for_storage(entry)
+    entry["is_separable"] = _safe_is_separable(entry.get("is_separable"))
     if entry.get("id") in (None, "", "unique"):
         entry["id"] = str(uuid.uuid4())
 
@@ -2689,8 +2711,9 @@ def add_word(db_path, entry):
             """
             INSERT INTO words (
                 id, type, article, german, plural, infinitive, prateritum, partizip2, komparativ, superlativ,
-                russian, ukrainian, english, image, example, topic, preposition_type, case_type, cefr_level, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                russian, ukrainian, english, image, example, topic, preposition_type, case_type, cefr_level,
+                is_separable, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             """,
             (
                 entry["id"],
@@ -2712,6 +2735,7 @@ def add_word(db_path, entry):
                 _safe_text(entry.get("preposition_type", "")),
                 _safe_text(entry.get("case_type", "")),
                 _safe_cefr_level(entry.get("cefr_level", "")),
+                entry["is_separable"],
             ),
         )
     return entry
@@ -3908,6 +3932,7 @@ def update_word_fields(db_path, word_id, fields):
         "preposition_type",
         "case_type",
         "cefr_level",
+        "is_separable",
     }
     init_db(db_path)
     with _connect(db_path) as conn:
@@ -3933,6 +3958,9 @@ def update_word_fields(db_path, word_id, fields):
             continue
         if key == "cefr_level":
             values[key] = _safe_cefr_level(value)
+            continue
+        if key == "is_separable":
+            values[key] = _safe_is_separable(value)
             continue
         values[key] = _safe_text(value)
     if not values:
@@ -4471,7 +4499,8 @@ def get_word_by_id(db_path, word_id):
         row = conn.execute(
             """
             SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian
-            , ukrainian, english, image, example, topic, preposition_type, case_type, cefr_level
+            , ukrainian, english, image, example, topic, preposition_type, case_type, cefr_level,
+              is_separable
             FROM words
             WHERE id = ?
             LIMIT 1
@@ -4490,7 +4519,8 @@ def list_all_words(db_path):
         rows = conn.execute(
             """
             SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian
-            , ukrainian, english, image, example, topic, preposition_type, case_type
+            , ukrainian, english, image, example, topic, preposition_type, case_type,
+              is_separable
             FROM words
             ORDER BY created_at ASC
             """

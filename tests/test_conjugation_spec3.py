@@ -253,6 +253,30 @@ class SetConjugationTest(_DbCase):
 
 
 class CarouselSelectionTest(_DbCase):
+    def test_separable_yes_excluded_but_no_and_unknown_are_eligible(self):
+        for wid, infinitive, separable in (
+            ("w1", "unknown", None),
+            ("w2", "not-separable", 0),
+            ("w3", "separable", 1),
+        ):
+            self._add_verb(wid, infinitive)
+            set_word_conjugation(self.db, wid, GOOD)
+            self._set_progress(7, wid, "ru_de", 2)
+            conn = sqlite3.connect(self.db)
+            conn.execute(
+                "UPDATE words SET is_separable = ? WHERE id = ?", (separable, wid)
+            )
+            conn.commit()
+            conn.close()
+
+        picks = set()
+        for _ in range(4):
+            word = next_conjugation_word(self.db, 7, "ru_de")
+            self.assertIsNotNone(word)
+            picks.add(word["id"])
+            record_conjugation_shown(self.db, 7, word["id"])
+        self.assertEqual(picks, {"w1", "w2"})
+
     def test_eligibility_gates(self):
         # w1: eligible (verb, reps>=2 in ru_de, conj set)
         # w2: reps=1 -> excluded; w3: no conjugation -> excluded; w4: reps>=2 only in de_ru -> excluded
