@@ -11,7 +11,7 @@ _clarify_fields_markup). The FSM state stays ADD_EDIT
 (internal, shared with the add-flow).
 """
 
-from telegram import ReplyKeyboardMarkup, Update
+from telegram import MessageEntity, ReplyKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from ..app_config import (
@@ -34,6 +34,7 @@ from ..app_config import (
     get_db_path,
     is_owner,
 )
+from ..common.bot_media import resolve_bot_word_media
 from ..common.lang import (
     _mode_de_l1,
     _mode_l1_de,
@@ -67,6 +68,7 @@ from ..storage import (
 )
 from ..text_utils import type_label as _type_label
 from ..ui.formatting import (
+    _entry_translation,
     _format_article_question,
     _format_de_ru_question,
     _format_pl_sg_question,
@@ -85,6 +87,36 @@ from ..ui.keyboards import (
 # P8: cap user-supplied free text (report / personal media) against abuse/bloat.
 _MAX_REPORT_LEN = 1000
 _MAX_MEDIA_LEN = 1000
+
+
+def _utf16_length(value):
+    """Telegram entity offsets and lengths are counted in UTF-16 code units."""
+    return len(str(value).encode("utf-16-le")) // 2
+
+
+async def _send_effective_value_echo(message, user_id, entry, field):
+    """Send a copyable effective value before a personal-media edit prompt."""
+    effective = resolve_bot_word_media(get_db_path(), user_id, entry)
+    if field == "my_translation":
+        value = _entry_translation(effective, _user_dict_lang(user_id))
+    else:
+        value = effective.get(field, "")
+    value = str(value or "")
+    if not value.strip():
+        return
+
+    lang = _user_interface_lang(user_id)
+    heading = t(lang, "clarify_current_value")
+    hint = t(lang, "clarify_tap_copy")
+    prefix = f"{heading}\n"
+    await message.reply_text(
+        f"{prefix}{value}\n{hint}",
+        entities=[MessageEntity(
+            type="code",
+            offset=_utf16_length(prefix),
+            length=_utf16_length(value),
+        )],
+    )
 
 
 def _edit_entry(context: ContextTypes.DEFAULT_TYPE):
@@ -710,6 +742,10 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
         context.user_data["edit_field"] = field
 
         context.user_data["edit_stage"] = "enter_value"
+        if field in ("image", "example", "my_translation"):
+            await _send_effective_value_echo(
+                update.message, update.effective_user.id, entry, field
+            )
         if field == "type":
             await update.message.reply_text(
                 "Choose new type:",

@@ -33,6 +33,12 @@ def install():
     for _n in ("ReplyKeyboardRemove", "Update", "LabeledPrice"):
         if not hasattr(tg, _n):
             setattr(tg, _n, type(_n, (), {"__init__": lambda self, *a, **k: None}))
+    if not hasattr(tg, "MessageEntity"):
+        def _entity_init(self, type, offset, length, **k):
+            self.type = type
+            self.offset = offset
+            self.length = length
+        tg.MessageEntity = type("MessageEntity", (), {"__init__": _entity_init})
 
     err = sys.modules.get("telegram.error") or types.ModuleType("telegram.error")
     if not hasattr(err, "TelegramError"):
