@@ -210,6 +210,16 @@ def _format_word_card(entry, title="Word card:", user_id=None):
     if _low_word(entry.get("type", "")) == "praeposition":
         lines.append(f"preposition_type: {entry.get('preposition_type', '') or '-'}")
         lines.append(f"case_type: {entry.get('case_type', '') or '-'}")
+    conj_praesens = format_conjugation_block(entry.get("conjugation_praesens", ""))
+    if conj_praesens:
+        lines.append("")
+        lines.append("Präsens:")
+        lines.append(conj_praesens)
+    conj_praeteritum = format_conjugation_block(entry.get("conjugation_praeteritum", ""))
+    if conj_praeteritum:
+        lines.append("")
+        lines.append("Präteritum:")
+        lines.append(conj_praeteritum)
     return "\n".join(lines)
 
 

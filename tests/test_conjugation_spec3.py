@@ -16,7 +16,7 @@ from bot.common.conjugation import (
     parse_conjugation,
     takes_praeteritum,
 )
-from bot.ui.formatting import _format_conjugation_card
+from bot.ui.formatting import _format_conjugation_card, _format_word_card
 from bot.storage import (
     init_db,
     next_conjugation_word,
@@ -127,6 +127,46 @@ class RenderTest(unittest.TestCase):
         )
         self.assertIn("er/sie/es geht", card)
         self.assertNotIn("_ich_", card)
+
+    def test_word_card_prasens_and_praeteritum(self):
+        entry = {
+            "german": "können",
+            "russian": "мочь",
+            "conjugation_praesens": GOOD,
+            "conjugation_praeteritum": PRAET,
+        }
+        card = _format_word_card(entry)
+        self.assertIn("\n\nPräsens:\n", card)
+        self.assertIn("\n\nPräteritum:\n", card)
+        self.assertNotIn("```", card)
+        self.assertLess(
+            card.index("Präsens:"),
+            card.index("Präteritum:"),
+        )
+
+    def test_word_card_only_praesens(self):
+        entry = {
+            "german": "gehen",
+            "russian": "идти",
+            "conjugation_praesens": GOOD,
+            "conjugation_praeteritum": "",
+        }
+        card = _format_word_card(entry)
+        self.assertIn("\n\nPräsens:\n", card)
+        self.assertNotIn("Präteritum:", card)
+        self.assertNotIn("```", card)
+
+    def test_word_card_empty_conjugation_blocks(self):
+        entry = {
+            "german": "gehen",
+            "russian": "идти",
+            "conjugation_praesens": "",
+            "conjugation_praeteritum": "",
+        }
+        card = _format_word_card(entry)
+        self.assertNotIn("Präsens:", card)
+        self.assertNotIn("Präteritum:", card)
+        self.assertFalse(card.endswith("\n"))
 
 
 class _DbCase(unittest.TestCase):
