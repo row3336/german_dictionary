@@ -194,6 +194,7 @@ def _clarify_fields_markup(
     user_id=None,
     in_search=False,
     is_prep=False,
+    is_verb=False,
     show_add_int=True,
     show_variants=False,
 ):
@@ -241,6 +242,8 @@ def _clarify_fields_markup(
             ["prateritum", "partizip2", "komparativ", "superlativ"],
             card_actions,
         ]
+        if is_verb:
+            rows.insert(3, [t(lang, "clarify_conjugation")])
         if is_prep:
             # spec #1: preposition-only fields, so the owner can (re)set the category
             # and case on an existing preposition straight from its card.
@@ -252,6 +255,21 @@ def _clarify_fields_markup(
         rows.append(last)
         return ReplyKeyboardMarkup(rows, resize_keyboard=True)
     return ReplyKeyboardMarkup([["russian", BACK_TEXT]], resize_keyboard=True)
+
+
+def _clarify_conjugation_markup(user_id, allow_praeteritum):
+    """Owner-only actions for the conjugation block editor."""
+    lang = _user_interface_lang(user_id)
+    rows = [
+        [t(lang, "clarify_conjugation_view")],
+        [t(lang, "clarify_conjugation_edit_praesens")],
+        [t(lang, "clarify_conjugation_clear_praesens")],
+    ]
+    if allow_praeteritum:
+        rows.insert(2, [t(lang, "clarify_conjugation_edit_praeteritum")])
+        rows.insert(4, [t(lang, "clarify_conjugation_clear_praeteritum")])
+    rows.append([t(lang, "back")])
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 
 def _type_choice_markup():

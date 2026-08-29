@@ -35,6 +35,7 @@ from ..app_config import (
     is_owner,
 )
 from ..common.bot_media import resolve_bot_word_media
+from ..common.conjugation import parse_conjugation, takes_praeteritum
 from ..common.lang import (
     _mode_de_l1,
     _mode_l1_de,
@@ -60,10 +61,12 @@ from ..storage import (
     add_error_report,
     delete_word,
     get_progress,
+    get_word_by_id,
     normalize_word_entry,
     set_progress,
     set_user_word_media,
     set_user_word_translation,
+    set_word_conjugation,
     simulate_fsrs_advance,
     update_word_fields,
 )
@@ -71,12 +74,14 @@ from ..text_utils import type_label as _type_label
 from ..ui.formatting import (
     _entry_translation,
     _format_article_question,
+    _format_conjugation_card,
     _format_de_ru_question,
     _format_pl_sg_question,
     _format_ru_question,
     _format_word_card,
 )
 from ..ui.keyboards import (
+    _clarify_conjugation_markup,
     _clarify_fields_markup,
     _main_menu_markup,
     _quiz_markup,
@@ -132,6 +137,11 @@ def _is_prep_entry(entry):
     return str((entry or {}).get("type", "")).strip().lower() == "praeposition"
 
 
+def _is_verb_entry(entry):
+    """True when the entry can carry conjugation blocks."""
+    return str((entry or {}).get("type", "")).strip().lower() == "verb"
+
+
 def _clarify_screen(context: ContextTypes.DEFAULT_TYPE, user_id):
     """Unified clarify keyboard for the current edit context (P6 collapsed card)."""
     return_state = context.user_data.get("edit_return_state")
@@ -143,6 +153,7 @@ def _clarify_screen(context: ContextTypes.DEFAULT_TYPE, user_id):
         user_id,
         in_search=in_search,
         is_prep=is_prep,
+        is_verb=_is_verb_entry(_edit_entry(context)),
         show_add_int=not _is_weak_return_state(return_state),
         show_variants=in_search and bool(context.user_data.get("db_search_exact_variants")),
     )
@@ -296,6 +307,234 @@ def _get_clarify_target(context: ContextTypes.DEFAULT_TYPE, prefer_current=False
     if current:
         return current, "Current quiz word:"
     return None, ""
+
+
+_CONJUGATION_ACTION_KEYS = (
+    "clarify_conjugation",
+    "clarify_conjugation_view",
+    "clarify_conjugation_edit_praesens",
+    "clarify_conjugation_edit_praeteritum",
+    "clarify_conjugation_clear_praesens",
+    "clarify_conjugation_clear_praeteritum",
+)
+_PRAETERITUM_ACTIONS = {
+    "clarify_conjugation_edit_praeteritum",
+    "clarify_conjugation_clear_praeteritum",
+}
+
+
+def _conjugation_action_key(text):
+    """Resolve a conjugation button even if the interface language changed."""
+    token = str(text or "").strip()
+    for lang in ("en", "ru", "uk"):
+        for key in _CONJUGATION_ACTION_KEYS:
+            if token == t(lang, key):
+                return key
+    return ""
+
+
+def _current_conjugation_entry(entry):
+    """Merge current DB identity fields into the session's conjugation copy."""
+    word_id = (entry or {}).get("id")
+    stored = get_word_by_id(get_db_path(), word_id) if word_id else None
+    if not stored:
+        return None
+    current = dict(entry)
+    for key in (
+        "id", "type", "german", "infinitive",
+        "conjugation_praesens", "conjugation_praeteritum",
+    ):
+        current[key] = stored.get(key, current.get(key, ""))
+    return current
+
+
+def _sync_conjugation_context(context, entry_key, entry, praesens, praeteritum):
+    """Keep every session copy of the edited word aligned with the committed blocks."""
+    updated = dict(entry)
+    updated["conjugation_praesens"] = praesens
+    updated["conjugation_praeteritum"] = praeteritum
+    context.user_data[entry_key] = updated
+    for key in ("quiz_entry", "quiz_last_answered_entry"):
+        other = context.user_data.get(key)
+        if other and other.get("id") == updated.get("id"):
+            merged = dict(other)
+            merged["conjugation_praesens"] = praesens
+            merged["conjugation_praeteritum"] = praeteritum
+            context.user_data[key] = merged
+    return updated
+
+
+async def _show_conjugation_menu(update, context, entry_key, entry, notice=None):
+    """Render the owner conjugation submenu for the current DB state."""
+    uid = update.effective_user.id
+    lang = _user_interface_lang(uid)
+    current = _current_conjugation_entry(entry)
+    if current is None or not _is_verb_entry(current):
+        context.user_data["edit_stage"] = "pick_field"
+        context.user_data.pop("conjugation_block", None)
+        await update.message.reply_text(
+            t(lang, "clarify_conjugation_forbidden"),
+            reply_markup=_clarify_screen(context, uid),
+        )
+        return ADD_EDIT
+    context.user_data[entry_key] = current
+    context.user_data["edit_stage"] = "conjugation_menu"
+    context.user_data.pop("conjugation_block", None)
+    await update.message.reply_text(
+        notice or t(lang, "clarify_conjugation_prompt"),
+        reply_markup=_clarify_conjugation_markup(
+            uid, takes_praeteritum(current.get("infinitive"))
+        ),
+    )
+    return ADD_EDIT
+
+
+async def _handle_conjugation_input(update, context, entry_key, entry, stage, action):
+    """Handle the owner-only conjugation submenu and its two write stages."""
+    uid = update.effective_user.id
+    lang = _user_interface_lang(uid)
+    current = _current_conjugation_entry(entry)
+    source = context.user_data.get("edit_source", "add")
+    if source != "quiz" or not is_owner(uid) or current is None or not _is_verb_entry(current):
+        context.user_data["edit_stage"] = "pick_field"
+        context.user_data.pop("conjugation_block", None)
+        await update.message.reply_text(
+            t(lang, "clarify_conjugation_forbidden"),
+            reply_markup=_clarify_screen(context, uid),
+        )
+        return ADD_EDIT
+
+    allow_praeteritum = takes_praeteritum(current.get("infinitive"))
+    if action in _PRAETERITUM_ACTIONS and not allow_praeteritum:
+        if stage == "conjugation_menu":
+            return await _show_conjugation_menu(
+                update, context, entry_key, current,
+                t(lang, "clarify_conjugation_forbidden"),
+            )
+        context.user_data["edit_stage"] = "pick_field"
+        await update.message.reply_text(
+            t(lang, "clarify_conjugation_forbidden"),
+            reply_markup=_clarify_screen(context, uid),
+        )
+        return ADD_EDIT
+
+    if stage == "pick_field":
+        if action == "clarify_conjugation":
+            return await _show_conjugation_menu(update, context, entry_key, current)
+        await update.message.reply_text(
+            t(lang, "clarify_conjugation_use_buttons"),
+            reply_markup=_clarify_screen(context, uid),
+        )
+        return ADD_EDIT
+
+    if stage == "conjugation_menu":
+        if _action_key_from_text(update.message.text, uid) == "back":
+            context.user_data["edit_stage"] = "pick_field"
+            context.user_data.pop("conjugation_block", None)
+            await update.message.reply_text(
+                t(lang, "clarify_choose_field"),
+                reply_markup=_clarify_screen(context, uid),
+            )
+            return ADD_EDIT
+        if action == "clarify_conjugation_view":
+            if current.get("conjugation_praesens") or current.get("conjugation_praeteritum"):
+                await update.message.reply_text(
+                    _format_conjugation_card(current, _user_dict_lang(uid)),
+                    parse_mode="Markdown",
+                )
+            else:
+                await update.message.reply_text(t(lang, "clarify_conjugation_empty"))
+            return await _show_conjugation_menu(update, context, entry_key, current)
+        action_blocks = {
+            "clarify_conjugation_edit_praesens": ("praesens", False),
+            "clarify_conjugation_edit_praeteritum": ("praeteritum", False),
+            "clarify_conjugation_clear_praesens": ("praesens", True),
+            "clarify_conjugation_clear_praeteritum": ("praeteritum", True),
+        }
+        selected = action_blocks.get(action)
+        if not selected:
+            await update.message.reply_text(
+                t(lang, "clarify_conjugation_use_buttons"),
+                reply_markup=_clarify_conjugation_markup(uid, allow_praeteritum),
+            )
+            return ADD_EDIT
+        block, clearing = selected
+        if block == "praeteritum" and not allow_praeteritum:
+            return await _show_conjugation_menu(
+                update, context, entry_key, current,
+                t(lang, "clarify_conjugation_forbidden"),
+            )
+        context.user_data["conjugation_block"] = block
+        tense = "Präsens" if block == "praesens" else "Präteritum"
+        if clearing:
+            context.user_data["edit_stage"] = "conjugation_clear_confirm"
+            await update.message.reply_text(
+                t(lang, "clarify_conjugation_clear_prompt").format(tense=tense),
+                reply_markup=ReplyKeyboardMarkup(
+                    [[SYN_CONFIRM_TEXT], [t(lang, "back")]], resize_keyboard=True
+                ),
+            )
+        else:
+            context.user_data["edit_stage"] = "conjugation_enter"
+            await update.message.reply_text(
+                t(lang, "clarify_conjugation_enter").format(tense=tense),
+                reply_markup=_value_entry_markup("conjugation", uid),
+            )
+        return ADD_EDIT
+
+    block = context.user_data.get("conjugation_block")
+    if block not in ("praesens", "praeteritum"):
+        return await _show_conjugation_menu(
+            update, context, entry_key, current,
+            t(lang, "clarify_conjugation_use_buttons"),
+        )
+    if block == "praeteritum" and not allow_praeteritum:
+        return await _show_conjugation_menu(
+            update, context, entry_key, current,
+            t(lang, "clarify_conjugation_forbidden"),
+        )
+    if _action_key_from_text(update.message.text, uid) == "back":
+        return await _show_conjugation_menu(update, context, entry_key, current)
+
+    praesens = current.get("conjugation_praesens", "")
+    praeteritum = current.get("conjugation_praeteritum", "")
+    tense = "Präsens" if block == "praesens" else "Präteritum"
+    if stage == "conjugation_enter":
+        try:
+            canonical = parse_conjugation(update.message.text)
+        except ValueError as exc:
+            await update.message.reply_text(
+                f'{t(lang, "clarify_conjugation_invalid")}\n{exc}',
+                reply_markup=_value_entry_markup("conjugation", uid),
+            )
+            return ADD_EDIT
+        if block == "praesens":
+            praesens = canonical
+        else:
+            praeteritum = canonical
+    elif stage == "conjugation_clear_confirm":
+        if update.message.text.strip() != SYN_CONFIRM_TEXT:
+            return await _show_conjugation_menu(update, context, entry_key, current)
+        if block == "praesens":
+            praesens = ""
+        else:
+            praeteritum = ""
+    else:
+        return await _show_conjugation_menu(
+            update, context, entry_key, current,
+            t(lang, "clarify_conjugation_use_buttons"),
+        )
+
+    set_word_conjugation(get_db_path(), current.get("id"), praesens, praeteritum)
+    updated = _sync_conjugation_context(
+        context, entry_key, current, praesens, praeteritum
+    )
+    notice = (
+        t(lang, "clarify_conjugation_updated")
+        if stage == "conjugation_enter"
+        else t(lang, "clarify_conjugation_cleared").format(tense=tense)
+    )
+    return await _show_conjugation_menu(update, context, entry_key, updated, notice)
 
 
 async def _start_clarify_fields(update: Update, context: ContextTypes.DEFAULT_TYPE, return_state, prefer_current=False):
@@ -487,6 +726,12 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
         return MENU
 
     stage = context.user_data.get("edit_stage", "pick_field")
+
+    conjugation_action = _conjugation_action_key(text)
+    if stage.startswith("conjugation_") or conjugation_action:
+        return await _handle_conjugation_input(
+            update, context, entry_key, entry, stage, conjugation_action
+        )
 
     if (
         stage == "pick_field"

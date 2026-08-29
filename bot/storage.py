@@ -4510,8 +4510,8 @@ def get_word_by_id(db_path, word_id):
         row = conn.execute(
             """
             SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian
-            , ukrainian, english, image, example, topic, preposition_type, case_type, cefr_level,
-              is_separable
+            , ukrainian, english, image, example, topic, preposition_type, case_type,
+              conjugation_praesens, conjugation_praeteritum, cefr_level, is_separable
             FROM words
             WHERE id = ?
             LIMIT 1

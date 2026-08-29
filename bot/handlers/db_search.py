@@ -349,7 +349,7 @@ async def _send_db_search_card(update, context, entry, query, show_variants=Fals
     context.user_data["edit_stage"] = "pick_field"
     context.user_data["edit_return_state"] = DB_SEARCH_VIEW
 
-    from .clarify_fields import _is_prep_entry
+    from .clarify_fields import _is_prep_entry, _is_verb_entry
 
     await update.message.reply_text(
         t(_user_interface_lang(user_id), "clarify_choose_action"),
@@ -358,6 +358,7 @@ async def _send_db_search_card(update, context, entry, query, show_variants=Fals
             user_id,
             in_search=True,
             is_prep=_is_prep_entry(entry),
+            is_verb=_is_verb_entry(entry),
             show_variants=show_variants,
         ),
     )
