@@ -15,7 +15,7 @@ from ..app_config import (
     FSRS_WEEKLY_REPORT_WEEK_KEY,
     get_db_path,
 )
-from ..common.lang import _mode_de_l1, _mode_l1_de, _user_interface_lang
+from ..common.lang import _mode_de_l1, _mode_l1_de, _user_interface_lang, direction_mode_family
 from ..common.outbound import SendStats, send_to_user
 from ..common.settings import _fsrs_report_hour_utc
 from ..i18n import t
@@ -123,7 +123,10 @@ async def _retention_broadcast_job(context: ContextTypes.DEFAULT_TYPE):
         if get_user_setting(db_path, user_id, FSRS_REPORT_DATE_KEY, "") == today:
             continue
         lang = _user_interface_lang(user_id)
-        modes = (_mode_l1_de(user_id), _mode_de_l1(user_id))
+        modes = (
+            *direction_mode_family(_mode_l1_de(user_id)),
+            *direction_mode_family(_mode_de_l1(user_id)),
+        )
         retention = get_daily_first_touch_retention(
             db_path, user_id=user_id, target_date=report_day, modes=modes,
         )

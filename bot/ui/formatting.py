@@ -315,6 +315,8 @@ def _format_de_ru_question(entry):
             lines.append(f"{_md_escape(german)} {_md_escape('(' + ', '.join(parts) + ')')}")
         else:
             lines.append(_md_escape(german))
+    elif word_type == "phrase":
+        lines.append(_md_escape(str(entry.get("german", "") or "").strip()))
     else:
         german = _low_word(entry.get("german", ""))
         lines.append(_md_escape(german))

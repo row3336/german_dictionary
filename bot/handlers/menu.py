@@ -26,9 +26,15 @@ from ..common.lang import (
     _mode_pl_sg,
     _quiz_dir_labels,
     _user_interface_lang,
+    phrase_mode,
 )
 from ..common.navigation import _action_key_from_text, _back_to_main_menu, _clear_last_answer
-from ..common.session import _reset_retry_state, _reset_session, _reset_weak_drill_state
+from ..common.session import (
+    _reset_fsrs_cycle_state,
+    _reset_retry_state,
+    _reset_session,
+    _reset_weak_drill_state,
+)
 from ..common.settings import _topic_filter_banner, _topic_filter_value
 from ..common.txlog import reset_undo_progress
 from ..handlers.access import access_allowed, show_rejected_screen
@@ -51,6 +57,7 @@ from ..storage import (
 from ..text_utils import split_text_chunks as _split_text_chunks
 from ..ui.keyboards import (
     _add_menu_markup,
+    _de_l1_menu_keys,
     _main_menu_markup,
     _ru_de_menu_keys,
     _settings_menu_keys,
@@ -198,6 +205,8 @@ async def tests_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if action == "back":
         return await _back_to_main_menu(update)
     if action == "quiz_l1_de":
+        context.user_data["quiz_direction_base"] = _mode_l1_de(user_id)
+        context.user_data.pop("quiz_mode", None)
         l1de, _ = _quiz_dir_labels(user_id)
         await update.message.reply_text(
             f"{l1de}:\n\n{_topic_filter_banner(user_id)}",
@@ -206,15 +215,15 @@ async def tests_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return QUIZ_RU_DE_MENU
     if action == "quiz_de_l1":
-        _reset_retry_state(context)
-        _clear_last_answer(context)
-        _reset_session(context, _mode_de_l1(user_id))
+        context.user_data["quiz_direction_base"] = _mode_de_l1(user_id)
+        context.user_data.pop("quiz_mode", None)
         _, del1 = _quiz_dir_labels(user_id)
-        return await _send_de_ru_prompt(
-            update,
-            context,
+        await update.message.reply_text(
             f"{del1}:\n\n{_topic_filter_banner(user_id)}",
+            reply_markup=ReplyKeyboardMarkup(_de_l1_menu_keys(user_id), resize_keyboard=True),
+            parse_mode="Markdown",
         )
+        return QUIZ_RU_DE_MENU
     if action == "quiz_pl_sg":
         _reset_retry_state(context)
         _clear_last_answer(context)
@@ -241,11 +250,13 @@ async def tests_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def quiz_ru_de_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Choice in the Lang>De menu: standard FSRS, weak modes, or topic filter."""
+    """Choose word/phrase SRS for a direction, or a still-live Lang>De weak mode."""
     text = update.message.text.strip()
     user_id = update.effective_user.id
     action = _action_key_from_text(text, user_id)
     if action == "back":
+        context.user_data.pop("quiz_mode", None)
+        context.user_data.pop("quiz_direction_base", None)
         await update.message.reply_text(
             t(_user_interface_lang(user_id), "tests") + ":",
             reply_markup=ReplyKeyboardMarkup(_tests_menu_keys(user_id), resize_keyboard=True),
@@ -254,10 +265,18 @@ async def quiz_ru_de_menu_choice(update: Update, context: ContextTypes.DEFAULT_T
     if action == "topic_filter":
         from .word_filter_ui import send_word_filter_screen  # local import: anti-cycle
         return await send_word_filter_screen(update, context, user_id, "ru_de_menu")
-    if action == "standard_fsrs":
-        _reset_retry_state(context)
+    if action in {"quiz_words", "quiz_phrases", "standard_fsrs"}:
+        base_mode = context.user_data.get("quiz_direction_base") or _mode_l1_de(user_id)
+        mode = phrase_mode(base_mode) if action == "quiz_phrases" else base_mode
+        context.user_data["quiz_mode"] = mode
+        _reset_retry_state(context, mode)
+        _reset_fsrs_cycle_state(context, mode)
         _clear_last_answer(context)
-        _reset_session(context, _mode_l1_de(user_id))
+        context.user_data.pop("quiz_entry", None)
+        context.user_data.pop("quiz_last_answered_entry", None)
+        _reset_session(context, mode)
+        if str(base_mode).startswith("de_"):
+            return await _send_de_ru_prompt(update, context, None)
         return await _send_ru_de_prompt(update, context, None)
     if action == "weak_article":
         _reset_weak_drill_state(context, "weak_article")
@@ -276,6 +295,11 @@ async def quiz_ru_de_menu_choice(update: Update, context: ContextTypes.DEFAULT_T
         return QUIZ_VERB_WEAK_MENU
     await update.message.reply_text(
         t(_user_interface_lang(user_id), "quiz_use_menu_buttons"),
-        reply_markup=ReplyKeyboardMarkup(_ru_de_menu_keys(user_id), resize_keyboard=True),
+        reply_markup=ReplyKeyboardMarkup(
+            _de_l1_menu_keys(user_id)
+            if str(context.user_data.get("quiz_direction_base") or "").startswith("de_")
+            else _ru_de_menu_keys(user_id),
+            resize_keyboard=True,
+        ),
     )
     return QUIZ_RU_DE_MENU

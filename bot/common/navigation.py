@@ -80,6 +80,8 @@ def _action_key_from_text(text, user_id):
         ("clarify_fields", "clarify_fields"),
         ("input_err", "input_err"),
         ("standard_fsrs", "standard_fsrs"),
+        ("quiz_words", "quiz_words"),
+        ("quiz_phrases", "quiz_phrases"),
         ("weak_article_mode", "weak_article"),
         ("weak_plural_mode", "weak_plural"),
         ("weak_verb_mode", "weak_verb"),
@@ -176,6 +178,8 @@ async def _back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE 
         _reset_fsrs_cycle_state(context)
         _reset_weak_drill_state(context)
         _clear_last_answer(context)
+        context.user_data.pop("quiz_mode", None)
+        context.user_data.pop("quiz_direction_base", None)
     user_id = update.effective_user.id
     await update.message.reply_text(
         t(_user_interface_lang(user_id), "main_menu"),
@@ -191,6 +195,8 @@ async def _back_to_tests(update: Update, context: ContextTypes.DEFAULT_TYPE = No
         _reset_fsrs_cycle_state(context)
         _reset_weak_drill_state(context)
         _clear_last_answer(context)
+        context.user_data.pop("quiz_mode", None)
+        context.user_data.pop("quiz_direction_base", None)
     user_id = update.effective_user.id
     await update.message.reply_text(
         t(_user_interface_lang(user_id), "tests") + ":",

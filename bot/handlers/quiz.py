@@ -24,7 +24,14 @@ from ..app_config import (
     is_owner,
 )
 from ..common.bot_media import resolve_bot_word_media
-from ..common.lang import _mode_de_l1, _mode_l1_de, _mode_pl_sg, _user_dict_lang, _user_interface_lang
+from ..common.lang import (
+    _mode_de_l1,
+    _mode_l1_de,
+    _mode_pl_sg,
+    _user_dict_lang,
+    _user_interface_lang,
+    selected_direction_mode,
+)
 from ..common.navigation import _action_key_from_text, _back_to_tests, _reply_text_with_retry
 from ..common.word_filter import count_words_for_filter
 from ..common.session import (
@@ -125,11 +132,12 @@ async def _apply_answer_reaction(update, context, ok):
 
 def _interval_divisor_for_mode(user_id, mode):
     """Handle interval divisor for mode."""
-    if mode == MODE_RU_DE:
+    base_mode = str(mode).removeprefix("phrase_")
+    if base_mode == MODE_RU_DE:
         return 1.65
     if mode == _mode_pl_sg(user_id):
         return 2.0
-    if mode == _mode_de_l1(user_id):
+    if base_mode == _mode_de_l1(user_id):
         return 2.0
     return 1.0
 
@@ -465,7 +473,7 @@ async def _repeat_current_pl_sg(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def _send_ru_de_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
     """Handle send ru de prompt."""
-    mode = _mode_l1_de(update.effective_user.id)
+    mode = selected_direction_mode(context, _mode_l1_de(update.effective_user.id))
     entry = _maybe_take_retry_entry(context, mode, update.effective_user.id)
     if not entry:
         context.user_data["quiz_is_retry"] = False
@@ -499,7 +507,7 @@ async def _send_ru_de_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
 async def _send_de_ru_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
     """Handle send de ru prompt."""
-    mode = _mode_de_l1(update.effective_user.id)
+    mode = selected_direction_mode(context, _mode_de_l1(update.effective_user.id))
     entry = _maybe_take_retry_entry(context, mode, update.effective_user.id)
     if not entry:
         context.user_data["quiz_is_retry"] = False
@@ -622,13 +630,14 @@ async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from ..main import _flag_current_word
 
     text = update.message.text.strip()
+    mode = selected_direction_mode(context, _mode_l1_de(update.effective_user.id))
     action = _action_key_from_text(text, update.effective_user.id)
     if action == "back":
         return await _back_to_tests(update, context)
     if action == "stop":
-        return await _stop_with_summary(update, context, _mode_l1_de(update.effective_user.id))
+        return await _stop_with_summary(update, context, mode)
     if action == "input_err":
-        applied = await _apply_input_err(update, context, _mode_l1_de(update.effective_user.id))
+        applied = await _apply_input_err(update, context, mode)
         lang = _user_interface_lang(update.effective_user.id)
         prefix = t(lang, "input_err_fixed") if applied else t(lang, "input_err_nothing")
         return await _repeat_current_ru_de(update, context, prefix)
@@ -637,7 +646,7 @@ async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if added:
             # Word is now in active learning (excluded from FSRS due) — drop it from the
             # retry queue and move on to the NEXT word, not the one just sent.
-            _remove_from_retry(context, _mode_l1_de(update.effective_user.id), (context.user_data.get("quiz_entry") or {}).get("id"))
+            _remove_from_retry(context, mode, (context.user_data.get("quiz_entry") or {}).get("id"))
         lang = _user_interface_lang(update.effective_user.id)
         prefix = t(lang, "added_to_learning") if added else t(lang, "nothing_to_send")
         return await _send_ru_de_prompt(update, context, prefix)
@@ -655,7 +664,6 @@ async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
         form_checks = {}
     else:
         ok, form_checks = _check_ru_de_strict(entry, text)
-    mode = _mode_l1_de(update.effective_user.id)
     if not is_retry:
         _remember_last_answer(context, entry, mode, ok, update.message.message_id)
         _update_srs_for_entry(update.effective_user.id, entry, mode, ok)
@@ -680,20 +688,21 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from ..main import _flag_current_word
 
     text = update.message.text.strip()
+    mode = selected_direction_mode(context, _mode_de_l1(update.effective_user.id))
     action = _action_key_from_text(text, update.effective_user.id)
     if action == "back":
         return await _back_to_tests(update, context)
     if action == "stop":
-        return await _stop_with_summary(update, context, _mode_de_l1(update.effective_user.id))
+        return await _stop_with_summary(update, context, mode)
     if action == "input_err":
-        applied = await _apply_input_err(update, context, _mode_de_l1(update.effective_user.id))
+        applied = await _apply_input_err(update, context, mode)
         lang = _user_interface_lang(update.effective_user.id)
         prefix = t(lang, "input_err_fixed") if applied else t(lang, "input_err_nothing")
         return await _repeat_current_de_ru(update, context, prefix)
     if action == "send_learn":
         added = _send_entry_to_learning(update, context, entry_key="quiz_entry")
         if added:
-            _remove_from_retry(context, _mode_de_l1(update.effective_user.id), (context.user_data.get("quiz_entry") or {}).get("id"))
+            _remove_from_retry(context, mode, (context.user_data.get("quiz_entry") or {}).get("id"))
         lang = _user_interface_lang(update.effective_user.id)
         prefix = t(lang, "added_to_learning") if added else t(lang, "nothing_to_send")
         return await _send_de_ru_prompt(update, context, prefix)
@@ -720,7 +729,6 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
             base_field = _DICT_TRANSLATION_COLUMN.get(dict_lang, "russian")
             variants |= set(_russian_variants(entry.get(base_field, "")))
         ok = bool(answer_variants & variants)
-    mode = _mode_de_l1(update.effective_user.id)
     if not is_retry:
         _remember_last_answer(context, entry, mode, ok, update.message.message_id)
         _update_srs_for_entry(update.effective_user.id, entry, mode, ok)

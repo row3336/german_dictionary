@@ -14,7 +14,7 @@ from ..app_config import (
     SESSION_EFFECT_GOOD_THRESHOLD_PCT,
     get_db_path,
 )
-from ..common.lang import _mode_de_l1, _mode_l1_de, _mode_pl_sg
+from ..common.lang import _mode_de_l1, _mode_l1_de, _mode_pl_sg, direction_mode_family
 from ..common.settings import (
     _session_retry_gap,
     _session_retry_iterations,
@@ -176,7 +176,9 @@ def _reset_fsrs_cycle_state(context, mode=None):
 
 def _pick_due_entry(context, user_id, mode, word_type=None):
     """Handle pick due entry."""
-    is_fsrs_mode = mode in {_mode_l1_de(user_id), _mode_de_l1(user_id), _mode_pl_sg(user_id)}
+    direction_modes = set(direction_mode_family(_mode_l1_de(user_id)))
+    direction_modes.update(direction_mode_family(_mode_de_l1(user_id)))
+    is_fsrs_mode = mode in direction_modes or mode == _mode_pl_sg(user_id)
 
     def _fetch_due():
         qf = resolve_quiz_filter(user_id)
@@ -345,8 +347,15 @@ def _remove_from_retry(context, mode, word_id):
     counts.pop(word_id, None)
 
 
-def _reset_retry_state(context):
-    """Handle reset retry state."""
+def _reset_retry_state(context, mode=None):
+    """Reset one exact quiz mode, or every retry bucket when leaving quizzes."""
+    if mode:
+        for key in ("retry_queue", "retry_counts", "retry_since_last"):
+            bucket = context.user_data.get(key)
+            if isinstance(bucket, dict):
+                bucket.pop(mode, None)
+        context.user_data.pop("quiz_is_retry", None)
+        return
     context.user_data.pop("retry_queue", None)
     context.user_data.pop("retry_counts", None)
     context.user_data.pop("retry_since_last", None)

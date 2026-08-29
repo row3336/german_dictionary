@@ -7,6 +7,34 @@ from ..storage import QUIZ_RU_DE as MODE_RU_DE
 from ..storage import get_setting, get_user_languages
 
 
+DIRECTION_BASE_MODES = (
+    "ru_de", "uk_de", "en_de",
+    "de_ru", "de_uk", "de_en",
+)
+
+
+def direction_mode_family(base_mode):
+    """Return the exact word/phrase modes belonging to one direction."""
+    mode = str(base_mode or "").strip()
+    if mode.startswith("phrase_"):
+        mode = mode[len("phrase_"):]
+    if mode not in DIRECTION_BASE_MODES:
+        raise ValueError(f"not a direction mode: {base_mode!r}")
+    return mode, f"phrase_{mode}"
+
+
+def phrase_mode(base_mode):
+    """Return the exact phrase SRS mode for a supported direction."""
+    return direction_mode_family(base_mode)[1]
+
+
+def selected_direction_mode(context, base_mode):
+    """Resolve the exact direction mode retained in this Telegram flow."""
+    family = direction_mode_family(base_mode)
+    selected = str(context.user_data.get("quiz_mode") or "")
+    return selected if selected in family else family[0]
+
+
 def _user_interface_lang(user_id):
     """This user's interface language (per-user, from the `users` table).
 

@@ -13,7 +13,13 @@ from telegram.error import BadRequest, TelegramError
 from telegram.ext import ContextTypes
 
 from ..app_config import APP_VERSION, get_db_path, is_owner
-from ..common.lang import _mode_de_l1, _mode_l1_de, _quiz_dir_labels, _user_interface_lang
+from ..common.lang import (
+    _mode_de_l1,
+    _mode_l1_de,
+    _quiz_dir_labels,
+    _user_interface_lang,
+    direction_mode_family,
+)
 from ..i18n import t
 from ..storage import get_statistics_snapshot, list_user_activity, select_due
 from ..text_utils import md_escape
@@ -33,11 +39,13 @@ def _format_progress_text(user_id):
     stats = get_statistics_snapshot(get_db_path(), user_id=user_id, mode=_mode_l1_de(user_id))
     word_types = stats.get("word_types") or {}
     db_path = get_db_path()
-    fsrs_ru_de_due = len(
-        select_due(db_path, user_id=user_id, mode=_mode_l1_de(user_id), exclude_correct_today=True)
+    fsrs_ru_de_due = sum(
+        len(select_due(db_path, user_id=user_id, mode=mode, exclude_correct_today=True))
+        for mode in direction_mode_family(_mode_l1_de(user_id))
     )
-    fsrs_de_ru_due = len(
-        select_due(db_path, user_id=user_id, mode=_mode_de_l1(user_id), exclude_correct_today=True)
+    fsrs_de_ru_due = sum(
+        len(select_due(db_path, user_id=user_id, mode=mode, exclude_correct_today=True))
+        for mode in direction_mode_family(_mode_de_l1(user_id))
     )
     lines = [
         f"{t(lang, 'stat_bot_version')} = v{APP_VERSION}",

@@ -106,7 +106,7 @@ from .storage import (
     restore_user_word_state,
     set_setting,
 )
-from .common.db_safety import apply_migrations_safely
+from .common.db_safety import prepare_storage_safely
 from .common.lang import _user_interface_lang
 from .common.outbound import configure_outbound_logger
 from .common.navigation import _back_to_tests
@@ -375,8 +375,9 @@ def _cleanup_old_dump_logs(days=14):
 def _prepare_storage():
     """Handle prepare storage."""
     db_path = get_db_path()
-    # Safe migration: backup-before-change → apply schema → healthcheck → log timeline.
-    report = apply_migrations_safely(db_path, get_dump_dir())
+    # Fresh/current DBs proceed; pending destructive steps stop startup and must
+    # be applied explicitly through scripts.migrate_db after its dry-run.
+    report = prepare_storage_safely(db_path, get_dump_dir())
     if report.get("migrated"):
         logger.info(
             "DB schema migrated v%s→v%s (backup=%s)",

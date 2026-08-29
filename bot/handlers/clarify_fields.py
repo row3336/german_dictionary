@@ -42,6 +42,7 @@ from ..common.lang import (
     _quiz_dir_labels,
     _user_dict_lang,
     _user_interface_lang,
+    direction_mode_family,
 )
 from ..common.navigation import _action_key_from_text, _back_to_main_menu, _back_to_tests, _reply_text_with_retry
 from ..common.txlog import _capture_transaction_snapshot, _log_transaction
@@ -160,12 +161,14 @@ def _is_weak_return_state(return_state):
     return return_state in _WEAK_RETURN_STATES
 
 
-def _add_int_mode_for_return_state(user_id, return_state):
+def _add_int_mode_for_return_state(user_id, return_state, selected_mode=None):
     """Resolve the progress mode supplied by a directional FSRS quiz."""
     if return_state == QUIZ_RU_DE:
-        return _mode_l1_de(user_id)
+        base_mode = _mode_l1_de(user_id)
+        return selected_mode if selected_mode in direction_mode_family(base_mode) else base_mode
     if return_state == QUIZ_DE_RU:
-        return _mode_de_l1(user_id)
+        base_mode = _mode_de_l1(user_id)
+        return selected_mode if selected_mode in direction_mode_family(base_mode) else base_mode
     if return_state == QUIZ_PL_SG:
         return _mode_pl_sg(user_id)
     if return_state == QUIZ_ARTICLE:
@@ -690,7 +693,9 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
                         reply_markup=_clarify_screen(context, uid),
                     )
                     return ADD_EDIT
-                mode = _add_int_mode_for_return_state(uid, return_state)
+                mode = _add_int_mode_for_return_state(
+                    uid, return_state, context.user_data.get("quiz_mode")
+                )
                 if mode:
                     context.user_data["add_int_mode"] = mode
                     context.user_data["edit_stage"] = "add_int_n"

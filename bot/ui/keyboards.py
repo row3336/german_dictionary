@@ -50,11 +50,21 @@ def _tests_menu_keys(user_id):
 
 
 def _ru_de_menu_keys(user_id):
-    """Lang>De keyboard: standard FSRS + weak modes (labels localized)."""
+    """Lang>De keyboard: word/phrase FSRS + weak modes until sprint item 4."""
     lang = _user_interface_lang(user_id)
     return [
-        [t(lang, "standard_fsrs"), t(lang, "weak_article_mode")],
+        [t(lang, "quiz_words"), t(lang, "quiz_phrases")],
+        [t(lang, "weak_article_mode")],
         [t(lang, "weak_plural_mode"), t(lang, "weak_verb_mode")],
+        [t(lang, "back")],
+    ]
+
+
+def _de_l1_menu_keys(user_id):
+    """De>Lang keyboard: choose isolated word or phrase SRS."""
+    lang = _user_interface_lang(user_id)
+    return [
+        [t(lang, "quiz_words"), t(lang, "quiz_phrases")],
         [t(lang, "back")],
     ]
 

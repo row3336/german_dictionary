@@ -1168,9 +1168,12 @@ def count_words_for_cefr(db_path, level):
 
 def get_statistics_snapshot(db_path, user_id, mode):
     """Handle get statistics snapshot."""
+    from .common.lang import direction_mode_family
+
     init_db(db_path)
     user_id = int(user_id)
     mode = _safe_text(mode)
+    mode_family = direction_mode_family(mode)
     today = date.today()
     week_start = today - timedelta(days=today.weekday())  # Monday
     week_end = week_start + timedelta(days=7)  # next Monday (exclusive)
@@ -1211,9 +1214,9 @@ def get_statistics_snapshot(db_path, user_id, mode):
                 SUM(CASE WHEN repetitions = 2 THEN 1 ELSE 0 END) AS s2,
                 SUM(CASE WHEN repetitions = 1 THEN 1 ELSE 0 END) AS s1
             FROM progress
-            WHERE user_id = ? AND mode = ?
+            WHERE user_id = ? AND mode IN (?, ?)
             """,
-            (user_id, mode),
+            (user_id, *mode_family),
         ).fetchone()
         streak_5p = int(streak_row["s5p"] or 0) if streak_row else 0
         streak_4 = int(streak_row["s4"] or 0) if streak_row else 0
@@ -1231,7 +1234,7 @@ def get_statistics_snapshot(db_path, user_id, mode):
                     FROM quiz_events e
                     JOIN words w ON w.id = e.word_id
                     WHERE e.user_id = ?
-                      AND e.mode = ?
+                      AND e.mode IN (?, ?)
                     GROUP BY e.word_id
                 )
                 SELECT COUNT(*) AS cnt
@@ -1239,7 +1242,7 @@ def get_statistics_snapshot(db_path, user_id, mode):
                 JOIN quiz_events e ON e.id = le.last_id
                 WHERE e.is_correct = 0
                 """,
-                (user_id, mode),
+                (user_id, *mode_family),
             ).fetchone()["cnt"]
             or 0
         )
@@ -1397,16 +1400,18 @@ def get_statistics_snapshot(db_path, user_id, mode):
         weak_prateritum_stage2 = int(weak_row["prateritum_stage2"] or 0) if weak_row else 0
         weak_prateritum_stage3 = int(weak_row["prateritum_stage3"] or 0) if weak_row else 0
 
-        def _today_mode_count(mode_name):
+        def _today_mode_count(mode_names):
+            selected = tuple(mode_names) if isinstance(mode_names, (tuple, list)) else (mode_names,)
+            placeholders = ",".join("?" for _ in selected)
             row = conn.execute(
-                """
+                f"""
                 SELECT COUNT(DISTINCT e.word_id) AS cnt
                 FROM quiz_events e
                 WHERE e.user_id = ?
-                  AND e.mode = ?
+                  AND e.mode IN ({placeholders})
                   AND date(e.created_at) = date(?)
                 """,
-                (user_id, mode_name, today.isoformat()),
+                (user_id, *selected, today.isoformat()),
             ).fetchone()
             return int((row["cnt"] if row else 0) or 0)
 
@@ -1428,8 +1433,8 @@ def get_statistics_snapshot(db_path, user_id, mode):
         # etc., so hardcoding ru_de would always show 0 for them. `mode` is the
         # user's L1>De mode (e.g. "uk_de"); derive the De>L1 mode from it.
         de_l1_mode = "de_" + mode[:-3] if mode.endswith("_de") else mode
-        today_complete_fsrs_ru_de = _today_mode_count(mode)
-        today_complete_fsrs_de_ru = _today_mode_count(de_l1_mode)
+        today_complete_fsrs_ru_de = _today_mode_count(mode_family)
+        today_complete_fsrs_de_ru = _today_mode_count(direction_mode_family(de_l1_mode))
         today_complete_pl_sg = _today_mode_prefix_count("pl_sg_")
         today_complete_weak_article = _today_mode_count("weak_article")
         today_complete_weak_plural = _today_mode_count("weak_plural")
@@ -1444,7 +1449,7 @@ def get_statistics_snapshot(db_path, user_id, mode):
                     word_id,
                     MIN(created_at) AS first_ts
                 FROM quiz_events
-                WHERE user_id = ? AND mode = ?
+                WHERE user_id = ? AND mode IN (?, ?)
                 GROUP BY word_id
             ),
             eligible AS (
@@ -1457,7 +1462,7 @@ def get_statistics_snapshot(db_path, user_id, mode):
                 FROM eligible ft
                 JOIN quiz_events e
                   ON e.user_id = ?
-                 AND e.mode = ?
+                 AND e.mode IN (?, ?)
                  AND e.word_id = ft.word_id
                  AND e.is_correct = 1
                  AND julianday(e.created_at) - julianday(ft.first_ts) >= 7
@@ -1466,7 +1471,7 @@ def get_statistics_snapshot(db_path, user_id, mode):
                 (SELECT COUNT(*) FROM eligible) AS eligible_cnt,
                 (SELECT COUNT(*) FROM passed) AS passed_cnt
             """,
-            (user_id, mode, user_id, mode),
+            (user_id, *mode_family, user_id, *mode_family),
         ).fetchone()
         retention_eligible = int(retention_row["eligible_cnt"] or 0) if retention_row else 0
         retention_passed = int(retention_row["passed_cnt"] or 0) if retention_row else 0
@@ -2797,12 +2802,18 @@ def select_due(
                   AND e.word_id = w.id
                   AND e.mode != 'learning'
             )
+            OR (? = 1 AND p.word_id IS NOT NULL)
         )""",
     ]
     where_params = [due_today, due_today]
     where_params.append(int(user_id))
     where_params.append(int(user_id))
     where_params.append(int(user_id))
+    where_params.append(1 if str(mode).startswith("phrase_") else 0)
+    if str(mode).startswith("phrase_"):
+        where_clauses.insert(0, "LOWER(TRIM(w.type)) = 'phrase'")
+    elif mode in {"ru_de", "uk_de", "en_de", "de_ru", "de_uk", "de_en"}:
+        where_clauses.insert(0, "LOWER(TRIM(w.type)) != 'phrase'")
     if word_type:
         where_clauses.insert(0, "w.type = ?")
         where_params.insert(0, word_type)
