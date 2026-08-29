@@ -37,6 +37,7 @@ from ..common.session import (
     _pick_due_entry,
     _reaction_emoji_for_streak,
     _register_retry_result,
+    _remove_pending_retry,
     _remove_from_retry,
     _retry_since_last,
     _session_correct_count,
@@ -180,7 +181,7 @@ async def _apply_input_err(update, context, mode):
     # Mirror it in the in-session summary: move this word from wrong to correct.
     _flip_session_result_to_correct(context, mode)
     _log_transaction(update.effective_user.id, f"input_err:{mode}", snapshot)
-    _remove_from_retry(context, mode, last_entry.get("id"))
+    _remove_pending_retry(context, mode, last_entry.get("id"))
     _set_retry_since_last(context, mode, _retry_since_last(context, mode) + 1)
     context.user_data["last_answered_ok"] = True
     # spec #9: lift the 👎 reaction from the corrected answer; no new one is set.

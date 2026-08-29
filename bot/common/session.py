@@ -331,12 +331,17 @@ def _register_retry_result(context, mode, word_id, ok, was_retry, user_id):
         _set_retry_since_last(context, mode, 0)
 
 
-def _remove_from_retry(context, mode, word_id):
-    """Handle remove from retry."""
+def _remove_pending_retry(context, mode, word_id):
+    """Remove a pending retry without resetting its consumed retry budget."""
     queue = _retry_queue(context, mode)
-    counts = _retry_counts(context, mode)
     if word_id in queue:
         queue[:] = [x for x in queue if x != word_id]
+
+
+def _remove_from_retry(context, mode, word_id):
+    """Remove a pending retry and its consumed retry budget."""
+    _remove_pending_retry(context, mode, word_id)
+    counts = _retry_counts(context, mode)
     counts.pop(word_id, None)
 
 
