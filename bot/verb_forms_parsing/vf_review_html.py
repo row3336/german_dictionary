@@ -199,6 +199,8 @@ function lemmaOf(m) {
   return m.review.headword || m.word.german || m.word.infinitive || m.review.query || "?";
 }
 
+let shownFields = 0;
+
 function render() {
   const type = document.getElementById("fType").value;
   const field = document.getElementById("fField").value;
@@ -206,7 +208,7 @@ function render() {
   const list = document.getElementById("list");
   const pend = document.getElementById("pending");
   list.innerHTML = ""; pend.innerHTML = "";
-  let shownFields = 0;
+  shownFields = 0;
 
   for (const m of model) {
     if (type && (m.word.type || "") !== type) continue;
@@ -227,7 +229,7 @@ function render() {
     head.querySelector(".lemma").textContent = lemmaOf(m);
     const lab = document.createElement("label");
     lab.innerHTML = `<input type="checkbox" ${m.accepted && !m.isPending ? "checked" : ""} ${m.isPending ? "disabled" : ""}> слово в apply`;
-    lab.querySelector("input").onchange = e => { m.accepted = e.target.checked; render(); };
+    lab.querySelector("input").onchange = e => setWordAccepted(m, card, e.target.checked);
     head.appendChild(lab);
     card.appendChild(head);
 
@@ -262,18 +264,18 @@ function render() {
           const dv = document.createElement("div");
           dv.className = "single block"; dv.contentEditable = "true";
           dv.textContent = f.value;
-          dv.onblur = () => { f.value = dv.innerText.trim(); };
+          wireEditable(dv, f, true);
           tdNew.appendChild(dv);
         } else {
           const sp = document.createElement("span");
           sp.className = "single"; sp.contentEditable = "true"; sp.textContent = f.value;
-          sp.onblur = () => { f.value = sp.textContent.trim(); };
+          wireEditable(sp, f, false);
           tdNew.appendChild(sp);
         }
 
         const tdC = document.createElement("td"); tdC.className = "fcheck";
         const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = f.accepted;
-        cb.onchange = () => { f.accepted = cb.checked; render(); };
+        cb.onchange = () => setFieldAccepted(f, tr, cb.checked);
         tdC.appendChild(cb);
 
         tr.append(tdN, tdCur, tdNew, tdC);
@@ -285,7 +287,7 @@ function render() {
   }
   document.getElementById("pendTitle").style.display =
     model.some(m => m.isPending) ? "" : "none";
-  updateCounters(shownFields);
+  updateCounters();
 }
 
 function esc(s) {
@@ -301,21 +303,52 @@ function multiline(text) {
   return frag;
 }
 
+function setWordAccepted(m, card, accepted) {
+  m.accepted = accepted;
+  card.classList.toggle("off", !accepted);
+  updateCounters();
+}
+
+function setFieldAccepted(f, row, accepted) {
+  f.accepted = accepted;
+  row.classList.toggle("rejected", !accepted);
+  updateCounters();
+}
+
+function setChipEnabled(ch, el, enabled) {
+  ch.on = enabled;
+  el.classList.toggle("offc", !enabled);
+  updateCounters();
+}
+
+function wireEditable(el, f, multilineValue) {
+  const readValue = () => multilineValue ? el.innerText : el.textContent;
+  const commit = () => {
+    f.value = readValue().trim();
+    el.textContent = f.value;
+  };
+  el.onblur = commit;
+  el.onkeydown = ev => {
+    if (ev.key !== "Enter") return;
+    ev.preventDefault();
+    commit();
+    el.blur();
+  };
+}
+
 function makeChip(f, ch) {
   const el = document.createElement("span");
   el.className = "chip" + (ch.isNew ? " new" : "") + (ch.on ? "" : " offc");
   el.textContent = ch.text;
   el.title = "клик — включить/исключить · двойной клик — исправить";
-  // Single click toggles AFTER a short delay so it can be cancelled by dblclick
-  // (an immediate toggle re-renders the DOM and the second click never lands).
+  // Single click toggles AFTER a short delay so it can be cancelled by dblclick.
   let clickTimer = null;
   let editing = false;
   el.onclick = () => {
     if (editing || clickTimer) return;
     clickTimer = setTimeout(() => {
       clickTimer = null;
-      ch.on = !ch.on;
-      render();
+      setChipEnabled(ch, el, !ch.on);
     }, 250);
   };
   el.ondblclick = e => {
@@ -327,17 +360,30 @@ function makeChip(f, ch) {
     inp.value = ch.text;
     inp.size = Math.max(8, ch.text.length + 2);
     el.textContent = ""; el.appendChild(inp); inp.focus(); inp.select();
-    const done = () => { ch.text = inp.value.trim() || ch.text; render(); };
-    inp.onblur = done;
+    const finishEdit = cancel => {
+      if (!editing) return;
+      const nextText = cancel ? ch.text : (inp.value.trim() || ch.text);
+      editing = false;
+      inp.onblur = null;
+      ch.text = nextText;
+      el.textContent = ch.text;
+    };
+    inp.onblur = () => finishEdit(false);
     inp.onkeydown = ev => {
-      if (ev.key === "Enter") inp.blur();
-      if (ev.key === "Escape") { inp.value = ch.text; inp.blur(); }
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        finishEdit(false);
+      }
+      if (ev.key === "Escape") {
+        ev.preventDefault();
+        finishEdit(true);
+      }
     };
   };
   return el;
 }
 
-function updateCounters(shownFields) {
+function updateCounters() {
   const diffWords = model.filter(m => !m.isPending);
   const pending = model.filter(m => m.isPending);
   const accepted = diffWords.filter(m => m.accepted).length;

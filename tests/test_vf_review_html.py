@@ -1,6 +1,7 @@
 """todo T8 — interactive HTML review companion: rendering and apply-JSON compatibility."""
 
 import json
+import re
 import unittest
 
 from _telegram_stub import install
@@ -47,6 +48,22 @@ def _recheck_card(**overrides):
     }
     card.update(overrides)
     return card
+
+
+def _function_body(html, name):
+    match = re.search(rf"function {re.escape(name)}\([^)]*\) \{{", html)
+    if not match:
+        raise AssertionError(f"JS function not found: {name}")
+    start = match.end() - 1
+    depth = 0
+    for index in range(start, len(html)):
+        if html[index] == "{":
+            depth += 1
+        elif html[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return html[start + 1:index]
+    raise AssertionError(f"Unclosed JS function: {name}")
 
 
 class RenderReviewHtmlTest(unittest.TestCase):
@@ -116,6 +133,59 @@ class RenderReviewHtmlTest(unittest.TestCase):
         self.assertEqual(entries[0]["id"], "w-1")  # recheck card targets the DB word
         self.assertEqual(entries[0]["russian"], "дом")
         self.assertNotIn("_review", entries[0])
+
+    def test_checkbox_and_chip_handlers_update_locally_without_render(self):
+        html = render_review_html(_doc([_recheck_card()]))
+
+        for helper in ("setWordAccepted", "setFieldAccepted", "setChipEnabled"):
+            body = _function_body(html, helper)
+            self.assertNotIn("render()", body)
+            self.assertIn("updateCounters()", body)
+
+        self.assertIn("setWordAccepted(m, card, e.target.checked)", html)
+        self.assertIn("setFieldAccepted(f, tr, cb.checked)", html)
+        self.assertIn("setChipEnabled(ch, el, !ch.on)", html)
+        self.assertNotIn("m.accepted = e.target.checked; render()", html)
+        self.assertNotIn("f.accepted = cb.checked; render()", html)
+        self.assertNotIn("ch.on = !ch.on;\n      render()", html)
+
+    def test_chip_enter_commits_locally_and_escape_still_cancels(self):
+        html = render_review_html(_doc([_recheck_card()]))
+        body = _function_body(html, "makeChip")
+
+        self.assertIn('if (ev.key === "Enter")', body)
+        self.assertIn("ev.preventDefault()", body)
+        self.assertIn("finishEdit(false)", body)
+        self.assertIn('if (ev.key === "Escape")', body)
+        self.assertIn("finishEdit(true)", body)
+        self.assertIn("inp.value.trim() || ch.text", body)
+        self.assertNotIn("render()", body)
+
+    def test_single_and_block_enter_share_trimmed_blur_commit(self):
+        html = render_review_html(_doc([_recheck_card()]))
+        body = _function_body(html, "wireEditable")
+
+        self.assertIn("const commit = () =>", body)
+        self.assertIn(".trim()", body)
+        self.assertIn("el.onblur = commit", body)
+        self.assertIn('if (ev.key !== "Enter") return', body)
+        self.assertIn("ev.preventDefault()", body)
+        self.assertIn("commit()", body)
+        self.assertNotIn("render()", body)
+        self.assertIn("wireEditable(dv, f, true)", html)
+        self.assertIn("wireEditable(sp, f, false)", html)
+
+    def test_build_apply_wire_shape_remains_unchanged(self):
+        html = render_review_html(_doc([_recheck_card()]))
+        body = _function_body(html, "buildApply")
+
+        self.assertIn("JSON.parse(JSON.stringify(m.word))", body)
+        self.assertIn("card[f.name] = f.current", body)
+        self.assertIn("job_id: DATA.job_id", body)
+        self.assertIn("topic: DATA.topic", body)
+        self.assertIn("generated_at: DATA.generated_at", body)
+        self.assertIn('edited_in: "html-review"', body)
+        self.assertIn("words }, null, 2", body)
 
 
 if __name__ == "__main__":
