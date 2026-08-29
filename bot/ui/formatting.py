@@ -4,9 +4,10 @@ Leaf module: depends only on text_utils/storage/app_config (no handler back-refs
 """
 
 from ..app_config import get_db_path
+from ..common.bot_media import resolve_bot_word_media
 from ..common.conjugation import format_conjugation_block
 from ..i18n import t
-from ..storage import apply_user_word_media, get_word_study_status
+from ..storage import get_word_study_status
 from ..text_utils import cap_plural as _cap_plural
 from ..text_utils import cap_word as _cap_word
 from ..text_utils import has_plural_form as _has_plural_form
@@ -35,8 +36,8 @@ def _expected_partizip2(entry):
 def _entry_translation(entry, dict_lang):
     """Translation shown to the user, in their dict_lang.
 
-    spec #7: a guest's personal override (entry['my_translation'], set by
-    apply_user_word_media for their dict_lang) wins over the shared dictionary.
+    spec #7: a guest's personal override (entry['my_translation'], set by the
+    Telegram media resolver for their dict_lang) wins over the shared dictionary.
     Falls back to the base russian/ukrainian/english fields when unset.
     """
     personal = str(entry.get("my_translation", "") or "").strip()
@@ -173,8 +174,7 @@ def _format_word_card(entry, title="Word card:", user_id=None):
     status_line = ""
     if user_id is not None and entry.get("id"):
         status_line = get_word_study_status(get_db_path(), user_id, entry.get("id"))
-        # Show this user's personal image/example override if any (P4); owner sees shared.
-        entry = apply_user_word_media(get_db_path(), user_id, entry)
+        entry = resolve_bot_word_media(get_db_path(), user_id, entry)
     lines = [
         title,
         f"id: {entry.get('id', '')}",
@@ -193,7 +193,7 @@ def _format_word_card(entry, title="Word card:", user_id=None):
         f"english: {entry.get('english', '') or '-'}",
     ]
     # spec #7 / bug #25: a guest's personal translation (their dict_lang override,
-    # set by apply_user_word_media above) — shown only when set, so the card CONFIRMS
+    # set by the Telegram media resolver above) — shown only when set, so the card CONFIRMS
     # it took (the base russian/ukrainian/english stay the shared dictionary). User-
     # writable → escape like image/example. Owner cards never carry my_translation.
     personal = str(entry.get("my_translation", "") or "").strip()

@@ -102,7 +102,7 @@ class UserWordMediaTest(unittest.TestCase):
         self.assertEqual(out["example"], "shared example")
         self.assertEqual(out["image"], "shared-img")
 
-    def test_word_card_guest_blank_owner_shared(self):
+    def test_word_card_guest_falls_back_to_shared_owner_shared(self):
         from bot.ui.formatting import _format_word_card
 
         os.environ["DB_PATH"] = self.db  # _format_word_card resolves the DB via get_db_path()
@@ -113,11 +113,10 @@ class UserWordMediaTest(unittest.TestCase):
             "id": self.wid, "type": "nomen", "german": "Haus",
             "image": "shared-img", "example": "shared example",
         }
-        # guest with no personal -> blank ("-" in the card), never the owner's text
+        # Telegram full cards fall back to shared media when no personal value exists.
         card_guest = _format_word_card(entry, user_id=U1)
-        self.assertIn("example: -", card_guest)
-        self.assertIn("image: -", card_guest)
-        self.assertNotIn("shared example", card_guest)
+        self.assertIn("example: shared example", card_guest)
+        self.assertIn("image: shared-img", card_guest)
         # guest who set their own -> sees their own
         set_user_word_media(self.db, U1, self.wid, example="mnemonic ex", image="my-img")
         card_guest2 = _format_word_card(entry, user_id=U1)

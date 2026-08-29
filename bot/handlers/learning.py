@@ -19,6 +19,7 @@ from ..app_config import (
     TESTS_MENU,
     get_db_path,
 )
+from ..common.bot_media import resolve_bot_word_media
 from ..common.lang import _user_dict_lang, _user_interface_lang
 from ..common.navigation import _action_key_from_text, _reply_text_with_retry
 from ..common.settings import (
@@ -35,7 +36,6 @@ from ..common.txlog import _capture_transaction_snapshot, _log_transaction
 from ..handlers.quiz import _check_ru_de_strict, _set_reaction
 from ..i18n import t
 from ..storage import (
-    apply_user_word_media,
     learning_active_count,
     learning_add_word_by_id,
     learning_add_words,
@@ -313,7 +313,7 @@ async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TY
     user_id = update.effective_user.id
     preview_entry = learning_preview_entry(get_db_path(), user_id=user_id)
     if preview_entry:
-        preview_entry = apply_user_word_media(get_db_path(), user_id, preview_entry)  # personal media (P4)
+        preview_entry = resolve_bot_word_media(get_db_path(), user_id, preview_entry)
         context.user_data["quiz_entry"] = preview_entry
         context.user_data["learning_preview_mode"] = True
         prompt_text = _format_learning_preview_prompt(preview_entry, _user_dict_lang(user_id))
@@ -348,7 +348,7 @@ async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TY
             reply_markup=ReplyKeyboardMarkup([[t(_user_interface_lang(user_id), "back")]], resize_keyboard=True),
         )
         return LEARNING_QUIZ
-    entry = apply_user_word_media(get_db_path(), user_id, entry)  # personal media (P4)
+    entry = resolve_bot_word_media(get_db_path(), user_id, entry)
     context.user_data["quiz_entry"] = entry
     context.user_data["learning_preview_mode"] = False
     _note_learning_shown(context, entry.get("id"))

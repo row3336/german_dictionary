@@ -23,6 +23,7 @@ from ..app_config import (
     get_db_path,
     is_owner,
 )
+from ..common.bot_media import resolve_bot_word_media
 from ..common.lang import _mode_de_l1, _mode_l1_de, _mode_pl_sg, _user_dict_lang, _user_interface_lang
 from ..common.navigation import _action_key_from_text, _back_to_tests, _reply_text_with_retry
 from ..common.word_filter import count_words_for_filter
@@ -50,7 +51,6 @@ from ..storage import QUIZ_ARTICLE as MODE_ARTICLE
 from ..storage import QUIZ_RU_DE as MODE_RU_DE
 from ..storage import (
     _DICT_TRANSLATION_COLUMN,
-    apply_user_word_media,
     get_synonym_group,
     log_quiz_event,
     mark_last_quiz_event_correct,
@@ -481,7 +481,7 @@ async def _send_ru_de_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
         )
         return QUIZ_RU_DE
 
-    entry = apply_user_word_media(get_db_path(), update.effective_user.id, entry)  # personal media (P4)
+    entry = resolve_bot_word_media(get_db_path(), update.effective_user.id, entry)
     context.user_data["quiz_entry"] = entry
     prompt_text = _format_ru_question(entry, _user_dict_lang(update.effective_user.id))
     if prefix_text:
@@ -515,7 +515,7 @@ async def _send_de_ru_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
         )
         return QUIZ_DE_RU
 
-    entry = apply_user_word_media(get_db_path(), update.effective_user.id, entry)  # personal media (P4)
+    entry = resolve_bot_word_media(get_db_path(), update.effective_user.id, entry)
     context.user_data["quiz_entry"] = entry
     prompt_text = _format_de_ru_question(entry)
     if prefix_text:
@@ -565,7 +565,7 @@ async def _send_pl_sg_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
         )
         return QUIZ_PL_SG
 
-    entry = apply_user_word_media(get_db_path(), update.effective_user.id, entry)  # personal media (P4)
+    entry = resolve_bot_word_media(get_db_path(), update.effective_user.id, entry)
     context.user_data["quiz_entry"] = entry
     prompt_text = _format_pl_sg_question(entry)
     if prefix_text:
@@ -597,7 +597,7 @@ async def _send_article_prompt(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         return TESTS_MENU
 
-    entry = apply_user_word_media(get_db_path(), update.effective_user.id, entry)  # personal media (P4)
+    entry = resolve_bot_word_media(get_db_path(), update.effective_user.id, entry)
     context.user_data["quiz_entry"] = entry
     prompt_text = _format_article_question(entry)
     if prefix_text:
