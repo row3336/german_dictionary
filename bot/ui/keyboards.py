@@ -1,6 +1,6 @@
 """Core menu keyboard builders (reply keyboards for the main navigation menus).
 
-Feature-specific markups (db_search/vf/synonyms/edit-fields/weak/dump) stay with
+Feature-specific markups (db_search/vf/synonyms/edit-fields/dump) stay with
 their handler groups and are moved alongside them in later refactor stages.
 """
 
@@ -50,12 +50,10 @@ def _tests_menu_keys(user_id):
 
 
 def _ru_de_menu_keys(user_id):
-    """Lang>De keyboard: word/phrase FSRS + weak modes until sprint item 4."""
+    """Lang>De keyboard for separate word and phrase FSRS modes."""
     lang = _user_interface_lang(user_id)
     return [
         [t(lang, "quiz_words"), t(lang, "quiz_phrases")],
-        [t(lang, "weak_article_mode")],
-        [t(lang, "weak_plural_mode"), t(lang, "weak_verb_mode")],
         [t(lang, "back")],
     ]
 
@@ -112,10 +110,9 @@ def _language_menu_keys(user_id):
 
 
 def _algo_settings_menu_keys(user_id):
-    """Algo settings menu (bug #0). FSRS/weak params now live in their submenus;
-    "unit_tests" is owner-only (P3.2), third in the weak/learning row."""
+    """Algo settings menu with owner-only unit-test access."""
     lang = _user_interface_lang(user_id)
-    study_row = [t(lang, "weak_sett"), t(lang, "learning_sett")]
+    study_row = [t(lang, "learning_sett")]
     if is_owner(user_id):
         study_row.append(t(lang, "unit_tests"))
     return [
@@ -130,15 +127,6 @@ def _fsrs_settings_menu_keys(user_id):
     lang = _user_interface_lang(user_id)
     return [
         [t(lang, "ses_rtr_gap"), t(lang, "ses_rtr_it")],
-        [t(lang, "back")],
-    ]
-
-
-def _drill_settings_menu_keys(user_id):
-    """Weak-settings submenu keys (UI label: weak_sett): the two weak-drill params."""
-    lang = _user_interface_lang(user_id)
-    return [
-        [t(lang, "weak_drill_gap"), t(lang, "weak_drill_repeats")],
         [t(lang, "back")],
     ]
 
@@ -170,14 +158,6 @@ def _quiz_idle_markup(user_id):
     lang = _user_interface_lang(user_id)
     rows = [[t(lang, "send_learn"), t(lang, "input_err")]]
     rows.append([t(lang, "clarify_fields"), t(lang, "back")])
-    return ReplyKeyboardMarkup(rows, resize_keyboard=True)
-
-
-def _weak_article_markup(user_id):
-    """Handle weak article markup."""
-    lang = _user_interface_lang(user_id)
-    rows = [["der", "die", "das"]]
-    rows.append([t(lang, "clarify_fields"), t(lang, "input_err"), t(lang, "stop")])
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 

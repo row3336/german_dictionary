@@ -1,5 +1,5 @@
 """#0 — a guest can open the clarify card (image/example, P4) from the learning
-session, matching quiz/weak/db_search. `learning.py` used to gate the
+session, matching quiz/db_search. `learning.py` used to gate the
 `clarify_fields` button behind `is_owner()`, so a guest's tap fell through to
 the answer-handling logic instead of opening the card (visible as the keyboard
 collapsing to next/skip/back with no clarify screen, and in normal mode the

@@ -26,7 +26,6 @@ from bot.storage import (
     learning_get_or_create_batch,
     get_user_languages,
     list_transaction_logs,
-    list_weak_words,
     reset_periodicity,
     select_due,
     set_user_dict_lang,
@@ -75,14 +74,6 @@ def _progress(conn, user_id, word_id, mode, due, interval=1, reps=1, ease=2.5):
     )
 
 
-def _weak_article(conn, user_id, word_id, errors=3):
-    # active weak episode for this user: errors + the persistent episode flag set
-    conn.execute(
-        "INSERT INTO form_stats (user_id, word_id, article_errors, article_active) VALUES (?, ?, ?, 1)",
-        (user_id, word_id, errors),
-    )
-
-
 def _learning_item(conn, user_id, word_id, batch_id, due_iso="2000-01-01 00:00:00"):
     # an active, preview-done item due in the past → appears in learning_due_entries
     conn.execute(
@@ -127,31 +118,6 @@ class SrCoreIsolationTest(unittest.TestCase):
                 _event(conn, U1, e["id"], "ru_de", 0, f"{self.today} 08:0{i}:00")
         self.assertEqual(fsrs_due_forecast(self.db, U1, "ru_de")["total"], 2)
         self.assertEqual(fsrs_due_forecast(self.db, U2, "ru_de")["total"], 0)
-
-
-class WeakWordsIsolationTest(unittest.TestCase):
-    """P1.2 — weak words (form_stats), incl. the db_search weak list: per-user."""
-
-    def setUp(self):
-        self.db = _mk_db()
-        self.addCleanup(lambda: os.unlink(self.db))
-        init_db(self.db)
-
-    def test_weak_list_is_per_user(self):
-        e = _add_noun(self.db, "Tisch", "стол")
-        with sqlite3.connect(self.db) as conn:
-            _weak_article(conn, U1, e["id"], errors=3)  # weak for U1 only
-        self.assertEqual(len(list_weak_words(self.db, U1, "article")), 1)
-        self.assertEqual(len(list_weak_words(self.db, U2, "article")), 0)
-
-    def test_each_user_sees_only_own_weak(self):
-        e1 = _add_noun(self.db, "Tisch", "стол")
-        e2 = _add_noun(self.db, "Lampe", "лампа")
-        with sqlite3.connect(self.db) as conn:
-            _weak_article(conn, U1, e1["id"], errors=3)
-            _weak_article(conn, U2, e2["id"], errors=3)
-        self.assertEqual([x["german"] for x in list_weak_words(self.db, U1, "article")], ["Tisch"])
-        self.assertEqual([x["german"] for x in list_weak_words(self.db, U2, "article")], ["Lampe"])
 
 
 class LearningIsolationTest(unittest.TestCase):

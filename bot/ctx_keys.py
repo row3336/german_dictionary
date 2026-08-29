@@ -7,7 +7,6 @@ is extracted into its own module. Not yet wired everywhere.
 Some keys are dynamic and built from a mode at runtime (kept as helpers):
 - session "seen" set:        f"session_seen_{mode}"
 - fsrs cycle queue bucket:     "fsrs_cycle_queue" (dict keyed by mode)
-- weak drill buckets:         "weak_drill_queue" / "weak_drill_counts" / "weak_drill_since_last" (dicts keyed by mode)
 - retry buckets:              "retry_queue" / "retry_counts" / "retry_since_last" (dicts keyed by mode)
 """
 
@@ -25,7 +24,6 @@ LAST_AI_PROMPT = "last_ai_prompt"
 # quiz / answers
 QUIZ_ENTRY = "quiz_entry"
 QUIZ_IS_RETRY = "quiz_is_retry"
-QUIZ_IS_WEAK_DRILL = "quiz_is_weak_drill"
 QUIZ_LAST_ANSWERED_ENTRY = "quiz_last_answered_entry"
 LAST_QUIZ_IDS = "last_quiz_ids"
 LAST_ANSWERED_ENTRY = "last_answered_entry"
@@ -34,19 +32,10 @@ LAST_ANSWERED_OK = "last_answered_ok"
 LAST_ANSWERED_SRS = "last_answered_srs"
 SESSION_MODE = "session_mode"
 
-# retry / weak drill (bucket dicts)
+# retry bucket dicts
 RETRY_QUEUE = "retry_queue"
 RETRY_COUNTS = "retry_counts"
 RETRY_SINCE_LAST = "retry_since_last"
-WEAK_DRILL_QUEUE = "weak_drill_queue"
-WEAK_DRILL_COUNTS = "weak_drill_counts"
-WEAK_DRILL_SINCE_LAST = "weak_drill_since_last"
-
-# weak answers
-LAST_WEAK_ANSWERED_ENTRY = "last_weak_answered_entry"
-LAST_WEAK_ANSWERED_FIELD = "last_weak_answered_field"
-LAST_WEAK_ANSWERED_OK = "last_weak_answered_ok"
-
 # learning
 LEARNING_RECENT_IDS = "learning_recent_ids"  # last shown word ids, for later-round show spacing
 LEARNING_PREVIEW_MODE = "learning_preview_mode"
@@ -72,7 +61,6 @@ TOPIC_RETURN = "topic_return"
 
 # db search
 DB_SEARCH_TOPIC_PICK = "db_search_topic_pick"
-DB_SEARCH_WEAK_IDS = "db_search_weak_ids"
 DB_SEARCH_WORDS_LISTS_MENU = "db_search_words_lists_menu"
 
 # synonyms

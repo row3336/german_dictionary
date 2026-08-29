@@ -30,7 +30,7 @@ class PhraseModeHelpersTest(unittest.TestCase):
         self.assertEqual(direction_mode_family("phrase_de_en"), ("de_en", "phrase_de_en"))
 
     def test_non_direction_modes_are_rejected(self):
-        for value in ("learning", "weak_article", "pl_sg_ru", "", "phrase_learning"):
+        for value in ("learning", "article", "pl_sg_ru", "", "phrase_learning"):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 direction_mode_family(value)
 

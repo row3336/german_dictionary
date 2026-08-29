@@ -45,7 +45,6 @@ from .app_config import (
     CONJUGATION_MENU,
     DB_SEARCH,
     DB_SEARCH_VIEW,
-    DRILL_SETTINGS_MENU,
     DUMP_MENU,
     FSRS_REPORT_HOUR_KEY,
     FSRS_SETTINGS_MENU,
@@ -68,15 +67,10 @@ from .app_config import (
     OWNER_DICT_LANG_KEY,
     OWNER_INTERFACE_LANG_KEY,
     QUIZ_ARTICLE,
-    QUIZ_ARTICLE_WEAK,
     QUIZ_DE_RU,
-    QUIZ_PARTIZIP2_WEAK,
-    QUIZ_PLURAL_WEAK,
     QUIZ_PL_SG,
-    QUIZ_PRATERITUM_WEAK,
     QUIZ_RU_DE,
     QUIZ_RU_DE_MENU,
-    QUIZ_VERB_WEAK_MENU,
     SELECT_DICT_LANG,
     SELECT_UI_LANG,
     SETTINGS_MENU,
@@ -89,10 +83,6 @@ from .app_config import (
     TESTS_MENU,
     TOPIC_FILTER_EDIT,
     TOPIC_FILTER_KEY,
-    WEAK_DRILL_GAP_DEFAULT,
-    WEAK_DRILL_GAP_KEY,
-    WEAK_DRILL_REPEATS_DEFAULT,
-    WEAK_DRILL_REPEATS_KEY,
     get_db_path,
     get_dump_dir,
     get_log_path,
@@ -128,13 +118,6 @@ from .handlers.synonyms import (
     synonyms_menu,
     synonyms_remove_input,
 )
-from .handlers.weak import (
-    quiz_article_weak,
-    quiz_partizip2_weak,
-    quiz_plural_weak,
-    quiz_prateritum_weak,
-    quiz_verb_weak_menu_choice,
-)
 from .handlers.learning import (
     learning_menu_choice,
     learning_quiz,
@@ -153,7 +136,6 @@ from .handlers.settings import (
     algo_settings_confirm,
     algo_settings_edit,
     algo_settings_menu_choice,
-    drill_settings_menu_choice,
     fsrs_settings_menu_choice,
     language_menu_choice,
     learning_settings_menu_choice,
@@ -312,14 +294,6 @@ async def _flag_current_word(update: Update, context: ContextTypes.DEFAULT_TYPE,
         return await _resume_after_clarify(update, context, "✅ Flag saved.", state_override=QUIZ_PL_SG)
     if return_state == QUIZ_ARTICLE:
         return await _resume_after_clarify(update, context, "✅ Flag saved.", state_override=QUIZ_ARTICLE)
-    if return_state == QUIZ_ARTICLE_WEAK:
-        return await _resume_after_clarify(update, context, "✅ Flag saved.", state_override=QUIZ_ARTICLE_WEAK)
-    if return_state == QUIZ_PLURAL_WEAK:
-        return await _resume_after_clarify(update, context, "✅ Flag saved.", state_override=QUIZ_PLURAL_WEAK)
-    if return_state == QUIZ_PRATERITUM_WEAK:
-        return await _resume_after_clarify(update, context, "✅ Flag saved.", state_override=QUIZ_PRATERITUM_WEAK)
-    if return_state == QUIZ_PARTIZIP2_WEAK:
-        return await _resume_after_clarify(update, context, "✅ Flag saved.", state_override=QUIZ_PARTIZIP2_WEAK)
     return await _back_to_tests(update, context)
 
 
@@ -391,10 +365,6 @@ def _prepare_storage():
         set_setting(db_path, OWNER_DICT_LANG_KEY, "ru")
     if not get_setting(db_path, TOPIC_FILTER_KEY):
         set_setting(db_path, TOPIC_FILTER_KEY, "1")
-    if not get_setting(db_path, WEAK_DRILL_GAP_KEY):
-        set_setting(db_path, WEAK_DRILL_GAP_KEY, str(WEAK_DRILL_GAP_DEFAULT))
-    if not get_setting(db_path, WEAK_DRILL_REPEATS_KEY):
-        set_setting(db_path, WEAK_DRILL_REPEATS_KEY, str(WEAK_DRILL_REPEATS_DEFAULT))
     if not get_setting(db_path, LEARNING_DAILY_QTY_KEY):
         set_setting(db_path, LEARNING_DAILY_QTY_KEY, str(LEARNING_DAILY_QTY_DEFAULT))
     if not get_setting(db_path, LEARNING_INTERVALS_KEY):
@@ -509,7 +479,6 @@ def main():
             BROADCAST_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, broadcast_confirm)],
             ALGO_SETTINGS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, algo_settings_menu_choice)],
             FSRS_SETTINGS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, fsrs_settings_menu_choice)],
-            DRILL_SETTINGS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, drill_settings_menu_choice)],
             LEARNING_SETTINGS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, learning_settings_menu_choice)],
             ALGO_SETTINGS_EDIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, algo_settings_edit)],
             ALGO_SETTINGS_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, algo_settings_confirm)],
@@ -533,11 +502,6 @@ def main():
             QUIZ_DE_RU: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_de_ru)],
             QUIZ_PL_SG: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_pl_sg)],
             QUIZ_ARTICLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_article)],
-            QUIZ_ARTICLE_WEAK: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_article_weak)],
-            QUIZ_PLURAL_WEAK: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_plural_weak)],
-            QUIZ_VERB_WEAK_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_verb_weak_menu_choice)],
-            QUIZ_PRATERITUM_WEAK: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_prateritum_weak)],
-            QUIZ_PARTIZIP2_WEAK: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_partizip2_weak)],
             SYN_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, synonyms_menu)],
             SYN_ADD_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, synonyms_add_input)],
             SYN_REMOVE_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, synonyms_remove_input)],

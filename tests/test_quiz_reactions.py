@@ -3,7 +3,7 @@
 Correct answers get a streak-based reaction (1-9 -> thumbs up, 10-19 -> hundred
 points, 20+ -> fire); wrong answers get thumbs down. Reactions land on the
 USER's answer message (never the bot's own text), only in the four FSRS quizzes
-(Lang>De/De>Lang/pl>sg/article) - weak/learning never react. A failed reaction
+(Lang>De/De>Lang/pl>sg/article). A failed reaction
 call must not break the quiz, and "input_err" (typo rollback) lifts the
 thumbs-down from the corrected message without setting a new one.
 """
@@ -256,6 +256,12 @@ class QuizHandlerReactionWiringTest(unittest.TestCase):
         ctx = _Ctx(user_data={"quiz_entry": self._entry()})
         _run(Q.quiz_ru_de(update, ctx))
         self.assertIn((GUEST, 55, [THUMBS_UP]), ctx.bot.reactions)
+        with sqlite3.connect(self.db) as conn:
+            self.assertIsNone(
+                conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='form_stats'"
+                ).fetchone()
+            )
 
     def test_wrong_answer_through_quiz_ru_de_reacts_thumbs_down(self):
         update = _Update(GUEST, "die Katze Katzen", message_id=56)
@@ -271,16 +277,7 @@ class QuizHandlerReactionWiringTest(unittest.TestCase):
         self.assertIn((GUEST, 57, [THUMBS_UP]), ctx.bot.reactions)
 
 
-# --- negative: weak never reacts; learning DOES (added 2026-07-09) -------------
-
-class WeakNoReactionsTest(unittest.TestCase):
-    def test_weak_source_never_calls_the_reactions_api(self):
-        import bot.handlers.weak as W
-
-        src = inspect.getsource(W)
-        self.assertNotIn("set_message_reaction", src, "weak must not send reactions (spec #9)")
-        self.assertNotIn("_set_reaction", src, "weak must not send reactions (spec #9)")
-
+class LearningReactionsTest(unittest.TestCase):
     def test_learning_does_react(self):
         # Learning gained 👍/👎 reactions on 2026-07-09 (same contract as FSRS).
         import bot.handlers.learning as L

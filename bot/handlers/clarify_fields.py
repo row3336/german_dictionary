@@ -1,7 +1,7 @@
 """Field-editing flow ("clarify_fields"): entry from quiz/db_search/add, the
 ADD_EDIT-state handler, and resume-after-edit dispatch.
 
-Most cross-feature calls (weak/learning/db_search/synonyms/add prompts) still
+Most cross-feature calls (learning/db_search/synonyms/add prompts) still
 live in main and are imported LOCALLY inside the functions to avoid cycles.
 Quiz prompt senders come from handlers.quiz (already extracted).
 
@@ -24,12 +24,8 @@ from ..app_config import (
     MENU,
     PREPOSITION_TYPES,
     QUIZ_ARTICLE,
-    QUIZ_ARTICLE_WEAK,
     QUIZ_DE_RU,
-    QUIZ_PARTIZIP2_WEAK,
     QUIZ_PL_SG,
-    QUIZ_PLURAL_WEAK,
-    QUIZ_PRATERITUM_WEAK,
     QUIZ_RU_DE,
     get_db_path,
     is_owner,
@@ -154,22 +150,9 @@ def _clarify_screen(context: ContextTypes.DEFAULT_TYPE, user_id):
         in_search=in_search,
         is_prep=is_prep,
         is_verb=_is_verb_entry(_edit_entry(context)),
-        show_add_int=not _is_weak_return_state(return_state),
+        show_add_int=True,
         show_variants=in_search and bool(context.user_data.get("db_search_exact_variants")),
     )
-
-
-_WEAK_RETURN_STATES = {
-    QUIZ_ARTICLE_WEAK,
-    QUIZ_PLURAL_WEAK,
-    QUIZ_PRATERITUM_WEAK,
-    QUIZ_PARTIZIP2_WEAK,
-}
-
-
-def _is_weak_return_state(return_state):
-    """Return whether the clarify card was opened from a weak-form drill."""
-    return return_state in _WEAK_RETURN_STATES
 
 
 def _add_int_mode_for_return_state(user_id, return_state, selected_mode=None):
@@ -599,12 +582,6 @@ async def _exit_clarify(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def _resume_after_clarify(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text, state_override=None):
     """Handle show quiz prompt after edit."""
-    from ..handlers.weak import (
-        _send_article_weak_prompt,
-        _send_partizip2_weak_prompt,
-        _send_plural_weak_prompt,
-        _send_prateritum_weak_prompt,
-    )
     from ..handlers.learning import _send_learning_prompt
 
     state = state_override or context.user_data.get("edit_return_state")
@@ -662,14 +639,6 @@ async def _resume_after_clarify(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return QUIZ_ARTICLE
 
-    if state == QUIZ_ARTICLE_WEAK:
-        return await _send_article_weak_prompt(update, context, prefix_text)
-    if state == QUIZ_PLURAL_WEAK:
-        return await _send_plural_weak_prompt(update, context, prefix_text)
-    if state == QUIZ_PRATERITUM_WEAK:
-        return await _send_prateritum_weak_prompt(update, context, prefix_text)
-    if state == QUIZ_PARTIZIP2_WEAK:
-        return await _send_partizip2_weak_prompt(update, context, prefix_text)
     if state == LEARNING_QUIZ:
         return await _send_learning_prompt(update, context, prefix_text, force_entry=context.user_data.get("quiz_entry"))
 
@@ -702,12 +671,6 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
         _show_saved_db_search_variants,
     )
     from ..handlers.synonyms import _open_synonyms_menu
-    from ..handlers.weak import (
-        _send_article_weak_prompt,
-        _send_partizip2_weak_prompt,
-        _send_plural_weak_prompt,
-        _send_prateritum_weak_prompt,
-    )
     from ..handlers.add_words import _show_ai_preview, _stop_queue
     from ..handlers.learning import _send_entry_to_learning
 
@@ -796,14 +759,6 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
             return await _send_de_ru_prompt(update, context, prefix)
         if state == QUIZ_ARTICLE:
             return await _send_article_prompt(update, context, prefix)
-        if state == QUIZ_ARTICLE_WEAK:
-            return await _send_article_weak_prompt(update, context, prefix)
-        if state == QUIZ_PLURAL_WEAK:
-            return await _send_plural_weak_prompt(update, context, prefix)
-        if state == QUIZ_PRATERITUM_WEAK:
-            return await _send_prateritum_weak_prompt(update, context, prefix)
-        if state == QUIZ_PARTIZIP2_WEAK:
-            return await _send_partizip2_weak_prompt(update, context, prefix)
         if state == DB_SEARCH_VIEW:
             _clear_db_search_variants(context)
             return await _send_db_search_prompt(update, update.effective_user.id, prefix)
@@ -932,12 +887,6 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
                 # spec #15 (T5): owner AND guest — each pushes their own progress.
                 lang = _user_interface_lang(uid)
                 return_state = context.user_data.get("edit_return_state")
-                if _is_weak_return_state(return_state):
-                    await update.message.reply_text(
-                        t(lang, "clarify_use_field_buttons"),
-                        reply_markup=_clarify_screen(context, uid),
-                    )
-                    return ADD_EDIT
                 mode = _add_int_mode_for_return_state(
                     uid, return_state, context.user_data.get("quiz_mode")
                 )

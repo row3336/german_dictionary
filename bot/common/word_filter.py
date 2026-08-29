@@ -13,7 +13,7 @@ draw from:
 `resolve_quiz_filter` turns the stored per-user state into the concrete arguments the
 storage layer expects (`select_due(topics=..., cefr_levels=...)`); exactly one axis is
 ever set, the other is None. This is the single source of truth so every quiz entry
-point (FSRS, weak, learning add, empty-state checks) filters identically.
+point (FSRS, learning add, empty-state checks) filters identically.
 """
 
 from collections import namedtuple

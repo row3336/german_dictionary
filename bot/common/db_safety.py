@@ -7,9 +7,8 @@ explicit dispatcher lazily imports `storage.init_db` through a one-way edge
 a separate blocker and never confirms destructive steps implicitly.
 
 See docs/multiuser.md §0.2 (protocol) and §0.4 (irreversible-step registry).
-Schema changes stay ADD-only (CREATE TABLE / ADD COLUMN) so an older build can
-open a newer DB. Versioned destructive data steps run only through the explicit
-dispatcher after dry-run and snapshot.
+Additive normalization remains compatible through v15. Versioned destructive
+steps run only through the explicit dispatcher after dry-run and snapshot.
 """
 
 import hashlib
@@ -46,8 +45,10 @@ from pathlib import Path
 #      has not produced a reliable answer; 0/1 are reviewed non-separable/separable.
 # 16 = separate phrase direction modes. This is a destructive DATA migration and
 #      is never run by ordinary bot startup.
+# 17 = remove weak-form modes, schema, settings, progress, and history. This is a
+#      destructive schema/data migration and is never run by ordinary startup.
 ADDITIVE_SCHEMA_VERSION = 15
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 
 
 class DestructiveMigrationRequired(RuntimeError):
@@ -59,8 +60,9 @@ _COUNT_TABLES = (
     "progress",
     "quiz_events",
     "learning_items",
-    "form_stats",
     "users",
+    "user_settings",
+    "app_settings",
     "word_synonyms",
     "user_word_media",
     "error_reports",
@@ -402,16 +404,162 @@ def _migrate_phrase_modes_v16(conn, today=None):
     }
 
 
-def _validate_destructive_counts(before, after, step):
+_REMOVED_WEAK_SETTING_KEYS = ("weak_drill_gap", "weak_drill_repeats")
+
+
+def _table_exists(conn, table_name):
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?",
+        (table_name,),
+    ).fetchone()
+    return bool(row)
+
+
+def _weak_removal_counts(conn):
+    """Count every removed weak entity and its preserved non-weak counterpart."""
+    form_stats = (
+        int(conn.execute("SELECT COUNT(*) FROM form_stats").fetchone()[0])
+        if _table_exists(conn, "form_stats")
+        else 0
+    )
+    counts = {"form_stats": form_stats}
+    for table, column, prefix in (
+        ("progress", "mode", "weak_*"),
+        ("quiz_events", "mode", "weak_*"),
+        ("transaction_log", "action", "quiz:weak_*"),
+    ):
+        total = int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
+        weak = int(
+            conn.execute(
+                f"SELECT COUNT(*) FROM {table} WHERE {column} GLOB ?",
+                (prefix,),
+            ).fetchone()[0]
+        )
+        counts[f"weak_{table}"] = weak
+        counts[f"non_weak_{table}"] = total - weak
+    placeholders = ",".join("?" for _ in _REMOVED_WEAK_SETTING_KEYS)
+    for table in ("user_settings", "app_settings"):
+        total = int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
+        weak = int(
+            conn.execute(
+                f"SELECT COUNT(*) FROM {table} WHERE key IN ({placeholders})",
+                _REMOVED_WEAK_SETTING_KEYS,
+            ).fetchone()[0]
+        )
+        counts[f"weak_{table}"] = weak
+        counts[f"non_weak_{table}"] = total - weak
+    return counts
+
+
+def _migrate_remove_weak_v17(conn):
+    """Remove weak schema and data while preserving every ordinary row verbatim."""
+    current_version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+    if current_version != 16:
+        raise RuntimeError(f"remove_weak_v17 requires exact schema v16, got v{current_version}")
+
+    before = _weak_removal_counts(conn)
+    quiz_indexes = [
+        row[0]
+        for row in conn.execute(
+            "SELECT sql FROM sqlite_master "
+            "WHERE type='index' AND tbl_name='quiz_events' AND sql IS NOT NULL "
+            "ORDER BY name"
+        ).fetchall()
+    ]
+
+    conn.execute("ALTER TABLE quiz_events RENAME TO quiz_events_v17_old")
+    conn.execute(
+        """
+        CREATE TABLE quiz_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            word_id TEXT NOT NULL,
+            mode TEXT NOT NULL,
+            is_correct INTEGER NOT NULL,
+            prev_is_correct INTEGER,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO quiz_events
+            (id, user_id, word_id, mode, is_correct, prev_is_correct, created_at)
+        SELECT id, user_id, word_id, mode, is_correct, prev_is_correct, created_at
+        FROM quiz_events_v17_old
+        WHERE mode NOT GLOB 'weak_*'
+        ORDER BY id
+        """
+    )
+    conn.execute("DROP TABLE quiz_events_v17_old")
+    for sql in quiz_indexes:
+        conn.execute(sql)
+
+    conn.execute("DELETE FROM progress WHERE mode GLOB 'weak_*'")
+    conn.execute("DELETE FROM transaction_log WHERE action GLOB 'quiz:weak_*'")
+    placeholders = ",".join("?" for _ in _REMOVED_WEAK_SETTING_KEYS)
+    conn.execute(
+        f"DELETE FROM user_settings WHERE key IN ({placeholders})",
+        _REMOVED_WEAK_SETTING_KEYS,
+    )
+    conn.execute(
+        f"DELETE FROM app_settings WHERE key IN ({placeholders})",
+        _REMOVED_WEAK_SETTING_KEYS,
+    )
+    conn.execute("DROP TABLE IF EXISTS form_stats")
+
+    after = _weak_removal_counts(conn)
+    for name, count in after.items():
+        if name.startswith("weak_") or name == "form_stats":
+            if count != 0:
+                raise RuntimeError(f"weak removal left {name} rows: {count}")
+        elif count != before[name]:
+            raise RuntimeError(
+                f"weak removal changed preserved {name}: {before[name]} -> {count}"
+            )
+    return {
+        "counts_before": before,
+        "counts_after": after,
+        "deleted_progress": before["weak_progress"],
+        "deleted_events": before["weak_quiz_events"],
+        "deleted_transaction_rows": before["weak_transaction_log"],
+        "deleted_user_settings": before["weak_user_settings"],
+        "deleted_app_settings": before["weak_app_settings"],
+        "deleted_form_stats": before["form_stats"],
+    }
+
+
+def _validate_destructive_counts(before, after, steps):
+    phrase_step = steps.get("phrase_modes_v16") or {}
+    weak_step = steps.get("remove_weak_v17") or {}
     allowed = {
-        "quiz_events": int(before.get("quiz_events", 0)) - step["deleted_events"],
-        "transaction_log": int(before.get("transaction_log", 0)) - step["deleted_rollback_rows"],
+        "progress": int(before.get("progress", 0)) - int(weak_step.get("deleted_progress", 0)),
+        "quiz_events": (
+            int(before.get("quiz_events", 0))
+            - int(phrase_step.get("deleted_events", 0))
+            - int(weak_step.get("deleted_events", 0))
+        ),
+        "transaction_log": (
+            int(before.get("transaction_log", 0))
+            - int(phrase_step.get("deleted_rollback_rows", 0))
+            - int(weak_step.get("deleted_transaction_rows", 0))
+        ),
+        "user_settings": (
+            int(before.get("user_settings", 0))
+            - int(weak_step.get("deleted_user_settings", 0))
+        ),
+        "app_settings": (
+            int(before.get("app_settings", 0))
+            - int(weak_step.get("deleted_app_settings", 0))
+        ),
     }
     for table, old_count in before.items():
         expected = allowed.get(table, old_count)
         if after.get(table) != expected:
             raise RuntimeError(
-                f"unexpected {table} count after phrase migration: {old_count} -> {after.get(table)}, expected {expected}"
+                f"unexpected {table} count after migration: "
+                f"{old_count} -> {after.get(table)}, expected {expected}"
             )
 
 
@@ -454,11 +602,10 @@ def _apply_migration_dispatcher(db_path, today=None, expected_fingerprint=None):
         }
 
     before = table_counts(db_path)
-    init_db(db_path)  # add-only schema through v15; version marker stays unchanged
     steps = {}
-    additive_step = _finalize_additive_normalization(db_path, pre)
-    if additive_step:
-        steps["additive_to_v15"] = additive_step
+    if pre < ADDITIVE_SCHEMA_VERSION:
+        init_db(db_path)  # add-only schema through v15; version marker stays unchanged
+        steps["additive_to_v15"] = _finalize_additive_normalization(db_path, pre)
     conn = sqlite3.connect(db_path)
     try:
         conn.execute("PRAGMA foreign_keys = ON")
@@ -469,15 +616,19 @@ def _apply_migration_dispatcher(db_path, today=None, expected_fingerprint=None):
                 "source DB changed after destructive migration dry-run; run a new dry-run"
             )
         current = int(conn.execute("PRAGMA user_version").fetchone()[0])
-        if current != ADDITIVE_SCHEMA_VERSION:
+        if current not in {ADDITIVE_SCHEMA_VERSION, 16}:
             raise RuntimeError(
-                f"phrase_modes_v16 dispatcher requires exact v{ADDITIVE_SCHEMA_VERSION}, "
+                f"destructive dispatcher requires exact v{ADDITIVE_SCHEMA_VERSION} or v16, "
                 f"got v{current}"
             )
-        steps["phrase_modes_v16"] = _migrate_phrase_modes_v16(conn, today=today)
+        if current == ADDITIVE_SCHEMA_VERSION:
+            steps["phrase_modes_v16"] = _migrate_phrase_modes_v16(conn, today=today)
+            conn.execute("PRAGMA user_version = 16")
+            current = 16
+        steps["remove_weak_v17"] = _migrate_remove_weak_v17(conn)
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         counts_in_transaction = _table_counts(conn)
-        _validate_destructive_counts(before, counts_in_transaction, steps["phrase_modes_v16"])
+        _validate_destructive_counts(before, counts_in_transaction, steps)
         integrity = conn.execute("PRAGMA integrity_check").fetchone()[0]
         fk_rows = conn.execute("PRAGMA foreign_key_check").fetchall()
         if integrity != "ok" or fk_rows:

@@ -10,7 +10,7 @@ Covers the non-migration surface (migration itself is in test_migrations.py
   - owner-only clarify gating of the two fields + the preset cascade;
   - db_search match-pairs never pairs two different-meaning prepositions;
   - every entry-returning storage query carries the two columns, so the hint
-    survives outside FSRS as well (learning/weak/menu lists).
+    survives outside FSRS as well (learning/menu lists).
 """
 
 import asyncio
@@ -43,7 +43,6 @@ from bot.storage import (  # noqa: E402
     list_all_words,
     list_learning_active_words,
     list_learning_queue_words,
-    list_weak_form_words,
     update_word_fields,
 )
 from bot.ui.formatting import (  # noqa: E402
@@ -358,7 +357,7 @@ class ClarifyCascadeTest(_DBTest):
 
 class EntryQueryContractTest(_DBTest):
     """The hint is built from the entry, so every query that feeds `_row_to_entry`
-    must select both columns. Learning and weak used to omit them, and the hint
+    must select both columns. Learning used to omit them, and the hint
     silently collapsed to '(praeposition)' everywhere outside FSRS."""
 
     def _seed(self):
@@ -388,19 +387,6 @@ class EntryQueryContractTest(_DBTest):
     def test_learning_queue_list_carries_the_fields(self):
         self._seed()
         self._assert_annotated(list_learning_queue_words(self.db, GUEST), "list_learning_queue_words")
-
-    def test_weak_form_words_carry_the_fields(self):
-        word_id = self._seed()
-        conn = sqlite3.connect(self.db)
-        try:
-            conn.execute(
-                "INSERT INTO form_stats (user_id, word_id, article_active) VALUES (?, ?, 1)",
-                (GUEST, word_id),
-            )
-            conn.commit()
-        finally:
-            conn.close()
-        self._assert_annotated(list_weak_form_words(self.db, GUEST), "list_weak_form_words")
 
     def test_no_entry_query_forgets_the_columns(self):
         """Source-level sweep: a new `_row_to_entry` query must not repeat the bug."""

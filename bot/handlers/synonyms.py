@@ -1,6 +1,6 @@
 """Synonyms feature: the synonym-group menu (add / remove / auto-by-translation /
 clear / flag), its input + confirm handlers, and the return-to-caller dispatch
-that resumes whichever quiz/weak/db-search flow opened the menu.
+that resumes whichever quiz or db-search flow opened the menu.
 """
 
 from telegram import ReplyKeyboardMarkup, Update
@@ -10,12 +10,8 @@ from ..app_config import (
     BACK_TEXT,
     DB_SEARCH_VIEW,
     QUIZ_ARTICLE,
-    QUIZ_ARTICLE_WEAK,
     QUIZ_DE_RU,
-    QUIZ_PARTIZIP2_WEAK,
     QUIZ_PL_SG,
-    QUIZ_PLURAL_WEAK,
-    QUIZ_PRATERITUM_WEAK,
     QUIZ_RU_DE,
     SYN_ADD_INPUT,
     SYN_AUTO_CONFIRM,
@@ -110,12 +106,6 @@ async def _return_from_synonyms(update: Update, context: ContextTypes.DEFAULT_TY
         _send_pl_sg_prompt,
         _send_ru_de_prompt,
     )
-    from ..handlers.weak import (
-        _send_article_weak_prompt,
-        _send_partizip2_weak_prompt,
-        _send_plural_weak_prompt,
-        _send_prateritum_weak_prompt,
-    )
 
     anchor_id = context.user_data.get("syn_anchor_id")
     return_state = context.user_data.get("syn_return_state")
@@ -133,14 +123,6 @@ async def _return_from_synonyms(update: Update, context: ContextTypes.DEFAULT_TY
         return await _send_pl_sg_prompt(update, context, prefix)
     if return_state == QUIZ_ARTICLE:
         return await _send_article_prompt(update, context, prefix)
-    if return_state == QUIZ_ARTICLE_WEAK:
-        return await _send_article_weak_prompt(update, context, prefix)
-    if return_state == QUIZ_PLURAL_WEAK:
-        return await _send_plural_weak_prompt(update, context, prefix)
-    if return_state == QUIZ_PRATERITUM_WEAK:
-        return await _send_prateritum_weak_prompt(update, context, prefix)
-    if return_state == QUIZ_PARTIZIP2_WEAK:
-        return await _send_partizip2_weak_prompt(update, context, prefix)
     if return_state == DB_SEARCH_VIEW:
         return await _send_db_search_prompt(update, update.effective_user.id, prefix)
     return await _back_to_tests(update, context)

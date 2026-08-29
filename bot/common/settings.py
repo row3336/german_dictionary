@@ -20,10 +20,6 @@ from ..app_config import (
     FSRS_REPORT_HOUR_KEY,
     FSRS_REPORT_UTC_HOUR_DEFAULT,
     TOPIC_FILTER_KEY,
-    WEAK_DRILL_GAP_DEFAULT,
-    WEAK_DRILL_GAP_KEY,
-    WEAK_DRILL_REPEATS_DEFAULT,
-    WEAK_DRILL_REPEATS_KEY,
     get_db_path,
 )
 from ..storage import _parse_learning_intervals, get_setting, get_user_setting, set_setting
@@ -64,18 +60,6 @@ def _session_retry_gap(db_path, user_id):
 def _session_retry_iterations(db_path, user_id):
     """Per-user retry iterations (max repeats of a missed word)."""
     return max(1, _get_int_user_setting(db_path, user_id, SESSION_RETRY_IT_KEY, RETRY_MAX_REPEATS))
-
-
-def _weak_drill_gap(db_path, user_id):
-    """Per-user: weak-drill gap (regular weak shows between drill repeats)."""
-    value = _get_int_user_setting(db_path, user_id, WEAK_DRILL_GAP_KEY, WEAK_DRILL_GAP_DEFAULT)
-    return max(1, value)
-
-
-def _weak_drill_repeats(db_path, user_id):
-    """Per-user: weak-drill repeats (how many times to show the word per session)."""
-    value = _get_int_user_setting(db_path, user_id, WEAK_DRILL_REPEATS_KEY, WEAK_DRILL_REPEATS_DEFAULT)
-    return max(1, value)
 
 
 def _learning_daily_qty(db_path, user_id):

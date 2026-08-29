@@ -26,7 +26,6 @@ def run_smoke(db_path):
             "words",
             "progress",
             "quiz_events",
-            "form_stats",
             "learning_items",
             "learning_batches",
             "app_settings",

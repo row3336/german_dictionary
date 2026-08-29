@@ -169,15 +169,6 @@ class DbSearchI18nTest(unittest.TestCase):
         last = self._drive("not-a-type", {"db_search_type_pick": True})
         self.assertEqual(last, TEXTS["ru"]["choose_type"])
 
-    def test_added_to_learning_n_localized(self):
-        word = add_word(self.db, {
-            "type": "nomen", "article": "der", "german": "Apfel",
-            "plural": "Äpfel", "russian": "яблоко", "topic": "1",
-        })
-        last = self._drive(TEXTS["ru"]["send_learn"], {"db_search_weak_ids": [word["id"]]})
-        self.assertIn("Добавлено в изучение:", last)
-        self.assertNotIn("Added to learning", last)
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -3,7 +3,7 @@
 Flow: a directional quiz supplies its progress mode; db_search asks for it.
 Then type n (1..15, fool-proofed) -> preview "next show = <due>" -> Confirm ->
 progress is written as if the word had been answered correctly n times in a
-row; undo-able via the transaction log. Weak-mode cards do not offer add_int.
+row; undo-able via the transaction log.
 """
 
 import asyncio
@@ -24,12 +24,8 @@ if "dotenv" not in sys.modules:
 from bot.app_config import (  # noqa: E402
     DB_SEARCH_VIEW,
     QUIZ_ARTICLE,
-    QUIZ_ARTICLE_WEAK,
     QUIZ_DE_RU,
-    QUIZ_PARTIZIP2_WEAK,
     QUIZ_PL_SG,
-    QUIZ_PLURAL_WEAK,
-    QUIZ_PRATERITUM_WEAK,
     QUIZ_RU_DE,
 )
 from bot.labels import SYN_CONFIRM_TEXT  # noqa: E402
@@ -170,28 +166,6 @@ class AddIntFlowTest(unittest.TestCase):
                     _add_int_mode_for_return_state(OWNER, return_state),
                     mode,
                 )
-
-    def test_weak_cards_hide_and_reject_add_int(self):
-        from bot.handlers.clarify_fields import _clarify_screen
-
-        weak_states = (
-            QUIZ_ARTICLE_WEAK,
-            QUIZ_PLURAL_WEAK,
-            QUIZ_PRATERITUM_WEAK,
-            QUIZ_PARTIZIP2_WEAK,
-        )
-        for return_state in weak_states:
-            with self.subTest(return_state=return_state):
-                ctx = self._ctx_for(OWNER, return_state)
-                buttons = [
-                    button
-                    for row in _clarify_screen(ctx, OWNER).rows
-                    for button in row
-                ]
-                self.assertNotIn("add_int", buttons)
-                self._send(OWNER, "add_int", ctx)
-                self.assertEqual(ctx.user_data["edit_stage"], "pick_field")
-                self.assertNotIn("add_int_mode", ctx.user_data)
 
     def test_full_flow_writes_progress_equal_to_preview(self):
         upd, ctx = self._drive_to_confirm(OWNER, "5")

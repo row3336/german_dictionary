@@ -83,7 +83,6 @@ class TelegramCallerCoverageTest(unittest.TestCase):
             "full-card": (os.path.join(root, "ui", "formatting.py"), 1),
             "quiz": (os.path.join(root, "handlers", "quiz.py"), 4),
             "learning": (os.path.join(root, "handlers", "learning.py"), 2),
-            "weak": (os.path.join(root, "handlers", "weak.py"), 4),
         }
         for name, (path, expected_calls) in paths.items():
             with self.subTest(path=name), open(path, encoding="utf-8") as source:

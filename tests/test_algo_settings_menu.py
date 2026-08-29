@@ -1,4 +1,4 @@
-"""Bug #0 — algo_sett reorganization: FSRS/weak submenus + per-setting
+"""Bug #0 — algo_sett reorganization: FSRS/learning submenus + per-setting
 explanations, button layout, and action routing."""
 
 import asyncio
@@ -13,7 +13,6 @@ install()
 from bot.app_config import (  # noqa: E402
     ALGO_SETTINGS_EDIT,
     ALGO_SETTINGS_MENU,
-    DRILL_SETTINGS_MENU,
     FSRS_SETTINGS_MENU,
     LEARNING_SETTINGS_MENU,
 )
@@ -32,7 +31,6 @@ OWNER, GUEST = 999, 111
 
 _DESC_KEYS = [
     "fsrs_sett_desc", "ses_rtr_gap_desc", "ses_rtr_it_desc",
-    "weak_sett_desc", "weak_drill_gap_desc", "weak_drill_repeats_desc",
     "learning_sett_desc", "learning_daily_qty_desc", "learning_intervals_desc",
     "learning_ready_quorum_desc", "learning_reminder_interval_desc",
     "learning_reminder_cooldown_desc",
@@ -93,7 +91,6 @@ class AlgoSettingsMenuTest(unittest.TestCase):
     def test_root_has_submenus_not_inline_retry_params(self):
         flat = _flat(K._algo_settings_menu_keys(GUEST))
         self.assertIn(t("en", "fsrs_sett"), flat)
-        self.assertIn(t("en", "weak_sett"), flat)
         self.assertIn(t("en", "learning_sett"), flat)
         # the two FSRS retry params moved into the FSRS submenu, off the root
         self.assertNotIn(t("en", "ses_rtr_gap"), flat)
@@ -103,12 +100,6 @@ class AlgoSettingsMenuTest(unittest.TestCase):
         flat = _flat(K._fsrs_settings_menu_keys(GUEST))
         self.assertIn(t("en", "ses_rtr_gap"), flat)
         self.assertIn(t("en", "ses_rtr_it"), flat)
-        self.assertIn(t("en", "back"), flat)
-
-    def test_weak_submenu_has_drill_params(self):
-        flat = _flat(K._drill_settings_menu_keys(GUEST))
-        self.assertIn(t("en", "weak_drill_gap"), flat)
-        self.assertIn(t("en", "weak_drill_repeats"), flat)
         self.assertIn(t("en", "back"), flat)
 
     def test_en_submenu_label_is_raw_key(self):
@@ -131,7 +122,6 @@ class AlgoSettingsMenuTest(unittest.TestCase):
         for lang in ("en", "ru", "uk"):
             set_user_interface_lang(self.db, GUEST, lang)
             self.assertEqual(_action_key_from_text(t(lang, "fsrs_sett"), GUEST), "fsrs_sett")
-            self.assertEqual(_action_key_from_text(t(lang, "weak_sett"), GUEST), "weak_sett")
 
     def test_press_fsrs_opens_submenu_with_explanations(self):
         set_user_interface_lang(self.db, GUEST, "ru")
@@ -141,13 +131,6 @@ class AlgoSettingsMenuTest(unittest.TestCase):
         body = upd.message.replies[-1]
         self.assertIn(t("ru", "fsrs_sett_desc"), body)
         self.assertIn(t("ru", "ses_rtr_gap_desc"), body)
-
-    def test_press_weak_opens_submenu_with_explanations(self):
-        set_user_interface_lang(self.db, GUEST, "ru")
-        upd = _Update(t("ru", "weak_sett"), GUEST)
-        state = _run(algo_settings_menu_choice(upd, _Ctx()))
-        self.assertEqual(state, DRILL_SETTINGS_MENU)
-        self.assertIn(t("ru", "weak_drill_gap_desc"), upd.message.replies[-1])
 
     def test_press_learning_opens_submenu_with_explanations(self):
         set_user_interface_lang(self.db, GUEST, "ru")

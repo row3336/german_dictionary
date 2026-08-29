@@ -109,11 +109,10 @@ class RawButtonI18nTest(unittest.TestCase):
         self.assertEqual(_action_key_from_text("я ошибся", GUEST), "input_err")
         self.assertEqual(_action_key_from_text("уточнить поля", GUEST), "clarify_fields")
 
-    def test_quiz_and_weak_keyboards_localize_input_err_for_ru(self):
+    def test_quiz_keyboards_localize_input_err_for_ru(self):
         for flat in (
             _flat(K._quiz_markup(GUEST).rows),
             _flat(K._quiz_idle_markup(GUEST).rows),
-            _flat(K._weak_article_markup(GUEST).rows),
         ):
             self.assertIn("я ошибся", flat)
             self.assertNotIn("input_err", flat)

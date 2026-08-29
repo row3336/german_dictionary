@@ -124,8 +124,8 @@ class PhraseMigrationV16Test(unittest.TestCase):
         report = apply_destructive_migrations_safely(
             self.db, self.backups, today=self.migration_day
         )
-        self.assertEqual(SCHEMA_VERSION, 16)
-        self.assertEqual(get_user_version(self.db), 16)
+        self.assertEqual(SCHEMA_VERSION, 17)
+        self.assertEqual(get_user_version(self.db), 17)
         self.assertTrue(report["dry_run"]["ok"])
         snapshot = Path(report["backup"])
         self.assertTrue(snapshot.is_file())
@@ -255,7 +255,7 @@ class PhraseMigrationV16Test(unittest.TestCase):
         # Once on the dry-run copy and once on live, both after the additive step.
         self.assertEqual(observed_versions, [15, 15])
         self.assertEqual(report["from_version"], 14)
-        self.assertEqual(get_user_version(self.db), 16)
+        self.assertEqual(get_user_version(self.db), 17)
         progress = self._rows(
             "SELECT word_id, mode FROM progress WHERE word_id='p_progress' ORDER BY mode"
         )

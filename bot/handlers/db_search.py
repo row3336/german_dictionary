@@ -1,5 +1,5 @@
 """DB search feature: the search menu, list views (matches / plural-match /
-weak / topics / verbs / learning-queue), free-text word lookup -> word card ->
+topics / verbs / learning-queue), free-text word lookup -> word card ->
 clarify_fields entry, and the DB_SEARCH / DB_SEARCH_VIEW state handlers.
 """
 
@@ -23,7 +23,6 @@ from ..storage import (
     learning_add_word_by_id,
     learning_get_or_create_batch,
     list_all_words,
-    list_weak_form_words,
     list_learning_queue_words,
     list_topics,
     list_words_by_topic,
@@ -64,7 +63,6 @@ def _db_search_markup(user_id):
         t(lang, "db_search_plural_match"),
         t(lang, "db_search_topic_words"),
         t(lang, "db_search_topics_lern"),
-        t(lang, "db_search_weak_words"),
     ]
     rows = [actions[i:i + 4] for i in range(0, len(actions), 4)]
     back = t(lang, "back")
@@ -82,12 +80,6 @@ def _db_search_words_lists_markup(user_id):
         [[t(lang, "db_search_topics_lists"), t(lang, "db_search_type_lists"), t(lang, "back")]],
         resize_keyboard=True,
     )
-
-
-def _db_search_weak_markup(user_id):
-    """Weak-words list keyboard: "send to learning" + back."""
-    lang = _user_interface_lang(user_id)
-    return ReplyKeyboardMarkup([[t(lang, "send_learn"), t(lang, "back")]], resize_keyboard=True)
 
 
 def _db_search_topic_markup(user_id):
@@ -495,17 +487,6 @@ def _list_match_pairs(entries, dict_lang):
     return blocks
 
 
-def _format_weak_form_line(entry):
-    """spec #6: `word — weak forms` (e.g. `Haus — artikel, plural`)."""
-    # Nouns are capitalized (German orthography); verbs stay lowercase.
-    if _low_word(entry.get("type", "")) == "nomen":
-        word = _cap_word(entry.get("german") or "")
-    else:
-        word = entry.get("german") or entry.get("infinitive") or ""
-    forms = ", ".join(entry.get("weak_forms") or [])
-    return f"{word} — {forms}"
-
-
 def _list_filename(list_name):
     """db_<list>_<date>.txt with a filesystem-safe list token."""
     safe = re.sub(r"[^\w.-]+", "_", str(list_name).strip()) or "list"
@@ -567,7 +548,6 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.pop("db_search_words_lists_menu", None)
             return await _send_db_search_prompt(update, user_id, None)
         context.user_data.pop("db_search_topic_pick", None)
-        context.user_data.pop("db_search_weak_ids", None)
         await update.message.reply_text(t(_user_interface_lang(user_id), "main_menu"), reply_markup=_main_menu_markup(user_id))
         return MENU
     if context.user_data.get("db_search_topic_pick"):
@@ -575,7 +555,6 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if text not in topics:
             await update.message.reply_text(t(_user_interface_lang(user_id), "choose_topic"), reply_markup=markup)
             return DB_SEARCH
-        context.user_data.pop("db_search_weak_ids", None)
         entries = list_words_by_topic(get_db_path(), text)
         if not entries:
             await update.message.reply_text(t(_user_interface_lang(user_id), "no_words_in_topic").format(topic=text), reply_markup=markup)
@@ -590,7 +569,6 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if chosen not in types:
             await update.message.reply_text(t(_user_interface_lang(user_id), "choose_type"), reply_markup=markup)
             return DB_SEARCH
-        context.user_data.pop("db_search_weak_ids", None)
         entries = [x for x in list_all_words(get_db_path()) if (x.get("type") or "").strip().lower() == chosen]
         if not entries:
             await update.message.reply_text(t(_user_interface_lang(user_id), "no_type_words").format(type=chosen), reply_markup=markup)
@@ -601,7 +579,6 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return DB_SEARCH
     if action == "db_search_topics_lern":
         context.user_data.pop("db_search_topic_pick", None)
-        context.user_data.pop("db_search_weak_ids", None)
         entries = list_learning_queue_words(get_db_path(), user_id=user_id)
         if not entries:
             return await _send_db_search_prompt(update, user_id, t(_user_interface_lang(user_id), "no_queued_learning"))
@@ -609,26 +586,8 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.extend(_format_topic_learning_line(entry) for entry in entries)
         await _send_lines_or_file(update.message, "\n".join(lines), "learning_queue", _db_search_markup(user_id))
         return DB_SEARCH
-    if action == "send_learn" and context.user_data.get("db_search_weak_ids"):
-        ids = list(dict.fromkeys(context.user_data.get("db_search_weak_ids") or []))
-        db_path = get_db_path()
-        batch_id = learning_get_or_create_batch(db_path, user_id=user_id, daily_qty=_learning_daily_qty(db_path, user_id))
-        added = 0
-        for wid in ids:
-            added += int(
-                learning_add_word_by_id(
-                    db_path,
-                    user_id=user_id,
-                    word_id=wid,
-                    batch_id=batch_id,
-                    first_delay_seconds=_learning_schedule_seconds(db_path, user_id)[0],
-                )
-            )
-        context.user_data.pop("db_search_weak_ids", None)
-        return await _send_db_search_prompt(update, user_id, t(_user_interface_lang(user_id), "added_to_learning_n").format(added=added))
     if action == "db_search_matches":
         context.user_data.pop("db_search_topic_pick", None)
-        context.user_data.pop("db_search_weak_ids", None)
         entries = list_all_words(get_db_path())
         blocks = _list_match_pairs(entries, _user_dict_lang(user_id))
         if not blocks:
@@ -640,7 +599,6 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return DB_SEARCH
     if action == "db_search_plural_match":
         context.user_data.pop("db_search_topic_pick", None)
-        context.user_data.pop("db_search_weak_ids", None)
         entries = []
         for row in list_all_words(get_db_path()):
             if (row.get("type") or "").strip().lower() != "nomen":
@@ -658,26 +616,11 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             lines.append(f"{article} {german}".strip())
         await _send_lines_or_file(update.message, "\n".join(lines), "plural_match", _db_search_markup(user_id))
         return DB_SEARCH
-    if action == "db_search_weak_words":
-        context.user_data.pop("db_search_topic_pick", None)
-        # spec #6: real weak words = active weak-form episodes (#18A), not FSRS streaks.
-        entries = list_weak_form_words(get_db_path(), user_id=user_id)
-        if not entries:
-            context.user_data.pop("db_search_weak_ids", None)
-            return await _send_db_search_prompt(update, user_id, t(_user_interface_lang(user_id), "no_weak_words"))
-        context.user_data["db_search_weak_ids"] = [x.get("id") for x in entries if x.get("id")]
-        lines = [_format_weak_form_line(entry) for entry in entries]
-        await _send_lines_or_file(
-            update.message, "\n\n".join(lines), "weak_words", _db_search_weak_markup(user_id),
-            caption=f"weak words: {len(entries)}",
-        )
-        return DB_SEARCH
     if action == "db_search_topic_words":
         context.user_data["db_search_words_lists_menu"] = True
         await update.message.reply_text(t(_user_interface_lang(user_id), "words_lists"), reply_markup=_db_search_words_lists_markup(user_id))
         return DB_SEARCH
     if action == "db_search_topics_lists":
-        context.user_data.pop("db_search_weak_ids", None)
         context.user_data["db_search_words_lists_menu"] = True
         markup, topics = _db_search_topic_markup(user_id)
         if not topics:
@@ -687,7 +630,6 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(t(_user_interface_lang(user_id), "choose_topic"), reply_markup=markup)
         return DB_SEARCH
     if action == "db_search_type_lists":
-        context.user_data.pop("db_search_weak_ids", None)
         context.user_data["db_search_words_lists_menu"] = True
         markup, types = _db_search_type_markup(user_id)
         if not types:
@@ -699,7 +641,6 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop("db_search_topic_pick", None)
     context.user_data.pop("db_search_type_pick", None)
     context.user_data.pop("db_search_words_lists_menu", None)
-    context.user_data.pop("db_search_weak_ids", None)
     exact = _select_db_search_exact(text)
     if _is_semantic_preposition_set(exact):
         variant_state, collision = _build_semantic_variant_state(exact, text)
@@ -734,12 +675,10 @@ async def db_search_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("db_search_words_lists_menu", None)
         context.user_data.pop("db_search_topic_pick", None)
         context.user_data.pop("db_search_type_pick", None)
-        context.user_data.pop("db_search_weak_ids", None)
         return await _send_db_search_prompt(update, user_id, None)
     if action in {
         "db_search_matches",
         "db_search_plural_match",
-        "db_search_weak_words",
         "db_search_topic_words",
         "db_search_topics_lists",
         "db_search_type_lists",

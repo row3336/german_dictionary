@@ -14,23 +14,6 @@ from .text_utils import ABSENT_PLURAL_MARKERS, cap_word, split_plural_forms
 DEFAULT_EASE = 2.5
 MIN_EASE = 1.3
 MAX_EASE = 3.5
-# A word ENTERS a weak episode when, on a wrong answer, total errors reach
-# WEAK_ACTIVE_MIN_ERRORS or it has WEAK_ACTIVE_MIN_STREAK_WRONG wrong in a row.
-# Entry only flips the persistent per-form `*_active` flag; once set, the word is
-# HELD in the quiz regardless of how the counters move, until it gets
-# WEAK_ACTIVE_CLEAR_STREAK correct in a row (which clears the flag and promotes
-# it to the day-based review ladder). Separating entry from hold is why the flag
-# exists: a single correct must not drop a freshly-entered word before it can
-# earn its 3-in-a-row (see docs/multiuser_test_bugs.md #18).
-WEAK_ACTIVE_MIN_ERRORS = 3
-WEAK_ACTIVE_MIN_STREAK_WRONG = 2
-WEAK_ACTIVE_CLEAR_STREAK = 3
-# Old (pre-flag) entry rule, kept only to backfill the `*_active` flag for words
-# that were already in an episode when the v4->v5 migration ran.
-WEAK_LEGACY_ACTIVE_MIN_ERRORS = 2
-WEAK_REVIEW_DAYS_STAGE1 = 1
-WEAK_REVIEW_DAYS_STAGE2 = 2
-WEAK_REVIEW_DAYS_STAGE3 = 5
 
 QUIZ_RU_DE = "ru_de"
 QUIZ_DE_RU = "de_ru"
@@ -87,7 +70,6 @@ def _ensure_indexes(conn):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_word_flags_status_created ON word_flags(status, created_at)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_quiz_events_day_user ON quiz_events(created_at, user_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_quiz_events_user_word_mode ON quiz_events(user_id, word_id, mode, created_at)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_form_stats_user_word ON form_stats(user_id, word_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_word_synonyms_group ON word_synonyms(group_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_learning_items_user_status_due ON learning_items(user_id, status, next_due)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_learning_items_batch_status ON learning_items(batch_id, status)")
@@ -132,13 +114,13 @@ def _repair_word_fk_tables(conn):
         if _table_exists(table_name):
             conn.execute(f"DROP TABLE {table_name}")
 
-    tables = ("progress", "word_flags", "quiz_events", "form_stats", "word_synonyms")
+    tables = ("progress", "word_flags", "quiz_events", "word_synonyms")
     if not any(_table_exists(t) and _fk_targets_words_old(t) for t in tables):
         return
 
     conn.execute("PRAGMA foreign_keys = OFF")
 
-    for old_name in ("progress_old", "word_flags_old", "quiz_events_old", "form_stats_old", "word_synonyms_old"):
+    for old_name in ("progress_old", "word_flags_old", "quiz_events_old", "word_synonyms_old"):
         _drop_if_exists(old_name)
 
     _copy_table(
@@ -185,44 +167,7 @@ def _repair_word_fk_tables(conn):
             mode TEXT NOT NULL,
             is_correct INTEGER NOT NULL,
             prev_is_correct INTEGER,
-            review_stage_snapshot INTEGER,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
-        )
-        """,
-    )
-
-    _copy_table(
-        "form_stats",
-        """
-        CREATE TABLE form_stats (
-            user_id INTEGER NOT NULL,
-            word_id TEXT NOT NULL,
-            article_errors INTEGER NOT NULL DEFAULT 0,
-            article_streak_wrong INTEGER NOT NULL DEFAULT 0,
-            article_streak_correct INTEGER NOT NULL DEFAULT 0,
-            article_review_stage INTEGER NOT NULL DEFAULT 0,
-            article_next_review TEXT DEFAULT NULL,
-            article_active INTEGER NOT NULL DEFAULT 0,
-            plural_errors INTEGER NOT NULL DEFAULT 0,
-            plural_streak_wrong INTEGER NOT NULL DEFAULT 0,
-            plural_streak_correct INTEGER NOT NULL DEFAULT 0,
-            plural_review_stage INTEGER NOT NULL DEFAULT 0,
-            plural_next_review TEXT DEFAULT NULL,
-            plural_active INTEGER NOT NULL DEFAULT 0,
-            prateritum_errors INTEGER NOT NULL DEFAULT 0,
-            prateritum_streak_wrong INTEGER NOT NULL DEFAULT 0,
-            prateritum_streak_correct INTEGER NOT NULL DEFAULT 0,
-            prateritum_review_stage INTEGER NOT NULL DEFAULT 0,
-            prateritum_next_review TEXT DEFAULT NULL,
-            prateritum_active INTEGER NOT NULL DEFAULT 0,
-            partizip2_errors INTEGER NOT NULL DEFAULT 0,
-            partizip2_streak_wrong INTEGER NOT NULL DEFAULT 0,
-            partizip2_streak_correct INTEGER NOT NULL DEFAULT 0,
-            partizip2_review_stage INTEGER NOT NULL DEFAULT 0,
-            partizip2_next_review TEXT DEFAULT NULL,
-            partizip2_active INTEGER NOT NULL DEFAULT 0,
-            PRIMARY KEY (user_id, word_id),
             FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
         )
         """,
@@ -375,7 +320,6 @@ def init_db(db_path):
                 mode TEXT NOT NULL,
                 is_correct INTEGER NOT NULL,
                 prev_is_correct INTEGER,
-                review_stage_snapshot INTEGER,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
             );
@@ -384,37 +328,6 @@ def init_db(db_path):
                 normalized_word TEXT PRIMARY KEY,
                 raw_word TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS form_stats (
-                user_id INTEGER NOT NULL,
-                word_id TEXT NOT NULL,
-                article_errors INTEGER NOT NULL DEFAULT 0,
-                article_streak_wrong INTEGER NOT NULL DEFAULT 0,
-                article_streak_correct INTEGER NOT NULL DEFAULT 0,
-                article_review_stage INTEGER NOT NULL DEFAULT 0,
-                article_next_review TEXT DEFAULT NULL,
-                article_active INTEGER NOT NULL DEFAULT 0,
-                plural_errors INTEGER NOT NULL DEFAULT 0,
-                plural_streak_wrong INTEGER NOT NULL DEFAULT 0,
-                plural_streak_correct INTEGER NOT NULL DEFAULT 0,
-                plural_review_stage INTEGER NOT NULL DEFAULT 0,
-                plural_next_review TEXT DEFAULT NULL,
-                plural_active INTEGER NOT NULL DEFAULT 0,
-                prateritum_errors INTEGER NOT NULL DEFAULT 0,
-                prateritum_streak_wrong INTEGER NOT NULL DEFAULT 0,
-                prateritum_streak_correct INTEGER NOT NULL DEFAULT 0,
-                prateritum_review_stage INTEGER NOT NULL DEFAULT 0,
-                prateritum_next_review TEXT DEFAULT NULL,
-                prateritum_active INTEGER NOT NULL DEFAULT 0,
-                partizip2_errors INTEGER NOT NULL DEFAULT 0,
-                partizip2_streak_wrong INTEGER NOT NULL DEFAULT 0,
-                partizip2_streak_correct INTEGER NOT NULL DEFAULT 0,
-                partizip2_review_stage INTEGER NOT NULL DEFAULT 0,
-                partizip2_next_review TEXT DEFAULT NULL,
-                partizip2_active INTEGER NOT NULL DEFAULT 0,
-                PRIMARY KEY (user_id, word_id),
-                FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
             );
 
             CREATE TABLE IF NOT EXISTS synonym_groups (
@@ -662,36 +575,6 @@ def _ensure_schema(conn):
         conn.execute("ALTER TABLE users ADD COLUMN interface_lang TEXT NOT NULL DEFAULT 'en'")
     if "dict_lang" not in user_cols:
         conn.execute("ALTER TABLE users ADD COLUMN dict_lang TEXT NOT NULL DEFAULT 'ru'")
-
-    form_cols = {
-        row["name"] if isinstance(row, sqlite3.Row) else row[1]
-        for row in conn.execute("PRAGMA table_info(form_stats)").fetchall()
-    }
-    for field in ("article", "plural", "prateritum", "partizip2"):
-        stage_col = f"{field}_review_stage"
-        next_col = f"{field}_next_review"
-        active_col = f"{field}_active"
-        if stage_col not in form_cols:
-            conn.execute(f"ALTER TABLE form_stats ADD COLUMN {stage_col} INTEGER NOT NULL DEFAULT 0")
-        if next_col not in form_cols:
-            conn.execute(f"ALTER TABLE form_stats ADD COLUMN {next_col} TEXT DEFAULT NULL")
-        # v4 -> v5: persistent weak-episode flag. Backfill rows that were already
-        # in an episode under the legacy (pre-flag) entry rule so the migration
-        # never drops a word that was active when it ran (docs §0.2 item 1).
-        if active_col not in form_cols:
-            conn.execute(f"ALTER TABLE form_stats ADD COLUMN {active_col} INTEGER NOT NULL DEFAULT 0")
-            conn.execute(
-                f"UPDATE form_stats SET {active_col} = 1 "
-                f"WHERE {field}_errors >= {WEAK_LEGACY_ACTIVE_MIN_ERRORS} "
-                f"OR {field}_streak_wrong >= {WEAK_ACTIVE_MIN_STREAK_WRONG}"
-            )
-
-    quiz_cols = {
-        row["name"] if isinstance(row, sqlite3.Row) else row[1]
-        for row in conn.execute("PRAGMA table_info(quiz_events)").fetchall()
-    }
-    if "review_stage_snapshot" not in quiz_cols:
-        conn.execute("ALTER TABLE quiz_events ADD COLUMN review_stage_snapshot INTEGER")
 
     batch_cols = {
         row["name"] if isinstance(row, sqlite3.Row) else row[1]
@@ -1247,159 +1130,6 @@ def get_statistics_snapshot(db_path, user_id, mode):
             or 0
         )
 
-        weak_row = conn.execute(
-            """
-            SELECT
-                SUM(
-                    CASE
-                        WHEN w.type = 'nomen' AND fs.article_active = 1 THEN 1
-                        ELSE 0
-                    END
-                ) AS article_active,
-                SUM(
-                    CASE
-                        WHEN w.type = 'nomen'
-                         AND fs.article_review_stage = 1
-                         AND fs.article_active = 0 THEN 1
-                        ELSE 0
-                    END
-                ) AS article_stage1,
-                SUM(
-                    CASE
-                        WHEN w.type = 'nomen'
-                         AND fs.article_review_stage = 2
-                         AND fs.article_active = 0 THEN 1
-                        ELSE 0
-                    END
-                ) AS article_stage2,
-                SUM(
-                    CASE
-                        WHEN w.type = 'nomen'
-                         AND fs.article_review_stage = 3
-                         AND fs.article_active = 0 THEN 1
-                        ELSE 0
-                    END
-                ) AS article_stage3,
-
-                SUM(
-                    CASE
-                        WHEN w.type = 'nomen' AND fs.plural_active = 1 THEN 1
-                        ELSE 0
-                    END
-                ) AS plural_active,
-                SUM(
-                    CASE
-                        WHEN w.type = 'nomen'
-                         AND fs.plural_review_stage = 1
-                         AND fs.plural_active = 0 THEN 1
-                        ELSE 0
-                    END
-                ) AS plural_stage1,
-                SUM(
-                    CASE
-                        WHEN w.type = 'nomen'
-                         AND fs.plural_review_stage = 2
-                         AND fs.plural_active = 0 THEN 1
-                        ELSE 0
-                    END
-                ) AS plural_stage2,
-                SUM(
-                    CASE
-                        WHEN w.type = 'nomen'
-                         AND fs.plural_review_stage = 3
-                         AND fs.plural_active = 0 THEN 1
-                        ELSE 0
-                    END
-                ) AS plural_stage3,
-
-                SUM(
-                    CASE
-                        WHEN w.type = 'verb' AND fs.partizip2_active = 1 THEN 1
-                        ELSE 0
-                    END
-                ) AS partizip2_active,
-                SUM(
-                    CASE
-                        WHEN w.type = 'verb'
-                         AND fs.partizip2_review_stage = 1
-                         AND fs.partizip2_active = 0 THEN 1
-                        ELSE 0
-                    END
-                ) AS partizip2_stage1,
-                SUM(
-                    CASE
-                        WHEN w.type = 'verb'
-                         AND fs.partizip2_review_stage = 2
-                         AND fs.partizip2_active = 0 THEN 1
-                        ELSE 0
-                    END
-                ) AS partizip2_stage2,
-                SUM(
-                    CASE
-                        WHEN w.type = 'verb'
-                         AND fs.partizip2_review_stage = 3
-                         AND fs.partizip2_active = 0 THEN 1
-                        ELSE 0
-                    END
-                ) AS partizip2_stage3,
-
-                SUM(
-                    CASE
-                        WHEN w.type = 'verb' AND fs.prateritum_active = 1 THEN 1
-                        ELSE 0
-                    END
-                ) AS prateritum_active,
-                SUM(
-                    CASE
-                        WHEN w.type = 'verb'
-                         AND fs.prateritum_review_stage = 1
-                         AND fs.prateritum_active = 0 THEN 1
-                        ELSE 0
-                    END
-                ) AS prateritum_stage1,
-                SUM(
-                    CASE
-                        WHEN w.type = 'verb'
-                         AND fs.prateritum_review_stage = 2
-                         AND fs.prateritum_active = 0 THEN 1
-                        ELSE 0
-                    END
-                ) AS prateritum_stage2,
-                SUM(
-                    CASE
-                        WHEN w.type = 'verb'
-                         AND fs.prateritum_review_stage = 3
-                         AND fs.prateritum_active = 0 THEN 1
-                        ELSE 0
-                    END
-                ) AS prateritum_stage3
-            FROM form_stats fs
-            JOIN words w ON w.id = fs.word_id
-            WHERE fs.user_id = ?
-            """,
-            (user_id,),
-        ).fetchone()
-        weak_article = int(weak_row["article_active"] or 0) if weak_row else 0
-        weak_plural = int(weak_row["plural_active"] or 0) if weak_row else 0
-        weak_partizip2 = int(weak_row["partizip2_active"] or 0) if weak_row else 0
-        weak_prateritum = int(weak_row["prateritum_active"] or 0) if weak_row else 0
-
-        weak_article_stage1 = int(weak_row["article_stage1"] or 0) if weak_row else 0
-        weak_article_stage2 = int(weak_row["article_stage2"] or 0) if weak_row else 0
-        weak_article_stage3 = int(weak_row["article_stage3"] or 0) if weak_row else 0
-
-        weak_plural_stage1 = int(weak_row["plural_stage1"] or 0) if weak_row else 0
-        weak_plural_stage2 = int(weak_row["plural_stage2"] or 0) if weak_row else 0
-        weak_plural_stage3 = int(weak_row["plural_stage3"] or 0) if weak_row else 0
-
-        weak_partizip2_stage1 = int(weak_row["partizip2_stage1"] or 0) if weak_row else 0
-        weak_partizip2_stage2 = int(weak_row["partizip2_stage2"] or 0) if weak_row else 0
-        weak_partizip2_stage3 = int(weak_row["partizip2_stage3"] or 0) if weak_row else 0
-
-        weak_prateritum_stage1 = int(weak_row["prateritum_stage1"] or 0) if weak_row else 0
-        weak_prateritum_stage2 = int(weak_row["prateritum_stage2"] or 0) if weak_row else 0
-        weak_prateritum_stage3 = int(weak_row["prateritum_stage3"] or 0) if weak_row else 0
-
         def _today_mode_count(mode_names):
             selected = tuple(mode_names) if isinstance(mode_names, (tuple, list)) else (mode_names,)
             placeholders = ",".join("?" for _ in selected)
@@ -1436,10 +1166,6 @@ def get_statistics_snapshot(db_path, user_id, mode):
         today_complete_fsrs_ru_de = _today_mode_count(mode_family)
         today_complete_fsrs_de_ru = _today_mode_count(direction_mode_family(de_l1_mode))
         today_complete_pl_sg = _today_mode_prefix_count("pl_sg_")
-        today_complete_weak_article = _today_mode_count("weak_article")
-        today_complete_weak_plural = _today_mode_count("weak_plural")
-        today_complete_weak_partizip2 = _today_mode_count("weak_partizip2")
-        today_complete_weak_prateritum = _today_mode_count("weak_prateritum")
         today_complete = today_complete_fsrs_ru_de + today_complete_fsrs_de_ru
 
         retention_row = conn.execute(
@@ -1512,35 +1238,6 @@ def get_statistics_snapshot(db_path, user_id, mode):
             or 0
         )
 
-        weak_resolved = int(
-            conn.execute(
-                """
-                WITH solved_candidates AS (
-                    SELECT
-                        word_id,
-                        mode,
-                        SUM(CASE WHEN is_correct = 1 THEN 1 ELSE 0 END) AS c
-                    FROM quiz_events
-                    WHERE user_id = ?
-                      AND mode IN ('weak_article', 'weak_plural', 'weak_partizip2', 'weak_prateritum')
-                      AND date(created_at) >= date(?)
-                      AND date(created_at) < date(?)
-                    GROUP BY word_id, mode
-                    HAVING c >= 3
-                )
-                SELECT COUNT(DISTINCT s.word_id) AS cnt
-                FROM solved_candidates s
-                JOIN form_stats fs ON fs.user_id = ? AND fs.word_id = s.word_id
-                WHERE
-                    (s.mode = 'weak_article' AND fs.article_errors = 0 AND fs.article_streak_wrong = 0)
-                    OR (s.mode = 'weak_plural' AND fs.plural_errors = 0 AND fs.plural_streak_wrong = 0)
-                    OR (s.mode = 'weak_partizip2' AND fs.partizip2_errors = 0 AND fs.partizip2_streak_wrong = 0)
-                    OR (s.mode = 'weak_prateritum' AND fs.prateritum_errors = 0 AND fs.prateritum_streak_wrong = 0)
-                """,
-                (user_id, ws, we, user_id),
-            ).fetchone()["cnt"]
-            or 0
-        )
         never_answered = int(
             conn.execute(
                 """
@@ -1570,35 +1267,14 @@ def get_statistics_snapshot(db_path, user_id, mode):
         "streak_2": streak_2,
         "streak_1": streak_1,
         "wrong_fsrs": wrong_fsrs,
-        "weak_article": weak_article,
-        "weak_article_stage1": weak_article_stage1,
-        "weak_article_stage2": weak_article_stage2,
-        "weak_article_stage3": weak_article_stage3,
-        "weak_plural": weak_plural,
-        "weak_plural_stage1": weak_plural_stage1,
-        "weak_plural_stage2": weak_plural_stage2,
-        "weak_plural_stage3": weak_plural_stage3,
-        "weak_partizip2": weak_partizip2,
-        "weak_partizip2_stage1": weak_partizip2_stage1,
-        "weak_partizip2_stage2": weak_partizip2_stage2,
-        "weak_partizip2_stage3": weak_partizip2_stage3,
-        "weak_prateritum": weak_prateritum,
-        "weak_prateritum_stage1": weak_prateritum_stage1,
-        "weak_prateritum_stage2": weak_prateritum_stage2,
-        "weak_prateritum_stage3": weak_prateritum_stage3,
         "today_complete": today_complete,
         "today_complete_fsrs_ru_de": today_complete_fsrs_ru_de,
         "today_complete_fsrs_de_ru": today_complete_fsrs_de_ru,
         "today_complete_pl_sg": today_complete_pl_sg,
-        "today_complete_weak_article": today_complete_weak_article,
-        "today_complete_weak_plural": today_complete_weak_plural,
-        "today_complete_weak_partizip2": today_complete_weak_partizip2,
-        "today_complete_weak_prateritum": today_complete_weak_prateritum,
         "never_answered": never_answered,
         "retention_7d_pct": retention_7d_pct,
         "new_words_tested_week": new_words_tested,
         "learning_weekly": learning_weekly,
-        "weak_resolved_week": weak_resolved,
     }
 
 
@@ -1752,10 +1428,6 @@ def snapshot_user_word_state(db_path, user_id, word_id, modes=None):
             ).fetchone()
             progress_rows[mode] = dict(row) if row else None
 
-        fs_row = conn.execute(
-            "SELECT * FROM form_stats WHERE user_id = ? AND word_id = ?",
-            (user_id, word_id),
-        ).fetchone()
         li_row = conn.execute(
             "SELECT * FROM learning_items WHERE user_id = ? AND word_id = ?",
             (user_id, word_id),
@@ -1778,7 +1450,6 @@ def snapshot_user_word_state(db_path, user_id, word_id, modes=None):
         "word_id": word_id,
         "modes": selected_modes,
         "progress": progress_rows,
-        "form_stats": dict(fs_row) if fs_row else None,
         "learning_item": dict(li_row) if li_row else None,
         "event_counts": event_counts,
     }
@@ -1795,8 +1466,8 @@ def restore_user_word_state(db_path, snapshot):
     progress_rows = snapshot.get("progress") or {}
     event_counts = snapshot.get("event_counts") or {}
     with _connect(db_path) as conn:
-        # progress/form_stats/learning_items all FK-reference words(id) ON DELETE
-        # CASCADE. If the word was deleted after the snapshot was taken, its child
+        # Progress and learning_items FK-reference words(id) ON DELETE CASCADE.
+        # If the word was deleted after the snapshot was taken, its child
         # rows were cascade-removed and re-inserting them would raise
         # "FOREIGN KEY constraint failed". There is nothing meaningful left to
         # restore, so skip the INSERTs (the DELETE branches stay harmless no-ops).
@@ -1834,25 +1505,6 @@ def restore_user_word_state(db_path, snapshot):
                     "DELETE FROM progress WHERE user_id = ? AND word_id = ? AND mode = ?",
                     (user_id, word_id, mode),
                 )
-
-        fs_row = snapshot.get("form_stats")
-        if fs_row and word_exists:
-            cols = [c for c in fs_row.keys()]
-            placeholders = ",".join("?" for _ in cols)
-            update_cols = ",".join(f"{c}=excluded.{c}" for c in cols if c not in {"user_id", "word_id"})
-            conn.execute(
-                f"""
-                INSERT INTO form_stats ({",".join(cols)})
-                VALUES ({placeholders})
-                ON CONFLICT(user_id, word_id) DO UPDATE SET {update_cols}
-                """,
-                tuple(fs_row[c] for c in cols),
-            )
-        else:
-            conn.execute(
-                "DELETE FROM form_stats WHERE user_id = ? AND word_id = ?",
-                (user_id, word_id),
-            )
 
         li_row = snapshot.get("learning_item")
         # learning_items additionally FK-references learning_batches(id) ON DELETE
@@ -3826,7 +3478,7 @@ def set_progress(db_path, user_id, word_id, mode, srs):
         )
 
 
-def log_quiz_event(db_path, user_id, word_id, mode, is_correct, review_stage_snapshot=None):
+def log_quiz_event(db_path, user_id, word_id, mode, is_correct):
     """Handle log quiz event."""
     init_db(db_path)
     with _connect(db_path) as conn:
@@ -3843,8 +3495,8 @@ def log_quiz_event(db_path, user_id, word_id, mode, is_correct, review_stage_sna
         prev_is_correct = None if not prev else int(prev["is_correct"])
         conn.execute(
             """
-            INSERT INTO quiz_events (user_id, word_id, mode, is_correct, prev_is_correct, review_stage_snapshot, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            INSERT INTO quiz_events (user_id, word_id, mode, is_correct, prev_is_correct, created_at)
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             """,
             (
                 int(user_id),
@@ -3852,7 +3504,6 @@ def log_quiz_event(db_path, user_id, word_id, mode, is_correct, review_stage_sna
                 _safe_text(mode),
                 1 if bool(is_correct) else 0,
                 prev_is_correct,
-                None if review_stage_snapshot is None else int(review_stage_snapshot),
             ),
         )
 
@@ -3994,340 +3645,6 @@ def delete_word(db_path, word_id):
             (_safe_text(word_id),),
         )
         return cur.rowcount > 0
-
-
-def update_form_stats(db_path, user_id, word_id, checks):
-    """
-    checks: dict[field_name -> bool], field_name in:
-      article, plural, prateritum, partizip2
-    """
-    safe_checks = {str(k).strip().lower(): bool(v) for k, v in dict(checks or {}).items()}
-    allowed = {"article", "plural", "prateritum", "partizip2"}
-    fields = [k for k in safe_checks if k in allowed]
-    if not fields:
-        return
-
-    init_db(db_path)
-    with _connect(db_path) as conn:
-        conn.execute(
-            """
-            INSERT INTO form_stats (user_id, word_id)
-            VALUES (?, ?)
-            ON CONFLICT(user_id, word_id) DO NOTHING
-            """,
-            (int(user_id), _safe_text(word_id)),
-        )
-
-        today_iso = (date.today() + timedelta(days=WEAK_REVIEW_DAYS_STAGE1)).isoformat()
-        for field in fields:
-            ok = safe_checks[field]
-            pre_row = conn.execute(
-                f"""
-                SELECT
-                    {field}_errors AS errors,
-                    {field}_streak_wrong AS streak_wrong,
-                    {field}_review_stage AS stage,
-                    {field}_active AS active
-                FROM form_stats
-                WHERE user_id = ? AND word_id = ?
-                """,
-                (int(user_id), _safe_text(word_id)),
-            ).fetchone()
-            pre_errors = int(pre_row["errors"] or 0) if pre_row else 0
-            pre_streak_wrong = int(pre_row["streak_wrong"] or 0) if pre_row else 0
-            pre_stage = int(pre_row["stage"] or 0) if pre_row else 0
-            was_active_before = bool(pre_row["active"]) if pre_row else False
-            if ok:
-                conn.execute(
-                    f"""
-                    UPDATE form_stats
-                    SET {field}_streak_correct = {field}_streak_correct + 1,
-                        {field}_streak_wrong = 0
-                    WHERE user_id = ? AND word_id = ?
-                    """,
-                    (int(user_id), _safe_text(word_id)),
-                )
-                row = conn.execute(
-                    f"""
-                    SELECT {field}_streak_correct AS s
-                    FROM form_stats
-                    WHERE user_id = ? AND word_id = ?
-                    """,
-                    (int(user_id), _safe_text(word_id)),
-                ).fetchone()
-                streak = int(row["s"] or 0) if row else 0
-                # A single correct must NOT clear the episode flag: a freshly-entered
-                # word is held in the quiz until it earns WEAK_ACTIVE_CLEAR_STREAK in a
-                # row — only then the flag drops and the word promotes to the ladder.
-                if streak >= WEAK_ACTIVE_CLEAR_STREAK:
-                    conn.execute(
-                        f"""
-                        UPDATE form_stats
-                        SET {field}_errors = 0,
-                            {field}_streak_wrong = 0,
-                            {field}_streak_correct = 0,
-                            {field}_active = 0
-                        WHERE user_id = ? AND word_id = ?
-                        """,
-                        (int(user_id), _safe_text(word_id)),
-                    )
-                    if pre_stage == 0 and was_active_before:
-                        conn.execute(
-                            f"""
-                            UPDATE form_stats
-                            SET {field}_review_stage = 1,
-                                {field}_next_review = ?
-                            WHERE user_id = ? AND word_id = ?
-                            """,
-                            (today_iso, int(user_id), _safe_text(word_id)),
-                        )
-            else:
-                conn.execute(
-                    f"""
-                    UPDATE form_stats
-                    SET {field}_errors = {field}_errors + 1,
-                        {field}_streak_wrong = {field}_streak_wrong + 1,
-                        {field}_streak_correct = 0
-                    WHERE user_id = ? AND word_id = ?
-                    """,
-                    (int(user_id), _safe_text(word_id)),
-                )
-                # Entry: flip the episode flag once the wrong answer reaches the
-                # entry threshold (total errors) or the wrong-streak threshold.
-                if (
-                    pre_errors + 1 >= WEAK_ACTIVE_MIN_ERRORS
-                    or pre_streak_wrong + 1 >= WEAK_ACTIVE_MIN_STREAK_WRONG
-                ):
-                    conn.execute(
-                        f"""
-                        UPDATE form_stats
-                        SET {field}_active = 1
-                        WHERE user_id = ? AND word_id = ?
-                        """,
-                        (int(user_id), _safe_text(word_id)),
-                    )
-
-
-def update_weak_review_state(db_path, user_id, word_id, field, ok):
-    """Handle update weak review state."""
-    field = _safe_text(field).strip().lower()
-    if field not in {"article", "plural", "prateritum", "partizip2"}:
-        return 0
-    init_db(db_path)
-    today = date.today()
-    today_iso = today.isoformat()
-    with _connect(db_path) as conn:
-        row = conn.execute(
-            f"""
-            SELECT
-                {field}_review_stage AS stage,
-                {field}_active AS active
-            FROM form_stats
-            WHERE user_id = ? AND word_id = ?
-            """,
-            (int(user_id), _safe_text(word_id)),
-        ).fetchone()
-        if not row:
-            return 0
-        stage = int(row["stage"] or 0)
-        active = bool(row["active"])
-        if active or stage <= 0:
-            return stage
-        if ok:
-            if stage == 1:
-                next_review = (today + timedelta(days=WEAK_REVIEW_DAYS_STAGE2)).isoformat()
-                conn.execute(
-                    f"""
-                    UPDATE form_stats
-                    SET {field}_review_stage = 2,
-                        {field}_next_review = ?
-                    WHERE user_id = ? AND word_id = ?
-                    """,
-                    (next_review, int(user_id), _safe_text(word_id)),
-                )
-                return 2
-            if stage == 2:
-                next_review = (today + timedelta(days=WEAK_REVIEW_DAYS_STAGE3)).isoformat()
-                conn.execute(
-                    f"""
-                    UPDATE form_stats
-                    SET {field}_review_stage = 3,
-                        {field}_next_review = ?
-                    WHERE user_id = ? AND word_id = ?
-                    """,
-                    (next_review, int(user_id), _safe_text(word_id)),
-                )
-                return 3
-            conn.execute(
-                f"""
-                UPDATE form_stats
-                SET {field}_review_stage = 0,
-                    {field}_next_review = NULL
-                WHERE user_id = ? AND word_id = ?
-                """,
-                (int(user_id), _safe_text(word_id)),
-            )
-            return 0
-        next_review = (today + timedelta(days=WEAK_REVIEW_DAYS_STAGE1)).isoformat()
-        conn.execute(
-            f"""
-            UPDATE form_stats
-            SET {field}_review_stage = 1,
-                {field}_next_review = ?
-            WHERE user_id = ? AND word_id = ?
-            """,
-            (next_review, int(user_id), _safe_text(word_id)),
-        )
-        return 1
-
-
-def apply_weak_input_err(db_path, user_id, word_id, field):
-    """Handle apply weak input error correction."""
-    field = _safe_text(field).strip().lower()
-    if field not in {"article", "plural", "prateritum", "partizip2"}:
-        return False
-    init_db(db_path)
-    with _connect(db_path) as conn:
-        row = conn.execute(
-            f"""
-            SELECT
-                {field}_errors AS errors,
-                {field}_streak_wrong AS streak_wrong,
-                {field}_streak_correct AS streak_correct
-            FROM form_stats
-            WHERE user_id = ? AND word_id = ?
-            """,
-            (int(user_id), _safe_text(word_id)),
-        ).fetchone()
-        if not row:
-            return False
-        errors = int(row["errors"] or 0)
-        streak_wrong = int(row["streak_wrong"] or 0)
-        streak_correct = int(row["streak_correct"] or 0)
-        new_errors = max(0, errors - 1)
-        new_streak_wrong = max(0, streak_wrong - 1)
-        new_streak_correct = streak_correct + 1
-        # input_err explicitly reverses the last (mis-matched) wrong answer, so it
-        # may pull a word back OUT of an episode it never should have entered — if
-        # the reverted counters no longer meet the entry threshold, drop the flag.
-        # (The normal-correct path keeps the flag; only this manual undo clears it.)
-        active = new_errors >= WEAK_ACTIVE_MIN_ERRORS or new_streak_wrong >= WEAK_ACTIVE_MIN_STREAK_WRONG
-        conn.execute(
-            f"""
-            UPDATE form_stats
-            SET {field}_errors = ?,
-                {field}_streak_wrong = ?,
-                {field}_streak_correct = ?,
-                {field}_active = ?
-            WHERE user_id = ? AND word_id = ?
-            """,
-            (new_errors, new_streak_wrong, new_streak_correct, 1 if active else 0, int(user_id), _safe_text(word_id)),
-        )
-    return True
-
-
-def get_form_state(db_path, user_id, word_id, field):
-    """Handle get form state."""
-    field = _safe_text(field).strip().lower()
-    if field not in {"article", "plural", "prateritum", "partizip2"}:
-        return {"errors": 0, "streak_wrong": 0, "review_stage": 0, "active": False}
-    init_db(db_path)
-    with _connect(db_path) as conn:
-        row = conn.execute(
-            f"""
-            SELECT
-                {field}_errors AS errors,
-                {field}_streak_wrong AS streak_wrong,
-                {field}_review_stage AS stage,
-                {field}_active AS active
-            FROM form_stats
-            WHERE user_id = ? AND word_id = ?
-            """,
-            (int(user_id), _safe_text(word_id)),
-        ).fetchone()
-    if not row:
-        return {"errors": 0, "streak_wrong": 0, "review_stage": 0, "active": False}
-    errors = int(row["errors"] or 0)
-    streak_wrong = int(row["streak_wrong"] or 0)
-    stage = int(row["stage"] or 0)
-    active = bool(row["active"])
-    return {"errors": errors, "streak_wrong": streak_wrong, "review_stage": stage, "active": active}
-
-
-def get_form_review_stage(db_path, user_id, word_id, field):
-    """Handle get form review stage."""
-    field = _safe_text(field).strip().lower()
-    if field not in {"article", "plural", "prateritum", "partizip2"}:
-        return 0
-    init_db(db_path)
-    with _connect(db_path) as conn:
-        row = conn.execute(
-            f"""
-            SELECT {field}_review_stage AS stage
-            FROM form_stats
-            WHERE user_id = ? AND word_id = ?
-            """,
-            (int(user_id), _safe_text(word_id)),
-        ).fetchone()
-    return int(row["stage"] or 0) if row else 0
-
-
-def list_weak_words(db_path, user_id, weak_field, word_type=None, topics=None, cefr_levels=None, limit=200):
-    """Handle list weak words."""
-    weak_field = _safe_text(weak_field).strip().lower()
-    if weak_field not in {"article", "plural", "prateritum", "partizip2"}:
-        return []
-    init_db(db_path)
-    today = date.today().isoformat()
-    active_cond = f"(fs.{weak_field}_active = 1)"
-    review_cond = f"(fs.{weak_field}_review_stage > 0 AND date(fs.{weak_field}_next_review) <= date(?))"
-    where = [
-        "fs.user_id = ?",
-        f"({active_cond} OR {review_cond})",
-    ]
-    params = [int(user_id), today]
-    if weak_field == "plural":
-        placeholders = ",".join("?" for _ in ABSENT_PLURAL_MARKERS)
-        where.append(f"TRIM(COALESCE(w.plural, '')) NOT IN ({placeholders})")
-        params.extend(ABSENT_PLURAL_MARKERS)
-    if word_type:
-        where.append("w.type = ?")
-        params.append(_safe_text(word_type))
-    if topics:
-        clean_topics = [_safe_text(x) for x in topics if _safe_text(x)]
-        if clean_topics:
-            placeholders = ",".join("?" for _ in clean_topics)
-            where.append(f"w.topic IN ({placeholders})")
-            params.extend(clean_topics)
-    cefr_clause, cefr_params = _cefr_filter_sql(cefr_levels)
-    if cefr_clause:
-        where.append(cefr_clause)
-        params.extend(cefr_params)
-    query = f"""
-        SELECT
-            w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ, w.russian,
-            w.ukrainian, w.english, w.topic, w.preposition_type, w.case_type,
-            fs.{weak_field}_review_stage AS review_stage,
-            fs.{weak_field}_next_review AS next_review,
-            p.interval AS p_interval, p.repetitions AS p_repetitions, p.ease AS p_ease, p.due AS p_due,
-            CASE WHEN {active_cond} THEN 1 ELSE 0 END AS is_active
-        FROM form_stats fs
-        JOIN words w ON w.id = fs.word_id
-        LEFT JOIN progress p ON p.word_id = w.id AND p.user_id = ? AND p.mode = ?
-        WHERE {' AND '.join(where)}
-        ORDER BY is_active DESC, COALESCE(fs.{weak_field}_next_review, '') ASC, w.created_at ASC
-        LIMIT ?
-    """
-    mode = f"weak_{weak_field}"
-    query_params = [int(user_id), mode] + params + [int(limit)]
-    with _connect(db_path) as conn:
-        rows = conn.execute(query, tuple(query_params)).fetchall()
-    result = []
-    for row in rows:
-        entry = _row_to_entry(row)
-        entry["srs"] = _progress_for_row(row)
-        result.append(entry)
-    return result
 
 
 def _get_or_create_group(conn, word_id):
@@ -4673,52 +3990,6 @@ def list_learning_queue_words(db_path, user_id, topics=None, cefr_levels=None):
             tuple(params),
         ).fetchall()
     return [_row_to_entry(row) for row in rows]
-
-
-# spec #6: display label -> the form's active-episode flag column in form_stats.
-_WEAK_FORM_COLUMNS = (
-    ("artikel", "article_active"),
-    ("plural", "plural_active"),
-    ("präteritum", "prateritum_active"),
-    ("partizip2", "partizip2_active"),
-)
-
-
-def list_weak_form_words(db_path, user_id):
-    """Words with an ACTIVE weak-form episode for this user (spec #6).
-
-    A word is listed when any weak-form flag (#18A `*_active`) is set — the exact
-    same episode mechanics that the weak quizzes use (3 correct in a row clears a
-    flag, dropping the word). Each entry carries a `weak_forms` list of the active
-    forms. Ordered worst-first (most active forms), then alphabetically. Replaces
-    the old wrong-streak list (which was unrelated to the weak-form modes).
-    """
-    init_db(db_path)
-    with _connect(db_path) as conn:
-        rows = conn.execute(
-            """
-            SELECT
-                w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum,
-                w.partizip2, w.komparativ, w.superlativ, w.russian, w.ukrainian, w.english, w.topic,
-                w.preposition_type, w.case_type,
-                fs.article_active AS article_active, fs.plural_active AS plural_active,
-                fs.prateritum_active AS prateritum_active, fs.partizip2_active AS partizip2_active
-            FROM form_stats fs
-            JOIN words w ON w.id = fs.word_id
-            WHERE fs.user_id = ?
-              AND (fs.article_active = 1 OR fs.plural_active = 1
-                   OR fs.prateritum_active = 1 OR fs.partizip2_active = 1)
-            """,
-            (int(user_id),),
-        ).fetchall()
-    out = []
-    for row in rows:
-        entry = _row_to_entry(row)
-        entry["weak_forms"] = [label for label, col in _WEAK_FORM_COLUMNS if row[col]]
-        out.append(entry)
-    # worst first (most active forms), then alphabetical by German lemma
-    out.sort(key=lambda e: (-len(e["weak_forms"]), (e.get("german") or e.get("infinitive") or "").lower()))
-    return out
 
 
 def find_word_by_value(db_path, token):

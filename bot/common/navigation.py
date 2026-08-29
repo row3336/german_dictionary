@@ -17,7 +17,6 @@ from ..common.lang import _QUIZ_DIR_SOURCES, _user_interface_lang
 from ..common.session import (
     _reset_fsrs_cycle_state,
     _reset_retry_state,
-    _reset_weak_drill_state,
 )
 from ..i18n import t
 from ..labels import (
@@ -46,7 +45,6 @@ def _action_key_from_text(text, user_id):
         ("db_search_topics_lists", "db_search_topics_lists"),
         ("db_search_type_lists", "db_search_type_lists"),
         ("db_search_topics_lern", "db_search_topics_lern"),
-        ("db_search_weak_words", "db_search_weak_words"),
         ("settings", "settings"),
         ("info", "info"),
         ("stat", "stat"),
@@ -60,7 +58,6 @@ def _action_key_from_text(text, user_id):
         ("conjugation", "conjugation"),
         ("conjugation_dice", "conjugation_dice"),
         ("fsrs_sett", "fsrs_sett"),
-        ("weak_sett", "weak_sett"),
         ("learning_sett", "learning_sett"),
         ("learning_sett_btn", "learning_sett"),
         ("learning_daily_qty", "learning_daily_qty"),
@@ -82,11 +79,6 @@ def _action_key_from_text(text, user_id):
         ("standard_fsrs", "standard_fsrs"),
         ("quiz_words", "quiz_words"),
         ("quiz_phrases", "quiz_phrases"),
-        ("weak_article_mode", "weak_article"),
-        ("weak_plural_mode", "weak_plural"),
-        ("weak_verb_mode", "weak_verb"),
-        ("weak_prateritum_mode", "weak_prateritum"),
-        ("weak_partizip2_mode", "weak_partizip2"),
         ("daily", "daily"),
         ("weekly", "weekly"),
         ("off", "off"),
@@ -104,7 +96,6 @@ def _action_key_from_text(text, user_id):
         mapping[f"{src} > De"] = "quiz_l1_de"
         mapping[f"De > {src}"] = "quiz_de_l1"
     mapping[QUIZ_PL_SG_TEXT] = "quiz_pl_sg"
-    # Study/weak-mode buttons are localized and routed via the keys list above.
     mapping["flags!"] = "review_flags"
     mapping[PARSE_VF_TEXT] = "review_flags"
     mapping["Back"] = "back"
@@ -176,7 +167,6 @@ async def _back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE 
     if context is not None:
         _reset_retry_state(context)
         _reset_fsrs_cycle_state(context)
-        _reset_weak_drill_state(context)
         _clear_last_answer(context)
         context.user_data.pop("quiz_mode", None)
         context.user_data.pop("quiz_direction_base", None)
@@ -193,7 +183,6 @@ async def _back_to_tests(update: Update, context: ContextTypes.DEFAULT_TYPE = No
     if context is not None:
         _reset_retry_state(context)
         _reset_fsrs_cycle_state(context)
-        _reset_weak_drill_state(context)
         _clear_last_answer(context)
         context.user_data.pop("quiz_mode", None)
         context.user_data.pop("quiz_direction_base", None)

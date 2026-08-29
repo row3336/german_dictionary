@@ -130,7 +130,7 @@ class LearningSettingsEntryTest(unittest.TestCase):
                 self.assertFalse(t(lang, key).startswith("learning"), f"{lang}/{key}")
 
     def test_algo_entry_label_matches_sibling_submenus(self):
-        # algo settings row reads FSRS_sett / weak_sett / learning_sett
+        # The algorithm settings row exposes FSRS and learning settings.
         self.assertEqual(t("en", "learning_sett"), "learning_sett")
 
     def test_press_opens_submenu_and_marks_origin(self):

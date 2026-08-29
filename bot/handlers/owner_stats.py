@@ -57,42 +57,12 @@ def _format_progress_text(user_id):
         f"{t(lang, 'stat_today_fsrs').format(dir=de_l1_dir)} = {stats['today_complete_fsrs_de_ru']}",
         f"{t(lang, 'stat_today_pl_sg')} = {stats.get('today_complete_pl_sg', 0)}",
         "",
-        f"{t(lang, 'stat_today_weak_article')} = {stats['today_complete_weak_article']}",
-        f"{t(lang, 'stat_today_weak_plural')} = {stats['today_complete_weak_plural']}",
-        f"{t(lang, 'stat_today_weak_partizip2')} = {stats['today_complete_weak_partizip2']}",
-        f"{t(lang, 'stat_today_weak_prateritum')} = {stats['today_complete_weak_prateritum']}",
-        "",
         f"{t(lang, 'stat_streak_5p')} = {stats.get('streak_5p', 0)}",
         f"{t(lang, 'stat_streak_4')} = {stats.get('streak_4', 0)}",
         f"{t(lang, 'stat_streak_3')} = {stats.get('streak_3', stats.get('streak_3p', 0))}",
         f"{t(lang, 'stat_streak_2')} = {stats.get('streak_2', 0)}",
         f"{t(lang, 'stat_streak_1')} = {stats.get('streak_1', 0)}",
         f"{t(lang, 'stat_wrong_fsrs')} = {stats.get('wrong_fsrs', 0)}",
-        "",
-        (
-            f"{t(lang, 'stat_weak_article')} = {stats['weak_article']} "
-            f"({stats['weak_article_stage1']}) "
-            f"({stats['weak_article_stage2']}) "
-            f"({stats['weak_article_stage3']})"
-        ),
-        (
-            f"{t(lang, 'stat_weak_plural')} = {stats['weak_plural']} "
-            f"({stats['weak_plural_stage1']}) "
-            f"({stats['weak_plural_stage2']}) "
-            f"({stats['weak_plural_stage3']})"
-        ),
-        (
-            f"{t(lang, 'stat_weak_partizip2')} = {stats['weak_partizip2']} "
-            f"({stats['weak_partizip2_stage1']}) "
-            f"({stats['weak_partizip2_stage2']}) "
-            f"({stats['weak_partizip2_stage3']})"
-        ),
-        (
-            f"{t(lang, 'stat_weak_prateritum')} = {stats['weak_prateritum']} "
-            f"({stats['weak_prateritum_stage1']}) "
-            f"({stats['weak_prateritum_stage2']}) "
-            f"({stats['weak_prateritum_stage3']})"
-        ),
         "",
         f"{t(lang, 'stat_words_in_dict')} = {stats['total_words']}",
         f"{t(lang, 'stat_never_touched')} = {stats['never_answered']}",

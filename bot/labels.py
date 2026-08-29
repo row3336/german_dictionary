@@ -1,10 +1,5 @@
 """UI button-text labels (fixed, non-localized strings used in keyboards/handlers)."""
 
-TEST_ARTICLE_WEAK_TEXT = "Article Weak Mode"
-TEST_PLURAL_WEAK_TEXT = "Plural Weak Mode"
-TEST_VERB_WEAK_TEXT = "Verb Forms Weak Mode"
-TEST_PRATERITUM_WEAK_TEXT = "Prateritum Weak Mode"
-TEST_PARTIZIP2_WEAK_TEXT = "Partizip2 Weak Mode"
 STANDARD_FSRS_TEXT = "Standart mode FSRS"
 SYNONYMS_TEXT = "synonyms"
 SYN_ADD_TEXT = "add"

@@ -135,11 +135,6 @@ def _status_text(ok, lang="en"):
     return t(lang, "answer_correct") if ok else t(lang, "answer_wrong")
 
 
-def _weak_status(ok, lang="en"):
-    """Handle weak status."""
-    return _status_text(ok, lang)
-
-
 def _nomen_with_edge_emoji(article_text, noun_text):
     """Wrap noun answer with edge emoji before article and after noun."""
     mapping = {"der": "🔵", "die": "🔴", "das": "🟢"}
@@ -479,42 +474,6 @@ def _format_feedback_article(entry, ok, dict_lang, lang="en"):
     if plural:
         lines.append("")
         lines.append(f"_pl. die {_md_escape(plural)}_")
-    _append_hint_lines(lines, entry, ok)
-    return "\n".join(lines)
-
-
-def _format_feedback_plural_weak(entry, ok, lang="en"):
-    """Handle format feedback plural weak."""
-    wrapped = _nomen_with_edge_emoji(entry.get("article", ""), entry.get("german", ""))
-    plural = _cap_plural(entry.get("plural", ""))
-    headline = f"{_weak_status(ok, lang)} >>>     {_md_escape(wrapped)}"
-    lines = [headline]
-    if plural:
-        lines.extend(["", f"_pl. die {_md_escape(plural)}_"])
-    _append_hint_lines(lines, entry, ok)
-    return "\n".join(lines)
-
-
-def _format_feedback_prateritum_weak(entry, ok, lang="en"):
-    """Handle format feedback prateritum weak."""
-    infinitive = _low_word(entry.get("infinitive", ""))
-    pr = _low_word(entry.get("prateritum", ""))
-    headline = f"{_weak_status(ok, lang)} >>>     {_md_escape(infinitive)}"
-    lines = [headline]
-    if pr:
-        lines.extend(["", f"_{_md_escape(pr)}_"])
-    _append_hint_lines(lines, entry, ok)
-    return "\n".join(lines)
-
-
-def _format_feedback_partizip2_weak(entry, ok, lang="en"):
-    """Handle format feedback partizip2 weak."""
-    infinitive = _low_word(entry.get("infinitive", ""))
-    p2 = _expected_partizip2(entry)
-    headline = f"{_weak_status(ok, lang)} >>>     {_md_escape(infinitive)}"
-    lines = [headline]
-    if p2:
-        lines.extend(["", f"_{_md_escape(p2)}_"])
     _append_hint_lines(lines, entry, ok)
     return "\n".join(lines)
 

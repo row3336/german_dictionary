@@ -1,7 +1,5 @@
 """Regression coverage for nouns that have no plural form."""
 
-import os
-import tempfile
 import unittest
 
 from _telegram_stub import install
@@ -9,7 +7,6 @@ from _telegram_stub import install
 install()
 
 from bot.handlers.quiz import _check_ru_de_strict  # noqa: E402
-from bot.storage import add_word, init_db, list_weak_words, update_form_stats  # noqa: E402
 from bot.text_utils import cap_plural, has_plural_form  # noqa: E402
 from bot.ui.formatting import _format_feedback_ru_de, _is_pl_sg_eligible  # noqa: E402
 
@@ -82,46 +79,6 @@ class MissingPluralContractTest(unittest.TestCase):
             feedback = _format_feedback_ru_de(entry, False)
             self.assertNotIn("pl. die", feedback)
             self.assertNotIn("die -", feedback)
-
-
-class MissingPluralWeakListTest(unittest.TestCase):
-    def setUp(self):
-        tmp = tempfile.NamedTemporaryFile(delete=False)
-        tmp.close()
-        self.db = tmp.name
-        self.addCleanup(lambda: os.unlink(self.db))
-        init_db(self.db)
-
-    def _add_active(self, german, plural):
-        word_id = add_word(
-            self.db,
-            {
-                "type": "nomen",
-                "article": "das",
-                "german": german,
-                "plural": plural,
-                "russian": german.lower(),
-            },
-        )["id"]
-        update_form_stats(self.db, 1, word_id, {"plural": False})
-        update_form_stats(self.db, 1, word_id, {"plural": False})
-        return word_id
-
-    def test_weak_plural_excludes_absent_forms(self):
-        empty_id = self._add_active("Obst", "")
-        dash_id = self._add_active("Eis", "-")
-        real_id = self._add_active("Buch", "Bücher")
-
-        result = list_weak_words(
-            self.db,
-            user_id=1,
-            weak_field="plural",
-            word_type="nomen",
-        )
-        ids = {entry["id"] for entry in result}
-        self.assertEqual(ids, {real_id})
-        self.assertNotIn(empty_id, ids)
-        self.assertNotIn(dash_id, ids)
 
 
 if __name__ == "__main__":

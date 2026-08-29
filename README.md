@@ -5,7 +5,6 @@ Owner-only Telegram bot for building a German dictionary and running quizzes. It
 - Manual and AI-assisted word import
 - FSRS-based long-term scheduling
 - Session-retry for short-term reinforcement
-- Weak-mode remediation and review scheduling for forms
 - Synonyms management
 - Stats and dumps
 
@@ -55,12 +54,8 @@ New words are saved under the first topic in the filter (or `1` when `all`).
 - De > L1
 
 **L1 > De submenu**
-- Standart mode FSRS
-- Article Weak Mode
-- Plural Weak Mode
-- Verb Forms Weak Mode
-  - Prateritum Weak Mode
-  - Partizip2 Weak Mode
+- Words FSRS
+- Phrases FSRS
 
 ## Add Words Flow
 ### 1) Precheck (AI correction + type detection)
@@ -110,26 +105,6 @@ Purpose: immediate reinforcement within the current session.
 - Total repeats per word: **4**.
 - Queue resets when leaving Quiz.
 
-## Weak Modes (Forms)
-Active weak:
-- `{form}_errors >= 2` OR `{form}_streak_wrong >= 2`.
-
-Review weak:
-- After leaving active weak:
-  - stage 1: +1 day
-  - stage 2: +2 days
-  - stage 3: +5 days
-  - then finish
-- Wrong in review resets to stage 1.
-
-Sources:
-- Active weak words
-- Review weak words due today
-
-Priority:
-1) Active weak
-2) Review weak
-
 ## Synonyms
 - Add/Remove/Clear groups
 - Auto link by translation
@@ -141,13 +116,12 @@ Priority:
 - Never answered count
 - Weekly added
 - Streaks
-- Weak counts
 - Accuracy
 
 ## Storage
 SQLite DB at `data/words.db` (configurable via `DB_PATH`).
 Tables:
-- `words`, `progress`, `quiz_events`, `form_stats`, `word_flags`, `synonym_groups`, `word_synonyms`, `users`.
+- `words`, `progress`, `quiz_events`, `word_flags`, `synonym_groups`, `word_synonyms`, `users`.
 
 ## Dumps
 Settings allow DB and logs dumps (manual and scheduled).

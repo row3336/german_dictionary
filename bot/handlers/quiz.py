@@ -63,7 +63,6 @@ from ..storage import (
     log_quiz_event,
     mark_last_quiz_event_correct,
     set_progress,
-    update_form_stats,
     update_progress,
 )
 from ..text_utils import has_plural_form
@@ -661,14 +660,11 @@ async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
     is_retry = bool(context.user_data.get("quiz_is_retry"))
     if text == I_DONT_KNOW_TEXT:
         ok = False
-        form_checks = {}
     else:
-        ok, form_checks = _check_ru_de_strict(entry, text)
+        ok, _ = _check_ru_de_strict(entry, text)
     if not is_retry:
         _remember_last_answer(context, entry, mode, ok, update.message.message_id)
         _update_srs_for_entry(update.effective_user.id, entry, mode, ok)
-        if form_checks:
-            update_form_stats(get_db_path(), update.effective_user.id, entry.get("id"), form_checks)
         _mark_session_word(context, mode, entry.get("id"))
     context.user_data["quiz_last_answered_entry"] = entry
     _register_retry_result(context, mode, entry.get("id"), ok, is_retry, update.effective_user.id)

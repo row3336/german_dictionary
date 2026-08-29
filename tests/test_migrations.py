@@ -1,10 +1,4 @@
-"""Migration tests + backward-compatibility contract (docs/multiuser.md §0.1/§0.2).
-
-The contract enforces ADD-only migrations: every table/column that the frozen
-v1.0-single-user baseline relies on must still exist, so an older (rolled-back)
-build can still open a newer DB. Adding tables/columns is fine; dropping or
-renaming a baseline one fails the contract.
-"""
+"""Migration tests and the schema contract through destructive schema v17."""
 
 import os
 import sqlite3
@@ -35,23 +29,10 @@ def _schema(db_path):
         conn.close()
 
 
-# Frozen schema contract for the v1.0-single-user baseline. DO NOT remove entries
-# here when adding multiuser tables/columns — the test only checks that the live
-# schema is a SUPERSET of this. Editing/removing an entry means a breaking change.
+# Retained baseline objects after the intentional weak-schema removal in v17.
 BASELINE_V1 = {
     "app_settings": {"key", "value"},
     "banned_words": {"normalized_word", "raw_word", "created_at"},
-    "form_stats": {
-        "user_id", "word_id",
-        "article_errors", "article_streak_wrong", "article_streak_correct",
-        "article_review_stage", "article_next_review",
-        "plural_errors", "plural_streak_wrong", "plural_streak_correct",
-        "plural_review_stage", "plural_next_review",
-        "prateritum_errors", "prateritum_streak_wrong", "prateritum_streak_correct",
-        "prateritum_review_stage", "prateritum_next_review",
-        "partizip2_errors", "partizip2_streak_wrong", "partizip2_streak_correct",
-        "partizip2_review_stage", "partizip2_next_review",
-    },
     "learning_batches": {
         "id", "user_id", "target_qty", "status", "ready_since",
         "last_notified_at", "created_at", "updated_at",
@@ -63,7 +44,7 @@ BASELINE_V1 = {
     "progress": {"user_id", "word_id", "mode", "interval", "repetitions", "ease", "due", "updated_at"},
     "quiz_events": {
         "id", "user_id", "word_id", "mode", "is_correct", "prev_is_correct",
-        "review_stage_snapshot", "created_at",
+        "created_at",
     },
     "synonym_groups": {"id", "created_at"},
     "transaction_log": {"id", "user_id", "action", "payload", "created_at"},
@@ -248,97 +229,6 @@ class V1ToV2MigrationTest(unittest.TestCase):
             {"id", "user_id", "text", "status", "created_at", "reviewed_at"},
             schema["feedback"],
         )
-        self.assertTrue(report["healthcheck"]["ok"])
-        self.assertEqual(get_user_version(db), SCHEMA_VERSION)
-
-
-class FormStatsActiveMigrationTest(unittest.TestCase):
-    """#18 — adding form_stats.*_active is a safe additive migration that
-    backfills the weak-episode flag for words already in an episode."""
-
-    def test_v4_to_v5_adds_active_columns_and_backfills(self):
-        d = tempfile.mkdtemp()
-        db = os.path.join(d, "words.db")
-        # Build a v4-style DB: words + a form_stats WITHOUT the *_active columns.
-        conn = sqlite3.connect(db)
-        conn.executescript(
-            """
-            CREATE TABLE words (
-                id TEXT PRIMARY KEY,
-                type TEXT NOT NULL,
-                article TEXT NOT NULL DEFAULT '',
-                german TEXT NOT NULL DEFAULT '',
-                plural TEXT NOT NULL DEFAULT '',
-                infinitive TEXT NOT NULL DEFAULT '',
-                prateritum TEXT NOT NULL DEFAULT '',
-                partizip2 TEXT NOT NULL DEFAULT '',
-                russian TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-            CREATE TABLE form_stats (
-                user_id INTEGER NOT NULL,
-                word_id TEXT NOT NULL,
-                article_errors INTEGER NOT NULL DEFAULT 0,
-                article_streak_wrong INTEGER NOT NULL DEFAULT 0,
-                article_streak_correct INTEGER NOT NULL DEFAULT 0,
-                article_review_stage INTEGER NOT NULL DEFAULT 0,
-                article_next_review TEXT DEFAULT NULL,
-                plural_errors INTEGER NOT NULL DEFAULT 0,
-                plural_streak_wrong INTEGER NOT NULL DEFAULT 0,
-                plural_streak_correct INTEGER NOT NULL DEFAULT 0,
-                plural_review_stage INTEGER NOT NULL DEFAULT 0,
-                plural_next_review TEXT DEFAULT NULL,
-                prateritum_errors INTEGER NOT NULL DEFAULT 0,
-                prateritum_streak_wrong INTEGER NOT NULL DEFAULT 0,
-                prateritum_streak_correct INTEGER NOT NULL DEFAULT 0,
-                prateritum_review_stage INTEGER NOT NULL DEFAULT 0,
-                prateritum_next_review TEXT DEFAULT NULL,
-                partizip2_errors INTEGER NOT NULL DEFAULT 0,
-                partizip2_streak_wrong INTEGER NOT NULL DEFAULT 0,
-                partizip2_streak_correct INTEGER NOT NULL DEFAULT 0,
-                partizip2_review_stage INTEGER NOT NULL DEFAULT 0,
-                partizip2_next_review TEXT DEFAULT NULL,
-                PRIMARY KEY (user_id, word_id)
-            );
-            """
-        )
-        conn.execute("INSERT INTO words (id, type, german) VALUES ('w_active', 'nomen', 'Tisch')")
-        conn.execute("INSERT INTO words (id, type, german) VALUES ('w_idle', 'nomen', 'Lampe')")
-        # w_active: legacy-active episode (2 article errors) → flag must backfill to 1.
-        conn.execute(
-            "INSERT INTO form_stats (user_id, word_id, article_errors) VALUES (1, 'w_active', 2)"
-        )
-        # w_idle: not weak → flag stays 0.
-        conn.execute(
-            "INSERT INTO form_stats (user_id, word_id, article_errors) VALUES (1, 'w_idle', 0)"
-        )
-        conn.commit()
-        conn.close()
-        set_user_version(db, 4)
-        self.assertNotIn("article_active", _schema(db)["form_stats"])
-
-        report = apply_migrations_safely(db, os.path.join(d, "backups"))
-
-        self.assertTrue(report["migrated"])
-        self.assertEqual(report["from_version"], 4)
-        self.assertEqual(report["to_version"], SCHEMA_VERSION)
-        self.assertGreaterEqual(SCHEMA_VERSION, 5)
-        cols = _schema(db)["form_stats"]
-        for field in ("article", "plural", "prateritum", "partizip2"):
-            self.assertIn(f"{field}_active", cols)
-
-        conn = sqlite3.connect(db)
-        try:
-            active = conn.execute(
-                "SELECT article_active FROM form_stats WHERE word_id='w_active'"
-            ).fetchone()[0]
-            idle = conn.execute(
-                "SELECT article_active FROM form_stats WHERE word_id='w_idle'"
-            ).fetchone()[0]
-        finally:
-            conn.close()
-        self.assertEqual(active, 1)  # already-active episode preserved
-        self.assertEqual(idle, 0)
         self.assertTrue(report["healthcheck"]["ok"])
         self.assertEqual(get_user_version(db), SCHEMA_VERSION)
 

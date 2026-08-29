@@ -1,6 +1,6 @@
 """Top-level menu routers: /start onboarding, the main menu, the tests menu, and
 the Ru>De quiz sub-menu. These are the dispatch hubs that hand off into the
-feature handlers (add_words / settings / db_search / quiz / weak / learning).
+feature handlers (add_words / settings / db_search / quiz / learning).
 """
 
 from telegram import ReplyKeyboardMarkup, Update
@@ -12,7 +12,6 @@ from ..app_config import (
     OWNER_DICT_LANG_KEY,
     OWNER_INTERFACE_LANG_KEY,
     QUIZ_RU_DE_MENU,
-    QUIZ_VERB_WEAK_MENU,
     SETTINGS_MENU,
     TESTS_MENU,
     TOPIC_FILTER_EDIT,
@@ -33,7 +32,6 @@ from ..common.session import (
     _reset_fsrs_cycle_state,
     _reset_retry_state,
     _reset_session,
-    _reset_weak_drill_state,
 )
 from ..common.settings import _topic_filter_banner, _topic_filter_value
 from ..common.txlog import reset_undo_progress
@@ -43,7 +41,6 @@ from ..handlers.learning import _send_learning_menu
 from ..handlers.owner_stats import _format_progress_text, _owner_stat_keyboard
 from ..handlers.quiz import _send_de_ru_prompt, _send_pl_sg_prompt, _send_ru_de_prompt
 from ..handlers.settings import _ask_dictionary_language, _ask_interface_language
-from ..handlers.weak import _send_article_weak_prompt, _send_plural_weak_prompt
 from ..i18n import normalize_interface_lang, t
 from ..labels import (
     QUIZ_PL_SG_TEXT,
@@ -250,7 +247,7 @@ async def tests_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def quiz_ru_de_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Choose word/phrase SRS for a direction, or a still-live Lang>De weak mode."""
+    """Choose word or phrase SRS for the selected direction."""
     text = update.message.text.strip()
     user_id = update.effective_user.id
     action = _action_key_from_text(text, user_id)
@@ -278,21 +275,6 @@ async def quiz_ru_de_menu_choice(update: Update, context: ContextTypes.DEFAULT_T
         if str(base_mode).startswith("de_"):
             return await _send_de_ru_prompt(update, context, None)
         return await _send_ru_de_prompt(update, context, None)
-    if action == "weak_article":
-        _reset_weak_drill_state(context, "weak_article")
-        _reset_session(context, "weak_article")
-        return await _send_article_weak_prompt(update, context, None)
-    if action == "weak_plural":
-        _reset_weak_drill_state(context, "weak_plural")
-        _reset_session(context, "weak_plural")
-        return await _send_plural_weak_prompt(update, context, None)
-    if action == "weak_verb":
-        lang = _user_interface_lang(user_id)
-        await update.message.reply_text(
-            t(lang, "weak_choose_verb_mode"),
-            reply_markup=ReplyKeyboardMarkup([[t(lang, "weak_prateritum_mode"), t(lang, "weak_partizip2_mode")], [t(lang, "back")]], resize_keyboard=True),
-        )
-        return QUIZ_VERB_WEAK_MENU
     await update.message.reply_text(
         t(_user_interface_lang(user_id), "quiz_use_menu_buttons"),
         reply_markup=ReplyKeyboardMarkup(

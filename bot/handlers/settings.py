@@ -18,7 +18,6 @@ from ..app_config import (
     ALGO_SETTINGS_CONFIRM,
     ALGO_SETTINGS_EDIT,
     ALGO_SETTINGS_MENU,
-    DRILL_SETTINGS_MENU,
     FSRS_SETTINGS_MENU,
     LEARNING_DAILY_QTY_KEY,
     LEARNING_INTERVALS_KEY,
@@ -36,8 +35,6 @@ from ..app_config import (
     SETTINGS_MENU,
     TESTS_MENU,
     TOPIC_FILTER_EDIT,
-    WEAK_DRILL_GAP_KEY,
-    WEAK_DRILL_REPEATS_KEY,
     get_db_path,
     is_owner,
 )
@@ -52,18 +49,10 @@ from ..common.settings import (
     _session_retry_gap,
     _session_retry_iterations,
     _topic_filter_value,
-    _weak_drill_gap,
-    _weak_drill_repeats,
 )
 from ..handlers.access import access_allowed, notify_owner_access_request
 from ..i18n import dict_choices, interface_choices, parse_dict_choice, parse_interface_choice, t
 from ..storage import (
-    WEAK_ACTIVE_CLEAR_STREAK,
-    WEAK_ACTIVE_MIN_ERRORS,
-    WEAK_ACTIVE_MIN_STREAK_WRONG,
-    WEAK_REVIEW_DAYS_STAGE1,
-    WEAK_REVIEW_DAYS_STAGE2,
-    WEAK_REVIEW_DAYS_STAGE3,
     _parse_learning_intervals,
     get_setting,
     get_user_status,
@@ -78,7 +67,6 @@ from ..storage import (
 from ..ui.keyboards import (
     _add_keys,
     _algo_settings_menu_keys,
-    _drill_settings_menu_keys,
     _fsrs_settings_menu_keys,
     _language_menu_keys,
     _learning_settings_menu_keys,
@@ -122,7 +110,7 @@ def _settings_submenu_text(lang, desc_key, rows):
 
 
 async def _send_algo_settings_menu(update: Update, user_id):
-    """Algo settings root (bug #0): FSRS/weak/learning params live in their own
+    """Algo settings root (bug #0): FSRS and learning params live in their own
     submenus now; the root only carries the topic filter + resets."""
     lang = _user_interface_lang(user_id)
     topics = list_topics(get_db_path())
@@ -153,30 +141,6 @@ async def _send_fsrs_settings_menu(update: Update, user_id):
         reply_markup=ReplyKeyboardMarkup(_fsrs_settings_menu_keys(user_id), resize_keyboard=True),
     )
     return FSRS_SETTINGS_MENU
-
-
-async def _send_drill_settings_menu(update: Update, user_id):
-    """Weak settings submenu (bug #0, UI label: weak_sett): the weak-drill params,
-    plus an owner-only footer with the weak-episode thresholds (constants)."""
-    lang = _user_interface_lang(user_id)
-    rows = [
-        ("weak_drill_gap", _weak_drill_gap(get_db_path(), user_id), "weak_drill_gap_desc"),
-        ("weak_drill_repeats", _weak_drill_repeats(get_db_path(), user_id), "weak_drill_repeats_desc"),
-    ]
-    msg = _settings_submenu_text(lang, "weak_sett_desc", rows)
-    if is_owner(user_id):
-        msg += "\n\n" + "\n".join(
-            [
-                f"weak.enter = err>={WEAK_ACTIVE_MIN_ERRORS} or wrong_streak>={WEAK_ACTIVE_MIN_STREAK_WRONG} (held until clear)",
-                f"weak.to_review = {WEAK_ACTIVE_CLEAR_STREAK} correct in row",
-                f"weak.review_days = {WEAK_REVIEW_DAYS_STAGE1}/{WEAK_REVIEW_DAYS_STAGE2}/{WEAK_REVIEW_DAYS_STAGE3}",
-            ]
-        )
-    await update.message.reply_text(
-        msg,
-        reply_markup=ReplyKeyboardMarkup(_drill_settings_menu_keys(user_id), resize_keyboard=True),
-    )
-    return DRILL_SETTINGS_MENU
 
 
 async def _send_learning_settings_menu(update: Update, user_id):
@@ -375,8 +339,6 @@ async def algo_settings_menu_choice(update: Update, context: ContextTypes.DEFAUL
 
     if action == "fsrs_sett":
         return await _send_fsrs_settings_menu(update, user_id)
-    if action == "weak_sett":
-        return await _send_drill_settings_menu(update, user_id)
     if action == "learning_sett":
         context.user_data["learning_sett_return"] = "algo"
         return await _send_learning_settings_menu(update, user_id)
@@ -412,8 +374,6 @@ async def algo_settings_menu_choice(update: Update, context: ContextTypes.DEFAUL
             keys=[
                 SESSION_RETRY_GAP_KEY,
                 SESSION_RETRY_IT_KEY,
-                WEAK_DRILL_GAP_KEY,
-                WEAK_DRILL_REPEATS_KEY,
                 LEARNING_DAILY_QTY_KEY,
                 LEARNING_INTERVALS_KEY,
                 LEARNING_REMINDER_INTERVAL_KEY,
@@ -460,41 +420,6 @@ async def fsrs_settings_menu_choice(update: Update, context: ContextTypes.DEFAUL
         return ALGO_SETTINGS_EDIT
 
     return await _send_fsrs_settings_menu(update, user_id)
-
-
-async def drill_settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle drill settings menu choice."""
-    text = update.message.text.strip()
-    user_id = update.effective_user.id
-    lang = _user_interface_lang(user_id)
-    action = _action_key_from_text(text, user_id)
-
-    if action == "back":
-        return await _send_algo_settings_menu(update, user_id)
-
-    if text == t(lang, "weak_drill_gap"):
-        context.user_data["algo_setting_edit"] = WEAK_DRILL_GAP_KEY
-        context.user_data["algo_edit_return"] = "drill"
-        await update.message.reply_text(
-            t(lang, "clarify_enter_value").format(field=t(lang, "weak_drill_gap")),
-            reply_markup=_settings_edit_back_markup(user_id),
-        )
-        return ALGO_SETTINGS_EDIT
-
-    if text == t(lang, "weak_drill_repeats"):
-        context.user_data["algo_setting_edit"] = WEAK_DRILL_REPEATS_KEY
-        context.user_data["algo_edit_return"] = "drill"
-        await update.message.reply_text(
-            t(lang, "clarify_enter_value").format(field=t(lang, "weak_drill_repeats")),
-            reply_markup=_settings_edit_back_markup(user_id),
-        )
-        return ALGO_SETTINGS_EDIT
-
-    await update.message.reply_text(
-        t(lang, "settings_use_drill_buttons"),
-        reply_markup=ReplyKeyboardMarkup(_drill_settings_menu_keys(user_id), resize_keyboard=True),
-    )
-    return DRILL_SETTINGS_MENU
 
 
 async def learning_settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -556,8 +481,6 @@ async def algo_settings_edit(update: Update, context: ContextTypes.DEFAULT_TYPE)
         context.user_data.pop("algo_edit_return", None)
         if return_to == "fsrs":
             return await _send_fsrs_settings_menu(update, user_id)
-        if return_to == "drill":
-            return await _send_drill_settings_menu(update, user_id)
         if return_to == "learning":
             return await _send_learning_settings_menu(update, user_id)
         return await _send_algo_settings_menu(update, user_id)
@@ -566,8 +489,6 @@ async def algo_settings_edit(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if key not in {
         SESSION_RETRY_GAP_KEY,
         SESSION_RETRY_IT_KEY,
-        WEAK_DRILL_GAP_KEY,
-        WEAK_DRILL_REPEATS_KEY,
         LEARNING_DAILY_QTY_KEY,
         LEARNING_INTERVALS_KEY,
         LEARNING_REMINDER_INTERVAL_KEY,
@@ -576,8 +497,6 @@ async def algo_settings_edit(update: Update, context: ContextTypes.DEFAULT_TYPE)
     }:
         if return_to == "fsrs":
             return await _send_fsrs_settings_menu(update, user_id)
-        if return_to == "drill":
-            return await _send_drill_settings_menu(update, user_id)
         if return_to == "learning":
             return await _send_learning_settings_menu(update, user_id)
         return await _send_algo_settings_menu(update, user_id)
@@ -608,8 +527,6 @@ async def algo_settings_edit(update: Update, context: ContextTypes.DEFAULT_TYPE)
     context.user_data.pop("algo_edit_return", None)
     if return_to == "fsrs":
         return await _send_fsrs_settings_menu(update, user_id)
-    if return_to == "drill":
-        return await _send_drill_settings_menu(update, user_id)
     if return_to == "learning":
         return await _send_learning_settings_menu(update, user_id)
     return await _send_algo_settings_menu(update, user_id)

@@ -51,7 +51,6 @@ class ReportButtonTest(unittest.TestCase):
         # P6.2/P6.3: a guest can now open the clarify card from quizzes too.
         self.assertIn("clarify_fields", _flat(K._quiz_markup(GUEST)))
         self.assertIn("clarify_fields", _flat(K._quiz_markup(OWNER)))
-        self.assertIn("clarify_fields", _flat(K._weak_article_markup(GUEST)))
 
 
 if __name__ == "__main__":
