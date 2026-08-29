@@ -143,6 +143,7 @@ def _clarify_screen(context: ContextTypes.DEFAULT_TYPE, user_id):
         in_search=in_search,
         is_prep=is_prep,
         show_add_int=not _is_weak_return_state(return_state),
+        show_variants=in_search and bool(context.user_data.get("db_search_exact_variants")),
     )
 
 
@@ -453,7 +454,11 @@ async def _resume_after_clarify(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle input when clarifying/editing the fields of a word card."""
-    from ..handlers.db_search import _send_db_search_prompt
+    from ..handlers.db_search import (
+        _clear_db_search_variants,
+        _send_db_search_prompt,
+        _show_saved_db_search_variants,
+    )
     from ..handlers.synonyms import _open_synonyms_menu
     from ..handlers.weak import (
         _send_article_weak_prompt,
@@ -480,6 +485,16 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
 
     stage = context.user_data.get("edit_stage", "pick_field")
 
+    if (
+        stage == "pick_field"
+        and context.user_data.get("edit_return_state") == DB_SEARCH_VIEW
+        and text == t(_user_interface_lang(update.effective_user.id), "db_search_back_to_variants")
+    ):
+        context.user_data.pop("quiz_entry", None)
+        context.user_data.pop("quiz_edit_entry", None)
+        context.user_data.pop("edit_field", None)
+        return await _show_saved_db_search_variants(update, context)
+
     if stage == "report_comment":
         # P6.2: user typed their error/fix report; back/stop cancels back to the card.
         lang = _user_interface_lang(update.effective_user.id)
@@ -501,6 +516,7 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         context.user_data["edit_stage"] = "pick_field"
         if return_state == DB_SEARCH_VIEW:
+            _clear_db_search_variants(context)
             return await _send_db_search_prompt(update, update.effective_user.id, t(lang, "report_saved"))
         return await _resume_after_clarify(update, context, t(lang, "report_saved"))
 
@@ -541,6 +557,7 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
         if state == QUIZ_PARTIZIP2_WEAK:
             return await _send_partizip2_weak_prompt(update, context, prefix)
         if state == DB_SEARCH_VIEW:
+            _clear_db_search_variants(context)
             return await _send_db_search_prompt(update, update.effective_user.id, prefix)
         return await _exit_clarify(update, context)
 
@@ -625,6 +642,7 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
             if stage == "pick_field":
                 if context.user_data.get("edit_return_state") == DB_SEARCH_VIEW:
                     context.user_data.pop("quiz_edit_entry", None)
+                    _clear_db_search_variants(context)
                     return await _send_db_search_prompt(update, update.effective_user.id, None)
                 return await _resume_after_clarify(
                     update, context,
@@ -697,6 +715,7 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
                 lang = _user_interface_lang(uid)
                 prefix = t(lang, "added_to_learning") if added else t(lang, "nothing_to_send")
                 if state == DB_SEARCH_VIEW:
+                    _clear_db_search_variants(context)
                     return await _send_db_search_prompt(update, uid, prefix)
                 return await _resume_after_clarify(update, context, prefix)
             if text == t(_user_interface_lang(uid), "report_card"):

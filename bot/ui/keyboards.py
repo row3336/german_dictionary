@@ -171,12 +171,21 @@ def _weak_article_markup(user_id):
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 
+def _db_search_variants_markup(labels, user_id):
+    """One semantic-card variant per row, plus a localized search back button."""
+    lang = _user_interface_lang(user_id)
+    rows = [[label] for label in labels]
+    rows.append([t(lang, "back")])
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True)
+
+
 def _clarify_fields_markup(
     source,
     user_id=None,
     in_search=False,
     is_prep=False,
     show_add_int=True,
+    show_variants=False,
 ):
     """Unified clarify/card keyboard (P6: no separate root menu — one screen).
 
@@ -204,7 +213,11 @@ def _clarify_fields_markup(
         if show_add_int:
             card_actions.append("add_int")
         rows = [card_actions, [t(lang, "my_translation"), t(lang, "report_card")]]
-        rows.append([t(lang, "send_learn"), BACK_TEXT] if in_search else [BACK_TEXT])
+        last = [t(lang, "send_learn")] if in_search else []
+        if show_variants:
+            last.append(t(lang, "db_search_back_to_variants"))
+        last.append(BACK_TEXT)
+        rows.append(last)
         return ReplyKeyboardMarkup(rows, resize_keyboard=True)
     if source == "quiz":
         # Owner edits fields directly, so no "report / fix" button (#20) — that's
@@ -222,7 +235,10 @@ def _clarify_fields_markup(
             # spec #1: preposition-only fields, so the owner can (re)set the category
             # and case on an existing preposition straight from its card.
             rows.append(["preposition_type", "case_type"])
-        last = ([t(lang, "send_learn")] if in_search else []) + ["delete", BACK_TEXT]
+        last = [t(lang, "send_learn")] if in_search else []
+        if show_variants:
+            last.append(t(lang, "db_search_back_to_variants"))
+        last.extend(["delete", BACK_TEXT])
         rows.append(last)
         return ReplyKeyboardMarkup(rows, resize_keyboard=True)
     return ReplyKeyboardMarkup([["russian", BACK_TEXT]], resize_keyboard=True)
