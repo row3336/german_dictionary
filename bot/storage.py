@@ -745,6 +745,12 @@ def _normalize_text(text):
     return " ".join(str(text).strip().lower().split())
 
 
+def _sqlite_like_pattern(text):
+    """Build a substring pattern that treats SQLite LIKE tokens literally."""
+    escaped = str(text).replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
 def _split_variants(text):
     """Handle split variants."""
     raw = _safe_text(text)
@@ -4774,21 +4780,29 @@ def search_word(db_path, token):
         if row:
             return _row_to_entry(row)
 
-        like = f"%{candidate}%"
-        like_stripped = f"%{stripped}%"
+        like = _sqlite_like_pattern(candidate)
+        like_stripped = _sqlite_like_pattern(stripped)
         rows = conn.execute(
             """
             SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian
             , ukrainian, english, image, example, topic, preposition_type, case_type
             FROM words
-            WHERE lower(german) LIKE ? OR lower(german) LIKE ?
-               OR lower(infinitive) LIKE ? OR lower(infinitive) LIKE ?
-               OR lower(plural) LIKE ? OR lower(plural) LIKE ?
-               OR lower(prateritum) LIKE ? OR lower(prateritum) LIKE ?
-               OR lower(partizip2) LIKE ? OR lower(partizip2) LIKE ?
-               OR lower(russian) LIKE ? OR lower(russian) LIKE ?
-               OR lower(ukrainian) LIKE ? OR lower(ukrainian) LIKE ?
-               OR lower(english) LIKE ? OR lower(english) LIKE ?
+            WHERE lower(german) LIKE ? ESCAPE '\\'
+               OR lower(german) LIKE ? ESCAPE '\\'
+               OR lower(infinitive) LIKE ? ESCAPE '\\'
+               OR lower(infinitive) LIKE ? ESCAPE '\\'
+               OR lower(plural) LIKE ? ESCAPE '\\'
+               OR lower(plural) LIKE ? ESCAPE '\\'
+               OR lower(prateritum) LIKE ? ESCAPE '\\'
+               OR lower(prateritum) LIKE ? ESCAPE '\\'
+               OR lower(partizip2) LIKE ? ESCAPE '\\'
+               OR lower(partizip2) LIKE ? ESCAPE '\\'
+               OR lower(russian) LIKE ? ESCAPE '\\'
+               OR lower(russian) LIKE ? ESCAPE '\\'
+               OR lower(ukrainian) LIKE ? ESCAPE '\\'
+               OR lower(ukrainian) LIKE ? ESCAPE '\\'
+               OR lower(english) LIKE ? ESCAPE '\\'
+               OR lower(english) LIKE ? ESCAPE '\\'
             LIMIT 20
             """,
             (
@@ -5224,4 +5238,3 @@ def save_vf_check_result(
                 _safe_text(source_hash),
             ),
         )
-
