@@ -169,6 +169,19 @@ def _append_hint_lines(lines, entry, ok):
     return lines
 
 
+def _example_lines(example):
+    """Return trimmed nonempty example lines without splitting sentences."""
+    return [line.strip() for line in str(example or "").splitlines() if line.strip()]
+
+
+def _append_example_lines(lines, examples):
+    """Append already scoped example lines as one optional Telegram hint block."""
+    if examples:
+        lines.append("")
+        lines.extend(_md_escape(example) for example in examples)
+    return lines
+
+
 def _format_word_card(entry, title="Word card:", user_id=None):
     """Handle format word card."""
     status_line = ""
@@ -306,16 +319,18 @@ def _format_de_ru_question(entry):
         german = _low_word(entry.get("german", ""))
         lines.append(_md_escape(german))
     lines.append(">>    ❓")
-    # Always show image/example with the De>Ru question (memorization aid).
+    # Always show image and the first example line with the De>Ru question.
     image = str(entry.get("image", "") or "").strip()
-    example = str(entry.get("example", "") or "").strip()
+    examples = _example_lines(entry.get("example", ""))[:1]
     if image:
         lines.append("")
         lines.append(_md_escape(image))
-    if example:
-        if not image:
+    if examples:
+        if image:
             lines.append("")
-        lines.append(_md_escape(example))
+            lines.extend(_md_escape(example) for example in examples)
+        else:
+            _append_example_lines(lines, examples)
     return "\n".join(lines)
 
 
@@ -396,7 +411,16 @@ def _format_feedback_ru_de(entry, ok, lang="en"):
             lines.append("")
             lines.append(f"_  {_md_escape(forms)}_")
 
-    _append_hint_lines(lines, entry, ok)
+    # Ru→De keeps image behavior in the generic wrong-answer path. Examples are
+    # intentionally narrower: only prepositions show their full multiline value,
+    # and they show it after both correct and incorrect answers.
+    image = str(entry.get("image", "") or "").strip()
+    examples = _example_lines(entry.get("example", "")) if _low_word(word_type) == "praeposition" else []
+    if not ok and image:
+        lines.append("")
+        lines.append(_md_escape(image))
+    if examples:
+        _append_example_lines(lines, examples)
     return "\n".join(lines)
 
 
@@ -430,6 +454,10 @@ def _format_learning_preview_prompt(entry, dict_lang):
         german = _low_word(entry.get("german", ""))
         lines.append(f"*{_md_escape(german)}*")
     lines.append(_format_ru_question_no_q(entry, dict_lang))
+    examples = _example_lines(entry.get("example", ""))
+    if word_type != "praeposition":
+        examples = examples[:1]
+    _append_example_lines(lines, examples)
     return "\n".join(lines)
 
 
