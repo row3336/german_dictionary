@@ -220,10 +220,11 @@ class LearningEndOfQueueTest(_LearningDbTest):
 
 
 class LearningInputErrTest(_LearningDbTest):
-    def test_input_err_on_last_word_advances_once_and_ends_cycle(self):
+    def test_input_err_on_last_word_advances_once_and_keeps_shown_card(self):
         # last word at an interval step (3), wrong answer -> reset to step 0 (+0s)
-        # -> re-asked. Pressing input_err must correct it (advance 3 -> 4) and END
-        # the cycle (nothing else due), NOT re-show it (which would advance again).
+        # -> re-asked as the already selected next card. Pressing input_err must
+        # correct the previous answer (advance 3 -> 4) and keep that shown card
+        # without applying a second learning update.
         lang = _user_interface_lang(GUEST)
         self._enqueue(status="active", next_due="2000-01-01T00:00:00Z", step_index=3)
         update = _Update(GUEST)
@@ -240,7 +241,7 @@ class LearningInputErrTest(_LearningDbTest):
         self.assertEqual(ctx.user_data["last_learning_prev_step"], 3)
 
         # press input_err -> corrected as if right from step 3 -> step 4 (future),
-        # cycle ends with the service message, word NOT re-asked
+        # while the card already shown after the wrong answer remains on screen
         update.message.text = t(lang, "input_err")
         update.message.calls.clear()
         _run(learning_quiz(update, ctx))
@@ -248,7 +249,9 @@ class LearningInputErrTest(_LearningDbTest):
         self.assertEqual(item["step"], 4)                 # advanced once (3 -> 4), no double
         self.assertGreater(item["next_due"], "2026")      # rescheduled into the future, not due
         joined = "\n".join(c[0] for c in update.message.calls)
-        self.assertIn(t(lang, "learning_no_due"), joined)  # "nothing to repeat" — cycle ended
+        self.assertIn(t(lang, "input_err_fixed"), joined)
+        self.assertIn("инженер", joined)
+        self.assertEqual(ctx.user_data["quiz_entry"]["id"], self._word["id"])
 
     def test_second_input_err_is_a_noop(self):
         # guard against double-advance via repeated input_err presses

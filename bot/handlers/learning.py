@@ -311,7 +311,9 @@ async def _learning_add_words(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text, force_entry=None):
     """Show the next question/preview in the learning session."""
     user_id = update.effective_user.id
-    preview_entry = learning_preview_entry(get_db_path(), user_id=user_id)
+    preview_entry = None
+    if force_entry is None:
+        preview_entry = learning_preview_entry(get_db_path(), user_id=user_id)
     if preview_entry:
         preview_entry = resolve_bot_word_media(get_db_path(), user_id, preview_entry)
         context.user_data["quiz_entry"] = preview_entry
@@ -331,7 +333,7 @@ async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TY
         return LEARNING_QUIZ
 
     entry = force_entry
-    if not entry:
+    if entry is None:
         entry = _pick_learning_due_entry(context, user_id)
     if not entry:
         context.user_data["learning_preview_mode"] = False
@@ -468,19 +470,16 @@ async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return LEARNING_QUIZ
 
     if action == "input_err":
+        next_entry = entry
         applied = _apply_input_err_learning(update, context)
         lang = _user_interface_lang(user_id)
         prefix = t(lang, "input_err_fixed") if applied else t(lang, "input_err_nothing")
         if applied:
             # lift the 👎 from the corrected answer message; no new reaction is set
             await _set_reaction(context, user_id, context.user_data.get("last_learning_answer_message_id"), [])
-        # Don't re-show the corrected word: learning_apply_input_err already advanced
-        # it one step (as if answered correctly from its pre-wrong step), so re-asking
-        # would let it advance AGAIN and overtake the queue. Move on to whatever is due
-        # now instead — on the last word this ends the cycle ("nothing to repeat").
-        # (Warm-up steps are 0s, so a still-due word is picked up naturally by the
-        # normal show layer; only the interval phase changes.)
-        return await _send_learning_prompt(update, context, prefix)
+        # Correct only the previous answer. The current card was already selected
+        # and shown, so keep it without consulting preview or due selectors again.
+        return await _send_learning_prompt(update, context, prefix, force_entry=next_entry)
 
     if action == "learning_skip":
         snapshot = _capture_transaction_snapshot(user_id, entry.get("id"), ["learning"])
