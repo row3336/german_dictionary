@@ -17,6 +17,7 @@ from logging.handlers import TimedRotatingFileHandler
 from telegram.error import Forbidden, TelegramError
 
 from ..app_config import get_log_path
+from .log_safety import SecretRedactingFormatter
 
 _log = logging.getLogger("outbound")
 _configured = False
@@ -27,7 +28,7 @@ _configured = False
 _LOG_RETENTION_DAYS = 30
 
 
-def configure_outbound_logger():
+def configure_outbound_logger(secrets=()):
     """Attach a dedicated rotating file handler to the 'outbound' logger.
 
     Idempotent. Writes next to the main bot log (`outbound.log`), daily rotation
@@ -46,7 +47,9 @@ def configure_outbound_logger():
         encoding="utf-8",
         utc=True,
     )
-    handler.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
+    handler.setFormatter(
+        SecretRedactingFormatter("%(asctime)s %(message)s", secrets=secrets)
+    )
     _log.addHandler(handler)
     _log.setLevel(logging.INFO)
     _log.propagate = False

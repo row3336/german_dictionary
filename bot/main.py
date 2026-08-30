@@ -98,6 +98,7 @@ from .storage import (
 )
 from .common.db_safety import prepare_storage_safely
 from .common.lang import _user_interface_lang
+from .common.log_safety import SecretRedactingFormatter, run_polling_safely
 from .common.outbound import configure_outbound_logger
 from .common.navigation import _back_to_tests
 from .common.runtime_checks import require_supported_ptb
@@ -297,11 +298,14 @@ async def _flag_current_word(update: Update, context: ContextTypes.DEFAULT_TYPE,
     return await _back_to_tests(update, context)
 
 
-def _configure_logging():
+def _configure_logging(secrets=()):
     """Handle configure logging."""
     log_path = get_log_path()
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    formatter = SecretRedactingFormatter(
+        "%(asctime)s %(levelname)s %(name)s: %(message)s",
+        secrets=secrets,
+    )
 
     file_handler = TimedRotatingFileHandler(
         filename=log_path,
@@ -324,7 +328,7 @@ def _configure_logging():
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     # Outbound send log (P5) goes to its own rotating file, off the root logger.
-    configure_outbound_logger()
+    configure_outbound_logger(secrets=secrets)
     logging.getLogger("apscheduler").setLevel(logging.WARNING)
     logging.getLogger("apscheduler.executors.default").setLevel(logging.WARNING)
 
@@ -397,11 +401,11 @@ def _with_inbox_open(states):
 def main():
     """Handle main."""
     load_dotenv()
-    _configure_logging()
+    token = os.getenv("BOT_TOKEN")
+    _configure_logging(secrets=(token,))
     # Before anything talks to Telegram: an outdated PTB only fails later, inside
     # handlers, where the user just sees "Something went wrong" (prod 2026-07-04).
     require_supported_ptb()
-    token = os.getenv("BOT_TOKEN")
     if not token:
         raise SystemExit("BOT_TOKEN is missing in .env")
 
@@ -534,7 +538,7 @@ def main():
     # Rescue (spec #13) is wired as the LAST entry_point of `conv` above (not a
     # standalone handler) so the state it returns actually re-enters the
     # conversation; a stale text with no active conversation lands there.
-    app.run_polling()
+    run_polling_safely(app, logger)
 
 
 if __name__ == "__main__":
