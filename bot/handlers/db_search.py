@@ -321,6 +321,12 @@ def _find_phrase_side_matches(token, primary_entry):
 async def _send_db_search_card(update, context, entry, query, show_variants=False):
     """Render a chosen card and enter the existing clarify/full-card flow."""
     user_id = update.effective_user.id
+    word_id = (entry or {}).get("id")
+    entry = get_word_by_id(get_db_path(), word_id) if word_id else None
+    if not entry or entry.get("id") != word_id:
+        return await _send_db_search_prompt(
+            update, user_id, t(_user_interface_lang(user_id), "not_found")
+        )
     phrase_matches = _find_phrase_side_matches(query, entry)
     await update.message.reply_text(
         f"```text\n{_format_word_card(entry, title='Word card:', user_id=user_id)}\n```",

@@ -9,11 +9,13 @@ from _telegram_stub import install
 
 install()
 
-from bot.app_config import ADD_EDIT  # noqa: E402
+from bot.app_config import ADD_EDIT, DB_SEARCH_VIEW  # noqa: E402
 from bot.handlers import clarify_fields as C  # noqa: E402
 from bot.i18n import t  # noqa: E402
 from bot.storage import (  # noqa: E402
     add_word,
+    get_user_word_media,
+    get_word_by_id,
     init_db,
     register_or_update_user,
     set_user_dict_lang,
@@ -68,9 +70,17 @@ class EditEchoSpec8Test(unittest.TestCase):
         register_or_update_user(self.db, GUEST, "guest", "Guest")
         set_user_dict_lang(self.db, GUEST, "uk")
         self.word_id = add_word(self.db, {
-            "type": "nomen", "german": "Haus", "russian": "дом",
+            "type": "praeposition", "article": "der", "german": "Haus",
+            "plural": "Häuser", "infinitive": "wohnen", "prateritum": "wohnte",
+            "partizip2": "gewohnt", "komparativ": "näher", "superlativ": "am nächsten",
+            "russian": "дом",
             "ukrainian": "дім", "english": "house",
             "image": "shared image", "example": "shared example",
+            "preposition_type": "local", "case_type": "dat",
+        })["id"]
+        self.adjective_id = add_word(self.db, {
+            "type": "adjektiv", "german": "nah", "russian": "близкий",
+            "komparativ": "näher", "superlativ": "am nächsten",
         })["id"]
 
     def _restore_env(self):
@@ -81,11 +91,7 @@ class EditEchoSpec8Test(unittest.TestCase):
                 os.environ[name] = value
 
     def _entry(self):
-        return {
-            "id": self.word_id, "type": "nomen", "german": "Haus",
-            "russian": "дом", "ukrainian": "дім", "english": "house",
-            "image": "shared image", "example": "shared example",
-        }
+        return dict(get_word_by_id(self.db, self.word_id))
 
     def _select(self, user_id, lang, field):
         set_user_interface_lang(self.db, user_id, lang)
@@ -141,6 +147,7 @@ class EditEchoSpec8Test(unittest.TestCase):
         ):
             with self.subTest(field=field):
                 entry = self._entry()
+                entry["id"] = ""
                 entry.update({"image": "", "example": "", "russian": "", "ukrainian": "", "english": ""})
                 text = t("en", "my_translation") if field == "my_translation" else field
                 update = _Update(GUEST, text)
@@ -148,15 +155,78 @@ class EditEchoSpec8Test(unittest.TestCase):
                 self.assertEqual(asyncio.run(C.clarify_fields_input(update, context)), ADD_EDIT)
                 self.assertEqual([text for text, _ in update.message.calls], [prompt])
 
-    def test_owner_uses_shared_value_and_preset_field_has_no_echo(self):
+    def test_owner_media_uses_personal_fallback_and_every_shared_field_echoes(self):
+        set_user_word_media(self.db, OWNER, self.word_id, example="owner-only example")
         calls, _ = self._select(OWNER, "en", "example")
-        self._assert_echo(calls, "en", "shared example", t("en", "clarify_enter_value").format(field="example"))
+        self._assert_echo(calls, "en", "owner-only example", t("en", "clarify_enter_value").format(field="example"))
 
-        update = _Update(OWNER, "type")
-        context = _Context(self._entry())
-        asyncio.run(C.clarify_fields_input(update, context))
-        self.assertEqual(len(update.message.calls), 1)
-        self.assertEqual(update.message.calls[0][0], "Choose new type:")
+        expected = {
+            "ru": "дом",
+            "ukr": "дім",
+            "de": "haus",
+            "article": "der",
+            "plural": "Häuser",
+            "type": "praeposition",
+            "infinitive": "wohnen",
+            "prateritum": "wohnte",
+            "partizip2": "gewohnt",
+            "komparativ": "näher",
+            "superlativ": "am nächsten",
+            "preposition_type": "local",
+            "case_type": "dat",
+        }
+        for field, value in expected.items():
+            with self.subTest(field=field):
+                if field in ("komparativ", "superlativ"):
+                    update = _Update(OWNER, field)
+                    context = _Context(dict(get_word_by_id(self.db, self.adjective_id)))
+                    self.assertEqual(
+                        asyncio.run(C.clarify_fields_input(update, context)), ADD_EDIT
+                    )
+                    calls = update.message.calls
+                else:
+                    calls, _ = self._select(OWNER, "en", field)
+                if field == "type":
+                    prompt = "Choose new type:"
+                elif field == "preposition_type":
+                    prompt = "Choose preposition category:"
+                elif field == "case_type":
+                    prompt = "Choose case:"
+                else:
+                    prompt = t("en", "clarify_enter_value").format(field=field)
+                self._assert_echo(calls, "en", value, prompt)
+
+    def test_owner_media_write_is_personal_and_later_shared_edit_cannot_leak_it(self):
+        entry = self._entry()
+        context = _Context(entry)
+        context.user_data.update({
+            "quiz_entry": dict(entry),
+            "edit_return_state": DB_SEARCH_VIEW,
+            "edit_stage": "enter_value",
+            "edit_field": "image",
+        })
+        update = _Update(OWNER, "owner private image")
+        self.assertEqual(asyncio.run(C.clarify_fields_input(update, context)), ADD_EDIT)
+
+        shared = get_word_by_id(self.db, self.word_id)
+        self.assertEqual(shared["image"], "shared image")
+        self.assertEqual(get_user_word_media(self.db, OWNER, self.word_id)["image"], "owner private image")
+
+        entry = dict(context.user_data["quiz_edit_entry"])
+        context = _Context(entry)
+        context.user_data.update({
+            "quiz_entry": dict(entry),
+            "edit_return_state": DB_SEARCH_VIEW,
+            "edit_stage": "enter_value",
+            "edit_field": "ru",
+        })
+        update = _Update(OWNER, "НОВЫЙ ПЕРЕВОД")
+        self.assertEqual(asyncio.run(C.clarify_fields_input(update, context)), ADD_EDIT)
+
+        shared = get_word_by_id(self.db, self.word_id)
+        self.assertEqual(shared["russian"], "новый перевод")
+        self.assertEqual(shared["image"], "shared image")
+        self.assertEqual(get_user_word_media(self.db, OWNER, self.word_id)["image"], "owner private image")
 
 
 if __name__ == "__main__":

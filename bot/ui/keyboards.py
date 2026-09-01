@@ -180,8 +180,8 @@ def _clarify_fields_markup(
 ):
     """Unified clarify/card keyboard (P6: no separate root menu — one screen).
 
-    A guest (non-owner) edits only image/example (personal, P4) + report; the
-    owner gets the full field grid + delete. For quizzes/db_search the screen also
+    A guest edits personal image/example/translation + report. The owner gets
+    the full field grid, with personal image/example, and delete. For quizzes/db_search the screen also
     carries the report button, owner delete, and (db_search only) send-to-learning.
     `source == "add"` keeps the plain field grid (AI add flow, no card actions).
     """
@@ -214,6 +214,8 @@ def _clarify_fields_markup(
         # Owner edits fields directly, so no "report / fix" button (#20) — that's
         # for guests to report TO the owner; the owner has nobody to report to.
         card_actions = ["image", "example"]
+        if is_verb:
+            card_actions.append(t(lang, "clarify_conjugation"))
         if show_add_int:
             card_actions.append("add_int")
         rows = [
@@ -222,8 +224,6 @@ def _clarify_fields_markup(
             ["prateritum", "partizip2", "komparativ", "superlativ"],
             card_actions,
         ]
-        if is_verb:
-            rows.insert(3, [t(lang, "clarify_conjugation")])
         if is_prep:
             # spec #1: preposition-only fields, so the owner can (re)set the category
             # and case on an existing preposition straight from its card.
@@ -240,15 +240,24 @@ def _clarify_fields_markup(
 def _clarify_conjugation_markup(user_id, allow_praeteritum):
     """Owner-only actions for the conjugation block editor."""
     lang = _user_interface_lang(user_id)
-    rows = [
-        [t(lang, "clarify_conjugation_view")],
-        [t(lang, "clarify_conjugation_edit_praesens")],
-        [t(lang, "clarify_conjugation_clear_praesens")],
-    ]
     if allow_praeteritum:
-        rows.insert(2, [t(lang, "clarify_conjugation_edit_praeteritum")])
-        rows.insert(4, [t(lang, "clarify_conjugation_clear_praeteritum")])
-    rows.append([t(lang, "back")])
+        rows = [
+            [
+                t(lang, "clarify_conjugation_view"),
+                t(lang, "clarify_conjugation_edit_praesens"),
+                t(lang, "clarify_conjugation_edit_praeteritum"),
+            ],
+            [
+                t(lang, "clarify_conjugation_clear_praesens"),
+                t(lang, "clarify_conjugation_clear_praeteritum"),
+                t(lang, "back"),
+            ],
+        ]
+    else:
+        rows = [
+            [t(lang, "clarify_conjugation_view"), t(lang, "clarify_conjugation_edit_praesens")],
+            [t(lang, "clarify_conjugation_clear_praesens"), t(lang, "back")],
+        ]
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 

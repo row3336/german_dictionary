@@ -89,6 +89,12 @@ from ..ui.keyboards import (
 # P8: cap user-supplied free text (report / personal media) against abuse/bloat.
 _MAX_REPORT_LEN = 1000
 _MAX_MEDIA_LEN = 1000
+_ENTRY_FIELD_ALIASES = {
+    "ru": "russian",
+    "ukr": "ukrainian",
+    "en": "english",
+    "de": "german",
+}
 
 
 def _utf16_length(value):
@@ -97,12 +103,14 @@ def _utf16_length(value):
 
 
 async def _send_effective_value_echo(message, user_id, entry, field):
-    """Send a copyable effective value before a personal-media edit prompt."""
-    effective = resolve_bot_word_media(get_db_path(), user_id, entry)
+    """Send a copyable current value before editing a non-empty field."""
+    word_id = (entry or {}).get("id")
+    stored = get_word_by_id(get_db_path(), word_id) if word_id else None
+    effective = resolve_bot_word_media(get_db_path(), user_id, stored or entry)
     if field == "my_translation":
         value = _entry_translation(effective, _user_dict_lang(user_id))
     else:
-        value = effective.get(field, "")
+        value = effective.get(_ENTRY_FIELD_ALIASES.get(field, field), "")
     value = str(value or "")
     if not value.strip():
         return
@@ -171,9 +179,12 @@ def _add_int_mode_for_return_state(user_id, return_state, selected_mode=None):
 
 
 def _allowed_clarify_fields(source, user_id=None, is_prep=False):
-    """Editable fields for this source. A guest (non-owner) editing a quiz/db_search
-    card may only touch image/example (their personal version, P4). The two
-    preposition fields (spec #1) are owner-only and only offered for a preposition."""
+    """Editable fields for this source.
+
+    A guest editing a quiz/db_search card may only touch personal
+    image/example/translation. Owner image/example are personal too; the
+    remaining owner fields are shared. Preposition fields are owner-only.
+    """
     if source == "quiz" and user_id is not None and not is_owner(user_id):
         # spec #7: guest may also edit their personal translation (their dict_lang).
         return {"image", "example", "my_translation"}
@@ -223,13 +234,7 @@ def _set_entry_field(entry, raw_update):
     field = field.strip().lower()
     value = value.strip()
 
-    alias = {
-        "ru": "russian",
-        "ukr": "ukrainian",
-        "en": "english",
-        "de": "german",
-    }
-    field = alias.get(field, field)
+    field = _ENTRY_FIELD_ALIASES.get(field, field)
 
     allowed = {
         "russian",
@@ -960,10 +965,9 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
         context.user_data["edit_field"] = field
 
         context.user_data["edit_stage"] = "enter_value"
-        if field in ("image", "example", "my_translation"):
-            await _send_effective_value_echo(
-                update.message, update.effective_user.id, entry, field
-            )
+        await _send_effective_value_echo(
+            update.message, update.effective_user.id, entry, field
+        )
         if field == "type":
             await update.message.reply_text(
                 "Choose new type:",
@@ -1040,9 +1044,25 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
 
     if source == "quiz":
         user_id = update.effective_user.id
-        if is_owner(user_id):
-            # Owner edits the shared word directly.
-            update_word_fields(get_db_path(), updated.get("id"), updated)
+        if field in ("image", "example"):
+            # Media is personal for every user, including owner. A blank value
+            # clears the override and restores Telegram's shared fallback.
+            set_user_word_media(
+                get_db_path(),
+                user_id,
+                updated.get("id"),
+                image=updated.get("image") if field == "image" else None,
+                example=updated.get("example") if field == "example" else None,
+            )
+        elif is_owner(user_id):
+            # Shared edits are intentionally field-scoped. The session entry may
+            # contain effective personal media, which must never leak into words.
+            storage_field = _ENTRY_FIELD_ALIASES.get(field, field)
+            update_word_fields(
+                get_db_path(),
+                updated.get("id"),
+                {storage_field: updated.get(storage_field, "")},
+            )
         elif field == "my_translation":
             # spec #7: guest personal translation → their dict_lang column in
             # user_word_media; '' clears it (revert to shared). Shared `words` untouched.
@@ -1054,15 +1074,13 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
                 updated.get("my_translation", ""),
             )
         else:
-            # Guest: persist only the edited image/example to their personal version
-            # (P4); the shared `words` row is never touched.
-            set_user_word_media(
-                get_db_path(),
-                user_id,
-                updated.get("id"),
-                image=updated.get("image") if field == "image" else None,
-                example=updated.get("example") if field == "example" else None,
+            # Defense in depth: the guest keyboard/allowlist should make every
+            # remaining field unreachable.
+            await update.message.reply_text(
+                t(_user_interface_lang(user_id), "clarify_use_field_buttons"),
+                reply_markup=_clarify_screen(context, user_id),
             )
+            return ADD_EDIT
         current_quiz_entry = context.user_data.get("quiz_entry")
         if current_quiz_entry and current_quiz_entry.get("id") == updated.get("id"):
             context.user_data["quiz_entry"] = updated

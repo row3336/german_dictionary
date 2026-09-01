@@ -68,11 +68,15 @@ class BotMediaFallbackTest(unittest.TestCase):
         effective = resolve_bot_word_media(self.db, GUEST, self.entry)
         self.assertEqual(effective["my_translation"], "дім")
 
-    def test_owner_gets_a_new_shared_copy(self):
+    def test_owner_uses_personal_media_fallback_but_shared_translation(self):
         os.environ["OWNER_ID"] = str(OWNER)
         self.addCleanup(lambda: os.environ.pop("OWNER_ID", None))
+        set_user_word_media(self.db, OWNER, self.word_id, image="owner image", example="  ")
+        set_user_word_translation(self.db, OWNER, self.word_id, "ru", "личный перевод")
         effective = resolve_bot_word_media(self.db, OWNER, self.entry)
-        self.assertEqual(effective, self.entry)
+        self.assertEqual(effective["image"], "owner image")
+        self.assertEqual(effective["example"], "shared example")
+        self.assertNotIn("my_translation", effective)
         self.assertIsNot(effective, self.entry)
 
 

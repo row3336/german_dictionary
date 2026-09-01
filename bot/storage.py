@@ -1901,9 +1901,9 @@ def list_user_activity(db_path):
     ]
 
 
-# --- Personal example/image (P4): a guest's per-word value, owner edits stay in
-# the shared `words`. A guest sees ONLY their personal image/example (blank when
-# unset) — never the owner's shared values. The owner sees the shared word. ---
+# --- Personal example/image storage (P4). Telegram applies its own per-field
+# personal->shared fallback for every user, including owner. The storage overlay
+# below retains the separate Mini App contract. ---
 
 # spec #7: which words-translation column a user's dict_lang overrides.
 _DICT_TRANSLATION_COLUMN = {"ru": "russian", "uk": "ukrainian", "en": "english"}
@@ -3826,8 +3826,9 @@ def get_word_by_id(db_path, word_id):
     with _connect(db_path) as conn:
         row = conn.execute(
             """
-            SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian
-            , ukrainian, english, image, example, topic, preposition_type, case_type,
+            SELECT id, type, article, german, plural, infinitive, prateritum, partizip2,
+              komparativ, superlativ, russian, ukrainian, english, image, example,
+              topic, preposition_type, case_type,
               conjugation_praesens, conjugation_praeteritum, cefr_level, is_separable
             FROM words
             WHERE id = ?

@@ -102,7 +102,7 @@ class UserWordMediaTest(unittest.TestCase):
         self.assertEqual(out["example"], "shared example")
         self.assertEqual(out["image"], "shared-img")
 
-    def test_word_card_guest_falls_back_to_shared_owner_shared(self):
+    def test_word_card_guest_and_owner_use_personal_to_shared_fallback(self):
         from bot.ui.formatting import _format_word_card
 
         os.environ["DB_PATH"] = self.db  # _format_word_card resolves the DB via get_db_path()
@@ -122,10 +122,15 @@ class UserWordMediaTest(unittest.TestCase):
         card_guest2 = _format_word_card(entry, user_id=U1)
         self.assertIn("example: mnemonic ex", card_guest2)
         self.assertIn("image: my-img", card_guest2)
-        # owner -> shared
+        # owner without personal -> shared
         card_owner = _format_word_card(entry, user_id=5000)
         self.assertIn("example: shared example", card_owner)
         self.assertIn("image: shared-img", card_owner)
+        # owner personal media is private and wins independently per field
+        set_user_word_media(self.db, 5000, self.wid, example="owner-only example")
+        card_owner_personal = _format_word_card(entry, user_id=5000)
+        self.assertIn("example: owner-only example", card_owner_personal)
+        self.assertIn("image: shared-img", card_owner_personal)
 
 
 if __name__ == "__main__":

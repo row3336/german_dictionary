@@ -61,6 +61,10 @@ def _flat(markup):
     return [button for row in markup.rows for button in row]
 
 
+def _rows(markup):
+    return [list(row) for row in markup.rows]
+
+
 class ClarifyConjugationTest(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.NamedTemporaryFile(delete=False)
@@ -156,10 +160,23 @@ class ClarifyConjugationTest(unittest.TestCase):
 
         update = _Update(OWNER)
         ctx = _Ctx()
-        state = asyncio.run(_send_db_search_card(update, ctx, dict(self.modal), "können"))
+        partial = {
+            key: self.modal[key]
+            for key in ("id", "type", "german", "infinitive", "russian")
+        }
+        state = asyncio.run(_send_db_search_card(update, ctx, partial, "können"))
         self.assertEqual(state, ADD_EDIT)
+        self.assertIn("Präsens:", update.message.calls[0][0])
+        self.assertEqual(ctx.user_data["quiz_entry"]["conjugation_praesens"], PRAESENS)
         buttons = _flat(update.message.calls[-1][1]["reply_markup"])
         self.assertIn(t("en", "clarify_conjugation"), buttons)
+
+    def test_owner_card_places_media_conjugation_and_add_int_in_one_row(self):
+        rows = _rows(C._clarify_screen(self._ctx(self.modal), OWNER))
+        self.assertIn(
+            ["image", "example", t("en", "clarify_conjugation"), "add_int"],
+            rows,
+        )
 
     def test_guest_manual_submenu_input_is_rejected(self):
         ctx = self._ctx(self.modal)
@@ -170,13 +187,31 @@ class ClarifyConjugationTest(unittest.TestCase):
     def test_modal_menu_has_both_blocks_regular_hides_praeteritum_actions(self):
         modal_update, modal_ctx = self._open(self.modal)
         regular_update, regular_ctx = self._open(self.regular)
-        modal_buttons = _flat(modal_update.message.calls[-1][1]["reply_markup"])
-        regular_buttons = _flat(regular_update.message.calls[-1][1]["reply_markup"])
+        modal_markup = modal_update.message.calls[-1][1]["reply_markup"]
+        regular_markup = regular_update.message.calls[-1][1]["reply_markup"]
+        modal_buttons = _flat(modal_markup)
+        regular_buttons = _flat(regular_markup)
         self.assertEqual(modal_ctx.user_data["edit_stage"], "conjugation_menu")
         self.assertEqual(regular_ctx.user_data["edit_stage"], "conjugation_menu")
         for key in ("clarify_conjugation_edit_praeteritum", "clarify_conjugation_clear_praeteritum"):
             self.assertIn(t("en", key), modal_buttons)
             self.assertNotIn(t("en", key), regular_buttons)
+        self.assertEqual(_rows(modal_markup), [
+            [
+                t("en", "clarify_conjugation_view"),
+                t("en", "clarify_conjugation_edit_praesens"),
+                t("en", "clarify_conjugation_edit_praeteritum"),
+            ],
+            [
+                t("en", "clarify_conjugation_clear_praesens"),
+                t("en", "clarify_conjugation_clear_praeteritum"),
+                t("en", "back"),
+            ],
+        ])
+        self.assertEqual(_rows(regular_markup), [
+            [t("en", "clarify_conjugation_view"), t("en", "clarify_conjugation_edit_praesens")],
+            [t("en", "clarify_conjugation_clear_praesens"), t("en", "back")],
+        ])
 
     def test_view_keeps_submenu_and_shows_both_blocks(self):
         _, ctx = self._open(self.modal)

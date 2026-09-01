@@ -12,7 +12,7 @@ def resolve_bot_word_media(db_path, user_id, shared_entry):
     The caller must pass the unoverlaid shared entry.
     """
     out = dict(shared_entry or {})
-    if not user_id or not out.get("id") or is_owner(user_id):
+    if not user_id or not out.get("id"):
         return out
 
     media = get_user_word_media(db_path, user_id, out["id"])
@@ -20,6 +20,11 @@ def resolve_bot_word_media(db_path, user_id, shared_entry):
         personal = media.get(field, "")
         if str(personal or "").strip():
             out[field] = personal
+
+    # Owner translations remain shared. Only image/example use the owner's
+    # personal row; guest personal translations keep their existing contract.
+    if is_owner(user_id):
+        return out
 
     _, dict_lang = get_user_languages(db_path, user_id)
     translation_column = _DICT_TRANSLATION_COLUMN.get(dict_lang)
