@@ -218,6 +218,29 @@ class RenderReviewHtmlTest(unittest.TestCase):
         self.assertIn("wireEditable(dv, f, true)", html)
         self.assertIn("wireEditable(sp, f, false)", html)
 
+    def test_translation_drag_and_add_update_model_without_render(self):
+        html = render_review_html(_doc([_recheck_card()]))
+
+        self.assertIn('className = "drag-handle"', html)
+        self.assertIn('handle.onpointerdown = e => startChipDrag', html)
+        self.assertIn('if (COMMA_FIELDS.has(f.name)) tdNew.appendChild(makeAddChip(f))', html)
+        self.assertIn('e.key === "ArrowRight"', html)
+
+        finish_body = _function_body(html, "finishChipDrag")
+        self.assertIn("syncChipDomOrder", finish_body)
+        self.assertNotIn("render()", finish_body)
+
+        chip_body = _function_body(html, "makeChip")
+        self.assertIn("moveChip(f, ch, target", chip_body)
+        self.assertIn("animateChipShift", chip_body)
+        self.assertNotIn("render()", chip_body)
+
+        add_body = _function_body(html, "makeAddChip")
+        self.assertIn("f.chips.push(chip)", add_body)
+        self.assertIn("inp.replaceWith(makeChip(f, chip), makeAddChip(f))", add_body)
+        self.assertIn('ev.key === "Escape"', add_body)
+        self.assertNotIn("render()", add_body)
+
     def test_build_apply_wire_shape_remains_unchanged(self):
         html = render_review_html(_doc([_recheck_card()]))
         body = _function_body(html, "buildApply")

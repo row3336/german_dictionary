@@ -99,15 +99,46 @@ _TEMPLATE = r"""<!DOCTYPE html>
                              color: var(--muted); display: block; margin-bottom: 3px; }
   tr.rejected td.new { opacity: .35; }
   .chip {
-    display: inline-block; margin: 2px 4px 2px 0; padding: 3px 10px;
+    display: inline-flex; align-items: center; gap: 5px;
+    margin: 2px 4px 2px 0; padding: 3px 10px;
     border-radius: 999px; border: 1px solid var(--border); background: #2b323b;
     cursor: pointer; user-select: none; font-size: 13px;
   }
   .chip.new { background: var(--green-bg); border-color: var(--green); color: #7ee787; }
   .chip.offc { background: transparent; border-style: dashed; color: var(--muted);
                text-decoration: line-through; }
+  .chip.drag-source { opacity: .18; pointer-events: none; }
+  .chip.drop-target { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .chip.drag-ghost {
+    position: fixed; z-index: 1000; margin: 0; pointer-events: none;
+    opacity: .94; transform: scale(1.04) rotate(-1deg);
+    box-shadow: 0 10px 28px rgba(0,0,0,.42);
+  }
+  .drag-handle {
+    border: 0; padding: 0; background: transparent; color: inherit;
+    font: inherit; line-height: 1; cursor: grab; opacity: .65; touch-action: none;
+  }
+  .drag-handle:active { cursor: grabbing; }
+  .drag-handle:hover, .drag-handle:focus-visible { opacity: 1; }
+  .drag-handle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .chip input { background: var(--panel2); color: var(--text); border: 1px solid var(--accent);
                 border-radius: 6px; font-size: 13px; padding: 1px 6px; }
+  .add-chip {
+    width: 28px; height: 28px; margin: 2px 4px 2px 0; padding: 0;
+    border-radius: 999px; border: 1px dashed var(--accent);
+    background: transparent; color: var(--accent); cursor: pointer;
+    font-size: 18px; line-height: 24px; vertical-align: middle;
+  }
+  .add-chip:hover { background: rgba(77,163,255,.12); }
+  .add-chip:focus-visible, .add-chip-input:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px;
+  }
+  .add-chip-input {
+    width: 220px; margin: 2px 4px 2px 0; padding: 4px 8px;
+    border-radius: 6px; border: 1px solid var(--accent);
+    background: var(--panel2); color: var(--text); font-size: 13px;
+    outline: none; vertical-align: middle;
+  }
   .single {
     display: inline-block; min-width: 60px; padding: 3px 10px; border-radius: 6px;
     border: 1px solid var(--green); background: var(--green-bg); color: #7ee787; cursor: text;
@@ -125,7 +156,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
 <body>
 
 <h1 id="title">🌐 VF review</h1>
-<div class="sub">Клик по чипу — включить/выключить значение · двойной клик — исправить текст · галка справа — принять/отклонить поле · галка в шапке слова — слово целиком. Закончив, жми «Скачать apply-JSON» и отправь файл боту.</div>
+<div class="sub">Клик по чипу — включить/выключить значение · двойной клик — исправить текст · перетяни перевод за «⋮⋮» — изменить порядок · «+» — добавить перевод · галка справа — принять/отклонить поле · галка в шапке слова — слово целиком. Закончив, жми «Скачать apply-JSON» и отправь файл боту.</div>
 
 <div class="topbar">
   <span class="counter" id="cWords"></span>
@@ -276,6 +307,7 @@ function render() {
           tdNew.appendChild(sel);
         } else if (f.kind === "chips") {
           f.chips.forEach(ch => tdNew.appendChild(makeChip(f, ch)));
+          if (COMMA_FIELDS.has(f.name)) tdNew.appendChild(makeAddChip(f));
         } else if (f.kind === "block") {
           // multiline unit (Präsens conjugation): edited as a whole, lines kept
           const dv = document.createElement("div");
@@ -369,15 +401,186 @@ function wireEditable(el, f, multilineValue) {
   };
 }
 
+let activeChipDrag = null;
+
+function moveChip(f, moved, target, placeAfter = false) {
+  const from = f.chips.indexOf(moved);
+  let to = f.chips.indexOf(target);
+  if (from < 0 || to < 0 || from === to) return false;
+  if (placeAfter) to += 1;
+  f.chips.splice(from, 1);
+  if (from < to) to -= 1;
+  f.chips.splice(to, 0, moved);
+  return f.chips.indexOf(moved) !== from;
+}
+
+function chipPositions(container) {
+  return new Map([...container.querySelectorAll(".chip")].map(node =>
+    [node, node.getBoundingClientRect()]));
+}
+
+function animateChipShift(container, before) {
+  if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+  for (const node of container.querySelectorAll(".chip")) {
+    const first = before.get(node);
+    if (!first || node.classList.contains("drag-source")) continue;
+    const last = node.getBoundingClientRect();
+    const dx = first.left - last.left;
+    const dy = first.top - last.top;
+    if (!dx && !dy) continue;
+    node.getAnimations?.().forEach(animation => animation.cancel());
+    node.animate?.(
+      [{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "translate(0, 0)" }],
+      { duration: 155, easing: "cubic-bezier(.2,.8,.2,1)" }
+    );
+  }
+}
+
+function nearestChip(container, source, x, y) {
+  let best = null;
+  let bestDistance = Infinity;
+  for (const node of container.querySelectorAll(".chip")) {
+    if (node === source) continue;
+    const rect = node.getBoundingClientRect();
+    const dx = x - (rect.left + rect.width / 2);
+    const dy = y - (rect.top + rect.height / 2);
+    const distance = dx * dx + dy * dy;
+    if (distance < bestDistance) { best = node; bestDistance = distance; }
+  }
+  return best;
+}
+
+function positionDragGhost(state, x, y) {
+  state.ghost.style.left = `${x - state.offsetX}px`;
+  state.ghost.style.top = `${y - state.offsetY}px`;
+}
+
+function syncChipDomOrder(container, chips) {
+  const nodes = new Map([...container.querySelectorAll(".chip")].map(node =>
+    [node._chipData, node]));
+  const anchor = container.querySelector(".add-chip, .add-chip-input");
+  for (const chip of chips) {
+    const node = nodes.get(chip);
+    if (!node) continue;
+    anchor ? container.insertBefore(node, anchor) : container.appendChild(node);
+  }
+}
+
+function cancelChipDragOnEscape(event) {
+  if (event.key !== "Escape" || !activeChipDrag) return;
+  event.preventDefault();
+  finishChipDrag(null, true);
+}
+
+function startChipDrag(event, f, ch, el, handle) {
+  if (event.button !== 0 || activeChipDrag) return;
+  event.preventDefault(); event.stopPropagation();
+  const rect = el.getBoundingClientRect();
+  const ghost = el.cloneNode(true);
+  ghost.classList.add("drag-ghost");
+  ghost.classList.remove("drag-source", "drop-target");
+  ghost.style.width = `${rect.width}px`;
+  ghost.style.height = `${rect.height}px`;
+  document.body.appendChild(ghost);
+  activeChipDrag = {
+    pointerId: event.pointerId, field: f, chip: ch, source: el,
+    handle, container: el.parentElement, ghost,
+    offsetX: event.clientX - rect.left, offsetY: event.clientY - rect.top,
+    originalIndex: f.chips.indexOf(ch), target: null,
+  };
+  el.classList.add("drag-source");
+  positionDragGhost(activeChipDrag, event.clientX, event.clientY);
+  handle.setPointerCapture?.(event.pointerId);
+  window.addEventListener("pointermove", moveChipDrag, { passive: false });
+  window.addEventListener("pointerup", finishChipDrag);
+  window.addEventListener("pointercancel", finishChipDrag);
+  window.addEventListener("keydown", cancelChipDragOnEscape);
+}
+
+function moveChipDrag(event) {
+  const state = activeChipDrag;
+  if (!state || event.pointerId !== state.pointerId) return;
+  event.preventDefault();
+  positionDragGhost(state, event.clientX, event.clientY);
+  const target = nearestChip(state.container, state.source, event.clientX, event.clientY);
+  if (!target || !target._chipData) return;
+  if (state.target && state.target !== target) state.target.classList.remove("drop-target");
+  state.target = target;
+  target.classList.add("drop-target");
+  const rect = target.getBoundingClientRect();
+  const sameRow = event.clientY >= rect.top && event.clientY <= rect.bottom;
+  const placeAfter = sameRow
+    ? event.clientX > rect.left + rect.width / 2
+    : event.clientY > rect.top + rect.height / 2;
+  const before = chipPositions(state.container);
+  if (!moveChip(state.field, state.chip, target._chipData, placeAfter)) return;
+  placeAfter ? target.after(state.source) : target.before(state.source);
+  animateChipShift(state.container, before);
+}
+
+function finishChipDrag(event, cancel = false) {
+  const state = activeChipDrag;
+  if (!state || (event && event.pointerId !== undefined && event.pointerId !== state.pointerId)) return;
+  if (cancel) {
+    const current = state.field.chips.indexOf(state.chip);
+    if (current >= 0) {
+      state.field.chips.splice(current, 1);
+      state.field.chips.splice(state.originalIndex, 0, state.chip);
+      syncChipDomOrder(state.container, state.field.chips);
+    }
+  }
+  state.target?.classList.remove("drop-target");
+  state.source.classList.remove("drag-source");
+  if (state.handle.hasPointerCapture?.(state.pointerId))
+    state.handle.releasePointerCapture(state.pointerId);
+  state.ghost.remove();
+  activeChipDrag = null;
+  window.removeEventListener("pointermove", moveChipDrag);
+  window.removeEventListener("pointerup", finishChipDrag);
+  window.removeEventListener("pointercancel", finishChipDrag);
+  window.removeEventListener("keydown", cancelChipDragOnEscape);
+}
+
 function makeChip(f, ch) {
   const el = document.createElement("span");
   el.className = "chip" + (ch.isNew ? " new" : "") + (ch.on ? "" : " offc");
-  el.textContent = ch.text;
   el.title = "клик — включить/исключить · двойной клик — исправить";
+  if (COMMA_FIELDS.has(f.name)) {
+    const handle = document.createElement("button");
+    handle.type = "button";
+    handle.className = "drag-handle";
+    handle.textContent = "⋮⋮";
+    handle.title = "перетащить перевод · Alt+←/→ — сдвинуть";
+    handle.setAttribute("aria-label", `Переместить «${ch.text}» в поле ${f.name}`);
+    handle.draggable = false;
+    handle.onclick = handle.ondblclick = e => e.stopPropagation();
+    handle.onpointerdown = e => startChipDrag(e, f, ch, el, handle);
+    handle.onkeydown = e => {
+      if (!e.altKey || !["ArrowLeft", "ArrowRight"].includes(e.key)) return;
+      e.preventDefault(); e.stopPropagation();
+      const from = f.chips.indexOf(ch);
+      const to = e.key === "ArrowLeft" ? from - 1 : from + 1;
+      if (to < 0 || to >= f.chips.length) return;
+      const target = f.chips[to];
+      const targetNode = [...el.parentElement.querySelectorAll(".chip")]
+        .find(node => node._chipData === target);
+      if (!targetNode) return;
+      const before = chipPositions(el.parentElement);
+      if (!moveChip(f, ch, target, e.key === "ArrowRight")) return;
+      e.key === "ArrowRight" ? targetNode.after(el) : targetNode.before(el);
+      animateChipShift(el.parentElement, before);
+    };
+    el.appendChild(handle);
+  }
+  el._chipData = ch;
+  const label = document.createElement("span");
+  label.textContent = ch.text;
+  el.appendChild(label);
   // Single click toggles AFTER a short delay so it can be cancelled by dblclick.
   let clickTimer = null;
   let editing = false;
-  el.onclick = () => {
+  el.onclick = e => {
+    if (e.target.closest(".drag-handle")) return;
     if (editing || clickTimer) return;
     clickTimer = setTimeout(() => {
       clickTimer = null;
@@ -385,6 +588,7 @@ function makeChip(f, ch) {
     }, 250);
   };
   el.ondblclick = e => {
+    if (e.target.closest(".drag-handle")) return;
     e.stopPropagation();
     if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
     if (editing) return;
@@ -392,14 +596,15 @@ function makeChip(f, ch) {
     const inp = document.createElement("input");
     inp.value = ch.text;
     inp.size = Math.max(8, ch.text.length + 2);
-    el.textContent = ""; el.appendChild(inp); inp.focus(); inp.select();
+    label.replaceWith(inp); inp.focus(); inp.select();
     const finishEdit = cancel => {
       if (!editing) return;
       const nextText = cancel ? ch.text : (inp.value.trim() || ch.text);
       editing = false;
       inp.onblur = null;
       ch.text = nextText;
-      el.textContent = ch.text;
+      label.textContent = ch.text;
+      inp.replaceWith(label);
     };
     inp.onblur = () => finishEdit(false);
     inp.onkeydown = ev => {
@@ -414,6 +619,44 @@ function makeChip(f, ch) {
     };
   };
   return el;
+}
+
+function makeAddChip(f) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "add-chip";
+  btn.textContent = "+";
+  btn.title = "добавить перевод";
+  btn.setAttribute("aria-label", `Добавить значение в поле ${f.name}`);
+  btn.onclick = () => {
+    const inp = document.createElement("input");
+    inp.type = "text";
+    inp.className = "add-chip-input";
+    inp.placeholder = "новый перевод";
+    inp.setAttribute("aria-label", `Новое значение поля ${f.name}`);
+    btn.replaceWith(inp);
+    inp.focus();
+
+    let finished = false;
+    const done = (save = true) => {
+      if (finished) return;
+      finished = true;
+      const text = inp.value.trim();
+      if (save && text) {
+        const chip = { text, on: true, isNew: true };
+        f.chips.push(chip);
+        inp.replaceWith(makeChip(f, chip), makeAddChip(f));
+      } else {
+        inp.replaceWith(makeAddChip(f));
+      }
+    };
+    inp.onblur = () => done(true);
+    inp.onkeydown = ev => {
+      if (ev.key === "Enter") { ev.preventDefault(); done(true); }
+      if (ev.key === "Escape") { ev.preventDefault(); done(false); }
+    };
+  };
+  return btn;
 }
 
 function updateCounters() {
