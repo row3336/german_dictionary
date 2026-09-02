@@ -112,6 +112,18 @@ class LearningShowOrderTests(unittest.TestCase):
             learning_update_result(self.db, user_id=1, word_id=entry["id"], ok=True, intervals_seconds=[0, 0, 0, 0])
         self.assertEqual(seen, ["Apfel", "Katze", "Haus", "Buch"])
 
+    def test_step_zero_reset_does_not_repeat_before_later_step_alternative(self):
+        reset_word = _add(self.db, "Apfel", "1")
+        alternative = _add(self.db, "Birne", "1")
+        self._enqueue_due([reset_word], step_index=0)
+        self._enqueue_due([alternative], step_index=3)
+        ctx = _ctx()
+        ctx.user_data["learning_recent_ids"] = [reset_word["id"]]
+
+        entry = _pick_learning_due_entry(ctx, user_id=1)
+
+        self.assertEqual(entry["id"], alternative["id"])
+
     def test_later_rounds_spacing_no_repeat_within_three(self):
         words = [_add(self.db, g, "1") for g in ("Apfel", "Katze", "Haus", "Buch")]
         self._enqueue_due(words, step_index=1)  # all past the first round, stay due

@@ -123,25 +123,27 @@ def _pick_learning_due_entry(context, user_id):
       - later rounds (step_index > 0): random, but a word is not shown again
         within the last two shows — at most once per three consecutive shows.
     Recent shows are tracked in context ("learning_recent_ids"); when the pool is
-    too small to honour the spacing, it relaxes as far as needed.
+    too small to honour the spacing, it relaxes as far as needed. An available
+    alternative to the last shown word is selected before step priority is
+    applied, so a wrong answer reset to step 0 cannot jump ahead of that
+    alternative and immediately repeat.
     """
     due_entries = learning_due_entries(get_db_path(), user_id=user_id)
     if not due_entries:
         return None
     recent = context.user_data.get("learning_recent_ids") or []
     last_shown = recent[-1] if recent else None
+    alternatives = [entry for entry in due_entries if entry.get("id") != last_shown]
+    selection_entries = alternatives or due_entries
 
-    first_round = [entry for entry in due_entries if int(entry.get("learning_step") or 0) == 0]
+    first_round = [entry for entry in selection_entries if int(entry.get("learning_step") or 0) == 0]
     if first_round:
         # already ordered by created_at ASC (preview order) in the query
-        for entry in first_round:
-            if entry.get("id") != last_shown:
-                return entry
         return first_round[0]
 
-    pool = [entry for entry in due_entries if entry.get("id") not in recent]
+    pool = [entry for entry in selection_entries if entry.get("id") not in recent]
     if not pool:
-        pool = [entry for entry in due_entries if entry.get("id") != last_shown] or due_entries
+        pool = selection_entries
     return random.choice(pool)
 
 
@@ -337,6 +339,7 @@ async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TY
         entry = _pick_learning_due_entry(context, user_id)
     if not entry:
         context.user_data["learning_preview_mode"] = False
+        context.user_data.pop("quiz_entry", None)
         context.user_data.pop("learning_recent_ids", None)
         # Send the trailing feedback (Markdown) and the plain service tail as two
         # separate messages: the tail carries 'next_due', whose underscore would
@@ -471,15 +474,20 @@ async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if action == "input_err":
         next_entry = entry
+        corrected_entry_id = context.user_data.get("last_learning_entry_id")
         applied = _apply_input_err_learning(update, context)
         lang = _user_interface_lang(user_id)
         prefix = t(lang, "input_err_fixed") if applied else t(lang, "input_err_nothing")
         if applied:
             # lift the 👎 from the corrected answer message; no new reaction is set
             await _set_reaction(context, user_id, context.user_data.get("last_learning_answer_message_id"), [])
-        # Correct only the previous answer. The current card was already selected
-        # and shown, so keep it without consulting preview or due selectors again.
-        return await _send_learning_prompt(update, context, prefix, force_entry=next_entry)
+        # Preserve a separately selected next card. If the shown card is the one
+        # just corrected, its embedded learning step is stale: re-read the queue
+        # so a future step ends the cycle and a zero-delay warm-up is shown with
+        # its current step instead of allowing an accidental double advance.
+        same_entry = str(next_entry.get("id")) == str(corrected_entry_id)
+        force_entry = None if same_entry else next_entry
+        return await _send_learning_prompt(update, context, prefix, force_entry=force_entry)
 
     if action == "learning_skip":
         snapshot = _capture_transaction_snapshot(user_id, entry.get("id"), ["learning"])

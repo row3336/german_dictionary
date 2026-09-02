@@ -73,7 +73,7 @@ SESSION_EFFECT_GOOD_THRESHOLD_PCT = 80
 # single-user, v2.0 = multiuser release, v2.1+ = each shipped batch of
 # features/fixes, v3.0 = next global redesign). Shown on the stat screen (all
 # users) so a bug report can name the version without asking the owner.
-APP_VERSION = "2.1"
+APP_VERSION = "2.2"
 
 ARTICLE_SET = {
     "der",

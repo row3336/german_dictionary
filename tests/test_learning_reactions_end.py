@@ -220,11 +220,11 @@ class LearningEndOfQueueTest(_LearningDbTest):
 
 
 class LearningInputErrTest(_LearningDbTest):
-    def test_input_err_on_last_word_advances_once_and_keeps_shown_card(self):
+    def test_input_err_on_last_interval_word_advances_once_and_ends_cycle(self):
         # last word at an interval step (3), wrong answer -> reset to step 0 (+0s)
         # -> re-asked as the already selected next card. Pressing input_err must
-        # correct the previous answer (advance 3 -> 4) and keep that shown card
-        # without applying a second learning update.
+        # correct the previous answer (advance 3 -> 4) and discard that stale
+        # card because the corrected step is due in the future.
         lang = _user_interface_lang(GUEST)
         self._enqueue(status="active", next_due="2000-01-01T00:00:00Z", step_index=3)
         update = _Update(GUEST)
@@ -240,8 +240,8 @@ class LearningInputErrTest(_LearningDbTest):
         self.assertEqual(self._item()["step"], 0)
         self.assertEqual(ctx.user_data["last_learning_prev_step"], 3)
 
-        # press input_err -> corrected as if right from step 3 -> step 4 (future),
-        # while the card already shown after the wrong answer remains on screen
+        # press input_err -> corrected as if right from step 3 -> step 4 (future)
+        # and the cycle ends instead of keeping the stale step-0 card
         update.message.text = t(lang, "input_err")
         update.message.calls.clear()
         _run(learning_quiz(update, ctx))
@@ -250,8 +250,31 @@ class LearningInputErrTest(_LearningDbTest):
         self.assertGreater(item["next_due"], "2026")      # rescheduled into the future, not due
         joined = "\n".join(c[0] for c in update.message.calls)
         self.assertIn(t(lang, "input_err_fixed"), joined)
-        self.assertIn("инженер", joined)
-        self.assertEqual(ctx.user_data["quiz_entry"]["id"], self._word["id"])
+        self.assertIn(t(lang, "learning_no_due").rstrip("."), joined)
+        self.assertNotIn("quiz_entry", ctx.user_data)
+
+    def test_input_err_on_last_warmup_word_reloads_current_step(self):
+        # Correcting a wrong answer from step 0 advances to zero-delay step 1.
+        # The word may be shown again, but the card must carry step 1 so the next
+        # correct answer advances exactly once from the current DB state.
+        lang = _user_interface_lang(GUEST)
+        self._enqueue(status="active", next_due="2000-01-01T00:00:00Z", step_index=0)
+        update = _Update(GUEST)
+        ctx = _Ctx()
+        _run(_send_learning_prompt(update, ctx, None))
+
+        update.message.text = "zzz-wrong"
+        _run(learning_quiz(update, ctx))
+        update.message.text = t(lang, "input_err")
+        update.message.calls.clear()
+        _run(learning_quiz(update, ctx))
+
+        self.assertEqual(self._item()["step"], 1)
+        self.assertEqual(int(ctx.user_data["quiz_entry"].get("learning_step")), 1)
+
+        update.message.text = "der Ingenieur Ingenieure"
+        _run(learning_quiz(update, ctx))
+        self.assertEqual(self._item()["step"], 2)
 
     def test_second_input_err_is_a_noop(self):
         # guard against double-advance via repeated input_err presses
@@ -270,7 +293,7 @@ class LearningInputErrTest(_LearningDbTest):
         _run(learning_quiz(update, ctx))
         self.assertEqual(self._item()["step"], 4)          # unchanged
         joined = "\n".join(c[0] for c in update.message.calls)
-        self.assertIn(t(lang, "input_err_nothing"), joined)
+        self.assertIn(t(lang, "learning_no_due").rstrip("."), joined)
 
 
 class LearningEmptyEntryTest(_LearningDbTest):
