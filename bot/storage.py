@@ -3379,7 +3379,10 @@ def learning_active_batches(db_path):
 
 
 def fsrs_due_forecast(db_path, user_id, mode):
-    """Handle fsrs due forecast."""
+    """Forecast due words and phrases using each card's exact direction mode."""
+    from .common.lang import direction_mode_family
+
+    word_mode, phrase_mode = direction_mode_family(mode)
     init_db(db_path)
     today = date.today().isoformat()
     with _connect(db_path) as conn:
@@ -3393,7 +3396,7 @@ def fsrs_due_forecast(db_path, user_id, mode):
             LEFT JOIN progress p
               ON p.word_id = w.id
              AND p.user_id = ?
-             AND p.mode = ?
+             AND p.mode = CASE WHEN LOWER(TRIM(w.type)) = 'phrase' THEN ? ELSE ? END
             WHERE COALESCE(p.due, date('now')) <= date('now')
               AND NOT EXISTS (
                 SELECT 1
@@ -3417,9 +3420,10 @@ def fsrs_due_forecast(db_path, user_id, mode):
                       AND e.word_id = w.id
                       AND e.mode != 'learning'
                 )
+                OR (LOWER(TRIM(w.type)) = 'phrase' AND p.word_id IS NOT NULL)
               )
             """,
-            (int(user_id), _safe_text(mode), int(user_id), int(user_id), int(user_id)),
+            (int(user_id), phrase_mode, word_mode, int(user_id), int(user_id), int(user_id)),
         ).fetchall()
     per_hour = {h: 0 for h in range(24)}
     total = 0

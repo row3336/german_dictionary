@@ -3,6 +3,7 @@ import sqlite3
 import tempfile
 import unittest
 import warnings
+from contextlib import closing
 from datetime import date, timedelta
 
 from bot.storage import add_word, init_db, select_due, fsrs_due_forecast
@@ -109,6 +110,78 @@ class SelectDueGatingTests(unittest.TestCase):
         forecast = fsrs_due_forecast(self.db, user_id=1, mode="ru_de")
         self.assertEqual(forecast["total"], len(due))
         self.assertEqual(forecast["total"], 3)
+
+
+class ForecastPhraseScheduleTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.db = os.path.join(tmp.name, "forecast.db")
+        init_db(self.db)
+        self.today = date.today().isoformat()
+        self.future = (date.today() + timedelta(days=7)).isoformat()
+        with closing(sqlite3.connect(self.db)) as conn:
+            conn.executemany(
+                "INSERT INTO words (id, type, german, russian) VALUES (?, ?, ?, ?)",
+                [
+                    ("word", "nomen", "Haus", "дом"),
+                    ("phrase_due", "phrase", "Guten Tag", "добрый день"),
+                    ("phrase_future", "phrase", "Guten Abend", "добрый вечер"),
+                ],
+            )
+            conn.commit()
+
+    def test_forecast_uses_word_and_phrase_schedules_in_each_direction(self):
+        for mode in ("ru_de", "uk_de", "en_de", "de_ru", "de_uk", "de_en"):
+            with self.subTest(mode=mode):
+                phrase_mode = f"phrase_{mode}"
+                with closing(sqlite3.connect(self.db)) as conn:
+                    for word_id, exact_mode, due in (
+                        ("word", mode, self.today),
+                        ("phrase_due", phrase_mode, self.today),
+                        ("phrase_future", phrase_mode, self.future),
+                    ):
+                        _event(conn, 1, word_id, exact_mode, 1, f"{self.today} 08:00:00")
+                        _progress(conn, 1, word_id, exact_mode, due)
+                    # Stale base-mode rows and another user's dates must not win.
+                    _progress(conn, 1, "phrase_due", mode, self.future)
+                    _progress(conn, 1, "phrase_future", mode, self.future)
+                    _progress(conn, 2, "phrase_due", phrase_mode, self.future)
+                    _progress(conn, 2, "phrase_future", phrase_mode, self.today)
+                    conn.execute(
+                        "UPDATE progress SET updated_at = ? WHERE user_id = 1 AND mode IN (?, ?)",
+                        (f"{self.today} 08:00:00", mode, phrase_mode),
+                    )
+                    conn.commit()
+                due = select_due(self.db, 1, mode) + select_due(self.db, 1, phrase_mode)
+                self.assertEqual({row["id"] for row in due}, {"word", "phrase_due"})
+                forecast = fsrs_due_forecast(self.db, 1, mode)
+                self.assertEqual(forecast["total"], len(due))
+                self.assertEqual(forecast["per_hour"][8], 2)
+                self.assertEqual(forecast["peak_hour"], 8)
+                self.assertEqual(forecast["peak_count"], 2)
+                self.assertEqual(sum(forecast["per_hour"].values()), 2)
+
+    def test_future_phrase_does_not_trigger_reminder(self):
+        with closing(sqlite3.connect(self.db)) as conn:
+            _event(conn, 1, "phrase_future", "phrase_ru_de", 1, f"{self.today} 08:00:00")
+            _progress(conn, 1, "phrase_future", "phrase_ru_de", self.future)
+            conn.commit()
+        forecast = fsrs_due_forecast(self.db, 1, "ru_de")
+        self.assertEqual(forecast["total"], 0)
+        self.assertEqual(forecast["peak_hour"], None)
+        self.assertEqual(sum(forecast["per_hour"].values()), 0)
+
+    def test_migrated_phrase_progress_is_eligible_without_quiz_history(self):
+        with closing(sqlite3.connect(self.db)) as conn:
+            _progress(conn, 1, "word", "ru_de", self.today)
+            _progress(conn, 1, "phrase_due", "phrase_ru_de", self.today)
+            _progress(conn, 1, "phrase_future", "phrase_ru_de", self.future)
+            conn.commit()
+        due = select_due(self.db, 1, "ru_de") + select_due(self.db, 1, "phrase_ru_de")
+        self.assertEqual([row["id"] for row in due], ["phrase_due"])
+        self.assertEqual(fsrs_due_forecast(self.db, 1, "ru_de")["total"], len(due))
+        self.assertEqual(fsrs_due_forecast(self.db, 2, "ru_de")["total"], 0)
 
 
 if __name__ == "__main__":
