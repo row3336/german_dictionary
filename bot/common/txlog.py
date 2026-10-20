@@ -16,18 +16,25 @@ def reset_undo_progress(context):
     context.user_data.pop(UNDO_TOTAL_KEY, None)
 
 
-def _capture_transaction_snapshot(user_id, word_id, modes):
+def _capture_transaction_snapshot(user_id, word_id, modes, *, conn=None):
     """Handle capture transaction snapshot."""
     if not word_id:
         return None
+    if conn is not None:
+        from ..study.repository import capture_snapshot
+        return capture_snapshot(conn, user_id, word_id, modes)
     return snapshot_user_word_state(get_db_path(), user_id=user_id, word_id=word_id, modes=modes)
 
 
-def _log_transaction(user_id, action, snapshot):
+def _log_transaction(user_id, action, snapshot, *, conn=None, action_key=None):
     """Handle log transaction."""
     if not snapshot:
         return
-    add_transaction_log(
+    if conn is not None:
+        from ..study.repository import append_transaction
+        return append_transaction(conn, user_id, action,
+                                  {"snapshot": snapshot, "action_key": action_key})
+    return add_transaction_log(
         get_db_path(),
         user_id=user_id,
         action=action,

@@ -10,6 +10,7 @@ from pathlib import Path
 from .app_config import CASE_TYPES, CEFR_LEVELS, PREPOSITION_TYPES, get_owner_id, is_owner
 from .common.conjugation import parse_conjugation, takes_praeteritum
 from .text_utils import ABSENT_PLURAL_MARKERS, cap_word, split_plural_forms
+from .study import srs as study_srs
 
 DEFAULT_EASE = 2.5
 MIN_EASE = 1.3
@@ -23,15 +24,8 @@ DICT_LANGS = ("ru", "uk", "en")
 
 
 def default_srs(today=None):
-    """Handle default srs."""
-    if today is None:
-        today = date.today()
-    return {
-        "interval": 1,
-        "repetitions": 0,
-        "ease": DEFAULT_EASE,
-        "due": today.isoformat(),
-    }
+    """Return the unchanged initial scheduling state."""
+    return study_srs.default_srs(today)
 
 
 @contextmanager
@@ -191,6 +185,10 @@ def _repair_word_fk_tables(conn):
 def init_db(db_path):
     """Handle init db."""
     with _connect(db_path) as conn:
+        version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+        if version > 18:
+            raise RuntimeError(f"database schema v{version} is newer than supported v18")
+        fresh = not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='words'").fetchone()
         conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS words (
@@ -414,6 +412,9 @@ def init_db(db_path):
             """
         )
         _ensure_schema(conn)
+        if fresh or version == 18:
+            from .study.schema_v18 import ensure_schema
+            ensure_schema(conn)
 
 
 def _ensure_schema(conn):
@@ -1456,111 +1457,11 @@ def snapshot_user_word_state(db_path, user_id, word_id, modes=None):
 
 
 def restore_user_word_state(db_path, snapshot):
-    """Handle restore user word state from rollback snapshot."""
+    """Restore legacy or v2 snapshots using one connection."""
     init_db(db_path)
-    if not isinstance(snapshot, dict):
-        return False
-    user_id = int(snapshot.get("user_id") or 0)
-    word_id = _safe_text(snapshot.get("word_id"))
-    modes = [str(m) for m in (snapshot.get("modes") or []) if str(m)]
-    progress_rows = snapshot.get("progress") or {}
-    event_counts = snapshot.get("event_counts") or {}
+    from .study.repository import restore_snapshot
     with _connect(db_path) as conn:
-        # Progress and learning_items FK-reference words(id) ON DELETE CASCADE.
-        # If the word was deleted after the snapshot was taken, its child
-        # rows were cascade-removed and re-inserting them would raise
-        # "FOREIGN KEY constraint failed". There is nothing meaningful left to
-        # restore, so skip the INSERTs (the DELETE branches stay harmless no-ops).
-        word_exists = bool(word_id) and conn.execute(
-            "SELECT 1 FROM words WHERE id = ?", (word_id,)
-        ).fetchone() is not None
-
-        for mode in modes:
-            row = progress_rows.get(mode)
-            if row and word_exists:
-                conn.execute(
-                    """
-                    INSERT INTO progress (user_id, word_id, mode, interval, repetitions, ease, due, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(user_id, word_id, mode) DO UPDATE SET
-                        interval = excluded.interval,
-                        repetitions = excluded.repetitions,
-                        ease = excluded.ease,
-                        due = excluded.due,
-                        updated_at = excluded.updated_at
-                    """,
-                    (
-                        int(row.get("user_id") or user_id),
-                        _safe_text(row.get("word_id") or word_id),
-                        _safe_text(row.get("mode") or mode),
-                        int(row.get("interval") or 1),
-                        int(row.get("repetitions") or 0),
-                        float(row.get("ease") or DEFAULT_EASE),
-                        _safe_text(row.get("due") or date.today().isoformat()),
-                        _safe_text(row.get("updated_at") or datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")),
-                    ),
-                )
-            else:
-                conn.execute(
-                    "DELETE FROM progress WHERE user_id = ? AND word_id = ? AND mode = ?",
-                    (user_id, word_id, mode),
-                )
-
-        li_row = snapshot.get("learning_item")
-        # learning_items additionally FK-references learning_batches(id) ON DELETE
-        # CASCADE, so its parent batch must also still exist to re-insert the row.
-        batch_id = _safe_text(li_row.get("batch_id")) if li_row else ""
-        batch_exists = bool(batch_id) and conn.execute(
-            "SELECT 1 FROM learning_batches WHERE id = ?", (batch_id,)
-        ).fetchone() is not None
-        if li_row and word_exists and batch_exists:
-            cols = [c for c in li_row.keys()]
-            placeholders = ",".join("?" for _ in cols)
-            update_cols = ",".join(f"{c}=excluded.{c}" for c in cols if c not in {"user_id", "word_id"})
-            conn.execute(
-                f"""
-                INSERT INTO learning_items ({",".join(cols)})
-                VALUES ({placeholders})
-                ON CONFLICT(user_id, word_id) DO UPDATE SET {update_cols}
-                """,
-                tuple(li_row[c] for c in cols),
-            )
-        else:
-            conn.execute(
-                "DELETE FROM learning_items WHERE user_id = ? AND word_id = ?",
-                (user_id, word_id),
-            )
-
-        for mode in modes:
-            target = int(event_counts.get(mode, 0) or 0)
-            current = int(
-                conn.execute(
-                    "SELECT COUNT(*) AS cnt FROM quiz_events WHERE user_id = ? AND word_id = ? AND mode = ?",
-                    (user_id, word_id, mode),
-                ).fetchone()["cnt"]
-                or 0
-            )
-            if current > target:
-                to_delete = current - target
-                ids = conn.execute(
-                    """
-                    SELECT id
-                    FROM quiz_events
-                    WHERE user_id = ? AND word_id = ? AND mode = ?
-                    ORDER BY id DESC
-                    LIMIT ?
-                    """,
-                    (user_id, word_id, mode, to_delete),
-                ).fetchall()
-                if ids:
-                    placeholders = ",".join("?" for _ in ids)
-                    conn.execute(
-                        f"DELETE FROM quiz_events WHERE id IN ({placeholders})",
-                        tuple(int(r["id"]) for r in ids),
-                    )
-    # False when the parent word is gone: nothing meaningful was restored (its
-    # child rows were cascade-deleted and cannot be re-created).
-    return word_exists
+        return restore_snapshot(conn, snapshot)
 
 
 def add_transaction_log(db_path, user_id, action, payload):
@@ -2540,46 +2441,8 @@ def select_due(
 
 
 def update_fsrs(srs, quality, today=None, interval_divisor=1.0):
-    """Handle FSRS-like update in existing FSRS storage format."""
-    if today is None:
-        today = date.today()
-
-    quality = max(0, min(5, int(quality)))
-    try:
-        interval_divisor = float(interval_divisor)
-    except (TypeError, ValueError):
-        interval_divisor = 1.0
-    if interval_divisor <= 0:
-        interval_divisor = 1.0
-    interval = max(1, int(srs.get("interval", 1)))
-    repetitions = max(0, int(srs.get("repetitions", 0)))
-    ease = float(srs.get("ease", DEFAULT_EASE))
-    ease = max(MIN_EASE, min(MAX_EASE, ease))
-
-    if quality < 3:
-        # Softer than classic FSRS reset: step back one stage and shorten interval.
-        repetitions = max(0, repetitions - 1)
-        ease = max(MIN_EASE, ease - 0.25)
-        interval = max(1, int(round(interval * 0.4)))
-    else:
-        repetitions += 1
-        ease = min(MAX_EASE, ease + 0.05 * (quality - 3))
-        if repetitions == 1:
-            interval = 1
-        elif repetitions == 2:
-            interval = 3
-        else:
-            growth = 1.7 + (ease - DEFAULT_EASE) * 0.35 + (quality - 3) * 0.08
-            growth = max(1.3, min(2.3, growth))
-            effective_growth = 1.0 + ((growth - 1.0) / interval_divisor)
-            interval = max(1, int(round(interval * effective_growth)))
-    due = today + timedelta(days=interval)
-    return {
-        "interval": interval,
-        "repetitions": repetitions,
-        "ease": round(ease, 2),
-        "due": due.isoformat(),
-    }
+    """Compatibility wrapper for the pure scheduling calculation."""
+    return study_srs.update_fsrs(srs, quality, today, interval_divisor)
 
 
 def simulate_fsrs_advance(srs, n, today=None, interval_divisor=1.0):
@@ -2662,6 +2525,9 @@ def update_progress(db_path, user_id, word_id, mode, quality, interval_divisor=1
                 updated["due"],
             ),
         )
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE name='conjugation_admissions'").fetchone():
+            from .conjugation.schema import admit_if_qualified
+            admit_if_qualified(conn, user_id, word_id, mode, updated["repetitions"])
 
 
 def _utc_now_iso():
@@ -3480,6 +3346,9 @@ def set_progress(db_path, user_id, word_id, mode, srs):
                 _safe_text(srs.get("due", date.today().isoformat())),
             ),
         )
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE name='conjugation_admissions'").fetchone():
+            from .conjugation.schema import admit_if_qualified
+            admit_if_qualified(conn, user_id, word_id, mode, srs.get("repetitions", 0))
 
 
 def log_quiz_event(db_path, user_id, word_id, mode, is_correct):

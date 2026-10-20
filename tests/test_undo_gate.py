@@ -137,16 +137,17 @@ class UndoGateTest(unittest.TestCase):
         set_user_status(self.db, GUEST, "approved")
         self._log_a_step(GUEST)
 
-        orig = M.restore_user_word_state
+        from bot.study import repository
+        orig = repository.restore_snapshot
 
         def _boom(*a, **k):
-            raise RuntimeError("FOREIGN KEY constraint failed")
+            raise ValueError("malformed legacy snapshot")
 
-        M.restore_user_word_state = _boom
+        repository.restore_snapshot = _boom
         try:
             _run(M.undo_steps(_Update(GUEST), _Ctx()))  # must not raise
         finally:
-            M.restore_user_word_state = orig
+            repository.restore_snapshot = orig
 
         # Log consumed despite the failure -> next /undo won't re-hit it.
         self.assertEqual(list_transaction_logs(self.db, user_id=GUEST, limit=10), [])
@@ -160,6 +161,31 @@ class UndoGateTest(unittest.TestCase):
         # Gate blocked undo → routed to guest-start, their log is NOT deleted.
         self.assertEqual(self._guest_start_calls, [PENDING])
         self.assertEqual(len(list_transaction_logs(self.db, user_id=PENDING, limit=10)), 1)
+
+
+    def test_committed_undo_send_failure_and_replay_do_not_consume_next_step(self):
+        register_or_update_user(self.db, GUEST, "g", "G")
+        set_user_status(self.db, GUEST, "approved")
+        self._log_a_step(GUEST)
+        self._log_a_step(GUEST)
+        update = _Update(GUEST)
+        update.update_id = 1234
+        context = _Ctx()
+        context.user_data["quiz_entry"] = {"id": self.wid}
+
+        async def fail_send(*args, **kwargs):
+            raise RuntimeError("synthetic delivery failure")
+
+        update.message.reply_text = fail_send
+        with self.assertLogs(M.logger, level="WARNING"):
+            self.assertEqual(_run(M.undo_steps(update, context)), M.MENU)
+        self.assertNotIn("quiz_entry", context.user_data)
+        self.assertEqual(len(list_transaction_logs(self.db, GUEST, limit=10)), 1)
+        # A new frame may have been established after the committed request.
+        context.user_data["quiz_entry"] = {"id": "new-question"}
+        self.assertIsNone(_run(M.undo_steps(update, context)))
+        self.assertEqual(context.user_data["quiz_entry"]["id"], "new-question")
+        self.assertEqual(len(list_transaction_logs(self.db, GUEST, limit=10)), 1)
 
 
 class UndoCounterTest(unittest.TestCase):

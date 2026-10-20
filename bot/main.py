@@ -90,10 +90,7 @@ from .app_config import (
 from .storage import (
     add_word_flag,
     cleanup_transaction_logs,
-    delete_transaction_logs,
     get_setting,
-    list_transaction_logs,
-    restore_user_word_state,
     set_setting,
 )
 from .common.db_safety import prepare_storage_safely
@@ -103,6 +100,8 @@ from .common.outbound import configure_outbound_logger
 from .common.navigation import _back_to_tests
 from .common.runtime_checks import require_supported_ptb
 from .common.txlog import UNDO_MSG_ID_KEY, UNDO_TOTAL_KEY
+from .common.study_lock import study_lock, invalidate_study_frames
+from .study.answers import undo_steps as apply_undo_steps
 from .common.add_words_gate import add_words_enabled
 from .ui.keyboards import _main_menu_markup
 from .i18n import t
@@ -223,7 +222,13 @@ async def _on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def undo_steps(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /undo [N] rollback by transaction log."""
+    """Serialize the complete undo request and its frame invalidation."""
+    async with study_lock(update.effective_user.id):
+        return await _undo_steps_locked(update, context)
+
+
+async def _undo_steps_locked(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /undo [N] using a persistent, immutable transaction selection."""
     user_id = update.effective_user.id
     # #9: /undo is per-user (transaction_log/restore/delete are all scoped by
     # user_id), so any APPROVED user may undo THEIR OWN steps — not owner-only.
@@ -236,23 +241,16 @@ async def undo_steps(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except (TypeError, ValueError):
             steps = 1
     steps = max(1, min(20, steps))
-    logs = list_transaction_logs(get_db_path(), user_id=user_id, limit=steps)
-    restored = 0
-    processed_ids = []
-    for item in logs:
-        payload = item.get("payload") or {}
-        snapshot = payload.get("snapshot")
-        # A failed restore must NOT abort the whole /undo: the entry is still
-        # marked processed (deleted below) so a single bad snapshot can't jam the
-        # transaction log and brick /undo forever on repeated presses.
-        try:
-            if restore_user_word_state(get_db_path(), snapshot):
-                restored += 1
-        except Exception:
-            logger.exception("undo: failed to restore snapshot for log id=%s", item.get("id"))
-        processed_ids.append(int(item.get("id")))
-    if processed_ids:
-        delete_transaction_logs(get_db_path(), user_id=user_id, ids=processed_ids)
+    update_id = getattr(update, "update_id", None)
+    if update_id is None:
+        # Local callers without a Telegram Update still get a unique request key.
+        import uuid
+        update_id = -int(uuid.uuid4().int & ((1 << 63) - 1))
+    result = apply_undo_steps(get_db_path(), user_id, steps, update_id)
+    if result.get("replayed"):
+        return None  # A delayed replay must not invalidate a newer frame.
+    invalidate_study_frames(context)
+    restored = int(result.get("restored", 0))
 
     # Consecutive /undo presses accumulate into ONE message edited in place (a live
     # step counter) instead of one reply per press; the main-menu keyboard is shown
@@ -274,7 +272,11 @@ async def undo_steps(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return MENU
         except Exception:
             pass  # message gone/uneditable -> fall through and send a fresh one
-    sent = await update.message.reply_text(text, reply_markup=_main_menu_markup(user_id))
+    try:
+        sent = await update.message.reply_text(text, reply_markup=_main_menu_markup(user_id))
+    except Exception:
+        logger.warning("Failed to deliver committed undo result", exc_info=True)
+        return MENU
     context.user_data[UNDO_MSG_ID_KEY] = sent.message_id
     return MENU
 

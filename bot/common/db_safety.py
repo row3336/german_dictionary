@@ -48,7 +48,7 @@ from pathlib import Path
 # 17 = remove weak-form modes, schema, settings, progress, and history. This is a
 #      destructive schema/data migration and is never run by ordinary startup.
 ADDITIVE_SCHEMA_VERSION = 15
-SCHEMA_VERSION = 17
+SCHEMA_VERSION = 18
 
 
 class DestructiveMigrationRequired(RuntimeError):
@@ -69,6 +69,12 @@ _COUNT_TABLES = (
     "feedback",
     "conjugation_progress",
     "transaction_log",
+    "study_actions",
+    "study_deliveries",
+    "conjugation_admissions",
+    "conjugation_blocks",
+    "conjugation_passes",
+    "conjugation_answers",
 )
 
 # Keep the db_events timeline bounded (it's tiny, but never let it grow forever).
@@ -215,10 +221,20 @@ def run_healthcheck(db_path):
         integrity = conn.execute("PRAGMA integrity_check").fetchone()[0]
         fk_rows = conn.execute("PRAGMA foreign_key_check").fetchall()
         counts = _table_counts(conn)
+        version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+        required = {"study_actions", "study_deliveries", "conjugation_admissions",
+                    "conjugation_blocks", "conjugation_passes", "conjugation_answers"}
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        missing = sorted(required - tables) if version == 18 else []
+        if version == 18:
+            columns = {r[1] for r in conn.execute("PRAGMA table_info(learning_items)")}
+            missing.extend("learning_items." + c for c in
+                           ("recovery_remaining", "first_due_pending") if c not in columns)
     finally:
         conn.close()
     return {
-        "ok": integrity == "ok" and len(fk_rows) == 0,
+        "ok": integrity == "ok" and len(fk_rows) == 0 and not missing,
+        "missing_schema": missing,
         "integrity": integrity,
         "fk_violations": len(fk_rows),
         "counts": counts,
@@ -555,6 +571,9 @@ def _validate_destructive_counts(before, after, steps):
         ),
     }
     for table, old_count in before.items():
+        if table in {"study_actions", "study_deliveries", "conjugation_admissions",
+                     "conjugation_blocks", "conjugation_passes", "conjugation_answers"}:
+            continue  # v18 creates these; only admissions may receive intentional seed rows.
         expected = allowed.get(table, old_count)
         if after.get(table) != expected:
             raise RuntimeError(
@@ -616,17 +635,23 @@ def _apply_migration_dispatcher(db_path, today=None, expected_fingerprint=None):
                 "source DB changed after destructive migration dry-run; run a new dry-run"
             )
         current = int(conn.execute("PRAGMA user_version").fetchone()[0])
-        if current not in {ADDITIVE_SCHEMA_VERSION, 16}:
+        if current not in {ADDITIVE_SCHEMA_VERSION, 16, 17}:
             raise RuntimeError(
-                f"destructive dispatcher requires exact v{ADDITIVE_SCHEMA_VERSION} or v16, "
+                f"migration dispatcher requires v{ADDITIVE_SCHEMA_VERSION}, v16, or v17, "
                 f"got v{current}"
             )
         if current == ADDITIVE_SCHEMA_VERSION:
             steps["phrase_modes_v16"] = _migrate_phrase_modes_v16(conn, today=today)
             conn.execute("PRAGMA user_version = 16")
             current = 16
-        steps["remove_weak_v17"] = _migrate_remove_weak_v17(conn)
-        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        if current == 16:
+            steps["remove_weak_v17"] = _migrate_remove_weak_v17(conn)
+            conn.execute("PRAGMA user_version = 17")
+            current = 17
+        if current == 17:
+            from ..study.schema_v18 import migrate
+            steps["study_v18"] = migrate(conn)
+            conn.execute("PRAGMA user_version = 18")
         counts_in_transaction = _table_counts(conn)
         _validate_destructive_counts(before, counts_in_transaction, steps)
         integrity = conn.execute("PRAGMA integrity_check").fetchone()[0]

@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import sqlite3
 import tempfile
 import unittest
@@ -17,6 +18,14 @@ from bot.common.db_safety import (
     set_user_version,
 )
 from bot.storage import add_word, init_db, restore_user_word_state
+
+
+def _has_removed_weak_surface(source):
+    # Permit only the exact stdlib import and qualified dictionary constructor.
+    # Every other weak token and all removed schema/runtime names stay forbidden.
+    source = re.sub(r"(?m)^import weakref[ \t]*$", "", source.lower())
+    source = re.sub(r"\bweakref\.weakvaluedictionary\b", "", source)
+    return any(token in source for token in ("weak", "form_stats", "review_stage_snapshot"))
 
 
 def _schema(db_path):
@@ -97,6 +106,13 @@ class FreshSchemaWithoutWeakTest(unittest.TestCase):
         self.assertNotIn("form_stats", source)
         self.assertNotIn("update_form_stats", source)
 
+    def test_weak_surface_scanner_only_exempts_exact_stdlib_reference(self):
+        standard = "import weakref\n_locks = weakref.WeakValueDictionary()\n"
+        self.assertFalse(_has_removed_weak_surface(standard))
+        for removed in ("weak_quiz", "weakref_alias", "form_stats", "review_stage_snapshot"):
+            with self.subTest(removed=removed):
+                self.assertTrue(_has_removed_weak_surface(standard + removed))
+
     def test_runtime_and_ui_have_no_residual_weak_surface(self):
         bot_dir = Path(__file__).parents[1] / "bot"
         allowed = {
@@ -107,7 +123,7 @@ class FreshSchemaWithoutWeakTest(unittest.TestCase):
             if path in allowed or "verb_forms_parsing" in path.parts:
                 continue
             source = path.read_text(encoding="utf-8").lower()
-            if "weak" in source or "form_stats" in source or "review_stage_snapshot" in source:
+            if _has_removed_weak_surface(source):
                 offenders.append(str(path.relative_to(bot_dir.parent)))
         self.assertEqual(offenders, [])
         self.assertFalse((bot_dir / "handlers" / "weak.py").exists())
@@ -240,7 +256,7 @@ class RemoveWeakMigrationV17Test(unittest.TestCase):
         before = database_fingerprint(self.db)
         report = dry_run_migration(self.db)
 
-        self.assertEqual(SCHEMA_VERSION, 17)
+        self.assertEqual(SCHEMA_VERSION, 18)
         self.assertTrue(report["ok"])
         self.assertEqual(before, database_fingerprint(self.db))
         step = report["steps"]["remove_weak_v17"]
@@ -266,9 +282,9 @@ class RemoveWeakMigrationV17Test(unittest.TestCase):
         old_indexes = _schema(self.db)[2]
         report = apply_destructive_migrations_safely(self.db, self.backups)
 
-        self.assertEqual(get_user_version(self.db), 17)
+        self.assertEqual(get_user_version(self.db), 18)
         self.assertEqual(report["from_version"], 16)
-        self.assertEqual(report["to_version"], 17)
+        self.assertEqual(report["to_version"], 18)
         self.assertTrue(Path(report["backup"]).name.startswith("snapshot-premigrate-v16-"))
         tables, columns, indexes = _schema(self.db)
         self.assertNotIn("form_stats", tables)
