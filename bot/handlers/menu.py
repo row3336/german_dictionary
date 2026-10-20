@@ -36,11 +36,14 @@ from ..common.session import (
 )
 from ..common.settings import _topic_filter_banner, _topic_filter_value
 from ..common.txlog import reset_undo_progress
+from ..common.study_lock import study_lock, invalidate_study_frames
+from ..study.answers import close_study_flow
+from ..written.state import transport_id
 from ..handlers.access import access_allowed, show_rejected_screen
 from ..handlers.db_search import _send_db_search_prompt
 from ..handlers.learning import _send_learning_menu
 from ..handlers.owner_stats import _format_progress_text, _stat_keyboard
-from ..handlers.quiz import _send_de_ru_prompt, _send_pl_sg_prompt, _send_ru_de_prompt
+from ..handlers.quiz import _send_de_ru_prompt, _send_pl_sg_prompt, _send_ru_de_prompt, serialized_written_entry
 from ..handlers.settings import _ask_dictionary_language, _ask_interface_language
 from ..i18n import normalize_interface_lang, t
 from ..labels import (
@@ -81,15 +84,42 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/start entry: owner gets their onboarding, a guest goes through the approval flow (P3.1)."""
     user = update.effective_user
     user_id = user.id
-    reset_undo_progress(context)  # leaving the undo flow ends its live counter
-    if not _is_owner_only(user_id):
-        return await _guest_start(update, context)
-    ui_lang = get_setting(get_db_path(), OWNER_INTERFACE_LANG_KEY, "")
-    dict_lang = get_setting(get_db_path(), OWNER_DICT_LANG_KEY, "")
-    if not ui_lang or not dict_lang:
-        return await _ask_interface_language(update)
-    await update.message.reply_text(t(_user_interface_lang(user_id), "main_menu"), reply_markup=_main_menu_markup(user_id))
-    return MENU
+    async with study_lock(user_id):
+        owner = _is_owner_only(user_id)
+        pending_key, pending = "quiz_start_pending", None
+        if owner or get_user_status(get_db_path(), user_id) == "approved":
+            transport = transport_id(update)
+            receipt = close_study_flow(get_db_path(), user_id, transport,
+                                       flow_id="start", action_kind="start")
+            if receipt.get("replayed"):
+                pending = context.user_data.get(pending_key)
+                live_study = any(context.user_data.get(key) for key in (
+                    "learning_frame", "quiz_written_frame", "conjugation_frame", "oral_frame",
+                    "study_frame", "quiz_entry", "quiz_published_view"))
+                if not pending or pending["transport"] != transport or live_study:
+                    return None
+            else:
+                invalidate_study_frames(context)
+                # Only this accepted close may finish its interrupted display.
+                # The quiz_ prefix extinguishes the right on a new study flow.
+                pending = {"transport": transport}
+                context.user_data[pending_key] = pending
+                reset_undo_progress(context)
+        else:
+            reset_undo_progress(context)
+        if not owner:
+            state = await _guest_start(update, context)
+        else:
+            ui_lang = get_setting(get_db_path(), OWNER_INTERFACE_LANG_KEY, "")
+            dict_lang = get_setting(get_db_path(), OWNER_DICT_LANG_KEY, "")
+            if not ui_lang or not dict_lang:
+                state = await _ask_interface_language(update)
+            else:
+                await update.message.reply_text(t(_user_interface_lang(user_id), "main_menu"), reply_markup=_main_menu_markup(user_id))
+                state = MENU
+        if pending is not None and context.user_data.get(pending_key) is pending:
+            context.user_data.pop(pending_key, None)
+        return state
 
 
 async def _guest_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -223,14 +253,17 @@ async def tests_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return QUIZ_RU_DE_MENU
     if action == "quiz_pl_sg":
-        _reset_retry_state(context)
-        _clear_last_answer(context)
-        _reset_session(context, _mode_pl_sg(user_id))
-        return await _send_pl_sg_prompt(
-            update,
-            context,
-            f"{QUIZ_PL_SG_TEXT}:\n\n{_topic_filter_banner(user_id)}",
-        )
+        # Other branches own their own lock; only serialize this written start.
+        @serialized_written_entry
+        async def start_plural(update, context):
+            _reset_retry_state(context)
+            _clear_last_answer(context)
+            _reset_session(context, _mode_pl_sg(user_id))
+            return await _send_pl_sg_prompt(
+                update, context,
+                f"{QUIZ_PL_SG_TEXT}:\n\n{_topic_filter_banner(user_id)}",
+            )
+        return await start_plural(update, context)
     if action == "learning":
         return await _send_learning_menu(update, user_id)
     if action == "conjugation":
@@ -247,6 +280,7 @@ async def tests_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return TESTS_MENU
 
 
+@serialized_written_entry
 async def quiz_ru_de_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Choose word or phrase SRS for the selected direction."""
     text = update.message.text.strip()

@@ -22,6 +22,26 @@ def dispatch_script(send_failure=False):
                   and "class NoNetworkRequest" in node.value)
     script = textwrap.dedent(source).replace("UID = 7", "UID = 17")
     script = script.replace("'ru_de'", "'uk_de'").replace("'ru'", "'uk'")
+    # This dispatch-only harness deliberately keeps its FakeService. Give the
+    # global guard an actual approved-user/ledger schema instead of a fallback
+    # physical DB path; use the same read-only inspector as production.
+    setup = (
+        "service = FakeService()\n"
+        "    from tests.test_new_logic_conjugation import ConjugationTests\n"
+        "    from bot.study import transport_guard\n"
+        "    guard_fixture = ConjugationTests()\n"
+        "    guard_fixture.setUp()\n"
+        "    guard_fixture.conn.execute(\"INSERT INTO users VALUES(?, 'approved')\", (UID,))\n"
+        "    guard_fixture.conn.commit()")
+    assert script.count("service = FakeService()") == 1
+    script = script.replace("service = FakeService()", setup, 1)
+    needle = "with ExitStack() as stack:\n"
+    replacement = (
+        needle + "        stack.callback(guard_fixture.doCleanups)\n"
+        "        stack.enter_context(patch.object(transport_guard, 'read_delivery',\n"
+        "            side_effect=lambda db_path,uid,tid: transport_guard.inspect_delivery(guard_fixture.conn,uid,tid)))\n")
+    assert script.count(needle) == 1
+    script = script.replace(needle, replacement, 1)
     if send_failure:
         needle = "await app.process_update(reset)\n        assert not errors, errors"
         replacement = (

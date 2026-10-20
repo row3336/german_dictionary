@@ -81,6 +81,8 @@ class RetryInputErrBudgetTest(unittest.TestCase):
         conn.commit()
         conn.close()
         register_or_update_user(self.db, USER, "u", "U")
+        from bot.storage import set_user_status
+        set_user_status(self.db, USER, "approved")
         self.old_env = {key: os.environ.get(key) for key in ("DB_PATH", "OWNER_ID")}
         os.environ["DB_PATH"] = self.db
         os.environ["OWNER_ID"] = str(OWNER)
@@ -102,7 +104,7 @@ class RetryInputErrBudgetTest(unittest.TestCase):
             "plural": "Hunde",
             "russian": "собака",
         }
-        return _Context({
+        context = _Context({
             "quiz_entry": entry,
             "quiz_is_retry": True,
             "last_answered_entry": entry,
@@ -113,6 +115,11 @@ class RetryInputErrBudgetTest(unittest.TestCase):
             "retry_queue": {RETRY_MODE: [WORD_ID] if pending else []},
             "retry_counts": {RETRY_MODE: {WORD_ID: count}},
         })
+        from bot.written.state import establish_view
+        frame = establish_view(context, RETRY_MODE, QUIZ_RU_DE, entry)
+        frame['last_receipt'] = quiz_handler._update_srs_for_entry(USER, entry, RETRY_MODE, False,
+            update=_Update("wrong"), context=context, state=QUIZ_RU_DE)
+        return context
 
     def test_correction_removes_pending_but_preserves_and_continues_count(self):
         context = self._retry_context(count=2)

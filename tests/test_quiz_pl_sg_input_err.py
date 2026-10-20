@@ -74,7 +74,7 @@ class PlSgInputErrTest(unittest.TestCase):
         self.assertEqual(picked, [])  # did not pop a new word off the queue
         self.assertTrue(upd.message.replies)  # re-showed the question
 
-    def test_falls_back_when_no_entry(self):
+    def test_completed_without_entry_does_not_pick(self):
         picked = []
 
         async def _spy(update, context, prefix):
@@ -84,7 +84,7 @@ class PlSgInputErrTest(unittest.TestCase):
         Q._send_pl_sg_prompt = _spy
         state = asyncio.run(Q._repeat_current_pl_sg(_FakeUpdate(), _Ctx({}), None))
         self.assertEqual(state, QUIZ_PL_SG)
-        self.assertEqual(picked, [1])  # no current entry -> normal prompt
+        self.assertEqual(picked, [])  # a completed view must not choose another word
 
 
 if __name__ == "__main__":

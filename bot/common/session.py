@@ -39,6 +39,8 @@ def _session_wrong_key(mode):
 
 def _reset_session(context, mode):
     """Handle reset session."""
+    for key in ("quiz_written_frame", "quiz_published_view", "quiz_return_point"):
+        context.user_data.pop(key, None)
     context.user_data["session_mode"] = mode
     context.user_data[_session_key(mode)] = set()
     context.user_data[_session_correct_key(mode)] = 0

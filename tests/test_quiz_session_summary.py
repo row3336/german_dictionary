@@ -160,6 +160,8 @@ class SessionSummaryWiringTest(unittest.TestCase):
         conn.commit()
         conn.close()
         register_or_update_user(self.db, GUEST, "g", "G")
+        from bot.storage import set_user_status
+        set_user_status(self.db, GUEST, "approved")
         self._old = {k: os.environ.get(k) for k in ("DB_PATH", "OWNER_ID")}
         os.environ["DB_PATH"] = self.db
         os.environ["OWNER_ID"] = str(OWNER)

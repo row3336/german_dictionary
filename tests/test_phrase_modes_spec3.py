@@ -122,6 +122,11 @@ class PhraseCasingTest(unittest.TestCase):
 
 
 class PhraseSelectionStateTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        # These tests isolate routing/bucket cleanup; atomic entry/replay has a
+        # real in-memory DB and PTB dispatch fixture in the new written suite.
+        self.enterContext(patch('bot.written.service.preflight', return_value=None))
+
     async def test_phrase_selection_clears_only_phrase_stale_buckets(self):
         context = SimpleNamespace(user_data={
             "quiz_direction_base": "ru_de",

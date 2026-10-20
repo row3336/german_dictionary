@@ -49,7 +49,7 @@ def _new_frame(pair, kind):
 
 
 def _recovered_undo(context, result):
-    if result.get("recovered_undo"):
+    if result.get("recovered_undo") and not result.get("replayed"):
         invalidate_study_frames(context)
         return True
     return False

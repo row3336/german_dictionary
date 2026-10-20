@@ -67,6 +67,8 @@ class QuizI18nTest(unittest.TestCase):
         os.environ["OWNER_ID"] = str(OWNER)
         self.addCleanup(self._restore)
         register_or_update_user(self.db, GUEST, "g", "G")
+        from bot.storage import set_user_status
+        set_user_status(self.db, GUEST, "approved")
         set_user_interface_lang(self.db, GUEST, "ru")
         # A word under the default topic '1' with no history: the topic filter matches
         # words (so it's the 'nothing due' path, not spec #8's 'no words for topic').

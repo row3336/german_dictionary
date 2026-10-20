@@ -182,6 +182,8 @@ class InputErrReactionTest(unittest.TestCase):
         conn.commit()
         conn.close()
         register_or_update_user(self.db, GUEST, "g", "G")
+        from bot.storage import set_user_status
+        set_user_status(self.db, GUEST, "approved")
         self._old = {k: os.environ.get(k) for k in ("DB_PATH", "OWNER_ID")}
         os.environ["DB_PATH"] = self.db
         os.environ["OWNER_ID"] = str(OWNER)
@@ -196,25 +198,25 @@ class InputErrReactionTest(unittest.TestCase):
 
     def _ctx_with_wrong_last_answer(self, message_id=99):
         entry = {"id": "w1", "type": "nomen", "german": "Hund", "article": "der", "plural": "Hunde"}
-        return _Ctx(user_data={
-            "last_answered_entry": entry,
-            "last_answered_mode": QUIZ_RU_DE,
-            "last_answered_ok": False,
-            "last_answered_srs": {"interval": 1, "repetitions": 0},
-            "last_answered_message_id": message_id,
-        })
+        from bot.written.state import establish_view
+        ctx = _Ctx(user_data={"last_answered_entry": entry, "last_answered_mode": "ru_de",
+            "last_answered_ok": False, "last_answered_message_id": message_id})
+        frame = establish_view(ctx, "ru_de", QUIZ_RU_DE, entry)
+        frame['last_receipt'] = Q._update_srs_for_entry(GUEST, entry, "ru_de", False,
+            update=_Update(GUEST, "wrong", message_id=message_id), context=ctx, state=QUIZ_RU_DE)
+        return ctx
 
     def test_successful_correction_lifts_the_reaction(self):
         update = _Update(GUEST, "я ошибся")
         ctx = self._ctx_with_wrong_last_answer(message_id=99)
-        applied = _run(Q._apply_input_err(update, ctx, QUIZ_RU_DE))
+        applied = _run(Q._apply_input_err(update, ctx, "ru_de"))
         self.assertTrue(applied)
         self.assertEqual(ctx.bot.reactions, [(GUEST, 99, [])])
 
     def test_nothing_to_fix_does_not_touch_reactions(self):
         update = _Update(GUEST, "я ошибся")
         ctx = _Ctx(user_data={})  # no last wrong answer at all
-        applied = _run(Q._apply_input_err(update, ctx, QUIZ_RU_DE))
+        applied = _run(Q._apply_input_err(update, ctx, "ru_de"))
         self.assertFalse(applied)
         self.assertEqual(ctx.bot.reactions, [])
 
@@ -236,6 +238,8 @@ class QuizHandlerReactionWiringTest(unittest.TestCase):
         conn.commit()
         conn.close()
         register_or_update_user(self.db, GUEST, "g", "G")
+        from bot.storage import set_user_status
+        set_user_status(self.db, GUEST, "approved")
         self._old = {k: os.environ.get(k) for k in ("DB_PATH", "OWNER_ID")}
         os.environ["DB_PATH"] = self.db
         os.environ["OWNER_ID"] = str(OWNER)

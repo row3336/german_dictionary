@@ -8,6 +8,12 @@ extracted in later steps.
 """
 
 import re
+from functools import wraps
+
+from ..common.quiz_resume import register_renderer, _render_legacy_frame
+from ..common.study_lock import study_lock, invalidate_study_frames
+from ..written import service as written_service, state as written_state
+from ..study.answers import StaleStudyAction
 
 from telegram import ReplyKeyboardMarkup, Update
 from telegram.ext import ContextTypes
@@ -15,6 +21,8 @@ from telegram.ext import ContextTypes
 from ..app_config import (
     FLAG_TEXT,
     I_DONT_KNOW_TEXT,
+    LEARNING_QUIZ,
+    ORAL_QUIZ,
     QUIZ_ARTICLE,
     QUIZ_DE_RU,
     QUIZ_PL_SG,
@@ -32,7 +40,7 @@ from ..common.lang import (
     _user_interface_lang,
     selected_direction_mode,
 )
-from ..common.navigation import _action_key_from_text, _back_to_tests, _reply_text_with_retry
+from ..common.navigation import _action_key_from_text, _back_to_main_menu, _back_to_tests, _reply_text_with_retry
 from ..common.word_filter import count_words_for_filter
 from ..common.session import (
     _bump_answer_streak,
@@ -53,17 +61,12 @@ from ..common.session import (
     _session_wrong_count,
     _set_retry_since_last,
 )
-from ..common.txlog import _capture_transaction_snapshot, _log_transaction
 from ..i18n import t
 from ..storage import QUIZ_ARTICLE as MODE_ARTICLE
-from ..storage import QUIZ_RU_DE as MODE_RU_DE
 from ..storage import (
     _DICT_TRANSLATION_COLUMN,
     get_synonym_group,
-    log_quiz_event,
-    mark_last_quiz_event_correct,
-    set_progress,
-    update_progress,
+    get_word_by_id,
 )
 from ..text_utils import has_plural_form
 from ..text_utils import normalize_answer as _normalize_answer
@@ -131,8 +134,10 @@ async def _apply_answer_reaction(update, context, ok):
 
 def _interval_divisor_for_mode(user_id, mode):
     """Handle interval divisor for mode."""
+    if str(mode).startswith("phrase_"):
+        return 2.0
     base_mode = str(mode).removeprefix("phrase_")
-    if base_mode == MODE_RU_DE:
+    if base_mode == _mode_l1_de(user_id):
         return 1.65
     if mode == _mode_pl_sg(user_id):
         return 2.0
@@ -141,59 +146,78 @@ def _interval_divisor_for_mode(user_id, mode):
     return 1.0
 
 
-def _update_srs_for_entry(user_id, entry, mode, ok):
-    """Handle update srs for entry."""
-    snapshot = _capture_transaction_snapshot(user_id, entry.get("id"), [mode])
-    quality = 5 if ok else 2
-    update_progress(
-        get_db_path(),
-        user_id=user_id,
-        word_id=entry.get("id"),
-        mode=mode,
-        quality=quality,
-        interval_divisor=_interval_divisor_for_mode(user_id, mode),
-    )
-    log_quiz_event(get_db_path(), user_id=user_id, word_id=entry.get("id"), mode=mode, is_correct=ok)
-    _log_transaction(user_id, f"quiz:{mode}", snapshot)
+def _update_srs_for_entry(user_id, entry, mode, ok, *, update, context, state, idk=False):
+    """One trusted before snapshot, event, transaction and delivery per original."""
+    kind = 'idk' if idk else ('correct' if ok else 'wrong')
+    return written_service.original(get_db_path(), update, context, mode, state, entry, kind,
+                                    _interval_divisor_for_mode(user_id, mode))
+
+
+def _check_receipt(context, receipt):
+    if receipt.get('invalidate_frame') or receipt.get('state') == 'undone':
+        invalidate_study_frames(context)
+        raise StaleStudyAction('closed study frame')
+    return not receipt.get('replayed')
+
+
+def _accept_written_answer(update, context, entry, mode, ok, is_retry, state, idk=False):
+    uid = update.effective_user.id
+    if is_retry:
+        receipt = written_service.control(get_db_path(), update, context, mode, state, 'written_retry')
+    else:
+        receipt = _update_srs_for_entry(uid, entry, mode, ok, update=update,
+            context=context, state=state, idk=idk)
+    if not _check_receipt(context, receipt):
+        return False
+    frame = context.user_data[written_state.FRAME]
+    if not is_retry:
+        frame['last_receipt'] = receipt
+        _remember_last_answer(context, entry, mode, ok, update.message.message_id)
+        _mark_session_word(context, mode, entry.get('id'))
+    context.user_data['quiz_last_answered_entry'] = entry
+    _register_retry_result(context, mode, entry.get('id'), ok, is_retry, uid)
+    if not is_retry and ok:
+        _set_retry_since_last(context, mode, _retry_since_last(context, mode)+1)
+    _bump_session_result(context, mode, ok, is_retry)
+    frame['advance_transport'] = written_state.transport_id(update)
+    return True
 
 
 async def _apply_input_err(update, context, mode):
-    """Handle apply input error correction."""
-    last_entry = context.user_data.get("last_answered_entry")
-    last_mode = context.user_data.get("last_answered_mode")
-    last_ok = context.user_data.get("last_answered_ok")
-    last_srs = context.user_data.get("last_answered_srs")
-    last_message_id = context.user_data.get("last_answered_message_id")
-    if not last_entry or last_mode != mode or last_ok is None:
+    """Replace the whole original effect from its persisted before snapshot."""
+    receipt = written_service.correction(get_db_path(), update, context, mode,
+        _interval_divisor_for_mode(update.effective_user.id, mode))
+    if receipt is None or not _check_receipt(context, receipt):
         return False
-    if last_ok:
-        return False
-    if not last_srs:
-        return False
-    snapshot = _capture_transaction_snapshot(update.effective_user.id, last_entry.get("id"), [mode])
-    set_progress(get_db_path(), update.effective_user.id, last_entry.get("id"), mode, last_srs)
-    update_progress(
-        get_db_path(),
-        update.effective_user.id,
-        last_entry.get("id"),
-        mode,
-        quality=5,
-        interval_divisor=_interval_divisor_for_mode(update.effective_user.id, mode),
-    )
-    # Flip the just-logged wrong event to correct IN PLACE (not a new appended
-    # event): the daily/weekly first-touch report keys off the first answer, so an
-    # appended correct would be ignored — input_err (a typo, not a real miss) must
-    # actually count as correct in the reports.
-    mark_last_quiz_event_correct(get_db_path(), update.effective_user.id, last_entry.get("id"), mode)
-    # Mirror it in the in-session summary: move this word from wrong to correct.
+    frame = context.user_data[written_state.FRAME]
+    frame['last_receipt'] = receipt
+    frame['revision'] += 1
     _flip_session_result_to_correct(context, mode)
-    _log_transaction(update.effective_user.id, f"input_err:{mode}", snapshot)
-    _remove_pending_retry(context, mode, last_entry.get("id"))
-    _set_retry_since_last(context, mode, _retry_since_last(context, mode) + 1)
-    context.user_data["last_answered_ok"] = True
-    # spec #9: lift the 👎 reaction from the corrected answer; no new one is set.
-    await _set_reaction(context, update.effective_user.id, last_message_id, [])
+    _remove_pending_retry(context, mode, receipt['word_id'])
+    _set_retry_since_last(context, mode, _retry_since_last(context, mode)+1)
+    context.user_data['last_answered_ok'] = True
+    written_state.publish(context)
+    await _set_reaction(context, update.effective_user.id,
+        context.user_data.get('last_answered_message_id'), [])
     return True
+
+
+_REPLAYED_LEARNING_SEND = object()
+
+
+async def _learning_send_outcome(update, context, state):
+    receipt = context.user_data.get('learning_send_receipt') or {}
+    if receipt.get('transport_update_id') != written_state.transport_id(update):
+        return None
+    if receipt.get('replayed'):
+        return _REPLAYED_LEARNING_SEND
+    if receipt.get('recovered_undo'):
+        invalidate_study_frames(context)
+        return await _back_to_main_menu(update, context)
+    frame = context.user_data.get(written_state.FRAME)
+    if frame:
+        frame['advance_transport'] = written_state.transport_id(update)
+    return None
 
 
 # --- answer checking (Ru>De strict) ---
@@ -407,217 +431,170 @@ async def _send_session_summary(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def _stop_with_summary(update: Update, context: ContextTypes.DEFAULT_TYPE, mode):
-    """Handle stop with summary."""
+    frame = context.user_data.get(written_state.FRAME) or {}
+    receipt = written_service.control(get_db_path(), update, context, mode,
+        frame.get('return_state', QUIZ_RU_DE), 'written_stop', destination=TESTS_MENU)
+    if not _check_receipt(context, receipt):
+        return TESTS_MENU
+    context.user_data.pop(written_state.FRAME, None)
+    context.user_data.pop('quiz_published_view', None)
+    context.user_data.pop('quiz_return_point', None)
+    context.user_data.pop('quiz_entry', None)
+    context.user_data.pop('quiz_last_answered_entry', None)
     await _send_session_summary(update, context, mode)
     return await _back_to_tests(update, context)
 
 
-async def _repeat_current_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
-    """Handle repeat current ru de."""
-    entry = context.user_data.get("quiz_entry")
-    if not entry:
-        return await _send_ru_de_prompt(update, context, prefix_text)
-    prompt_text = _format_ru_question(entry, _user_dict_lang(update.effective_user.id))
-    if prefix_text:
-        prompt_text = f"{prefix_text}\n\n{prompt_text}"
-    await _reply_text_with_retry(
-        update.message,
-        prompt_text,
-        reply_markup=_quiz_markup(update.effective_user.id, article=False),
-        parse_mode="Markdown",
-    )
-    return QUIZ_RU_DE
+_WRITTEN_KINDS = {
+    QUIZ_RU_DE: ('ru_de', None, 'no_due_words'),
+    QUIZ_DE_RU: ('de_ru', None, 'no_due_words'),
+    QUIZ_PL_SG: ('pl_sg', 'nomen', 'no_due_pl_sg'),
+    QUIZ_ARTICLE: ('article', 'nomen', 'no_due_nouns'),
+}
 
 
-async def _repeat_current_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
-    """Handle repeat current de ru."""
-    entry = context.user_data.get("quiz_entry")
-    if not entry:
-        return await _send_de_ru_prompt(update, context, prefix_text)
-    prompt_text = _format_de_ru_question(entry)
-    if prefix_text:
-        prompt_text = f"{prefix_text}\n\n{prompt_text}"
-    await _reply_text_with_retry(
-        update.message,
-        prompt_text,
-        reply_markup=_quiz_markup(update.effective_user.id, article=False),
-        parse_mode="Markdown",
-    )
-    return QUIZ_DE_RU
+def _written_mode(context, uid, state):
+    if state == QUIZ_RU_DE:
+        return selected_direction_mode(context, _mode_l1_de(uid))
+    if state == QUIZ_DE_RU:
+        return selected_direction_mode(context, _mode_de_l1(uid))
+    return _mode_pl_sg(uid) if state == QUIZ_PL_SG else MODE_ARTICLE
 
 
-async def _repeat_current_pl_sg(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
-    """Re-show the current pl>sg word after input_err (mirror of _repeat_current_ru_de).
-
-    input_err only corrects the previous answer; it must NOT advance to a new word.
-    Sending the prompt instead would pop the next word off the FSRS queue, changing
-    the already-shown word. Falls back to the prompt only when there's no current entry.
-    """
-    entry = context.user_data.get("quiz_entry")
-    if not entry:
-        return await _send_pl_sg_prompt(update, context, prefix_text)
-    prompt_text = _format_pl_sg_question(entry)
-    if prefix_text:
-        prompt_text = f"{prefix_text}\n\n{prompt_text}"
-    await _reply_text_with_retry(
-        update.message,
-        prompt_text,
-        reply_markup=_quiz_markup(update.effective_user.id, article=False),
-        parse_mode="Markdown",
-    )
-    return QUIZ_PL_SG
+def _written_question(entry, uid, state):
+    if state == QUIZ_RU_DE:
+        return _format_ru_question(entry, _user_dict_lang(uid))
+    if state == QUIZ_DE_RU:
+        return _format_de_ru_question(entry)
+    return _format_pl_sg_question(entry) if state == QUIZ_PL_SG else _format_article_question(entry)
 
 
-# --- prompt senders ---
+async def _deliver_written_view(update, context, frame, messages):
+    frame['view'] = messages
+    frame['pending_render'] = True
+    frame['render_transport'] = written_state.transport_id(update)
+    frame['render_revision'] = frame['revision']
+    for text, kwargs in messages:
+        await _reply_text_with_retry(update.message, text, **kwargs)
+    frame['pending_render'] = False
+    pending = frame.get('next_view') or {}
+    if (pending.get('transport') == written_state.transport_id(update)
+            and pending.get('revision') == frame['revision']):
+        frame.pop('next_view', None)
+    return frame['return_state']
 
-async def _send_ru_de_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
-    """Handle send ru de prompt."""
-    mode = selected_direction_mode(context, _mode_l1_de(update.effective_user.id))
-    entry = _maybe_take_retry_entry(context, mode, update.effective_user.id)
-    if not entry:
-        context.user_data["quiz_is_retry"] = False
-        entry = _pick_due_entry(context, update.effective_user.id, mode)
-    if not entry:
-        entry = _force_take_retry_entry(context, mode)
-    if not entry:
+
+async def _render_current_written(update, context, state, prefix_text=None, tail_text=None):
+    uid = update.effective_user.id
+    mode = _written_mode(context, uid, state)
+    existing = context.user_data.get(written_state.FRAME)
+    frame = written_state.ensure_frame(context, mode, state)
+    if not existing and context.user_data.get('quiz_entry'):
+        frame = written_state.establish_view(context, mode, state, context.user_data['quiz_entry'])
+    entry = context.user_data.get('quiz_entry') if frame['phase'] == 'question' else None
+    messages = []
+    if entry:
+        text = _written_question(entry, uid, state)
         if prefix_text:
-            await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
-        await _send_session_summary(
-            update, context, mode,
-            tail_text=t(_user_interface_lang(update.effective_user.id), _no_words_key(update.effective_user.id, "no_due_words")),
-            reply_markup=_quiz_idle_markup(update.effective_user.id),
-        )
-        return QUIZ_RU_DE
-
-    entry = resolve_bot_word_media(get_db_path(), update.effective_user.id, entry)
-    context.user_data["quiz_entry"] = entry
-    prompt_text = _format_ru_question(entry, _user_dict_lang(update.effective_user.id))
-    if prefix_text:
-        prompt_text = f"{prefix_text}\n\n{prompt_text}"
-
-    await _reply_text_with_retry(
-        update.message,
-        prompt_text,
-        reply_markup=_quiz_markup(update.effective_user.id, article=False),
-        parse_mode="Markdown",
-    )
-    return QUIZ_RU_DE
-
-
-async def _send_de_ru_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
-    """Handle send de ru prompt."""
-    mode = selected_direction_mode(context, _mode_de_l1(update.effective_user.id))
-    entry = _maybe_take_retry_entry(context, mode, update.effective_user.id)
-    if not entry:
-        context.user_data["quiz_is_retry"] = False
-        entry = _pick_due_entry(context, update.effective_user.id, mode)
-    if not entry:
-        entry = _force_take_retry_entry(context, mode)
-    if not entry:
+            text = prefix_text+'\n\n'+text
+        messages.append((text, {'reply_markup': _quiz_markup(uid, article=state == QUIZ_ARTICLE),
+                                'parse_mode': 'Markdown'}))
+    elif state == QUIZ_ARTICLE:
+        context.user_data.pop('quiz_entry', None)
+        frame['return_state'] = TESTS_MENU
         if prefix_text:
-            await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
-        await _send_session_summary(
-            update, context, mode,
-            tail_text=t(_user_interface_lang(update.effective_user.id), _no_words_key(update.effective_user.id, "no_due_words")),
-            reply_markup=_quiz_idle_markup(update.effective_user.id),
-        )
-        return QUIZ_DE_RU
-
-    entry = resolve_bot_word_media(get_db_path(), update.effective_user.id, entry)
-    context.user_data["quiz_entry"] = entry
-    prompt_text = _format_de_ru_question(entry)
-    if prefix_text:
-        prompt_text = f"{prefix_text}\n\n{prompt_text}"
-
-    await _reply_text_with_retry(
-        update.message,
-        prompt_text,
-        reply_markup=_quiz_markup(update.effective_user.id, article=False),
-        parse_mode="Markdown",
-    )
-    return QUIZ_DE_RU
-
-
-async def _send_pl_sg_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
-    """Handle send pl sg prompt."""
-    mode = _mode_pl_sg(update.effective_user.id)
-    entry = _maybe_take_retry_entry(context, mode, update.effective_user.id)
-    if not entry:
-        context.user_data["quiz_is_retry"] = False
-        attempts = 0
-        entry = None
-        while attempts < 30:
-            attempts += 1
-            candidate = _pick_due_entry(context, update.effective_user.id, mode, word_type="nomen")
-            if not candidate:
-                break
-            if _is_pl_sg_eligible(candidate):
-                entry = candidate
-                break
-        if not entry and attempts > 0:
-            if prefix_text:
-                await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
-            await _send_session_summary(
-                update, context, mode,
-                tail_text=t(_user_interface_lang(update.effective_user.id), _no_words_key(update.effective_user.id, "no_due_pl_sg")),
-                reply_markup=_quiz_idle_markup(update.effective_user.id),
-            )
-            return QUIZ_PL_SG
-    if not entry:
+            messages.append((prefix_text, {'parse_mode': 'Markdown'}))
+        messages.append((tail_text or t(_user_interface_lang(uid), 'no_due_nouns'),
+            {'reply_markup': ReplyKeyboardMarkup(_tests_menu_keys(uid), resize_keyboard=True)}))
+    else:
+        context.user_data.pop('quiz_entry', None)
+        text = t(_user_interface_lang(uid), 'session_words_count').format(
+            count=_session_count(context, mode), correct=_session_correct_count(context, mode),
+            wrong=_session_wrong_count(context, mode))
+        if tail_text:
+            text += '\n\n'+tail_text
         if prefix_text:
-            await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
-        await _send_session_summary(
-            update, context, mode,
-            tail_text=t(_user_interface_lang(update.effective_user.id), _no_words_key(update.effective_user.id, "no_due_words")),
-            reply_markup=_quiz_idle_markup(update.effective_user.id),
-        )
-        return QUIZ_PL_SG
-
-    entry = resolve_bot_word_media(get_db_path(), update.effective_user.id, entry)
-    context.user_data["quiz_entry"] = entry
-    prompt_text = _format_pl_sg_question(entry)
-    if prefix_text:
-        prompt_text = f"{prefix_text}\n\n{prompt_text}"
-
-    await _reply_text_with_retry(
-        update.message,
-        prompt_text,
-        reply_markup=_quiz_markup(update.effective_user.id, article=False),
-        parse_mode="Markdown",
-    )
-    return QUIZ_PL_SG
+            messages.append((prefix_text, {'parse_mode': 'Markdown'}))
+        messages.append((text, {'reply_markup': _quiz_idle_markup(uid),
+                               'message_effect_id': _session_effect_id(context, mode)}))
+    written_state.publish(context)
+    return await _deliver_written_view(update, context, frame, messages)
 
 
-async def _send_article_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text):
-    """Handle send article prompt."""
-    mode = MODE_ARTICLE
-    entry = _maybe_take_retry_entry(context, mode, update.effective_user.id)
-    if not entry:
-        context.user_data["quiz_is_retry"] = False
-        entry = _pick_due_entry(context, update.effective_user.id, mode, word_type="nomen")
-    if not entry:
-        if prefix_text:
-            await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
-        await _reply_text_with_retry(
-            update.message,
-            t(_user_interface_lang(update.effective_user.id), _no_words_key(update.effective_user.id, "no_due_nouns")),
-            reply_markup=ReplyKeyboardMarkup(_tests_menu_keys(update.effective_user.id), resize_keyboard=True),
-        )
-        return TESTS_MENU
+async def _repeat_current_ru_de(update, context, prefix_text):
+    return await _render_current_written(update, context, QUIZ_RU_DE, prefix_text)
 
-    entry = resolve_bot_word_media(get_db_path(), update.effective_user.id, entry)
-    context.user_data["quiz_entry"] = entry
-    prompt_text = _format_article_question(entry)
-    if prefix_text:
-        prompt_text = f"{prefix_text}\n\n{prompt_text}"
 
-    await _reply_text_with_retry(
-        update.message,
-        prompt_text,
-        reply_markup=_quiz_markup(update.effective_user.id, article=True),
-        parse_mode="Markdown",
-    )
-    return QUIZ_ARTICLE
+async def _repeat_current_de_ru(update, context, prefix_text):
+    return await _render_current_written(update, context, QUIZ_DE_RU, prefix_text)
+
+
+async def _repeat_current_pl_sg(update, context, prefix_text):
+    return await _render_current_written(update, context, QUIZ_PL_SG, prefix_text)
+
+
+async def _send_written_prompt(update, context, prefix_text, state):
+    uid = update.effective_user.id
+    mode = _written_mode(context, uid, state)
+    frame = written_state.ensure_frame(context, mode, state)
+    transport = written_state.transport_id(update)
+    pending = frame.get('next_view')
+    resuming = (pending and pending['transport'] == transport
+                and pending['revision'] == frame['revision'])
+    if not resuming:
+        if frame.get('advance_transport') != transport:
+            receipt = written_service.control(get_db_path(), update, context, mode, state, 'written_enter')
+            if not _check_receipt(context, receipt):
+                if (frame.get('pending_render') and frame.get('render_transport') == transport
+                        and frame.get('render_revision') == frame['revision']):
+                    return await _deliver_written_view(update, context, frame, frame['view'])
+                return frame['return_state']
+        # The accepted delivery owns this unfinished transition before any read
+        # or queue mutation. Selection and media enrichment are separate steps:
+        # a failed media read must retain the already reserved question.
+        pending = {'transport': transport, 'revision': frame['revision'],
+                   'prefix': prefix_text, 'selected': False, 'adopted': False}
+        frame['next_view'] = pending
+    if not pending['selected']:
+        entry = _maybe_take_retry_entry(context, mode, uid)
+        if not entry:
+            context.user_data['quiz_is_retry'] = False
+            for _ in range(30 if state == QUIZ_PL_SG else 1):
+                candidate = _pick_due_entry(context, uid, mode, word_type=_WRITTEN_KINDS[state][1])
+                if not candidate:
+                    break
+                if state != QUIZ_PL_SG or _is_pl_sg_eligible(candidate):
+                    entry = candidate
+                    break
+        if not entry:
+            entry = _force_take_retry_entry(context, mode)
+        pending['entry'], pending['selected'] = entry, True
+    if not pending['adopted']:
+        entry = pending['entry']
+        if entry:
+            entry = resolve_bot_word_media(get_db_path(), uid, entry)
+        written_state.establish_view(context, mode, state, entry)
+        pending['revision'], pending['adopted'] = frame['revision'], True
+        frame.pop('advance_transport', None)
+    tail = None if frame['phase'] == 'question' else t(
+        _user_interface_lang(uid), _no_words_key(uid, _WRITTEN_KINDS[state][2]))
+    return await _render_current_written(update, context, state, pending['prefix'], tail)
+
+
+async def _send_ru_de_prompt(update, context, prefix_text):
+    return await _send_written_prompt(update, context, prefix_text, QUIZ_RU_DE)
+
+
+async def _send_de_ru_prompt(update, context, prefix_text):
+    return await _send_written_prompt(update, context, prefix_text, QUIZ_DE_RU)
+
+
+async def _send_pl_sg_prompt(update, context, prefix_text):
+    return await _send_written_prompt(update, context, prefix_text, QUIZ_PL_SG)
+
+
+async def _send_article_prompt(update, context, prefix_text):
+    return await _send_written_prompt(update, context, prefix_text, QUIZ_ARTICLE)
 
 
 # --- answer handlers ---
@@ -632,7 +609,7 @@ async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mode = selected_direction_mode(context, _mode_l1_de(update.effective_user.id))
     action = _action_key_from_text(text, update.effective_user.id)
     if action == "back":
-        return await _back_to_tests(update, context)
+        return await _stop_with_summary(update, context, mode)
     if action == "stop":
         return await _stop_with_summary(update, context, mode)
     if action == "input_err":
@@ -642,6 +619,11 @@ async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await _repeat_current_ru_de(update, context, prefix)
     if action == "send_learn":
         added = _send_entry_to_learning(update, context, entry_key="quiz_entry")
+        outcome = await _learning_send_outcome(update, context, QUIZ_RU_DE)
+        if outcome is _REPLAYED_LEARNING_SEND:
+            return None
+        if outcome is not None:
+            return outcome
         if added:
             # Word is now in active learning (excluded from FSRS due) — drop it from the
             # retry queue and move on to the NEXT word, not the one just sent.
@@ -662,19 +644,14 @@ async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ok = False
     else:
         ok, _ = _check_ru_de_strict(entry, text)
-    if not is_retry:
-        _remember_last_answer(context, entry, mode, ok, update.message.message_id)
-        _update_srs_for_entry(update.effective_user.id, entry, mode, ok)
-        _mark_session_word(context, mode, entry.get("id"))
-    context.user_data["quiz_last_answered_entry"] = entry
-    _register_retry_result(context, mode, entry.get("id"), ok, is_retry, update.effective_user.id)
-    if not is_retry and ok:
-        _set_retry_since_last(context, mode, _retry_since_last(context, mode) + 1)
-    _bump_session_result(context, mode, ok, is_retry)
-    await _apply_answer_reaction(update, context, ok)
+    if not _accept_written_answer(update, context, entry, mode, ok, is_retry, QUIZ_RU_DE,
+                                  idk=text == I_DONT_KNOW_TEXT):
+        return await _render_current_written(update, context, QUIZ_RU_DE)
 
     feedback = _format_feedback_ru_de(entry, ok, lang=_user_interface_lang(update.effective_user.id))
-    return await _send_ru_de_prompt(update, context, feedback)
+    result = await _send_ru_de_prompt(update, context, feedback)
+    await _apply_answer_reaction(update, context, ok)
+    return result
 
 
 async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -687,7 +664,7 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mode = selected_direction_mode(context, _mode_de_l1(update.effective_user.id))
     action = _action_key_from_text(text, update.effective_user.id)
     if action == "back":
-        return await _back_to_tests(update, context)
+        return await _stop_with_summary(update, context, mode)
     if action == "stop":
         return await _stop_with_summary(update, context, mode)
     if action == "input_err":
@@ -697,6 +674,11 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await _repeat_current_de_ru(update, context, prefix)
     if action == "send_learn":
         added = _send_entry_to_learning(update, context, entry_key="quiz_entry")
+        outcome = await _learning_send_outcome(update, context, QUIZ_DE_RU)
+        if outcome is _REPLAYED_LEARNING_SEND:
+            return None
+        if outcome is not None:
+            return outcome
         if added:
             _remove_from_retry(context, mode, (context.user_data.get("quiz_entry") or {}).get("id"))
         lang = _user_interface_lang(update.effective_user.id)
@@ -725,19 +707,14 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
             base_field = _DICT_TRANSLATION_COLUMN.get(dict_lang, "russian")
             variants |= set(_russian_variants(entry.get(base_field, "")))
         ok = bool(answer_variants & variants)
-    if not is_retry:
-        _remember_last_answer(context, entry, mode, ok, update.message.message_id)
-        _update_srs_for_entry(update.effective_user.id, entry, mode, ok)
-        _mark_session_word(context, mode, entry.get("id"))
-    context.user_data["quiz_last_answered_entry"] = entry
-    _register_retry_result(context, mode, entry.get("id"), ok, is_retry, update.effective_user.id)
-    if not is_retry and ok:
-        _set_retry_since_last(context, mode, _retry_since_last(context, mode) + 1)
-    _bump_session_result(context, mode, ok, is_retry)
-    await _apply_answer_reaction(update, context, ok)
+    if not _accept_written_answer(update, context, entry, mode, ok, is_retry, QUIZ_DE_RU,
+                                  idk=False):
+        return await _render_current_written(update, context, QUIZ_DE_RU)
 
     feedback = _format_feedback_de_ru(entry, ok, _user_dict_lang(update.effective_user.id), update.effective_user.id, lang=_user_interface_lang(update.effective_user.id))
-    return await _send_de_ru_prompt(update, context, feedback)
+    result = await _send_de_ru_prompt(update, context, feedback)
+    await _apply_answer_reaction(update, context, ok)
+    return result
 
 
 async def quiz_pl_sg(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -746,10 +723,11 @@ async def quiz_pl_sg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from ..handlers.learning import _send_entry_to_learning
     from ..main import _flag_current_word
 
+    mode = _mode_pl_sg(update.effective_user.id)
     text = update.message.text.strip()
     action = _action_key_from_text(text, update.effective_user.id)
     if action == "back":
-        return await _back_to_tests(update, context)
+        return await _stop_with_summary(update, context, mode)
     if action == "stop":
         return await _stop_with_summary(update, context, _mode_pl_sg(update.effective_user.id))
     if action == "input_err":
@@ -759,6 +737,11 @@ async def quiz_pl_sg(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await _repeat_current_pl_sg(update, context, prefix)
     if action == "send_learn":
         added = _send_entry_to_learning(update, context, entry_key="quiz_entry")
+        outcome = await _learning_send_outcome(update, context, QUIZ_PL_SG)
+        if outcome is _REPLAYED_LEARNING_SEND:
+            return None
+        if outcome is not None:
+            return outcome
         if added:
             _remove_from_retry(context, _mode_pl_sg(update.effective_user.id), (context.user_data.get("quiz_entry") or {}).get("id"))
         lang = _user_interface_lang(update.effective_user.id)
@@ -791,18 +774,13 @@ async def quiz_pl_sg(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # If singular and plural are identical, allow answer with article only.
             ok = singular == plural and _article_matches(got, entry.get("article", ""))
     mode = _mode_pl_sg(update.effective_user.id)
-    if not is_retry:
-        _remember_last_answer(context, entry, mode, ok, update.message.message_id)
-        _update_srs_for_entry(update.effective_user.id, entry, mode, ok)
-        _mark_session_word(context, mode, entry.get("id"))
-    context.user_data["quiz_last_answered_entry"] = entry
-    _register_retry_result(context, mode, entry.get("id"), ok, is_retry, update.effective_user.id)
-    if not is_retry and ok:
-        _set_retry_since_last(context, mode, _retry_since_last(context, mode) + 1)
-    _bump_session_result(context, mode, ok, is_retry)
-    await _apply_answer_reaction(update, context, ok)
+    if not _accept_written_answer(update, context, entry, mode, ok, is_retry, QUIZ_PL_SG,
+                                  idk=text == I_DONT_KNOW_TEXT):
+        return await _render_current_written(update, context, QUIZ_PL_SG)
     feedback = _format_feedback_pl_sg(entry, ok, lang=_user_interface_lang(update.effective_user.id))
-    return await _send_pl_sg_prompt(update, context, feedback)
+    result = await _send_pl_sg_prompt(update, context, feedback)
+    await _apply_answer_reaction(update, context, ok)
+    return result
 
 
 async def quiz_article(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -813,6 +791,10 @@ async def quiz_article(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "stop":
         return await _stop_with_summary(update, context, MODE_ARTICLE)
+    if _action_key_from_text(text, update.effective_user.id) == 'input_err':
+        applied = await _apply_input_err(update, context, MODE_ARTICLE)
+        return await _render_current_written(update, context, QUIZ_ARTICLE,
+            t(_user_interface_lang(update.effective_user.id), 'input_err_fixed' if applied else 'input_err_nothing'))
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_ARTICLE)
     if _action_key_from_text(text, update.effective_user.id) == "clarify_fields":
@@ -829,15 +811,152 @@ async def quiz_article(update: Update, context: ContextTypes.DEFAULT_TYPE):
         expected = entry.get("article", "")
         ok = _article_matches(text, expected)
     mode = MODE_ARTICLE
-    if not is_retry:
-        _update_srs_for_entry(update.effective_user.id, entry, mode, ok)
-        _mark_session_word(context, mode, entry.get("id"))
-    context.user_data["quiz_last_answered_entry"] = entry
-    _register_retry_result(context, mode, entry.get("id"), ok, is_retry, update.effective_user.id)
-    if not is_retry:
-        _set_retry_since_last(context, mode, _retry_since_last(context, mode) + 1)
-    _bump_session_result(context, mode, ok, is_retry)
-    await _apply_answer_reaction(update, context, ok)
+    if not _accept_written_answer(update, context, entry, mode, ok, is_retry, QUIZ_ARTICLE,
+                                  idk=text == I_DONT_KNOW_TEXT):
+        return await _render_current_written(update, context, QUIZ_ARTICLE)
 
     feedback = _format_feedback_article(entry, ok, _user_dict_lang(update.effective_user.id), lang=_user_interface_lang(update.effective_user.id))
-    return await _send_article_prompt(update, context, feedback)
+    result = await _send_article_prompt(update, context, feedback)
+    await _apply_answer_reaction(update, context, ok)
+    return result
+
+
+def _other_flow_state(context):
+    kind = (context.user_data.get('quiz_published_view') or {}).get('caller_kind')
+    return {'learning': LEARNING_QUIZ, 'oral': ORAL_QUIZ}.get(kind)
+
+
+async def _drain_unshown_written(update, context):
+    """A new delivery finishes an accepted display before interpreting its text."""
+    frame = context.user_data.get(written_state.FRAME)
+    if not frame:
+        return False, None
+    pending = frame.get('next_view') or {}
+    advancing = pending.get('revision') == frame['revision']
+    rendering = frame.get('pending_render') and frame.get('render_revision') == frame['revision']
+    if not advancing and not rendering:
+        return False, None
+    receipt = written_service.control(get_db_path(), update, context, frame['mode'],
+                                      frame['return_state'], 'written_drain_view')
+    if not receipt.get('replayed') and receipt.get('invalidate_frame'):
+        invalidate_study_frames(context)
+        return True, await _back_to_main_menu(update, context)
+    if receipt.get('replayed'):
+        return True, frame['return_state']
+    transport = written_state.transport_id(update)
+    if advancing:
+        pending['transport'] = transport
+    if rendering:
+        return True, await _deliver_written_view(update, context, frame, frame['view'])
+    return True, await _send_written_prompt(update, context, pending['prefix'], frame['return_state'])
+
+
+def _serialized_written(state):
+    """Own the user lock from delivery lookup through frame adoption and send."""
+    def decorate(handler):
+        @wraps(handler)
+        async def wrapped(update, context):
+            async with study_lock(update.effective_user.id):
+                receipt = written_service.preflight(
+                    get_db_path(), update.effective_user.id, written_state.transport_id(update))
+                if receipt:
+                    other_state = _other_flow_state(context)
+                    if receipt.get('replayed') and other_state is not None:
+                        return other_state
+                    if not receipt.get('replayed') and receipt.get('invalidate_frame'):
+                        invalidate_study_frames(context)
+                        return await _back_to_main_menu(update, context)
+                    frame = context.user_data.get(written_state.FRAME)
+                    if frame:
+                        if (frame.get('pending_render')
+                                and frame.get('render_transport') == written_state.transport_id(update)
+                                and frame.get('render_revision') == frame['revision']):
+                            return await _deliver_written_view(update, context, frame, frame['view'])
+                        pending = frame.get('next_view') or {}
+                        if (pending.get('transport') == written_state.transport_id(update)
+                                and pending.get('revision') == frame['revision']):
+                            return await _send_written_prompt(update, context, pending['prefix'], frame['return_state'])
+                        return frame['return_state']
+                    return receipt.get('return_state', TESTS_MENU)
+                other_state = _other_flow_state(context)
+                if state is not None and other_state is not None:
+                    return other_state
+                if other_state is None:
+                    drained, result = await _drain_unshown_written(update, context)
+                    if drained:
+                        return result
+                try:
+                    return await handler(update, context)
+                except StaleStudyAction:
+                    frame = context.user_data.get(written_state.FRAME)
+                    if not frame:
+                        return await _back_to_main_menu(update, context)
+                    # Bind a rejected delivery too: it must not grade a later B.
+                    receipt = written_service.control(get_db_path(), update, context,
+                        frame['mode'], frame['return_state'], 'written_stale')
+                    _check_receipt(context, receipt)
+                    if frame['question_id'] and not get_word_by_id(get_db_path(), frame['question_id']):
+                        frame['advance_transport'] = written_state.transport_id(update)
+                        frame['question_id'], frame['action_key'] = None, None
+                        context.user_data.pop('quiz_entry', None)
+                        return await _send_written_prompt(update, context, None, frame['return_state'])
+                    return await _render_current_written(update, context, frame['return_state'])
+        return wrapped
+    return decorate
+
+
+def serialized_written_entry(handler):
+    """Menu adapter: lock/preflight before the menu clears an existing frame."""
+    return _serialized_written(None)(handler)
+
+
+def _matching_written_frame(context, point):
+    frame = context.user_data.get(written_state.FRAME)
+    if (frame and frame['flow_id'] == point.flow_id and frame['mode'] == point.mode
+            and frame['revision'] == point.view_revision):
+        return frame
+    return None
+
+
+async def _render_existing_written(update, context, point, prefix_text):
+    other_state = _other_flow_state(context)
+    if other_state is not None:
+        return other_state
+    frame = _matching_written_frame(context, point)
+    if not frame:
+        current = context.user_data.get(written_state.FRAME)
+        if current:
+            return current['return_state']
+        # Pre-adapter in-flight sessions can still use the shared render-only
+        # legacy view, but a published oral/Learning flow never enters it.
+        published = context.user_data.get('quiz_published_view') or {}
+        if not context.user_data.get(written_state.FRAME) and published.get('caller_kind') == 'written':
+            return await _render_legacy_frame(update, context, point, prefix_text)
+        return await _back_to_tests(update, context)
+    if frame['phase'] == 'question':
+        entry = get_word_by_id(get_db_path(), frame['question_id'])
+        if entry:
+            context.user_data['quiz_entry'] = resolve_bot_word_media(get_db_path(), update.effective_user.id, entry)
+        else:
+            frame['phase'], frame['question_id'], frame['action_key'] = 'completed', None, None
+            context.user_data.pop('quiz_entry', None)
+    return await _render_current_written(update, context, frame['return_state'], prefix_text)
+
+
+async def _written_after_delete(update, context, point, word_id, prefix_text):
+    frame = _matching_written_frame(context, point)
+    if not frame:
+        return await _render_existing_written(update, context, point, prefix_text)
+    if (frame.get('last_receipt') or {}).get('word_id') == word_id:
+        frame['last_receipt'] = None
+    if frame['phase'] == 'question' and frame['question_id'] == word_id:
+        frame['question_id'], frame['action_key'] = None, None
+        return await _send_written_prompt(update, context, prefix_text, frame['return_state'])
+    return await _render_current_written(update, context, frame['return_state'], prefix_text)
+
+
+quiz_ru_de = _serialized_written(QUIZ_RU_DE)(quiz_ru_de)
+quiz_de_ru = _serialized_written(QUIZ_DE_RU)(quiz_de_ru)
+quiz_pl_sg = _serialized_written(QUIZ_PL_SG)(quiz_pl_sg)
+quiz_article = _serialized_written(QUIZ_ARTICLE)(quiz_article)
+register_renderer('written', _render_existing_written, _written_after_delete)
