@@ -77,7 +77,7 @@ class LearningShowOrderTests(unittest.TestCase):
         with sqlite3.connect(self.db) as conn:
             for i, w in enumerate(words):
                 conn.execute(
-                    "UPDATE learning_items SET preview_done = 1, step_index = ?, "
+                    "UPDATE learning_items SET preview_done = 1, first_due_pending = 0, step_index = ?, "
                     "next_due = '2000-01-01T00:00:00Z', created_at = ? "
                     "WHERE user_id = 1 AND word_id = ?",
                     (step_index, f"2000-01-01 00:00:{i:02d}", w["id"]),

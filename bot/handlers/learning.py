@@ -7,6 +7,9 @@ db_search).
 """
 
 import random
+import uuid
+from copy import deepcopy
+from dataclasses import replace
 from datetime import datetime, timezone
 
 from telegram import ReplyKeyboardMarkup, Update
@@ -14,6 +17,8 @@ from telegram.ext import ContextTypes
 
 from ..app_config import (
     I_DONT_KNOW_TEXT,
+    LEARNING_DAILY_QTY_KEY,
+    LEARNING_DAILY_QTY_DEFAULT,
     LEARNING_MENU,
     LEARNING_QUIZ,
     TESTS_MENU,
@@ -27,30 +32,21 @@ from ..common.settings import (
     _learning_intervals_text,
     _learning_mix_mode_enabled,
     _learning_ready_quorum,
-    _learning_schedule_seconds,
-    _set_learning_mix_mode,
     _topic_filter_banner,
 )
 from ..common.word_filter import count_words_for_filter, resolve_quiz_filter
-from ..common.txlog import _capture_transaction_snapshot, _log_transaction
+from ..common.study_lock import study_lock, invalidate_study_frames
+from ..common.quiz_resume import register_renderer, publish_view, RETURN_POINT_KEY, PUBLISHED_VIEW_KEY
+from .. import learning_store
+from ..study import answers, deliveries, repository
 from ..handlers.quiz import _check_ru_de_strict, _set_reaction
 from ..i18n import t
 from ..storage import (
-    learning_active_count,
-    learning_add_word_by_id,
-    learning_add_words,
-    learning_apply_input_err,
     learning_due_entries,
-    learning_get_or_create_batch,
-    learning_mark_preview_next,
     learning_pick_new_words,
     learning_preview_entry,
-    learning_reset_session,
-    learning_skip_word,
     learning_status_snapshot,
-    learning_update_result,
     list_learning_active_words,
-    log_quiz_event,
 )
 from ..text_utils import cap_word as _cap_word
 from ..text_utils import low_word as _low_word
@@ -112,7 +108,7 @@ def _learning_empty_text(user_id):
 _LEARNING_RECENT_SHOWS = 2
 
 
-def _pick_learning_due_entry(context, user_id):
+def _pick_learning_due_entry(context, user_id, conn=None):
     """Pick the next word to show in the running learning queue.
 
     STATIC show rule — identical whether or not mix mode is on (mix only shapes
@@ -125,10 +121,11 @@ def _pick_learning_due_entry(context, user_id):
     Recent shows are tracked in context ("learning_recent_ids"); when the pool is
     too small to honour the spacing, it relaxes as far as needed. An available
     alternative to the last shown word is selected before step priority is
-    applied, so a wrong answer reset to step 0 cannot jump ahead of that
-    alternative and immediately repeat.
+    applied, so a recovering word cannot jump ahead of that alternative and
+    immediately repeat.
     """
-    due_entries = learning_due_entries(get_db_path(), user_id=user_id)
+    due_entries = (learning_store.due_entries(conn, user_id) if conn is not None
+                   else learning_due_entries(get_db_path(), user_id=user_id))
     if not due_entries:
         return None
     recent = context.user_data.get("learning_recent_ids") or []
@@ -165,51 +162,163 @@ async def _apply_learning_reaction(update, context, ok):
     await _set_reaction(context, update.effective_user.id, update.message.message_id, [emoji])
 
 
+FRAME = "learning_frame"
+_PENDING_NAVIGATION = "quiz_learning_pending_navigation"
+
+
+def _transport_id(update):
+    value = getattr(update, "update_id", None)
+    if value is None:
+        value = getattr(update, "_learning_transport_id", None)
+        if value is None:
+            value = uuid.uuid4().int & ((1 << 63) - 1)
+            update._learning_transport_id = value
+    return int(value)
+
+
+def _new_frame():
+    return {"flow_id": uuid.uuid4().hex, "revision": 0, "phase": "completed",
+            "current": None, "last_answer": None, "last_visible_id": None,
+            "pending_render": False, "accepted_delivery": None}
+
+
+def _legacy_frame(context):
+    frame = context.user_data.get(FRAME)
+    if frame:
+        return frame
+    frame = _new_frame()
+    entry = context.user_data.get("quiz_entry")
+    if entry:
+        frame.update(current={"entry": entry, "action_key": uuid.uuid4().hex}, revision=1,
+                     phase="preview" if context.user_data.get("learning_preview_mode") else "question")
+    last = context.user_data.get("quiz_last_answered_entry")
+    frame["last_visible_id"] = last.get("id") if last else None
+    context.user_data[FRAME] = frame
+    return frame
+
+
+def _delivery_receipt(update, context):
+    uid, transport = update.effective_user.id, _transport_id(update)
+    with repository.transaction(get_db_path()) as conn:
+        answers.authorize_user(conn, uid)
+        old = deliveries.lookup_delivery(conn, uid, transport)
+        if not old:
+            return None
+        receipt = (answers.lookup_action(conn, uid, old["action_key"]) if old.get("action_key") else None)
+        return {**(receipt or old["result"]), "replayed": True}
+
+
+async def _present_learning_navigation(update, context, pending):
+    uid = update.effective_user.id
+    if pending["destination"] == LEARNING_MENU:
+        state = await _send_learning_menu(update, uid)
+    else:
+        await _reply_text_with_retry(update.message, t(_user_interface_lang(uid), "tests") + ":",
+            reply_markup=ReplyKeyboardMarkup(_tests_menu_keys(uid), resize_keyboard=True))
+        state = TESTS_MENU
+    if context.user_data.get(_PENDING_NAVIGATION) is pending:
+        context.user_data.pop(_PENDING_NAVIGATION, None)
+    return state
+
+
+async def _leave_learning(update, context, receipt, destination):
+    invalidate_study_frames(context)
+    pending = {"transport": _transport_id(update), "flow_id": receipt["flow_id"],
+               "destination": destination}
+    context.user_data[_PENDING_NAVIGATION] = pending
+    return await _present_learning_navigation(update, context, pending)
+
+
+async def _handle_replay(update, context, receipt):
+    pending = context.user_data.get(_PENDING_NAVIGATION)
+    if (pending and pending["transport"] == _transport_id(update) and
+            pending["flow_id"] == receipt.get("flow_id")):
+        live_study = any(context.user_data.get(key) for key in (
+            FRAME, "quiz_written_frame", "conjugation_frame", "study_frame",
+            "quiz_entry", "quiz_published_view"))
+        if not live_study:
+            return await _present_learning_navigation(update, context, pending)
+    frame = context.user_data.get(FRAME)
+    if (frame and frame.get("pending_render") and
+            frame.get("accepted_delivery") == _transport_id(update) and
+            receipt.get("flow_id") == frame["flow_id"]):
+        return await _render_learning_frame(update, context)
+    return None  # Keep a newer conversation state/screen intact.
+
+
+async def _drain_pending_learning_view(update, context):
+    """Consume new input as delivery of an already committed unseen view."""
+    frame = context.user_data.get(FRAME)
+    if not frame or not frame.get("pending_render"):
+        return False, None
+    uid, transport = update.effective_user.id, _transport_id(update)
+    result = answers.record_control_transition(get_db_path(), uid, transport,
+        frame["flow_id"], "learning_drain_view",
+        lambda conn: {"flow_id": frame["flow_id"], "revision": frame["revision"]})
+    if result.get("replayed"):
+        return True, await _handle_replay(update, context, result)
+    if _learning_recovery(context, result):
+        return True, await _send_learning_menu(update, uid)
+    frame["accepted_delivery"] = transport
+    return True, await _render_learning_frame(update, context)
+
+
 def _send_entry_to_learning(update: Update, context: ContextTypes.DEFAULT_TYPE, entry_key="quiz_entry"):
-    """Handle send entry to learning."""
-    entry = context.user_data.get(entry_key)
-    if not entry:
-        return False
-    db_path = get_db_path()
-    user_id = update.effective_user.id
-    batch_id = learning_get_or_create_batch(db_path, user_id=user_id, daily_qty=_learning_daily_qty(db_path, user_id))
-    added = learning_add_word_by_id(
-        db_path,
-        user_id=user_id,
-        word_id=entry.get("id"),
-        batch_id=batch_id,
-        first_delay_seconds=_learning_schedule_seconds(db_path, user_id)[0],
-    )
-    return bool(added)
-
-
-def _apply_input_err_learning(update, context):
-    """Handle apply input error for learning mode."""
-    last_id = context.user_data.get("last_learning_entry_id")
-    last_ok = context.user_data.get("last_learning_ok")
-    last_prev_step = context.user_data.get("last_learning_prev_step")
-    if not last_id or last_ok is None:
-        return False
-    if last_ok:
-        return False
-    snapshot = _capture_transaction_snapshot(update.effective_user.id, last_id, ["learning"])
-    result = learning_apply_input_err(
-        get_db_path(),
-        user_id=update.effective_user.id,
-        word_id=last_id,
-        prev_step_index=last_prev_step,
-        intervals_seconds=_learning_schedule_seconds(get_db_path(), update.effective_user.id),
-    )
-    log_quiz_event(
-        get_db_path(),
-        user_id=update.effective_user.id,
-        word_id=last_id,
-        mode="learning",
-        is_correct=True,
-    )
-    _log_transaction(update.effective_user.id, "input_err:learning", snapshot)
-    context.user_data["last_learning_ok"] = True
-    return bool(result)
+    """Synchronous bridge; callers own the outer study lock, never a SQL tx."""
+    uid, transport = update.effective_user.id, _transport_id(update)
+    context.user_data["learning_send_receipt"] = {"transport_update_id": transport, "added": 0}
+    with repository.transaction(get_db_path()) as conn:
+        answers.authorize_user(conn, uid)
+        old = deliveries.lookup_delivery(conn, uid, transport)
+        if old:
+            result = {**old["result"], "replayed": True}
+        elif answers.recover_pending_undo(conn, uid):
+            result = {"recovered_undo": True, "added": 0}
+            deliveries.begin_delivery(conn, uid, transport, "send_learn", "send_learn")
+            deliveries.commit_delivery(conn, uid, transport, result)
+        else:
+            entry = context.user_data.get(entry_key)
+            if not entry or not conn.execute("SELECT 1 FROM words WHERE id=?", (entry.get("id"),)).fetchone():
+                result = {"added": 0}
+            else:
+                row = conn.execute("SELECT value FROM user_settings WHERE user_id=? AND key=?",
+                                   (uid, LEARNING_DAILY_QTY_KEY)).fetchone()
+                if row is None:
+                    row = conn.execute("SELECT value FROM app_settings WHERE key=?", (LEARNING_DAILY_QTY_KEY,)).fetchone()
+                try:
+                    qty = max(1, int(row[0] if row else LEARNING_DAILY_QTY_DEFAULT))
+                except (ValueError, TypeError):
+                    qty = LEARNING_DAILY_QTY_DEFAULT
+                batch = learning_store.get_or_create_batch(conn, uid, qty)
+                added = learning_store.add_items(conn, uid, [entry["id"]], batch, restart=True)
+                result = {"added": added, "word_id": entry["id"], "batch_id": batch,
+                          "flow_id": (context.user_data.get(PUBLISHED_VIEW_KEY) or {}).get("flow_id", "send_learn")}
+                frame = context.user_data.get(FRAME)
+                point = context.user_data.get(RETURN_POINT_KEY)
+                current = (frame or {}).get("current")
+                if (frame and point and point.caller_kind == "learning" and
+                        ((current and current["entry"]["id"] == entry["id"]) or
+                         (not current and frame.get("last_visible_id") == entry["id"]))):
+                    result["next_view"] = _next_learning_view(conn, context, uid)
+            deliveries.begin_delivery(conn, uid, transport, result.get("flow_id", "send_learn"), "send_learn")
+            deliveries.commit_delivery(conn, uid, transport, result)
+    result["transport_update_id"] = transport
+    if result.get("recovered_undo") and not result.get("replayed"):
+        invalidate_study_frames(context)
+    elif result.get("added") and not result.get("replayed"):
+        frame = context.user_data.get(FRAME)
+        if frame and (frame.get("last_answer") or {}).get("word_id") == result["word_id"]:
+            frame["last_answer"] = None
+        if "next_view" in result:
+            frame = _establish_learning_frame(context, uid, transport=transport, plan=result["next_view"])
+            point = context.user_data[RETURN_POINT_KEY]
+            current = frame.get("current")
+            context.user_data[RETURN_POINT_KEY] = replace(point, flow_id=frame["flow_id"],
+                view_revision=frame["revision"], phase=frame["phase"],
+                current_question_id=current["entry"]["id"] if current else None,
+                visible_answer_id=current["entry"]["id"] if current and frame["phase"] == "preview" else frame.get("last_visible_id"))
+    context.user_data["learning_send_receipt"] = result
+    return bool(result.get("added")) and not result.get("replayed", False)
 
 
 async def _send_learning_menu(update: Update, user_id):
@@ -264,262 +373,340 @@ def _format_learning_preview_line(entry, dict_lang):
 
 
 async def _learning_add_words(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle learning add words."""
-    user_id = update.effective_user.id
-    db_path = get_db_path()
-    daily_qty = _learning_daily_qty(db_path, user_id)
-    batch_id = learning_get_or_create_batch(db_path, user_id=user_id, daily_qty=daily_qty)
-    active_count = learning_active_count(db_path, user_id=user_id, batch_id=batch_id)
-    need = max(0, daily_qty - active_count)
-    if need <= 0:
-        await _reply_text_with_retry(
-            update.message,
-            t(_user_interface_lang(user_id), "learning_batch_full").format(active=active_count, daily=daily_qty),
-            reply_markup=ReplyKeyboardMarkup(_learning_menu_keys(user_id), resize_keyboard=True),
-        )
-        return LEARNING_MENU
-    qf = resolve_quiz_filter(user_id)
-    picked = learning_pick_new_words(
-        db_path,
-        user_id=user_id,
-        limit=need,
-        topics=qf.topics,
-        cefr_levels=qf.cefr_levels,
-        mix=_learning_mix_mode_enabled(user_id),
-    )
-    if not picked:
-        await _reply_text_with_retry(
-            update.message,
-            t(_user_interface_lang(user_id), "learning_no_new"),
-            reply_markup=ReplyKeyboardMarkup(_learning_menu_keys(user_id), resize_keyboard=True),
-        )
-        return LEARNING_MENU
-    first_delay = _learning_schedule_seconds(db_path, user_id)[0]
-    added = learning_add_words(
-        db_path,
-        user_id=user_id,
-        words=picked,
-        batch_id=batch_id,
-        first_delay_seconds=first_delay,
-    )
-    await _reply_text_with_retry(
-        update.message,
-        t(_user_interface_lang(user_id), "learning_added").format(added=added),
-        reply_markup=ReplyKeyboardMarkup(_learning_menu_keys(user_id), resize_keyboard=True),
-    )
+    uid = update.effective_user.id
+    db = get_db_path()
+    qty = _learning_daily_qty(db, uid)
+    stats = learning_status_snapshot(db, uid)
+    need = max(0, qty - stats["active_count"])
+    qf = resolve_quiz_filter(uid)
+    picked = learning_pick_new_words(db, uid, need, topics=qf.topics, cefr_levels=qf.cefr_levels,
+                                    mix=_learning_mix_mode_enabled(uid)) if need else []
+
+    def add(conn):
+        added = 0
+        if picked:
+            batch = learning_store.get_or_create_batch(conn, uid, qty)
+            added = learning_store.add_items(conn, uid, [entry["id"] for entry in picked], batch)
+        return {"added": added, "flow_id": "learning-menu"}
+
+    result = answers.record_control_transition(db, uid, _transport_id(update), "learning-menu", "learning_add", add)
+    if _learning_recovery(context, result):
+        return await _send_learning_menu(update, uid)
+    lang = _user_interface_lang(uid)
+    text = (t(lang, "learning_batch_full").format(active=stats["active_count"], daily=qty) if not need
+            else t(lang, "learning_added").format(added=result["added"]) if picked else t(lang, "learning_no_new"))
+    await _reply_text_with_retry(update.message, text,
+        reply_markup=ReplyKeyboardMarkup(_learning_menu_keys(uid), resize_keyboard=True))
     return LEARNING_MENU
 
 
-async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text, force_entry=None):
-    """Show the next question/preview in the learning session."""
-    user_id = update.effective_user.id
-    preview_entry = None
-    if force_entry is None:
-        preview_entry = learning_preview_entry(get_db_path(), user_id=user_id)
-    if preview_entry:
-        preview_entry = resolve_bot_word_media(get_db_path(), user_id, preview_entry)
-        context.user_data["quiz_entry"] = preview_entry
-        context.user_data["learning_preview_mode"] = True
-        prompt_text = _format_learning_preview_prompt(preview_entry, _user_dict_lang(user_id))
-        if prefix_text:
-            prompt_text = f"{prefix_text}\n\n{prompt_text}"
-        await _reply_text_with_retry(
-            update.message,
-            prompt_text,
-            reply_markup=ReplyKeyboardMarkup(
-                [[t(_user_interface_lang(user_id), "learning_next"), t(_user_interface_lang(user_id), "learning_skip")], [t(_user_interface_lang(user_id), "clarify_fields"), t(_user_interface_lang(user_id), "back")]],
-                resize_keyboard=True,
-            ),
-            parse_mode="Markdown",
-        )
-        return LEARNING_QUIZ
+def _next_learning_view(conn, context, user_id):
+    entry = learning_store.preview_entry(conn, user_id)
+    if entry:
+        return {"entry": entry, "phase": "preview"}
+    entry = _pick_learning_due_entry(context, user_id, conn=conn)
+    active = conn.execute("SELECT 1 FROM learning_items WHERE user_id=? AND status='active' LIMIT 1", (user_id,)).fetchone()
+    return {"entry": entry, "phase": "question" if entry else "waiting" if active else "completed"}
 
-    entry = force_entry
-    if entry is None:
-        entry = _pick_learning_due_entry(context, user_id)
-    if not entry:
-        context.user_data["learning_preview_mode"] = False
+
+def _establish_learning_frame(context, user_id, prefix_text=None, force_entry=None, transport=None, plan=None):
+    frame = deepcopy(context.user_data.get(FRAME) or _new_frame())
+    entry = plan["entry"] if plan is not None else force_entry
+    phase = plan["phase"] if plan is not None else "question"
+    if plan is None and entry is None:
+        entry = learning_preview_entry(get_db_path(), user_id=user_id)
+        if entry:
+            phase = "preview"
+        else:
+            entry = _pick_learning_due_entry(context, user_id)
+    if entry:
+        frame["current"] = {"entry": entry, "action_key": uuid.uuid4().hex}
+        frame["phase"] = phase
+        context.user_data["quiz_entry"] = entry
+        context.user_data["learning_preview_mode"] = phase == "preview"
+        if phase == "question" and force_entry is None:
+            _note_learning_shown(context, entry.get("id"))
+    else:
+        if plan is None:
+            stats = learning_status_snapshot(get_db_path(), user_id)
+            phase = "waiting" if stats["active_count"] else "completed"
+        frame.update(current=None, phase=phase)
         context.user_data.pop("quiz_entry", None)
-        context.user_data.pop("learning_recent_ids", None)
-        # Send the trailing feedback (Markdown) and the plain service tail as two
-        # separate messages: the tail carries 'next_due', whose underscore would
-        # break parse_mode='Markdown' (unterminated entity). Keep them apart so the
-        # word feedback still renders while the tail stays plain and crash-proof.
-        if prefix_text:
-            await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
-        await _reply_text_with_retry(
-            update.message,
-            _learning_empty_text(user_id),
-            reply_markup=ReplyKeyboardMarkup([[t(_user_interface_lang(user_id), "back")]], resize_keyboard=True),
-        )
-        return LEARNING_QUIZ
-    entry = resolve_bot_word_media(get_db_path(), user_id, entry)
-    context.user_data["quiz_entry"] = entry
-    context.user_data["learning_preview_mode"] = False
-    _note_learning_shown(context, entry.get("id"))
-    prompt_text = _format_ru_question(entry, _user_dict_lang(user_id))
-    if prefix_text:
-        prompt_text = f"{prefix_text}\n\n{prompt_text}"
-    await _reply_text_with_retry(
-        update.message,
-        prompt_text,
-        reply_markup=ReplyKeyboardMarkup(
-            [[I_DONT_KNOW_TEXT, t(_user_interface_lang(user_id), "input_err")], [t(_user_interface_lang(user_id), "learning_skip"), t(_user_interface_lang(user_id), "clarify_fields"), t(_user_interface_lang(user_id), "back")]],
-            resize_keyboard=True,
-        ),
-        parse_mode="Markdown",
-    )
+        context.user_data["learning_preview_mode"] = False
+    frame.update(revision=frame["revision"] + 1, prefix_text=prefix_text,
+                 accepted_delivery=transport, pending_render=True)
+    context.user_data[FRAME] = frame
+    return frame
+
+
+async def _render_learning_frame(update, context, prefix_text=None):
+    """Render established state only: never select or count another question."""
+    from ..storage import get_word_by_id
+    uid = update.effective_user.id
+    frame = context.user_data.get(FRAME)
+    if not frame:
+        return await _send_learning_menu(update, uid)
+    frame["pending_render"] = True
+    prefix = frame.get("prefix_text") if prefix_text is None else prefix_text
+    slot = frame.get("current")
+    entry = slot["entry"] if slot else None
+    if entry:
+        fresh = get_word_by_id(get_db_path(), entry["id"])
+        if not fresh:
+            return await _learning_deleted(update, context, None, entry["id"], prefix)
+        # Keep dictionary content current without storing personal media in the slot.
+        slot["entry"] = {**entry, **fresh}
+        entry = resolve_bot_word_media(get_db_path(), uid, slot["entry"])
+        context.user_data["quiz_entry"] = entry
+    phase = frame["phase"]
+    publish_view(context, caller_kind="learning", mode="learning", phase=phase,
+                 current_question_id=entry["id"] if entry else None,
+                 visible_answer_id=entry["id"] if phase == "preview" and entry else frame.get("last_visible_id"),
+                 flow_id=frame["flow_id"], view_revision=frame["revision"])
+    lang = _user_interface_lang(uid)
+    if entry:
+        text = (_format_learning_preview_prompt(entry, _user_dict_lang(uid)) if phase == "preview"
+                else _format_ru_question(entry, _user_dict_lang(uid)))
+        if prefix:
+            text = prefix + "\n\n" + text
+        rows = ([[t(lang, "learning_next"), t(lang, "learning_skip")],
+                 [t(lang, "clarify_fields"), t(lang, "back")]] if phase == "preview" else
+                [[I_DONT_KNOW_TEXT, t(lang, "input_err")],
+                 [t(lang, "learning_skip"), t(lang, "clarify_fields"), t(lang, "back")]])
+        await _reply_text_with_retry(update.message, text,
+            reply_markup=ReplyKeyboardMarkup(rows, resize_keyboard=True), parse_mode="Markdown")
+    else:
+        if prefix:
+            await _reply_text_with_retry(update.message, prefix, parse_mode="Markdown")
+        await _reply_text_with_retry(update.message, _learning_empty_text(uid),
+            reply_markup=ReplyKeyboardMarkup([[t(lang, "back")]], resize_keyboard=True))
+    frame["pending_render"] = False
     return LEARNING_QUIZ
 
 
-async def learning_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Choice in the learning menu (start/mix/add/reset/back)."""
-    text = update.message.text.strip()
-    user_id = update.effective_user.id
-    action = _action_key_from_text(text, user_id)
-    if action == "back":
-        await _reply_text_with_retry(
-            update.message,
-            t(_user_interface_lang(user_id), "tests") + ":",
-            reply_markup=ReplyKeyboardMarkup(_tests_menu_keys(user_id), resize_keyboard=True),
-        )
-        return TESTS_MENU
-    if action == "learning_sett":
-        # Same submenu as algo settings; remember the entry point so its "back"
-        # returns here instead of to algo settings.
-        from .settings import _send_learning_settings_menu  # local import: anti-cycle
+async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text, force_entry=None):
+    _establish_learning_frame(context, update.effective_user.id, prefix_text, force_entry)
+    return await _render_learning_frame(update, context)
 
-        context.user_data["learning_sett_return"] = "learning_menu"
-        return await _send_learning_settings_menu(update, user_id)
+
+async def _learning_existing(update, context, point, prefix_text):
+    frame = context.user_data.get(FRAME)
+    if not frame:
+        _legacy_frame(context)
+        frame = context.user_data[FRAME]
+        frame.update(flow_id=point.flow_id, revision=point.view_revision, phase=point.phase)
+    if point.flow_id != frame["flow_id"] or point.view_revision != frame["revision"]:
+        return await _send_learning_menu(update, update.effective_user.id)
+    return await _render_learning_frame(update, context, prefix_text)
+
+
+async def _learning_deleted(update, context, point, word_id, prefix_text):
+    frame = context.user_data.get(FRAME)
+    if not frame:
+        return await _send_learning_menu(update, update.effective_user.id)
+    if frame.get("last_visible_id") == word_id:
+        frame["last_visible_id"] = None
+        frame["last_answer"] = None
+    slot = frame.get("current")
+    if slot and slot["entry"]["id"] == word_id:
+        _establish_learning_frame(context, update.effective_user.id, prefix_text)
+    return await _render_learning_frame(update, context, prefix_text)
+
+
+async def learning_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async with study_lock(update.effective_user.id):
+        receipt = _delivery_receipt(update, context)
+        if receipt is not None:
+            return await _handle_replay(update, context, receipt)
+        context.user_data.pop(_PENDING_NAVIGATION, None)
+        drained, state = await _drain_pending_learning_view(update, context)
+        if drained:
+            return state
+        return await _learning_menu_locked(update, context)
+
+
+async def _learning_menu_locked(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    action = _action_key_from_text(update.message.text.strip(), uid)
     if action == "learning_add":
         return await _learning_add_words(update, context)
-    if action == "learning_mix_mode":
-        enabled = _learning_mix_mode_enabled(user_id)
-        _set_learning_mix_mode(user_id, not enabled)
-        # Mix only shapes which words enter the queue on the next add — toggling
-        # it mid-session must not disturb the current show order/spacing state.
-        await _reply_text_with_retry(update.message, f"{t(_user_interface_lang(user_id), 'learning_mix_mode')} = {'ON' if not enabled else 'OFF'}")
-        return await _send_learning_menu(update, user_id)
-    if action == "learning_reset":
-        learning_reset_session(get_db_path(), user_id=user_id)
-        context.user_data.pop("learning_recent_ids", None)
-        await _reply_text_with_retry(
-            update.message,
-            t(_user_interface_lang(user_id), "learning_session_reset"),
-            reply_markup=ReplyKeyboardMarkup(_learning_menu_keys(user_id), resize_keyboard=True),
-        )
+    accepted = {"back", "learning_sett", "learning_mix_mode", "learning_reset", "learning_start"}
+    if action not in accepted:
+        await _reply_text_with_retry(update.message, t(_user_interface_lang(uid), "learning_use_menu_buttons"),
+            reply_markup=ReplyKeyboardMarkup(_learning_menu_keys(uid), resize_keyboard=True))
         return LEARNING_MENU
-    if action == "learning_start":
-        context.user_data.pop("learning_recent_ids", None)
-        # Empty queue: nothing previewed and nothing due -> don't enter the session
-        # (no lone Back button, no 🔥). Just show the service message and stay in the
-        # menu, where the "add for learning" button is already in reach.
-        has_preview = learning_preview_entry(get_db_path(), user_id=user_id) is not None
-        has_due = bool(learning_due_entries(get_db_path(), user_id=user_id))
-        if not has_preview and not has_due:
-            await _reply_text_with_retry(
-                update.message,
-                _learning_empty_text(user_id),
-                reply_markup=ReplyKeyboardMarkup(_learning_menu_keys(user_id), resize_keyboard=True),
-            )
-            return LEARNING_MENU
-        return await _send_learning_prompt(update, context, None)
-    await _reply_text_with_retry(
-        update.message,
-        t(_user_interface_lang(user_id), "learning_use_menu_buttons"),
-        reply_markup=ReplyKeyboardMarkup(_learning_menu_keys(user_id), resize_keyboard=True),
-    )
-    return LEARNING_MENU
+    flow = uuid.uuid4().hex
+
+    def control(conn):
+        result = {"flow_id": flow}
+        if action == "learning_reset":
+            learning_store.reset(conn, uid)
+        elif action == "learning_mix_mode":
+            key = f"learning_mix_mode:{uid}"
+            row = conn.execute("SELECT value FROM app_settings WHERE key=?", (key,)).fetchone()
+            enabled = bool(row and str(row[0]).lower() in {"1", "true", "yes", "on"})
+            conn.execute("""INSERT INTO app_settings(key,value) VALUES (?,?)
+                ON CONFLICT(key) DO UPDATE SET value=excluded.value""", (key, "0" if enabled else "1"))
+            result["enabled"] = not enabled
+        if action == "learning_start":
+            learning_store.recover_ready_previews(conn, uid, datetime.now(timezone.utc))
+            empty_history = type("LearningStartContext", (), {"user_data": {}})()
+            result["next_view"] = _next_learning_view(conn, empty_history, uid)
+        return result
+
+    result = answers.record_control_transition(get_db_path(), uid, _transport_id(update), flow, action, control)
+    if _learning_recovery(context, result):
+        return await _send_learning_menu(update, uid)
+    if action == "back":
+        return await _leave_learning(update, context, result, TESTS_MENU)
+    if action == "learning_sett":
+        from .settings import _send_learning_settings_menu
+        context.user_data["learning_sett_return"] = "learning_menu"
+        return await _send_learning_settings_menu(update, uid)
+    if action == "learning_mix_mode":
+        await _reply_text_with_retry(update.message,
+            f"{t(_user_interface_lang(uid), 'learning_mix_mode')} = {'ON' if result['enabled'] else 'OFF'}")
+        return await _send_learning_menu(update, uid)
+    if action == "learning_reset":
+        invalidate_study_frames(context)
+        await _reply_text_with_retry(update.message, t(_user_interface_lang(uid), "learning_session_reset"),
+            reply_markup=ReplyKeyboardMarkup(_learning_menu_keys(uid), resize_keyboard=True))
+        return LEARNING_MENU
+    context.user_data.pop("learning_recent_ids", None)
+    context.user_data.pop("quiz_last_answered_entry", None)
+    frame = _new_frame()
+    frame["flow_id"] = flow
+    context.user_data[FRAME] = frame
+    if not result["next_view"]["entry"]:
+        context.user_data.pop(FRAME, None)
+        await _reply_text_with_retry(update.message, _learning_empty_text(uid),
+            reply_markup=ReplyKeyboardMarkup(_learning_menu_keys(uid), resize_keyboard=True))
+        return LEARNING_MENU
+    _establish_learning_frame(context, uid, transport=_transport_id(update), plan=result["next_view"])
+    return await _render_learning_frame(update, context)
 
 
 async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle an answer/action in the learning session (preview and normal mode)."""
-    from ..handlers.clarify_fields import _start_clarify_fields
+    async with study_lock(update.effective_user.id):
+        receipt = _delivery_receipt(update, context)
+        if receipt is not None:
+            return await _handle_replay(update, context, receipt)
+        context.user_data.pop(_PENDING_NAVIGATION, None)
+        drained, state = await _drain_pending_learning_view(update, context)
+        if drained:
+            return state
+        return await _learning_quiz_locked(update, context)
 
+
+def _learning_recovery(context, receipt):
+    if receipt.get("invalidate_frame") or receipt.get("state") == "recovered_undo":
+        invalidate_study_frames(context)
+        return True
+    return False
+
+
+async def _learning_quiz_locked(update, context):
+    from .clarify_fields import _start_clarify_fields
+    uid, transport = update.effective_user.id, _transport_id(update)
     text = update.message.text.strip()
-    user_id = update.effective_user.id
-    action = _action_key_from_text(text, user_id)
-    if action == "back":
-        return await _send_learning_menu(update, user_id)
-    if action == "clarify_fields":
+    action = _action_key_from_text(text, uid)
+    frame = _legacy_frame(context)
+    if action in ("back", "clarify_fields"):
+        result = answers.record_control_transition(get_db_path(), uid, transport, frame["flow_id"], action,
+            lambda conn: {"flow_id": frame["flow_id"], "revision": frame["revision"]})
+        if _learning_recovery(context, result):
+            return await _send_learning_menu(update, uid)
+        if action == "back":
+            return await _leave_learning(update, context, result, LEARNING_MENU)
         return await _start_clarify_fields(update, context, LEARNING_QUIZ, prefer_current=True)
-
-    entry = context.user_data.get("quiz_entry")
-    if not entry:
-        return await _send_learning_prompt(update, context, None)
-
-    is_preview = bool(context.user_data.get("learning_preview_mode"))
-    if is_preview:
-        if action == "learning_skip":
-            snapshot = _capture_transaction_snapshot(user_id, entry.get("id"), ["learning"])
-            learning_skip_word(get_db_path(), user_id=user_id, word_id=entry.get("id"))
-            _log_transaction(user_id, "learning:skip", snapshot)
-            return await _send_learning_prompt(update, context, t(_user_interface_lang(user_id), "learning_skipped"))
-        if action == "learning_next":
-            snapshot = _capture_transaction_snapshot(user_id, entry.get("id"), ["learning"])
-            learning_mark_preview_next(
-                get_db_path(),
-                user_id=user_id,
-                word_id=entry.get("id"),
-                first_interval_seconds=_learning_schedule_seconds(get_db_path(), user_id)[0],
-            )
-            _log_transaction(user_id, "learning:preview_next", snapshot)
-            return await _send_learning_prompt(update, context, t(_user_interface_lang(user_id), "learning_saved_next"))
-        await _reply_text_with_retry(
-            update.message,
-            t(_user_interface_lang(user_id), "learning_use_next_skip_back"),
-            reply_markup=ReplyKeyboardMarkup([[t(_user_interface_lang(user_id), "learning_next"), t(_user_interface_lang(user_id), "learning_skip")], [t(_user_interface_lang(user_id), "back")]], resize_keyboard=True),
-        )
-        return LEARNING_QUIZ
-
+    slot = frame.get("current")
     if action == "input_err":
-        next_entry = entry
-        corrected_entry_id = context.user_data.get("last_learning_entry_id")
-        applied = _apply_input_err_learning(update, context)
-        lang = _user_interface_lang(user_id)
-        prefix = t(lang, "input_err_fixed") if applied else t(lang, "input_err_nothing")
-        if applied:
-            # lift the 👎 from the corrected answer message; no new reaction is set
-            await _set_reaction(context, user_id, context.user_data.get("last_learning_answer_message_id"), [])
-        # Preserve a separately selected next card. If the shown card is the one
-        # just corrected, its embedded learning step is stale: re-read the queue
-        # so a future step ends the cycle and a zero-delay warm-up is shown with
-        # its current step instead of allowing an accidental double advance.
-        same_entry = str(next_entry.get("id")) == str(corrected_entry_id)
-        force_entry = None if same_entry else next_entry
-        return await _send_learning_prompt(update, context, prefix, force_entry=force_entry)
+        last = frame.get("last_answer")
+        if not last or last.get("ok") or frame["phase"] == "preview":
+            result = answers.record_control_transition(get_db_path(), uid, transport, frame["flow_id"], "input_err_empty",
+                lambda conn: {"flow_id": frame["flow_id"], "revision": frame["revision"]})
+            if _learning_recovery(context, result):
+                return await _send_learning_menu(update, uid)
+            return await _render_learning_frame(update, context, t(_user_interface_lang(uid), "input_err_nothing"))
+        def correct(conn, snapshot, kind, now):
+            result = learning_store.apply_answer(conn, snapshot, kind, now)
+            if not slot or slot["entry"]["id"] == last["word_id"]:
+                result["next_view"] = _next_learning_view(conn, context, uid)
+            return result
 
-    if action == "learning_skip":
-        snapshot = _capture_transaction_snapshot(user_id, entry.get("id"), ["learning"])
-        learning_skip_word(get_db_path(), user_id=user_id, word_id=entry.get("id"))
-        _log_transaction(user_id, "learning:skip", snapshot)
-        return await _send_learning_prompt(update, context, t(_user_interface_lang(user_id), "learning_skipped"))
+        receipt = answers.correct_last_answer(get_db_path(), uid, last["action_key"], last["correction_key"],
+            transport, frame["revision"], flow_id=frame["flow_id"],
+            live_revision=lambda: context.user_data[FRAME]["revision"], learning_transition=correct)
+        if _learning_recovery(context, receipt):
+            return await _send_learning_menu(update, uid)
+        if receipt.get("replayed"):
+            return await _handle_replay(update, context, receipt)
+        frame["last_answer"]["ok"] = True
+        context.user_data["last_learning_ok"] = True
+        prefix = t(_user_interface_lang(uid), "input_err_fixed")
+        if slot and slot["entry"]["id"] != last["word_id"]:
+            frame.update(revision=frame["revision"] + 1, prefix_text=prefix,
+                         accepted_delivery=transport, pending_render=True)
+        else:
+            _establish_learning_frame(context, uid, prefix, transport=transport, plan=receipt["after"]["next_view"])
+        await _set_reaction(context, uid, context.user_data.get("last_learning_answer_message_id"), [])
+        return await _render_learning_frame(update, context)
+    if not slot:
+        return await _render_learning_frame(update, context)
+    entry = slot["entry"]
+    if action == "learning_skip" or (frame["phase"] == "preview" and action == "learning_next"):
+        kind = "skip" if action == "learning_skip" else "preview_next"
+        def preview(conn, snapshot, now):
+            result = learning_store.preview_transition(conn, uid, entry["id"], kind, now)
+            result["next_view"] = _next_learning_view(conn, context, uid)
+            return result
 
-    if text == I_DONT_KNOW_TEXT:
-        ok = False
-    else:
-        ok, _ = _check_ru_de_strict(entry, text)
-    context.user_data["last_learning_entry_id"] = entry.get("id")
-    context.user_data["last_learning_ok"] = bool(ok)
-    context.user_data["last_learning_prev_step"] = int(entry.get("learning_step") or 0)
+        receipt = answers.apply_preview_transition(get_db_path(), uid, entry["id"], kind, slot["action_key"],
+            transport, frame["revision"], flow_id=frame["flow_id"],
+            live_revision=lambda: context.user_data[FRAME]["revision"],
+            affected_learning_ids=lambda conn: learning_store.preview_affected_ids(conn, uid, entry["id"]),
+            transition=preview)
+        if _learning_recovery(context, receipt):
+            return await _send_learning_menu(update, uid)
+        if receipt.get("replayed"):
+            return await _handle_replay(update, context, receipt)
+        if kind == "skip" and (frame.get("last_answer") or {}).get("word_id") == entry["id"]:
+            frame["last_answer"] = None
+        prefix = t(_user_interface_lang(uid), "learning_skipped" if kind == "skip" else "learning_saved_next")
+        _establish_learning_frame(context, uid, prefix, transport=transport, plan=receipt["after"]["next_view"])
+        return await _render_learning_frame(update, context)
+    if frame["phase"] == "preview":
+        lang = _user_interface_lang(uid)
+        await _reply_text_with_retry(update.message, t(lang, "learning_use_next_skip_back"),
+            reply_markup=ReplyKeyboardMarkup([[t(lang, "learning_next"), t(lang, "learning_skip")],
+                                              [t(lang, "back")]], resize_keyboard=True))
+        return LEARNING_QUIZ
+    ok = False if text == I_DONT_KNOW_TEXT else _check_ru_de_strict(entry, text)[0]
+    kind = "idk" if text == I_DONT_KNOW_TEXT else "correct" if ok else "wrong"
+    def grade(conn, snapshot, answer, now):
+        result = learning_store.apply_answer(conn, snapshot, answer, now)
+        result["next_view"] = _next_learning_view(conn, context, uid)
+        return result
+
+    receipt = answers.apply_original_answer(get_db_path(), uid, entry["id"], "learning", kind, slot["action_key"],
+        transport, frame["revision"], flow_id=frame["flow_id"],
+        live_revision=lambda: context.user_data[FRAME]["revision"], learning_transition=grade)
+    if _learning_recovery(context, receipt):
+        return await _send_learning_menu(update, uid)
+    if receipt.get("replayed"):
+        return await _handle_replay(update, context, receipt)
+    frame["last_answer"] = {"word_id": entry["id"], "action_key": slot["action_key"],
+                             "correction_key": uuid.uuid4().hex, "ok": bool(ok)}
+    frame["last_visible_id"] = entry["id"]
+    context.user_data.update(last_learning_entry_id=entry["id"], last_learning_ok=bool(ok),
+                             last_learning_prev_step=receipt["before"]["learning_item"]["step_index"],
+                             quiz_last_answered_entry=entry)
+    feedback = _format_feedback_ru_de(entry, ok, lang=_user_interface_lang(uid))
+    if receipt["after"].get("completed"):
+        feedback += "\n\n" + t(_user_interface_lang(uid), "learning_done_sent_fsrs")
+    _establish_learning_frame(context, uid, feedback, transport=transport, plan=receipt["after"]["next_view"])
     await _apply_learning_reaction(update, context, ok)
-    log_quiz_event(
-        get_db_path(),
-        user_id=user_id,
-        word_id=entry.get("id"),
-        mode="learning",
-        is_correct=ok,
-    )
-    snapshot = _capture_transaction_snapshot(user_id, entry.get("id"), ["learning"])
-    result = learning_update_result(
-        get_db_path(),
-        user_id=user_id,
-        word_id=entry.get("id"),
-        ok=ok,
-        intervals_seconds=_learning_schedule_seconds(get_db_path(), user_id),
-    )
-    _log_transaction(user_id, "learning:answer", snapshot)
-    feedback = _format_feedback_ru_de(entry, ok, lang=_user_interface_lang(user_id))
-    if result.get("completed"):
-        feedback = f"{feedback}\n\n{t(_user_interface_lang(user_id), 'learning_done_sent_fsrs')}"
-    return await _send_learning_prompt(update, context, feedback)
+    return await _render_learning_frame(update, context)
+
+
+register_renderer("learning", _learning_existing, _learning_deleted)

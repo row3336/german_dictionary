@@ -21,7 +21,7 @@ async def study_lock(user_id):
 
 def invalidate_study_frames(context):
     """Close live correction rights and queues after undo or startup recovery."""
-    exact = {"study_frame", "learning_frame", "quiz_return_point", "quiz_published_view",
+    exact = {"study_frame", "learning_frame", "learning_send_receipt", "quiz_return_point", "quiz_published_view",
              "last_answered_entry", "last_answered_mode", "last_answered_ok",
              "last_answered_srs", "session_mode", "retry_queue", "retry_counts",
              "retry_since_last", "fsrs_cycle_queue", "last_learning_entry_id",

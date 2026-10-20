@@ -1,10 +1,29 @@
 """Dispatch regression with real PTB, isolated from the suite's Telegram stubs."""
 
 import subprocess
+import os
+import sqlite3
+import tempfile
 import sys
 import textwrap
 import unittest
 from pathlib import Path
+
+
+
+def synthetic_dispatch_environment():
+    from bot.storage import init_db
+    stand = Path('/Users/wf/py/_agent_work/888_german_dictionary/new_logic_learning_tests')
+    stand.mkdir(parents=True, exist_ok=True)
+    db = str(Path(tempfile.mkdtemp(prefix='dispatch-', dir=stand)) / 'synthetic.sqlite')
+    init_db(db)
+    conn = sqlite3.connect(db)
+    try:
+        conn.execute("INSERT INTO users(user_id,status,interface_lang,dict_lang) VALUES(7,'approved','en','ru')")
+        conn.commit()
+    finally:
+        conn.close()
+    return {**os.environ, 'DB_PATH': db, 'OWNER_ID': '0'}
 
 
 class ConjugationConversationTest(unittest.TestCase):
@@ -205,6 +224,7 @@ class ConjugationConversationTest(unittest.TestCase):
         ''')
         result = subprocess.run([sys.executable, "-B", "-c", script],
                                 cwd=Path(__file__).resolve().parents[1],
+                                env=synthetic_dispatch_environment(),
                                 text=True, capture_output=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("network=0", result.stdout)

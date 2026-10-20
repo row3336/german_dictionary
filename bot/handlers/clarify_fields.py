@@ -14,6 +14,8 @@ _clarify_fields_markup). The FSM state stays ADD_EDIT
 from telegram import MessageEntity, ReplyKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
+from ..common.study_lock import study_lock
+
 from ..app_config import (
     ADD_EDIT,
     ALLOWED_AI_TYPES,
@@ -627,6 +629,11 @@ async def _resume_after_clarify(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async with study_lock(update.effective_user.id):
+        return await _clarify_fields_input_locked(update, context)
+
+
+async def _clarify_fields_input_locked(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle input when clarifying/editing the fields of a word card."""
     from ..handlers.db_search import (
         _clear_db_search_variants,
@@ -880,6 +887,11 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
                 return ADD_EDIT
             if _action_key_from_text(text, uid) == "send_learn":
                 added = _send_entry_to_learning(update, context, entry_key="quiz_edit_entry")
+                send_receipt = context.user_data.get("learning_send_receipt", {})
+                if send_receipt.get("replayed"):
+                    return None
+                if send_receipt.get("recovered_undo"):
+                    return await _back_to_main_menu(update, context)
                 state = context.user_data.get("edit_return_state")
                 lang = _user_interface_lang(uid)
                 prefix = t(lang, "added_to_learning") if added else t(lang, "nothing_to_send")

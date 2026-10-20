@@ -660,6 +660,10 @@ async def settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
         context.user_data.pop("vf_menu", None)
         return await _back_to_main_menu(update)
 
+    if text in {t(lang, "notifications_title") for lang in ("en", "ru", "uk")}:
+        from ..notifications.handlers import show_notification_settings
+        return await show_notification_settings(update, context)
+
     if text == t(_user_interface_lang(user_id), "language_sett"):
         return await _send_language_menu(update, user_id)
 

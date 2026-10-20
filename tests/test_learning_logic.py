@@ -71,7 +71,7 @@ class LearningLogicTests(unittest.TestCase):
         self.assertEqual(len(due), 1)
         self.assertEqual(due[0]["german"], "Katze")
 
-    def test_learning_wrong_resets_to_step_zero(self):
+    def test_learning_wrong_keeps_step_and_starts_recovery(self):
         db_path = _mk_db()
         self.addCleanup(lambda: os.unlink(db_path))
         init_db(db_path)
@@ -82,12 +82,14 @@ class LearningLogicTests(unittest.TestCase):
         due = learning_due_entry(db_path, user_id=1)
         self.assertIsNone(due)
 
-        # Force immediate due by using short intervals and two updates.
+        learning_mark_preview_next(db_path, user_id=1, word_id=w1["id"], first_interval_seconds=0)
+        # A wrong answer preserves the attained step and starts recovery.
         result = learning_update_result(db_path, user_id=1, word_id=w1["id"], ok=True, intervals_seconds=[1, 2, 3])
         self.assertFalse(result["completed"])
         result2 = learning_update_result(db_path, user_id=1, word_id=w1["id"], ok=False, intervals_seconds=[1, 2, 3])
         self.assertFalse(result2["completed"])
-        self.assertEqual(result2["step_index"], 0)
+        self.assertEqual(result2["step_index"], 1)
+        self.assertEqual(result2["recovery_remaining"], 3)
 
     def test_learning_pick_new_words_only_untouched(self):
         db_path = _mk_db()
@@ -229,14 +231,14 @@ class LearningLogicTests(unittest.TestCase):
             ).fetchone()[0]
         self.assertEqual(before_wrong_step, 1)
 
-        # Wrong answer resets to step 0.
+        # Wrong answer retains the prior step while recovery becomes three.
         learning_update_result(db_path, user_id=1, word_id=w1["id"], ok=False, intervals_seconds=[1, 2, 3, 4])
         with sqlite3.connect(db_path) as conn:
             after_wrong_step = conn.execute(
                 "SELECT step_index FROM learning_items WHERE user_id = ? AND word_id = ?",
                 (1, w1["id"]),
             ).fetchone()[0]
-        self.assertEqual(after_wrong_step, 0)
+        self.assertEqual(after_wrong_step, before_wrong_step)
 
         # input_err should recover as if last answer was correct from prev step (1 -> 2), not from 0.
         result = learning_apply_input_err(

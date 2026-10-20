@@ -80,6 +80,13 @@ def _finish(conn, user_id, action_key, transport_update_id, flow_id, kind,
     return receipt
 
 
+def _record_recovery(conn, user_id, transport_update_id, flow_id, action_kind, recovered):
+    result = {"state": "recovered_undo", "invalidate_frame": True, "undo": recovered}
+    deliveries.begin_delivery(conn, user_id, transport_update_id, flow_id, action_kind)
+    deliveries.commit_delivery(conn, user_id, transport_update_id, result)
+    return result
+
+
 def apply_original_answer(db_path, user_id, word_id, mode, answer_kind, action_key,
                           transport_update_id, expected_revision, now=None, *,
                           flow_id, live_revision, interval_divisor=1.0,
@@ -95,7 +102,8 @@ def apply_original_answer(db_path, user_id, word_id, mode, answer_kind, action_k
             return accepted
         recovered = recover_pending_undo(conn, user_id)
         if recovered:
-            return {"state": "recovered_undo", "invalidate_frame": True, "undo": recovered}
+            return _record_recovery(conn, user_id, transport_update_id, flow_id,
+                                    "answer", recovered)
         if target_resolver:
             target = target_resolver(conn)
             word_id = target["word_id"]
@@ -133,7 +141,8 @@ def correct_last_answer(db_path, user_id, parent_action_key, action_key,
             return accepted
         recovered = recover_pending_undo(conn, user_id)
         if recovered:
-            return {"state": "recovered_undo", "invalidate_frame": True, "undo": recovered}
+            return _record_recovery(conn, user_id, transport_update_id, flow_id,
+                                    "correction", recovered)
         parent = lookup_action(conn, user_id, parent_action_key)
         if not parent or parent["state"] != "applied" or parent["kind"] != "answer":
             raise StaleStudyAction("original answer is unavailable")
@@ -171,7 +180,8 @@ def apply_preview_transition(db_path, user_id, word_id, action_kind, action_key,
             return accepted
         recovered = recover_pending_undo(conn, user_id)
         if recovered:
-            return {"state": "recovered_undo", "invalidate_frame": True, "undo": recovered}
+            return _record_recovery(conn, user_id, transport_update_id, flow_id,
+                                    action_kind, recovered)
         _validate_target(conn, user_id, word_id, expected_revision, live_revision)
         ids = affected_learning_ids(conn) if callable(affected_learning_ids) else affected_learning_ids
         snapshot = repo.capture_snapshot(conn, user_id, word_id, [], affected_learning_ids=ids)
@@ -190,11 +200,28 @@ def record_control_transition(db_path, user_id, transport_update_id, flow_id,
             return _delivery_result(conn, user_id, old)
         recovered = recover_pending_undo(conn, user_id)
         if recovered:
-            return {"state": "recovered_undo", "invalidate_frame": True, "undo": recovered}
+            return _record_recovery(conn, user_id, transport_update_id, flow_id,
+                                    action_kind, recovered)
         result = resolve(conn)
         deliveries.begin_delivery(conn, user_id, transport_update_id, flow_id, action_kind)
         deliveries.commit_delivery(conn, user_id, transport_update_id, result)
         return result
+
+
+def close_study_flow(db_path, user_id, transport_update_id, flow_id="navigation",
+                     action_kind="start"):
+    """Close live correction rights once, before callers invalidate UI frames.
+
+    The caller holds study_lock. Persisted pass/results/admissions survive this
+    navigation boundary; replay never closes a subsequently opened flow.
+    """
+    def close(conn):
+        conn.execute("UPDATE conjugation_answers SET correction_session_id=NULL WHERE user_id=?",
+                     (user_id,))
+        return {"flow_id": flow_id, "invalidate_frame": True, "replayed": False}
+
+    return record_control_transition(db_path, user_id, transport_update_id, flow_id,
+                                     action_kind, close)
 
 
 def undo_transaction(conn, user_id, tx_id):

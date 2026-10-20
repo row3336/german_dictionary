@@ -27,6 +27,7 @@ from bot.storage import (  # noqa: E402
     learning_add_words,
     learning_get_or_create_batch,
     register_or_update_user,
+    set_user_status,
     set_user_interface_lang,
 )
 
@@ -84,6 +85,7 @@ class LearningI18nTest(unittest.TestCase):
         os.environ["OWNER_ID"] = str(OWNER)
         self.addCleanup(self._restore)
         register_or_update_user(self.db, GUEST, "g", "G")
+        set_user_status(self.db, GUEST, "approved")
         set_user_interface_lang(self.db, GUEST, "ru")
 
     def _restore(self):
@@ -160,7 +162,7 @@ class LearningI18nTest(unittest.TestCase):
         learning_add_words(self.db, user_id=GUEST, words=[word], batch_id=batch_id, first_delay_seconds=0)
         with sqlite3.connect(self.db) as conn:
             conn.execute(
-                "UPDATE learning_items SET preview_done=1, next_due='2099-01-01T00:00:00Z' WHERE user_id=? AND word_id=?",
+                "UPDATE learning_items SET preview_done=1, first_due_pending=0, next_due='2099-01-01T00:00:00Z' WHERE user_id=? AND word_id=?",
                 (GUEST, word["id"]),
             )
         update = _Update(GUEST)

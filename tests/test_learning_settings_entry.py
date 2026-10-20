@@ -28,7 +28,7 @@ from bot.handlers.settings import (  # noqa: E402
     learning_settings_menu_choice,
 )
 from bot.i18n import t  # noqa: E402
-from bot.storage import init_db, register_or_update_user, set_user_interface_lang  # noqa: E402
+from bot.storage import init_db, register_or_update_user, set_user_interface_lang, set_user_status  # noqa: E402
 from bot.ui import keyboards as K  # noqa: E402
 
 OWNER, GUEST = 999, 111
@@ -72,6 +72,7 @@ class LearningSettingsEntryTest(unittest.TestCase):
         os.environ["OWNER_ID"] = str(OWNER)
         self.addCleanup(self._restore)
         register_or_update_user(self.db, GUEST, "g", "G")
+        set_user_status(self.db, GUEST, "approved")
 
     def _restore(self):
         for k, v in self._old.items():

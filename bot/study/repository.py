@@ -216,6 +216,9 @@ def restore_snapshot(conn, snapshot):
         if item.get("user_id", user_id) != user_id:
             raise ValueError("snapshot crosses users")
         restored = _restore_learning(conn, user_id, item["word_id"], item.get("before")) or restored
+    from ..learning_store import touch_batch
+    for batch_id in {item["before"]["batch_id"] for item in items if item.get("before")}:
+        touch_batch(conn, user_id, batch_id)
     if int(snapshot.get("version", 1)) >= 2:
         for event_id in snapshot.get("created_event_ids") or []:
             conn.execute("DELETE FROM quiz_events WHERE user_id=? AND id=?", (user_id, event_id))

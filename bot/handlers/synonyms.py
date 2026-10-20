@@ -6,6 +6,8 @@ that resumes whichever quiz or db-search flow opened the menu.
 from telegram import ReplyKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
+from ..common.study_lock import study_lock
+
 from ..app_config import (
     BACK_TEXT,
     DB_SEARCH_VIEW,
@@ -117,6 +119,11 @@ async def _return_from_synonyms(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def synonyms_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async with study_lock(update.effective_user.id):
+        return await _synonyms_menu_locked(update, context)
+
+
+async def _synonyms_menu_locked(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle synonyms menu."""
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "stop":
@@ -164,6 +171,11 @@ async def synonyms_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def synonyms_add_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async with study_lock(update.effective_user.id):
+        return await _synonyms_add_input_locked(update, context)
+
+
+async def _synonyms_add_input_locked(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle synonyms add input."""
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "back":
@@ -188,6 +200,11 @@ async def synonyms_add_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def synonyms_remove_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async with study_lock(update.effective_user.id):
+        return await _synonyms_remove_input_locked(update, context)
+
+
+async def _synonyms_remove_input_locked(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle synonyms remove input."""
     text = update.message.text.strip()
     anchor_id = context.user_data.get("syn_anchor_id")
@@ -229,6 +246,11 @@ async def synonyms_remove_input(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def synonyms_auto_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async with study_lock(update.effective_user.id):
+        return await _synonyms_auto_confirm_locked(update, context)
+
+
+async def _synonyms_auto_confirm_locked(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle synonyms auto confirm."""
     text = update.message.text.strip()
     if text == SYN_CANCEL_TEXT or _action_key_from_text(text, update.effective_user.id) == "back":
@@ -255,6 +277,11 @@ async def synonyms_auto_confirm(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def synonyms_clear_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async with study_lock(update.effective_user.id):
+        return await _synonyms_clear_confirm_locked(update, context)
+
+
+async def _synonyms_clear_confirm_locked(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle synonyms clear confirm."""
     text = update.message.text.strip()
     if text == SYN_CANCEL_TEXT or _action_key_from_text(text, update.effective_user.id) == "back":

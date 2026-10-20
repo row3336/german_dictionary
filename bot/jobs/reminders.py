@@ -1,11 +1,4 @@
-"""Background jobs: two independent reminders.
-
-1. Learning-queue reminder — while a learning batch is active, once a quorum of
-   its words are due ("ready"), ping the owner (interval before first ping,
-   cooldown between repeats).
-2. FSRS-queue reminder — once per day at/after 18:00 Europe/Berlin (DST-aware),
-   if the FSRS review queue still has due words, ping the owner.
-"""
+"""Learning continuation plus personal quiz/new-word reminder dispatch."""
 
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
@@ -26,19 +19,20 @@ from ..common.settings import (
 )
 from ..i18n import t
 from ..storage import (
-    fsrs_due_forecast,
-    get_user_setting,
+    select_due,
     learning_active_batches,
     learning_batch_mark_notified,
     learning_batch_update_ready_state,
     learning_status_snapshot,
     list_active_users,
-    set_user_setting,
 )
 
+from ..notifications.settings import due_to_notify, mark_sent
+from ..notifications.handlers import notification_inline_markup
+
 _BERLIN_TZ = ZoneInfo("Europe/Berlin")
-_FSRS_REMINDER_HOUR_BERLIN = 18
 _FSRS_REMINDER_DATE_KEY = "fsrs_afternoon_reminder_date"
+_dispatcher_running = False
 
 
 def _parse_utc_iso(token):
@@ -101,42 +95,66 @@ async def _learning_reminder_job(context: ContextTypes.DEFAULT_TYPE):
     send_stats.log("learning_reminder")
 
 
+def _now_berlin():
+    return datetime.now(_BERLIN_TZ)
+
+
+def _count_quiz_due(db_path, user_id, today):
+    # Exact written L1->De words, independent of the user's topic/CEFR filter.
+    return len(select_due(db_path, user_id=user_id, mode=_mode_l1_de(user_id),
+                          today=today, exclude_correct_today=True))
+
+
 async def _fsrs_afternoon_reminder_job(context: ContextTypes.DEFAULT_TYPE):
-    """FSRS-queue reminder to ALL users: 18:00 Berlin, once/day each, only if due."""
-    db_path = get_db_path()
-    now_berlin = datetime.now(_BERLIN_TZ)
-    if now_berlin.hour < _FSRS_REMINDER_HOUR_BERLIN:
+    """Minute dispatcher; legacy job name/day-key preserve restart dedup.
+
+    A successful Telegram send and the SQLite day marker are not atomic. A crash
+    between them can cause a duplicate; no exactly-once delivery is claimed.
+    """
+    global _dispatcher_running
+    if _dispatcher_running:
         return
-
-    today = now_berlin.date().isoformat()
-    send_stats = SendStats()
-    for user_id in list_active_users(db_path):
-        # Per-user once-a-day dedup (was a single global key before P5).
-        if get_user_setting(db_path, user_id, _FSRS_REMINDER_DATE_KEY, "") == today:
-            continue
-        mode = _mode_l1_de(user_id)
-        total = int(fsrs_due_forecast(db_path, user_id, mode).get("total", 0))
-        if total <= 0:
-            # Queue is done for now — no reminder, and don't mark the day done: if
-            # words become due later this evening we still want to remind once.
-            continue
-        lang = _user_interface_lang(user_id)
-        # bug #24: show the quiz direction by the user's dictionary language
-        # (Ru>De / Uk>De / En>De), not a hardcoded "L1>De" literal.
-        text = t(lang, "reminder_fsrs_due").format(
-            total=total, dir=_quiz_dir_labels(user_id)[0],
-        )
-        result = await send_to_user(
-            context.bot, user_id, text, "fsrs_reminder", stats=send_stats,
-        )
-        if result != "error":
-            set_user_setting(db_path, user_id, _FSRS_REMINDER_DATE_KEY, today)
-
-    send_stats.log("fsrs_reminder")
+    _dispatcher_running = True
+    try:
+        db_path = get_db_path()
+        stats = {"quiz": SendStats(), "new_words": SendStats()}
+        for user_id in list_active_users(db_path):
+            for kind in ("quiz", "new_words"):
+                now = _now_berlin()
+                today = now.date().isoformat()
+                if not due_to_notify(db_path, user_id, kind, now):
+                    continue
+                lang = _user_interface_lang(user_id)
+                if kind == "quiz":
+                    total = _count_quiz_due(db_path, user_id, now.date())
+                    if total <= 0:
+                        # Late readiness must remain eligible for a later tick.
+                        continue
+                    text = t(lang, "reminder_fsrs_due").format(
+                        total=total, dir=_quiz_dir_labels(user_id)[0],
+                    )
+                    send_kind = "fsrs_reminder"
+                else:
+                    text = t(lang, "reminder_new_words")
+                    send_kind = "new_words_reminder"
+                # Re-read after any prior await; never send a previous day's catch-up.
+                current = _now_berlin()
+                if current.date().isoformat() != today or not due_to_notify(db_path, user_id, kind, current):
+                    continue
+                result = await send_to_user(
+                    context.bot, user_id, text, send_kind, stats=stats[kind],
+                    reply_markup=notification_inline_markup(user_id, kind),
+                )
+                if result == "ok":
+                    mark_sent(db_path, user_id, kind, today)
+        stats["quiz"].log("fsrs_reminder")
+        stats["new_words"].log("new_words_reminder")
+    finally:
+        _dispatcher_running = False
 
 
 def _configure_learning_reminders(app: Application):
-    """Schedule both the learning-queue and FSRS-afternoon reminders."""
+    """Keep Learning continuation and schedule one personal dispatcher each minute."""
     job_queue = app.job_queue
     if job_queue is None:
         return
@@ -152,10 +170,10 @@ def _configure_learning_reminders(app: Application):
 
     for job in job_queue.get_jobs_by_name(FSRS_AFTERNOON_REMINDER_JOB_NAME):
         job.schedule_removal()
-    # Run frequently and guard by Berlin hour/date so it still fires after restarts.
+    # Replace the previous evening job rather than creating a parallel sender.
     job_queue.run_repeating(
         _fsrs_afternoon_reminder_job,
-        interval=600,
-        first=120,
+        interval=60,
+        first=60,
         name=FSRS_AFTERNOON_REMINDER_JOB_NAME,
     )

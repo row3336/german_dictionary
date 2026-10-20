@@ -737,6 +737,10 @@ def _row_to_entry(row):
         entry["wrong_streak"] = int(row["wrong_streak"] or 0)
     if "learning_step" in row.keys():
         entry["learning_step"] = int(row["learning_step"] or 0)
+    if "learning_recovery_remaining" in row.keys():
+        entry["learning_recovery_remaining"] = int(row["learning_recovery_remaining"] or 0)
+    if "learning_first_due_pending" in row.keys():
+        entry["learning_first_due_pending"] = int(row["learning_first_due_pending"] or 0)
     if "learning_due" in row.keys():
         entry["learning_due"] = row["learning_due"]
     if "learning_batch_id" in row.keys():
@@ -2563,30 +2567,11 @@ def _active_learning_batch_row(conn, user_id):
 
 
 def learning_get_or_create_batch(db_path, user_id, daily_qty):
-    """Handle learning get or create batch."""
+    """Compatibility wrapper; the conn-scoped primitive never opens a second DB."""
     init_db(db_path)
+    from .learning_store import get_or_create_batch
     with _connect(db_path) as conn:
-        row = _active_learning_batch_row(conn, user_id)
-        if row:
-            if int(row["target_qty"] or 0) != int(daily_qty):
-                conn.execute(
-                    """
-                    UPDATE learning_batches
-                    SET target_qty = ?, updated_at = CURRENT_TIMESTAMP
-                    WHERE id = ?
-                    """,
-                    (int(daily_qty), row["id"]),
-                )
-            return row["id"]
-        batch_id = str(uuid.uuid4())
-        conn.execute(
-            """
-            INSERT INTO learning_batches (id, user_id, target_qty, status)
-            VALUES (?, ?, ?, 'active')
-            """,
-            (batch_id, int(user_id), int(daily_qty)),
-        )
-    return batch_id
+        return get_or_create_batch(conn, user_id, daily_qty)
 
 
 def learning_active_count(db_path, user_id, batch_id=None):
@@ -2688,64 +2673,19 @@ def learning_pick_new_words(db_path, user_id, limit, topics=None, cefr_levels=No
 
 
 def learning_add_words(db_path, user_id, words, batch_id, first_delay_seconds):
-    """Handle learning add words."""
+    """Add pending previews without assigning their first interval yet."""
     init_db(db_path)
-    due_iso = _utc_now_iso()
-    inserted = 0
+    from .learning_store import add_items
     with _connect(db_path) as conn:
-        for entry in words:
-            word_id = _safe_text(entry.get("id"))
-            if not word_id:
-                continue
-            cur = conn.execute(
-                """
-                INSERT INTO learning_items (user_id, word_id, batch_id, step_index, preview_done, next_due, status)
-                VALUES (?, ?, ?, 0, 0, ?, 'active')
-                ON CONFLICT(user_id, word_id) DO NOTHING
-                """,
-                (int(user_id), word_id, _safe_text(batch_id), due_iso),
-            )
-            inserted += int(cur.rowcount > 0)
-        conn.execute(
-            """
-            UPDATE learning_batches
-            SET updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-            """,
-            (_safe_text(batch_id),),
-        )
-    return inserted
+        return add_items(conn, user_id, [entry["id"] for entry in words if entry.get("id")], batch_id)
 
 
 def learning_add_word_by_id(db_path, user_id, word_id, batch_id, first_delay_seconds):
-    """Add/restart a word in learning as a fresh item (preview from step 0).
-
-    Manual "send to learning" must always (re)enqueue the word as new — even if it
-    previously completed/skipped learning or is already active — so it goes through
-    the preview/learning cycle again. Returns 1 (the upsert always touches a row).
-    """
+    """Restart a preview, retaining the original item's created_at ordering."""
     init_db(db_path)
-    due_iso = _utc_now_iso()
+    from .learning_store import add_items
     with _connect(db_path) as conn:
-        conn.execute(
-            """
-            INSERT INTO learning_items (user_id, word_id, batch_id, step_index, preview_done, next_due, status)
-            VALUES (?, ?, ?, 0, 0, ?, 'active')
-            ON CONFLICT(user_id, word_id) DO UPDATE SET
-                batch_id = excluded.batch_id,
-                step_index = 0,
-                preview_done = 0,
-                next_due = excluded.next_due,
-                status = 'active',
-                updated_at = CURRENT_TIMESTAMP
-            """,
-            (int(user_id), _safe_text(word_id), _safe_text(batch_id), due_iso),
-        )
-        conn.execute(
-            "UPDATE learning_batches SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            (_safe_text(batch_id),),
-        )
-    return 1
+        return add_items(conn, user_id, [word_id], batch_id, restart=True)
 
 
 def learning_preview_entry(db_path, user_id):
@@ -2759,7 +2699,9 @@ def learning_preview_entry(db_path, user_id):
                 w.russian, w.ukrainian, w.english, w.image, w.example, w.topic, w.preposition_type, w.case_type,
                 li.step_index AS learning_step,
                 li.next_due AS learning_due,
-                li.batch_id AS learning_batch_id
+                li.batch_id AS learning_batch_id,
+                li.recovery_remaining AS learning_recovery_remaining,
+                li.first_due_pending AS learning_first_due_pending
             FROM learning_items li
             JOIN words w ON w.id = li.word_id
             WHERE li.user_id = ?
@@ -2774,54 +2716,11 @@ def learning_preview_entry(db_path, user_id):
 
 
 def learning_mark_preview_next(db_path, user_id, word_id, first_interval_seconds):
-    """Handle learning mark preview next."""
+    """Finalize only newly previewed pending rows, preserving existing due dates."""
     init_db(db_path)
-    now = datetime.now(timezone.utc)
-    first_due_iso = (now + timedelta(seconds=max(0, int(first_interval_seconds)))).strftime("%Y-%m-%dT%H:%M:%SZ")
+    from .learning_store import preview_transition
     with _connect(db_path) as conn:
-        row = conn.execute(
-            """
-            SELECT batch_id
-            FROM learning_items
-            WHERE user_id = ? AND word_id = ? AND status = 'active'
-            """,
-            (int(user_id), _safe_text(word_id)),
-        ).fetchone()
-        if not row:
-            return False
-        batch_id = row["batch_id"]
-        conn.execute(
-            """
-            UPDATE learning_items
-            SET preview_done = 1, updated_at = CURRENT_TIMESTAMP
-            WHERE user_id = ? AND word_id = ? AND status = 'active'
-            """,
-            (int(user_id), _safe_text(word_id)),
-        )
-        pending = int(
-            conn.execute(
-                """
-                SELECT COUNT(*) AS cnt
-                FROM learning_items
-                WHERE user_id = ? AND batch_id = ? AND status = 'active' AND preview_done = 0
-                """,
-                (int(user_id), batch_id),
-            ).fetchone()["cnt"]
-            or 0
-        )
-        if pending == 0:
-            conn.execute(
-                """
-                UPDATE learning_items
-                SET next_due = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE user_id = ? AND batch_id = ? AND status = 'active' AND preview_done = 1
-                """,
-                (first_due_iso, int(user_id), batch_id),
-            )
-        conn.execute(
-            "UPDATE learning_batches SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            (batch_id,),
-        )
+        preview_transition(conn, user_id, word_id, "preview_next", datetime.now(timezone.utc), first_interval_seconds)
     return True
 
 
@@ -2835,12 +2734,15 @@ def learning_due_entries(db_path, user_id, exclude_word_id=None):
                 w.russian, w.ukrainian, w.english, w.image, w.example, w.topic, w.preposition_type, w.case_type,
                 li.step_index AS learning_step,
                 li.next_due AS learning_due,
-                li.batch_id AS learning_batch_id
+                li.batch_id AS learning_batch_id,
+                li.recovery_remaining AS learning_recovery_remaining,
+                li.first_due_pending AS learning_first_due_pending
             FROM learning_items li
             JOIN words w ON w.id = li.word_id
             WHERE li.user_id = ?
               AND li.status = 'active'
               AND li.preview_done = 1
+              AND li.first_due_pending = 0
               AND li.next_due <= ?
     """
     order_clause = """
@@ -2880,165 +2782,34 @@ def learning_due_entry(db_path, user_id, exclude_word_id=None):
 
 
 def learning_update_result(db_path, user_id, word_id, ok, intervals_seconds):
-    """Handle learning update result."""
-    intervals = [int(v) for v in intervals_seconds if int(v) >= 0]
-    if not intervals:
-        return {"completed": True, "step_index": 0, "next_due": None}
+    """Legacy path API; live handlers use the atomic study answer service."""
     init_db(db_path)
-    now = datetime.now(timezone.utc)
+    from .learning_store import apply_answer
+    from .study.repository import capture_snapshot
     with _connect(db_path) as conn:
-        row = conn.execute(
-            """
-            SELECT step_index, batch_id
-            FROM learning_items
-            WHERE user_id = ? AND word_id = ? AND status = 'active'
-            """,
-            (int(user_id), _safe_text(word_id)),
-        ).fetchone()
-        if not row:
-            return {"completed": False, "step_index": 0, "next_due": None}
-        step_index = int(row["step_index"] or 0)
-        batch_id = row["batch_id"]
-
-        if ok:
-            next_step = step_index + 1
-            if next_step >= len(intervals):
-                conn.execute(
-                    """
-                    UPDATE learning_items
-                    SET status = 'completed', updated_at = CURRENT_TIMESTAMP
-                    WHERE user_id = ? AND word_id = ?
-                    """,
-                    (int(user_id), _safe_text(word_id)),
-                )
-                conn.execute(
-                    """
-                    UPDATE learning_batches
-                    SET updated_at = CURRENT_TIMESTAMP
-                    WHERE id = ?
-                    """,
-                    (_safe_text(batch_id),),
-                )
-                return {"completed": True, "step_index": next_step, "next_due": None}
-            due_iso = (now + timedelta(seconds=intervals[next_step])).strftime("%Y-%m-%dT%H:%M:%SZ")
-            conn.execute(
-                """
-                UPDATE learning_items
-                SET step_index = ?, next_due = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE user_id = ? AND word_id = ?
-                """,
-                (int(next_step), due_iso, int(user_id), _safe_text(word_id)),
-            )
-            conn.execute(
-                """
-                UPDATE learning_batches
-                SET updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-                """,
-                (_safe_text(batch_id),),
-            )
-            return {"completed": False, "step_index": next_step, "next_due": due_iso}
-
-        due_iso = (now + timedelta(seconds=intervals[0])).strftime("%Y-%m-%dT%H:%M:%SZ")
-        conn.execute(
-            """
-            UPDATE learning_items
-            SET step_index = 0, next_due = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE user_id = ? AND word_id = ?
-            """,
-            (due_iso, int(user_id), _safe_text(word_id)),
-        )
-        conn.execute(
-            """
-            UPDATE learning_batches
-            SET updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-            """,
-            (_safe_text(batch_id),),
-        )
-        return {"completed": False, "step_index": 0, "next_due": due_iso}
+        before = capture_snapshot(conn, user_id, word_id, ["learning"])
+        return apply_answer(conn, before, "correct" if ok else "wrong", datetime.now(timezone.utc), intervals_seconds)
 
 
-def learning_apply_input_err(db_path, user_id, word_id, prev_step_index, intervals_seconds):
-    """Handle apply input err for learning without reset."""
-    intervals = [int(v) for v in intervals_seconds if int(v) >= 0]
-    if not intervals:
-        return {"completed": True, "step_index": 0, "next_due": None}
+def learning_apply_input_err(db_path, user_id, word_id, prev_step_index, intervals_seconds, *, before_snapshot=None):
+    """Compatibility for old callers; live corrections pass the complete receipt."""
     init_db(db_path)
-    now = datetime.now(timezone.utc)
-    try:
-        prev_step = int(prev_step_index)
-    except (TypeError, ValueError):
-        prev_step = 0
-    prev_step = max(0, min(prev_step, len(intervals) - 1))
+    from .learning_store import apply_answer
+    from .study.repository import capture_snapshot
     with _connect(db_path) as conn:
-        row = conn.execute(
-            """
-            SELECT batch_id
-            FROM learning_items
-            WHERE user_id = ? AND word_id = ? AND status = 'active'
-            """,
-            (int(user_id), _safe_text(word_id)),
-        ).fetchone()
-        if not row:
-            return {"completed": False, "step_index": prev_step, "next_due": None}
-        batch_id = row["batch_id"]
-        next_step = prev_step + 1
-        if next_step >= len(intervals):
-            conn.execute(
-                """
-                UPDATE learning_items
-                SET status = 'completed', updated_at = CURRENT_TIMESTAMP
-                WHERE user_id = ? AND word_id = ?
-                """,
-                (int(user_id), _safe_text(word_id)),
-            )
-            conn.execute(
-                "UPDATE learning_batches SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                (_safe_text(batch_id),),
-            )
-            return {"completed": True, "step_index": next_step, "next_due": None}
-        due_iso = (now + timedelta(seconds=intervals[next_step])).strftime("%Y-%m-%dT%H:%M:%SZ")
-        conn.execute(
-            """
-            UPDATE learning_items
-            SET step_index = ?, next_due = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE user_id = ? AND word_id = ?
-            """,
-            (int(next_step), due_iso, int(user_id), _safe_text(word_id)),
-        )
-        conn.execute(
-            "UPDATE learning_batches SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            (_safe_text(batch_id),),
-        )
-        return {"completed": False, "step_index": next_step, "next_due": due_iso}
+        before = before_snapshot or capture_snapshot(conn, user_id, word_id, ["learning"])
+        if before_snapshot is None and before["learning_item"]:
+            before["learning_item"]["step_index"] = max(0, int(prev_step_index or 0))
+            before["learning_item"]["recovery_remaining"] = 0
+        return apply_answer(conn, before, "correct", datetime.now(timezone.utc), intervals_seconds)
 
 
 def learning_skip_word(db_path, user_id, word_id):
-    """Handle learning skip word."""
+    """Skipping the last required preview can finalize other viewed rows."""
     init_db(db_path)
+    from .learning_store import preview_transition
     with _connect(db_path) as conn:
-        row = conn.execute(
-            """
-            SELECT batch_id
-            FROM learning_items
-            WHERE user_id = ? AND word_id = ? AND status = 'active'
-            """,
-            (int(user_id), _safe_text(word_id)),
-        ).fetchone()
-        conn.execute(
-            """
-            UPDATE learning_items
-            SET status = 'skipped', updated_at = CURRENT_TIMESTAMP
-            WHERE user_id = ? AND word_id = ? AND status = 'active'
-            """,
-            (int(user_id), _safe_text(word_id)),
-        )
-        if row:
-            conn.execute(
-                "UPDATE learning_batches SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                (row["batch_id"],),
-            )
+        preview_transition(conn, user_id, word_id, "skip", datetime.now(timezone.utc))
     return True
 
 
@@ -3132,7 +2903,7 @@ def learning_status_snapshot(db_path, user_id, quorum_pct=70):
                 """
                 SELECT COUNT(*) AS cnt
                 FROM learning_items
-                WHERE user_id = ? AND batch_id = ? AND status = 'active' AND preview_done = 1
+                WHERE user_id = ? AND batch_id = ? AND status = 'active' AND preview_done = 1 AND first_due_pending = 0
                 """,
                 (int(user_id), batch_id),
             ).fetchone()["cnt"]
@@ -3143,7 +2914,7 @@ def learning_status_snapshot(db_path, user_id, quorum_pct=70):
                 """
                 SELECT COUNT(*) AS cnt
                 FROM learning_items
-                WHERE user_id = ? AND batch_id = ? AND status = 'active' AND preview_done = 1 AND next_due <= ?
+                WHERE user_id = ? AND batch_id = ? AND status = 'active' AND preview_done = 1 AND first_due_pending = 0 AND next_due <= ?
                 """,
                 (int(user_id), batch_id, now_iso),
             ).fetchone()["cnt"]
@@ -3153,7 +2924,7 @@ def learning_status_snapshot(db_path, user_id, quorum_pct=70):
             """
             SELECT next_due
                 FROM learning_items
-                WHERE user_id = ? AND batch_id = ? AND status = 'active' AND preview_done = 1
+                WHERE user_id = ? AND batch_id = ? AND status = 'active' AND preview_done = 1 AND first_due_pending = 0
                 ORDER BY next_due ASC
                 LIMIT 1
                 """,
@@ -3503,14 +3274,17 @@ def update_word_fields(db_path, word_id, fields):
 
 
 def delete_word(db_path, word_id):
-    """Handle delete word."""
+    """Delete the shared parent and finalize surviving previews in the same tx."""
     init_db(db_path)
+    from .learning_store import finalize_preview_if_ready, touch_batch
+    now = datetime.now(timezone.utc)
     with _connect(db_path) as conn:
-        cur = conn.execute(
-            "DELETE FROM words WHERE id = ?",
-            (_safe_text(word_id),),
-        )
-        return cur.rowcount > 0
+        affected = conn.execute("SELECT user_id,batch_id FROM learning_items WHERE word_id=?", (word_id,)).fetchall()
+        removed = conn.execute("DELETE FROM words WHERE id=?", (word_id,)).rowcount > 0
+        for row in affected:
+            finalize_preview_if_ready(conn, row["user_id"], row["batch_id"], now)
+            touch_batch(conn, row["user_id"], row["batch_id"], now)
+        return removed
 
 
 def _get_or_create_group(conn, word_id):

@@ -44,6 +44,8 @@ from .app_config import (
     ALGO_SETTINGS_MENU,
     CONJUGATION_MENU,
     CONJUGATION_TEST,
+    NOTIFICATION_SETTINGS_MENU,
+    NOTIFICATION_SETTINGS_TIME,
     DB_SEARCH,
     DB_SEARCH_VIEW,
     DUMP_MENU,
@@ -102,7 +104,7 @@ from .common.navigation import _back_to_tests
 from .common.runtime_checks import require_supported_ptb
 from .common.txlog import UNDO_MSG_ID_KEY, UNDO_TOTAL_KEY
 from .common.study_lock import study_lock, invalidate_study_frames
-from .study.answers import undo_steps as apply_undo_steps
+from .study.answers import undo_steps as apply_undo_steps, close_study_flow
 from .common.add_words_gate import add_words_enabled
 from .ui.keyboards import _main_menu_markup
 from .i18n import t
@@ -126,6 +128,10 @@ from .handlers.learning import (
 )
 from .handlers.conjugation import conjugation_card_callback, conjugation_input
 from .handlers.conjugation_test import conjugation_test_input
+from .notifications.handlers import (
+    notification_settings_callback as _notification_settings_callback,
+    notification_menu_input, notification_time_input,
+)
 from .handlers.add_words import (
     add_clarify,
     add_confirm,
@@ -403,6 +409,53 @@ def _with_inbox_open(states):
     return states
 
 
+async def study_update_guard(update, context):
+    """Stop accepted study replays before the current state can reinterpret them."""
+    user, transport = update.effective_user, update.update_id
+    if user is None or transport is None:
+        return
+    from telegram.ext import ApplicationHandlerStop
+    from .study.transport_guard import allow_dispatch, read_delivery
+
+    async with study_lock(user.id):
+        authorized, delivery = read_delivery(get_db_path(), user.id, transport)
+        if authorized and not allow_dispatch(context.user_data, transport, delivery):
+            raise ApplicationHandlerStop
+
+
+async def notification_settings_callback(update, context):
+    """Leave a study flow once; ConversationHandler applies the settings state."""
+    uid = update.effective_user.id
+    async with study_lock(uid):
+        if access_allowed(uid):
+            import uuid
+            transport = getattr(update, "update_id", None)
+            if transport is None:
+                transport = uuid.uuid4().int & ((1 << 63) - 1)
+
+            result = close_study_flow(get_db_path(), uid, transport, "notifications",
+                                      "open_notifications")
+            pending_key = "quiz_notification_pending"
+            pending = context.user_data.get(pending_key)
+            if result.get("replayed"):
+                live_study = any(context.user_data.get(key) for key in (
+                    "learning_frame", "quiz_written_frame", "conjugation_frame", "study_frame",
+                    "quiz_entry", "quiz_published_view"))
+                if not pending or pending["transport"] != transport or live_study:
+                    return None
+            else:
+                invalidate_study_frames(context)
+                # The quiz_ prefix makes /start and other flow invalidation close
+                # this retry right as well. Only this opening may finish its view.
+                pending = {"transport": transport}
+                context.user_data[pending_key] = pending
+            state = await _notification_settings_callback(update, context)
+            if context.user_data.get(pending_key) is pending:
+                context.user_data.pop(pending_key, None)
+            return state
+        return await _notification_settings_callback(update, context)
+
+
 async def _resume_enabled_add_jobs(app):
     if add_words_enabled():
         await resume_jobs(app)
@@ -449,6 +502,7 @@ def main():
         entry_points=[
             CommandHandler("start", start),
             CommandHandler("undo", undo_steps),
+            CallbackQueryHandler(notification_settings_callback, pattern=r"^notify:(quiz|new_words)$"),
             # spec #5: "🔧 open word" from the inline inbox enters the clarify card.
             # An entry_point (fires when the owner isn't mid-conversation); the global
             # ^inb: handler covers the rest of the inbox.
@@ -495,6 +549,8 @@ def main():
             QUIZ_RU_DE_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_ru_de_menu_choice)],
             SETTINGS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, settings_menu_choice)],
             LANGUAGE_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, language_menu_choice)],
+            NOTIFICATION_SETTINGS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, notification_menu_input)],
+            NOTIFICATION_SETTINGS_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, notification_time_input)],
             OWNER_REVIEW_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, owner_review_menu_choice)],
             BROADCAST_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, broadcast_input)],
             BROADCAST_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, broadcast_confirm)],
@@ -529,9 +585,12 @@ def main():
             SYN_AUTO_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, synonyms_auto_confirm)],
             SYN_CLEAR_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, synonyms_clear_confirm)],
         }),
-        fallbacks=[CommandHandler("start", start), CommandHandler("undo", undo_steps)],
+        fallbacks=[CommandHandler("start", start), CommandHandler("undo", undo_steps),
+                   CallbackQueryHandler(notification_settings_callback, pattern=r"^notify:(quiz|new_words)$")],
     )
 
+    from telegram.ext import TypeHandler
+    app.add_handler(TypeHandler(Update, study_update_guard), group=-1)
     app.add_handler(conv)
     # Global handler for the owner's inline decisions on access requests (P3.1).
     app.add_handler(CallbackQueryHandler(access_decision_callback, pattern=r"^access:"))

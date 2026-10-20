@@ -87,7 +87,8 @@ def _settings_menu_keys(user_id):
     owner = is_owner(user_id)
     # Languages now live in their own submenu (P6.3): "language_sett". parse_VF moved
     # to the add-flow submenu (spec #2): AI / VF add / VF recheck.
-    rows = [[t(lang, "algo_settings"), t(lang, "language_sett")]]
+    rows = [[t(lang, "algo_settings"), t(lang, "language_sett")],
+            [t(lang, "notifications_title")]]
     # Owner reviews reports/feedback (review_menu); a guest submits feedback +
     # can support the project with Telegram Stars (P6.3/P6.4).
     # parse_VF (bug #27): the proxy mini-menu needs a visible owner entry — the

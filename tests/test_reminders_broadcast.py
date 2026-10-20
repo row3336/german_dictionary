@@ -10,6 +10,7 @@ import asyncio
 import os
 import tempfile
 import unittest
+from datetime import datetime
 
 from _telegram_stub import install
 
@@ -51,19 +52,19 @@ class FsrsBroadcastTest(unittest.TestCase):
 
         # Patch module globals; restore on teardown.
         self._orig = {
-            "_FSRS_REMINDER_HOUR_BERLIN": R._FSRS_REMINDER_HOUR_BERLIN,
+            "_now_berlin": R._now_berlin,
             "list_active_users": R.list_active_users,
-            "fsrs_due_forecast": R.fsrs_due_forecast,
+            "_count_quiz_due": R._count_quiz_due,
             "_user_interface_lang": R._user_interface_lang,
             "_mode_l1_de": R._mode_l1_de,
             "_quiz_dir_labels": R._quiz_dir_labels,
         }
         self.addCleanup(self._restore_globals)
-        # Pass the Berlin-hour gate regardless of wall clock.
-        R._FSRS_REMINDER_HOUR_BERLIN = 0
+        # Use a deterministic Berlin evening, preserving the default 18:00 setting.
+        R._now_berlin = lambda: datetime.fromisoformat("2026-10-20T19:00:00+02:00")
         R.list_active_users = lambda db: [U1, U2, U3]
         self._due = {U1: 5, U2: 0, U3: 3}
-        R.fsrs_due_forecast = lambda db, uid, mode: {"total": self._due[uid]}
+        R._count_quiz_due = lambda db, uid, today: self._due[uid]
         self._lang = {U1: "ru", U2: "en", U3: "uk"}
         R._user_interface_lang = lambda uid: self._lang[uid]
         R._mode_l1_de = lambda uid: "ru_de"

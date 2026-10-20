@@ -35,6 +35,7 @@ from bot.storage import (
     learning_add_words,
     learning_get_or_create_batch,
     register_or_update_user,
+    set_user_status,
 )
 
 warnings.filterwarnings("ignore", category=ResourceWarning)
@@ -93,6 +94,7 @@ class _Msg:
 
 class _Update:
     def __init__(self, uid, message_id=1, text=""):
+        self.update_id = 100
         self.message = _Msg(message_id, text)
         self.effective_user = types.SimpleNamespace(id=uid, username="u", first_name="U")
         self.effective_chat = types.SimpleNamespace(id=uid)
@@ -136,6 +138,7 @@ class _LearningDbTest(unittest.TestCase):
         self.addCleanup(lambda: os.unlink(self.db))
         init_db(self.db)
         register_or_update_user(self.db, GUEST, "g", "G")
+        set_user_status(self.db, GUEST, "approved")
         self._old = {k: os.environ.get(k) for k in ("DB_PATH", "OWNER_ID")}
         os.environ["DB_PATH"] = self.db
         os.environ["OWNER_ID"] = "999"
@@ -158,7 +161,7 @@ class _LearningDbTest(unittest.TestCase):
         learning_add_words(self.db, user_id=GUEST, words=[self._word], batch_id=batch_id, first_delay_seconds=0)
         with sqlite3.connect(self.db) as conn:
             conn.execute(
-                "UPDATE learning_items SET status=?, preview_done=1, next_due=?, step_index=? WHERE user_id=? AND word_id=?",
+                "UPDATE learning_items SET status=?, preview_done=1, first_due_pending=0, next_due=?, step_index=? WHERE user_id=? AND word_id=?",
                 (status, next_due, step_index, GUEST, self._word["id"]),
             )
 
@@ -221,7 +224,7 @@ class LearningEndOfQueueTest(_LearningDbTest):
 
 class LearningInputErrTest(_LearningDbTest):
     def test_input_err_on_last_interval_word_advances_once_and_ends_cycle(self):
-        # last word at an interval step (3), wrong answer -> reset to step 0 (+0s)
+        # last word at an interval step (3), wrong answer -> keep step 3, recovery 3 (+0s)
         # -> re-asked as the already selected next card. Pressing input_err must
         # correct the previous answer (advance 3 -> 4) and discard that stale
         # card because the corrected step is due in the future.
@@ -233,16 +236,18 @@ class LearningInputErrTest(_LearningDbTest):
         _run(_send_learning_prompt(update, ctx, None))
         self.assertEqual(int(ctx.user_data["quiz_entry"].get("learning_step")), 3)
 
-        # answer WRONG -> reset to step 0, re-asked
+        # answer WRONG -> keep step 3 and immediately re-ask for recovery
         update.message.text = "zzz-wrong"
+        update.update_id += 1  # A distinct Telegram delivery for this new action.
         update.message.calls.clear()
         _run(learning_quiz(update, ctx))
-        self.assertEqual(self._item()["step"], 0)
+        self.assertEqual(self._item()["step"], 3)
         self.assertEqual(ctx.user_data["last_learning_prev_step"], 3)
 
         # press input_err -> corrected as if right from step 3 -> step 4 (future)
-        # and the cycle ends instead of keeping the stale step-0 card
+        # and the cycle ends instead of keeping the stale recovery card
         update.message.text = t(lang, "input_err")
+        update.update_id += 1  # A distinct Telegram delivery for this new action.
         update.message.calls.clear()
         _run(learning_quiz(update, ctx))
         item = self._item()
@@ -264,8 +269,10 @@ class LearningInputErrTest(_LearningDbTest):
         _run(_send_learning_prompt(update, ctx, None))
 
         update.message.text = "zzz-wrong"
+        update.update_id += 1  # A distinct Telegram delivery for this new action.
         _run(learning_quiz(update, ctx))
         update.message.text = t(lang, "input_err")
+        update.update_id += 1  # A distinct Telegram delivery for this new action.
         update.message.calls.clear()
         _run(learning_quiz(update, ctx))
 
@@ -273,6 +280,7 @@ class LearningInputErrTest(_LearningDbTest):
         self.assertEqual(int(ctx.user_data["quiz_entry"].get("learning_step")), 1)
 
         update.message.text = "der Ingenieur Ingenieure"
+        update.update_id += 1  # A distinct Telegram delivery for this new action.
         _run(learning_quiz(update, ctx))
         self.assertEqual(self._item()["step"], 2)
 
@@ -284,11 +292,14 @@ class LearningInputErrTest(_LearningDbTest):
         ctx = _Ctx()
         _run(_send_learning_prompt(update, ctx, None))
         update.message.text = "zzz-wrong"
+        update.update_id += 1  # A distinct Telegram delivery for this new action.
         _run(learning_quiz(update, ctx))
         update.message.text = t(lang, "input_err")
+        update.update_id += 1  # A distinct Telegram delivery for this new action.
         _run(learning_quiz(update, ctx))
         self.assertEqual(self._item()["step"], 4)
-        # second press: nothing to fix
+        # second distinct press: nothing to fix
+        update.update_id += 1
         update.message.calls.clear()
         _run(learning_quiz(update, ctx))
         self.assertEqual(self._item()["step"], 4)          # unchanged
