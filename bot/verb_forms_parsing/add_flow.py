@@ -20,6 +20,7 @@ from telegram import ReplyKeyboardMarkup
 
 from ..app_config import MENU, VF_ADD_INPUT, VF_APPLY_CONFIRM, get_db_path, get_dump_dir
 from ..common.db_safety import backup_db_with_event
+from ..common.add_words_gate import add_words_enabled, guard_add_handler, require_add_words_enabled
 from ..common.navigation import _action_key_from_text, _back_to_main_menu, _reply_text_with_retry
 from ..i18n import t
 from ..common.lang import _user_interface_lang
@@ -241,6 +242,7 @@ async def _make_progress_cb(bot, chat_id, job_id):
     return on_progress
 
 
+@guard_add_handler
 async def _launch_job(update: Update, context: ContextTypes.DEFAULT_TYPE, job_id, count):
     """Send the pre-start + live progress messages and start the background task."""
     chat_id = update.effective_chat.id
@@ -262,6 +264,7 @@ async def _launch_job(update: Update, context: ContextTypes.DEFAULT_TYPE, job_id
     return MENU
 
 
+@guard_add_handler
 async def start_vf_add_job(update: Update, context: ContextTypes.DEFAULT_TYPE, words):
     """Create + launch a VF-add job from a word list, using the topic picked for this
     batch (context.user_data['add_topic'], set by the topic step — not the quiz filter)."""
@@ -272,6 +275,7 @@ async def start_vf_add_job(update: Update, context: ContextTypes.DEFAULT_TYPE, w
     return await _launch_job(update, context, job_id, len(words))
 
 
+@guard_add_handler
 async def _start_recheck(update: Update, context: ContextTypes.DEFAULT_TYPE, text):
     """Create + launch a VF-recheck job over existing words.
 
@@ -316,6 +320,7 @@ async def _start_recheck(update: Update, context: ContextTypes.DEFAULT_TYPE, tex
     return await _launch_job(update, context, job_id, len(pairs))
 
 
+@guard_add_handler
 async def vf_recheck_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Entry from the Add submenu 'VF recheck' button: ask what to recheck."""
     reset_vf_checks(get_db_path())  # legacy .com results table (stale) — unrelated to v13 marks
@@ -342,6 +347,8 @@ async def resume_jobs(app):
     on restart, so we post a fresh progress message and continue from there; the
     persisted item results mean no already-parsed word is re-fetched.
     """
+    if not add_words_enabled():
+        return
     db_path = get_db_path()
     for job in active_jobs(db_path):
         jid = job["id"]
@@ -360,6 +367,7 @@ async def resume_jobs(app):
         VF_ADD_TASKS[jid] = asyncio.create_task(run_job(db_path, jid, on_progress=on_progress))
 
 
+@guard_add_handler
 async def vf_add_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Entry from the Add submenu 'VF add' button: ask for the word list."""
     await _reply_text_with_retry(
@@ -370,6 +378,7 @@ async def vf_add_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return VF_ADD_INPUT
 
 
+@guard_add_handler
 async def vf_add_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Receive the word list (text) and launch the job."""
     user_id = update.effective_user.id
@@ -390,6 +399,7 @@ async def vf_add_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return await _prompt_vf_topic(update, context, words)
 
 
+@guard_add_handler
 async def _prompt_vf_topic(update, context, words):
     """VF add asks for the target topic every time (decoupled from the quiz filter,
     spec_topics_levels.md P4). Stash the batch, then reuse the shared topic prompt;
@@ -400,6 +410,7 @@ async def _prompt_vf_topic(update, context, words):
     return await prompt_add_topic(update, context)
 
 
+@guard_add_handler
 async def vf_add_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Receive a .txt word list and launch the job."""
     doc = update.message.document
@@ -438,6 +449,7 @@ def apply_batch(db_path, entries):
     that word; otherwise it is inserted (add). Verbs also get their Präsens
     conjugation. Returns (added, updated, duplicates, errors); a duplicate
     (ValueError from add_word) is skipped."""
+    require_add_words_enabled()
     added = updated = duplicates = errors = 0
     for entry in entries:
         conj = str(entry.get("conjugation_praesens", "")).strip()
@@ -468,6 +480,7 @@ def apply_batch(db_path, entries):
     return added, updated, duplicates, errors
 
 
+@guard_add_handler
 async def _show_apply_preview(update, context, entries, issues):
     user_id = update.effective_user.id
     context.user_data["vf_apply_entries"] = entries
@@ -480,6 +493,7 @@ async def _show_apply_preview(update, context, entries, issues):
     return VF_APPLY_CONFIRM
 
 
+@guard_add_handler
 async def _read_document_entries(update):
     doc = update.message.document
     file = await doc.get_file()
@@ -487,6 +501,7 @@ async def _read_document_entries(update):
     return parse_review_document(data.decode("utf-8", errors="ignore"))
 
 
+@guard_add_handler
 async def vf_review_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """MENU: an uploaded VF review file -> validate, preview, ask to confirm."""
     if not update.message.document:
@@ -502,6 +517,7 @@ async def vf_review_document(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return await _show_apply_preview(update, context, entries, issues)
 
 
+@guard_add_handler
 async def vf_apply_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """VF_APPLY_CONFIRM: re-edited file re-previews (loop); 'yes' applies; back cancels."""
     user_id = update.effective_user.id
@@ -535,6 +551,7 @@ async def vf_apply_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return MENU
 
 
+@guard_add_handler
 async def vf_add_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Inline button handler: pause/resume/stop/details for a running job."""
     query = update.callback_query

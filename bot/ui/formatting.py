@@ -3,8 +3,10 @@
 Leaf module: depends only on text_utils/storage/app_config (no handler back-refs).
 """
 
-from ..app_config import get_db_path
+from ..app_config import get_db_path, is_owner
 from ..common.bot_media import resolve_bot_word_media
+from ..common.lang import _user_dict_lang
+from ..common.translation_view import translation_card_lines
 from ..common.conjugation import format_conjugation_block
 from ..i18n import t
 from ..storage import get_word_study_status
@@ -196,14 +198,16 @@ def _format_word_card(entry, title="Word card:", user_id=None):
         f"partizip2: {entry.get('partizip2', '') or '-'}",
         f"komparativ: {entry.get('komparativ', '') or '-'}",
         f"superlativ: {entry.get('superlativ', '') or '-'}",
-        f"russian: {entry.get('russian', '') or '-'}",
-        f"ukrainian: {entry.get('ukrainian', '') or '-'}",
-        f"english: {entry.get('english', '') or '-'}",
     ]
-    # spec #7 / bug #25: a guest's personal translation (their dict_lang override,
-    # set by the Telegram media resolver above) — shown only when set, so the card CONFIRMS
-    # it took (the base russian/ukrainian/english stay the shared dictionary). User-
-    # writable → escape like image/example. Owner cards never carry my_translation.
+    lines.extend(
+        f"{column}: {_md_escape(value)}"
+        for column, value in translation_card_lines(
+            entry, _user_dict_lang(user_id) if user_id is not None else "ru",
+            owner=user_id is None or is_owner(user_id),
+        )
+    )
+    # Personal translation uses the same selected language as the shared row.
+    # Escape user text like media; owner translations remain shared.
     personal = str(entry.get("my_translation", "") or "").strip()
     if personal:
         lines.append(f"my_translation: {_md_escape(personal)}")
@@ -276,7 +280,7 @@ def _format_de_ru_question(entry):
     word_type = _low_word(entry.get("type", ""))
     lines = []
     if word_type == "nomen":
-        article = str(entry.get("article", "")).strip()
+        article = _article_with_emoji(entry.get("article", ""))
         german = _cap_word(entry.get("german", ""))
         answer = f"{article} {german}".strip() if article else german
         lines.append(_md_escape(answer))

@@ -550,6 +550,9 @@ async def topic_filter_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     menu (printing the active-filter summary when the inline word-filter screen is
     open), and owner add-flow topic input is delegated to add_words. The quiz filter
     itself is chosen via inline buttons (word_filter_ui), not text."""
+    from ..common.add_words_gate import add_words_enabled, reject_disabled_add
+    if context.user_data.get("topic_return") == "add_queue" and not add_words_enabled():
+        return await reject_disabled_add(update, context)
     text = update.message.text.strip()
     user_id = update.effective_user.id
     lang = _user_interface_lang(user_id)

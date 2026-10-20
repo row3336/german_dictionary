@@ -43,6 +43,7 @@ from ..app_config import (
     get_db_path,
 )
 from ..common.lang import _user_dict_lang, _user_interface_lang
+from ..common.add_words_gate import guard_add_handler
 from ..common.navigation import _action_key_from_text, _back_to_main_menu, _reply_text_with_retry
 from ..common.settings import _topic_filter_banner
 from ..common.topics import parse_topic_input
@@ -277,6 +278,7 @@ def _prefilter_reject_reason(word):
     return None
 
 
+@guard_add_handler
 async def _save_entry(update: Update, entry):
     """Handle save entry."""
     if "russian" in entry:
@@ -392,6 +394,7 @@ def _format_precheck_list(items, topic):
     return "\n".join(lines)
 
 
+@guard_add_handler
 async def _precheck_words(update: Update, context: ContextTypes.DEFAULT_TYPE, words):
     """Handle precheck words."""
     if not os.getenv("OPENAI_API_KEY"):
@@ -609,6 +612,7 @@ def _format_ai_preview(entry, dict_lang, has_synonym=False):
     return "\n".join(lines)
 
 
+@guard_add_handler
 async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, word, clarification):
     """Handle process ai word."""
     has_queue = bool(context.user_data.get("add_queue"))
@@ -742,6 +746,7 @@ async def _process_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE, w
     return await _show_ai_preview(update, entry)
 
 
+@guard_add_handler
 async def _show_ai_preview(update: Update, entry):
     """Handle show ai preview."""
     dict_lang = _user_dict_lang(update.effective_user.id)
@@ -773,6 +778,7 @@ def _level_reply_keyboard(user_id):
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 
+@guard_add_handler
 async def _finalize_add_topic(update, context, name):
     """Commit the chosen topic for the pending batch and continue (AI queue or VF job).
 
@@ -794,6 +800,7 @@ async def _finalize_add_topic(update, context, name):
     return await _process_next_ai_word(update, context)
 
 
+@guard_add_handler
 async def _ask_topic_level(update, context, name):
     """Prompt the mandatory book-level for a freshly created topic (6 reply buttons)."""
     context.user_data["pending_topic_level"] = name
@@ -805,6 +812,7 @@ async def _ask_topic_level(update, context, name):
     return TOPIC_FILTER_EDIT
 
 
+@guard_add_handler
 async def handle_add_topic_input(update, context, raw):
     """Owner add-flow topic selection (spec #8 + spec_topics_levels.md P4).
 
@@ -852,6 +860,7 @@ async def handle_add_topic_input(update, context, raw):
     return TOPIC_FILTER_EDIT
 
 
+@guard_add_handler
 async def prompt_add_topic(update, context):
     """Show the 'choose/create a topic' prompt for a batch (VF add reuses this).
 
@@ -869,6 +878,7 @@ async def prompt_add_topic(update, context):
     return TOPIC_FILTER_EDIT
 
 
+@guard_add_handler
 async def _process_next_ai_word(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle process next ai word."""
     queue = context.user_data.get("add_queue") or []
@@ -890,6 +900,7 @@ async def _process_next_ai_word(update: Update, context: ContextTypes.DEFAULT_TY
     return MENU
 
 
+@guard_add_handler
 async def _ban_pending_word(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle ban pending word."""
     word = (context.user_data.get("pending_word") or "").strip()
@@ -906,6 +917,7 @@ async def _ban_pending_word(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return await _process_next_ai_word(update, context)
 
 
+@guard_add_handler
 async def _stop_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle stop queue."""
     context.user_data.pop("add_queue", None)
@@ -947,6 +959,7 @@ def _parse_precheck_edit_lines(lines):
     return result
 
 
+@guard_add_handler
 async def add_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Add submenu router (spec #2): pick recognition method.
 
@@ -986,6 +999,7 @@ async def add_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ADD_MENU
 
 
+@guard_add_handler
 async def add_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle add input."""
     raw = update.message.text.strip()
@@ -1041,6 +1055,7 @@ async def add_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ADD_PRECHECK
 
 
+@guard_add_handler
 async def add_precheck(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle add precheck."""
     text = update.message.text.strip()
@@ -1107,6 +1122,7 @@ async def add_precheck(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return TOPIC_FILTER_EDIT
 
 
+@guard_add_handler
 async def add_precheck_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle add precheck edit."""
     text = update.message.text.strip()
@@ -1153,6 +1169,7 @@ async def add_precheck_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return TOPIC_FILTER_EDIT
 
 
+@guard_add_handler
 async def add_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle add document."""
     doc = update.message.document
@@ -1200,6 +1217,7 @@ async def add_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ADD_PRECHECK
 
 
+@guard_add_handler
 async def add_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle add confirm."""
     text = update.message.text.strip()
@@ -1250,6 +1268,7 @@ async def add_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return await _process_next_ai_word(update, context)
 
 
+@guard_add_handler
 async def add_clarify(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle add clarify."""
     text = update.message.text.strip()

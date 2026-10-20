@@ -6,6 +6,7 @@ import json
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from _telegram_stub import install
 
@@ -90,6 +91,10 @@ class _Ctx:
 
 class ApplyTest(unittest.TestCase):
     def setUp(self):
+        # The feature is disabled by default; verify its retained internals explicitly.
+        enabled = patch("bot.common.add_words_gate.ADD_WORDS_ENABLED", True)
+        enabled.start()
+        self.addCleanup(enabled.stop)
         tmp = tempfile.NamedTemporaryFile(delete=False)
         tmp.close()
         self.db = tmp.name

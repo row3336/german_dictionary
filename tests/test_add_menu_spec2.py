@@ -72,26 +72,25 @@ class AddMenuRoutingTest(unittest.TestCase):
         upd = _FakeUpdate(t(self.lang, key), OWNER)
         return asyncio.run(AW.add_menu_choice(upd, _Ctx())), upd
 
-    def test_ai_enters_add_input(self):
+    def test_ai_is_temporarily_disabled(self):
         state, upd = self._route("add_ai")
-        self.assertEqual(state, AW.ADD_INPUT)
-        self.assertTrue(upd.message.replies)  # AI prompt sent
+        self.assertEqual(state, AW.MENU)
+        self.assertEqual(upd.message.replies[-1], t(self.lang, "add_words_disabled"))
 
-    def test_vf_add_enters_input(self):
-        # add_vf now prompts for the word list (spec #2 3d), not a stub.
+    def test_vf_add_is_temporarily_disabled(self):
+        # Cached VF-add buttons must obey the current feature gate.
         from bot.app_config import VF_ADD_INPUT
         state, _ = self._route("add_vf")
-        self.assertEqual(state, VF_ADD_INPUT)
+        self.assertEqual(state, AW.MENU)
 
-    def test_vf_recheck_enters_recheck_input(self):
-        # VF recheck now starts the .de recheck flow (spec #2 step 6): asks for the
-        # word set and flags the recheck mode.
+    def test_vf_recheck_is_temporarily_disabled(self):
+        # Recheck must not arm a cached flow while the feature is disabled.
         from bot.app_config import VF_ADD_INPUT
         upd = _FakeUpdate(t(self.lang, "vf_recheck"), OWNER)
         ctx = _Ctx()
         state = asyncio.run(AW.add_menu_choice(upd, ctx))
-        self.assertEqual(state, VF_ADD_INPUT)
-        self.assertTrue(ctx.user_data.get("vf_recheck"))
+        self.assertEqual(state, AW.MENU)
+        self.assertNotIn("vf_recheck", ctx.user_data)
 
     def test_settings_menu_parse_vf_is_proxy_entry_owner_only(self):
         # spec #2 moved PARSING to the add menu; the parse_VF button returned to
@@ -103,10 +102,10 @@ class AddMenuRoutingTest(unittest.TestCase):
         state, _ = self._route("back")
         self.assertEqual(state, AW.MENU)
 
-    def test_unknown_text_stays_in_menu(self):
+    def test_cached_add_menu_unknown_text_returns_to_main(self):
         upd = _FakeUpdate("gibberish", OWNER)
         state = asyncio.run(AW.add_menu_choice(upd, _Ctx()))
-        self.assertEqual(state, AW.ADD_MENU)
+        self.assertEqual(state, AW.MENU)
 
 
 if __name__ == "__main__":

@@ -19,6 +19,7 @@ from ..app_config import (
     get_info_path,
     is_owner as _is_owner_only,
 )
+from ..common.add_words_gate import add_words_enabled, is_add_action, reject_disabled_add
 from ..common.lang import (
     _mode_de_l1,
     _mode_l1_de,
@@ -139,6 +140,9 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # (add/AI/parse_VF/dump/...) is handled in P3.2.
     if not access_allowed(user_id):
         return await _guest_start(update, context)
+
+    if not add_words_enabled() and is_add_action(text):
+        return await reject_disabled_add(update, context)
 
     if action == "add_word":
         # Adding words is owner-only (P3.2): a guest never writes to the shared dictionary.

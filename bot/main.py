@@ -103,6 +103,7 @@ from .common.outbound import configure_outbound_logger
 from .common.navigation import _back_to_tests
 from .common.runtime_checks import require_supported_ptb
 from .common.txlog import UNDO_MSG_ID_KEY, UNDO_TOTAL_KEY
+from .common.add_words_gate import add_words_enabled
 from .ui.keyboards import _main_menu_markup
 from .i18n import t
 from .handlers.dump import (
@@ -398,6 +399,11 @@ def _with_inbox_open(states):
     return states
 
 
+async def _resume_enabled_add_jobs(app):
+    if add_words_enabled():
+        await resume_jobs(app)
+
+
 def main():
     """Handle main."""
     load_dotenv()
@@ -426,7 +432,7 @@ def main():
         .write_timeout(20)
         .pool_timeout(10)
         .connection_pool_size(8)
-        .post_init(resume_jobs)  # spec #2: resume any in-flight VF-add job after a restart
+        .post_init(_resume_enabled_add_jobs)  # spec #2: resume any in-flight VF-add job after a restart
         .build()
     )
     app.add_error_handler(_on_error)

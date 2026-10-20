@@ -5,6 +5,7 @@ import asyncio
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from _telegram_stub import install
 
@@ -131,6 +132,10 @@ class PureHelpersTest(unittest.TestCase):
 
 class CallbackTest(unittest.TestCase):
     def setUp(self):
+        # The feature is disabled by default; verify its retained internals explicitly.
+        enabled = patch("bot.common.add_words_gate.ADD_WORDS_ENABLED", True)
+        enabled.start()
+        self.addCleanup(enabled.stop)
         tmp = tempfile.NamedTemporaryFile(delete=False)
         tmp.close()
         self.db = tmp.name
@@ -168,6 +173,10 @@ class CallbackTest(unittest.TestCase):
 
 class InputRoutingTest(unittest.TestCase):
     def setUp(self):
+        # The feature is disabled by default; verify its retained internals explicitly.
+        enabled = patch("bot.common.add_words_gate.ADD_WORDS_ENABLED", True)
+        enabled.start()
+        self.addCleanup(enabled.stop)
         tmp = tempfile.NamedTemporaryFile(delete=False)
         tmp.close()
         self.db = tmp.name

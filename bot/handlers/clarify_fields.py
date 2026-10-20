@@ -31,6 +31,12 @@ from ..app_config import (
     is_owner,
 )
 from ..common.bot_media import resolve_bot_word_media
+from ..common.add_words_gate import add_words_enabled, reject_disabled_add
+from ..common.translation_view import effective_translation
+from ..common.quiz_resume import (
+    PUBLISHED_VIEW_KEY, RETURN_POINT_KEY, capture_return_point, close_return_point,
+    render_existing_frame, resume_after_delete,
+)
 from ..common.conjugation import parse_conjugation, takes_praeteritum
 from ..common.lang import (
     _mode_de_l1,
@@ -45,10 +51,6 @@ from ..common.navigation import _action_key_from_text, _back_to_main_menu, _back
 from ..common.txlog import _capture_transaction_snapshot, _log_transaction
 from ..handlers.quiz import (
     _interval_divisor_for_mode,
-    _send_article_prompt,
-    _send_de_ru_prompt,
-    _send_pl_sg_prompt,
-    _send_ru_de_prompt,
 )
 from ..i18n import t
 from ..labels import SYN_CONFIRM_TEXT, SYNONYMS_TEXT
@@ -68,19 +70,13 @@ from ..storage import (
 )
 from ..text_utils import type_label as _type_label
 from ..ui.formatting import (
-    _entry_translation,
-    _format_article_question,
     _format_conjugation_card,
-    _format_de_ru_question,
-    _format_pl_sg_question,
-    _format_ru_question,
     _format_word_card,
 )
 from ..ui.keyboards import (
     _clarify_conjugation_markup,
     _clarify_fields_markup,
     _main_menu_markup,
-    _quiz_markup,
     _type_choice_markup,
     _value_entry_markup,
 )
@@ -108,7 +104,7 @@ async def _send_effective_value_echo(message, user_id, entry, field):
     stored = get_word_by_id(get_db_path(), word_id) if word_id else None
     effective = resolve_bot_word_media(get_db_path(), user_id, stored or entry)
     if field == "my_translation":
-        value = _entry_translation(effective, _user_dict_lang(user_id))
+        value = effective_translation(effective, _user_dict_lang(user_id))
     else:
         value = effective.get(_ENTRY_FIELD_ALIASES.get(field, field), "")
     value = str(value or "")
@@ -285,16 +281,24 @@ def _set_entry_field_value(entry, field, value):
 
 
 def _get_clarify_target(context: ContextTypes.DEFAULT_TYPE, prefer_current=False):
-    """Handle get quiz action entry."""
+    """Select a visible answer, never the next hidden question."""
+    point = context.user_data.get(RETURN_POINT_KEY)
+    published = context.user_data.get(PUBLISHED_VIEW_KEY)
+    if point is not None or published:
+        word_id = point.visible_answer_id if point is not None else published.get("visible_answer_id")
+        entry = get_word_by_id(get_db_path(), word_id) if word_id else None
+        return (entry, "Visible answer:") if entry else (None, "")
     current = context.user_data.get("quiz_entry")
+    if prefer_current and context.user_data.get("learning_preview_mode") and current:
+        return current, "Current learning card:"
     last_answered = context.user_data.get("quiz_last_answered_entry")
-    if prefer_current and current:
-        return current, "Current quiz word:"
-    if last_answered:
-        return last_answered, "Last answered word:"
-    if current:
-        return current, "Current quiz word:"
-    return None, ""
+    return (last_answered, "Last answered word:") if last_answered else (None, "")
+
+
+def _clarify_value_markup(context, field, user_id):
+    return _value_entry_markup(
+        field, user_id, allow_stop=context.user_data.get("edit_source") != "quiz"
+    )
 
 
 _CONJUGATION_ACTION_KEYS = (
@@ -466,7 +470,7 @@ async def _handle_conjugation_input(update, context, entry_key, entry, stage, ac
             context.user_data["edit_stage"] = "conjugation_enter"
             await update.message.reply_text(
                 t(lang, "clarify_conjugation_enter").format(tense=tense),
-                reply_markup=_value_entry_markup("conjugation", uid),
+                reply_markup=_clarify_value_markup(context, "conjugation", uid),
             )
         return ADD_EDIT
 
@@ -493,7 +497,7 @@ async def _handle_conjugation_input(update, context, entry_key, entry, stage, ac
         except ValueError as exc:
             await update.message.reply_text(
                 f'{t(lang, "clarify_conjugation_invalid")}\n{exc}',
-                reply_markup=_value_entry_markup("conjugation", uid),
+                reply_markup=_clarify_value_markup(context, "conjugation", uid),
             )
             return ADD_EDIT
         if block == "praesens":
@@ -527,9 +531,15 @@ async def _handle_conjugation_input(update, context, entry_key, entry, stage, ac
 
 async def _start_clarify_fields(update: Update, context: ContextTypes.DEFAULT_TYPE, return_state, prefer_current=False):
     """Handle start quiz edit."""
+    close_return_point(context)
+    capture_return_point(context, return_state)
     entry, title = _get_clarify_target(context, prefer_current=prefer_current)
     if not entry:
-        return await _back_to_tests(update, context)
+        close_return_point(context)
+        await update.message.reply_text(
+            t(_user_interface_lang(update.effective_user.id), "clarify_answer_first")
+        )
+        return return_state
     context.user_data["edit_source"] = "quiz"
     context.user_data["quiz_edit_entry"] = entry
     context.user_data["edit_stage"] = "pick_field"
@@ -557,6 +567,7 @@ async def open_clarify_from_report(update: Update, context: ContextTypes.DEFAULT
     _resume_after_clarify has no quiz_entry -> _back_to_tests). Messages are sent
     via the callback's chat (a callback has no update.message).
     """
+    close_return_point(context)
     context.user_data["edit_source"] = "quiz"
     context.user_data["quiz_edit_entry"] = entry
     context.user_data["edit_stage"] = "pick_field"
@@ -586,68 +597,12 @@ async def _exit_clarify(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def _resume_after_clarify(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text, state_override=None):
-    """Handle show quiz prompt after edit."""
-    from ..handlers.learning import _send_learning_prompt
-
-    state = state_override or context.user_data.get("edit_return_state")
-    if state != DB_SEARCH_VIEW:
-        context.user_data.pop("quiz_edit_entry", None)
-    entry = context.user_data.get("quiz_entry")
-    if not entry:
-        return await _exit_clarify(update, context)
-
-    if state == QUIZ_RU_DE:
-        text = _format_ru_question(entry, _user_dict_lang(update.effective_user.id))
-        if prefix_text:
-            text = f"{prefix_text}\n\n{text}"
-        await _reply_text_with_retry(
-            update.message,
-            text,
-            reply_markup=_quiz_markup(update.effective_user.id, article=False),
-            parse_mode="Markdown",
-        )
-        return QUIZ_RU_DE
-
-    if state == QUIZ_DE_RU:
-        text = _format_de_ru_question(entry)
-        if prefix_text:
-            text = f"{prefix_text}\n\n{text}"
-        await _reply_text_with_retry(
-            update.message,
-            text,
-            reply_markup=_quiz_markup(update.effective_user.id, article=False),
-            parse_mode="Markdown",
-        )
-        return QUIZ_DE_RU
-
-    if state == QUIZ_PL_SG:
-        text = _format_pl_sg_question(entry)
-        if prefix_text:
-            text = f"{prefix_text}\n\n{text}"
-        await _reply_text_with_retry(
-            update.message,
-            text,
-            reply_markup=_quiz_markup(update.effective_user.id, article=False),
-            parse_mode="Markdown",
-        )
-        return QUIZ_PL_SG
-
-    if state == QUIZ_ARTICLE:
-        text = _format_article_question(entry)
-        if prefix_text:
-            text = f"{prefix_text}\n\n{text}"
-        await _reply_text_with_retry(
-            update.message,
-            text,
-            reply_markup=_quiz_markup(update.effective_user.id, article=True),
-            parse_mode="Markdown",
-        )
-        return QUIZ_ARTICLE
-
-    if state == LEARNING_QUIZ:
-        return await _send_learning_prompt(update, context, prefix_text, force_entry=context.user_data.get("quiz_entry"))
-
+    """Render the caller's established frame without advancing its session."""
+    state = state_override if state_override is not None else context.user_data.get("edit_return_state")
     if state == DB_SEARCH_VIEW:
+        entry = context.user_data.get("quiz_edit_entry") or context.user_data.get("quiz_entry")
+        if not entry:
+            return await _exit_clarify(update, context)
         if prefix_text:
             await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
         await _reply_text_with_retry(
@@ -659,13 +614,16 @@ async def _resume_after_clarify(update: Update, context: ContextTypes.DEFAULT_TY
         context.user_data["edit_source"] = "quiz"
         context.user_data["edit_stage"] = "pick_field"
         await _reply_text_with_retry(
-            update.message,
-            t(_user_interface_lang(update.effective_user.id), "clarify_choose_action"),
+            update.message, t(_user_interface_lang(update.effective_user.id), "clarify_choose_action"),
             reply_markup=_clarify_screen(context, update.effective_user.id),
         )
         return ADD_EDIT
-
-    return await _back_to_tests(update, context)
+    context.user_data.pop("quiz_edit_entry", None)
+    if state is None:
+        close_return_point(context)
+        return await _exit_clarify(update, context)
+    capture_return_point(context, state)
+    return await render_existing_frame(update, context, prefix_text)
 
 
 async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -679,11 +637,20 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
     from ..handlers.add_words import _show_ai_preview, _stop_queue
     from ..handlers.learning import _send_entry_to_learning
 
+    source = context.user_data.get("edit_source", "add")
+    if source == "add" and not add_words_enabled():
+        return await reject_disabled_add(update, context)
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "stop":
+        if source == "quiz":
+            context.user_data["edit_stage"] = "pick_field"
+            context.user_data.pop("edit_field", None)
+            await update.message.reply_text(
+                t(_user_interface_lang(update.effective_user.id), "clarify_choose_action"),
+                reply_markup=_clarify_screen(context, update.effective_user.id),
+            )
+            return ADD_EDIT
         return await _stop_queue(update, context)
-
-    source = context.user_data.get("edit_source", "add")
     if source == "add":
         entry_key = "pending_entry"
     else:
@@ -737,6 +704,13 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
         return await _resume_after_clarify(update, context, t(lang, "report_saved"))
 
     if stage == "delete_confirm":
+        if not is_owner(update.effective_user.id):
+            context.user_data["edit_stage"] = "pick_field"
+            await update.message.reply_text(
+                t(_user_interface_lang(update.effective_user.id), "clarify_use_field_buttons"),
+                reply_markup=_clarify_screen(context, update.effective_user.id),
+            )
+            return ADD_EDIT
         # P6.2: only an explicit "yes" deletes; anything else (incl. back) cancels.
         if text.strip().lower() != "yes":
             context.user_data["edit_stage"] = "pick_field"
@@ -747,26 +721,17 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
             return ADD_EDIT
         word_id = entry.get("id")
         removed = delete_word(get_db_path(), word_id) if word_id else False
-        context.user_data.pop("quiz_edit_entry", None)
-        current_quiz_entry = context.user_data.get("quiz_entry")
-        if current_quiz_entry and current_quiz_entry.get("id") == word_id:
-            context.user_data.pop("quiz_entry", None)
-        last_answered = context.user_data.get("quiz_last_answered_entry")
-        if last_answered and last_answered.get("id") == word_id:
-            context.user_data.pop("quiz_last_answered_entry", None)
+        state = context.user_data.get("edit_return_state")
         context.user_data["edit_stage"] = "pick_field"
         context.user_data.pop("edit_field", None)
-        state = context.user_data.get("edit_return_state")
         prefix = "✅ Deleted." if removed else "❌ Word not found."
-        if state == QUIZ_RU_DE:
-            return await _send_ru_de_prompt(update, context, prefix)
-        if state == QUIZ_DE_RU:
-            return await _send_de_ru_prompt(update, context, prefix)
-        if state == QUIZ_ARTICLE:
-            return await _send_article_prompt(update, context, prefix)
         if state == DB_SEARCH_VIEW:
+            context.user_data.pop("quiz_entry", None)
+            context.user_data.pop("quiz_edit_entry", None)
             _clear_db_search_variants(context)
             return await _send_db_search_prompt(update, update.effective_user.id, prefix)
+        if state is not None:
+            return await resume_after_delete(update, context, word_id, prefix)
         return await _exit_clarify(update, context)
 
     # --- add_int (spec #15 / T5): push the word's next show further out, as if
@@ -978,18 +943,18 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
             prompt = "Choose preposition category:" if field == "preposition_type" else "Choose case:"
             await update.message.reply_text(
                 prompt,
-                reply_markup=_value_entry_markup(field, update.effective_user.id),
+                reply_markup=_clarify_value_markup(context, field, update.effective_user.id),
             )
         elif field == "my_translation":
             # spec #7: localized prompt (personal translation in the user's dict_lang).
             await update.message.reply_text(
                 t(_user_interface_lang(update.effective_user.id), "my_translation_prompt"),
-                reply_markup=ReplyKeyboardMarkup([[t(_user_interface_lang(update.effective_user.id), "back"), t(_user_interface_lang(update.effective_user.id), "stop")]], resize_keyboard=True),
+                reply_markup=_clarify_value_markup(context, field, update.effective_user.id),
             )
         else:
             await update.message.reply_text(
                 t(_user_interface_lang(update.effective_user.id), "clarify_enter_value").format(field=field),
-                reply_markup=ReplyKeyboardMarkup([[t(_user_interface_lang(update.effective_user.id), "back"), t(_user_interface_lang(update.effective_user.id), "stop")]], resize_keyboard=True),
+                reply_markup=_clarify_value_markup(context, field, update.effective_user.id),
             )
         return ADD_EDIT
 
@@ -1019,9 +984,9 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
     if error:
         # spec #1: preset-value fields re-show their preset buttons on a bad value.
         reply_markup = (
-            _value_entry_markup(field, update.effective_user.id)
+            _clarify_value_markup(context, field, update.effective_user.id)
             if field in ("type", "preposition_type", "case_type")
-            else ReplyKeyboardMarkup([[t(_user_interface_lang(update.effective_user.id), "back"), t(_user_interface_lang(update.effective_user.id), "stop")]], resize_keyboard=True)
+            else _clarify_value_markup(context, field, update.effective_user.id)
         )
         await update.message.reply_text(
             error,
@@ -1094,7 +1059,7 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
         prompt = "Choose preposition category:" if next_field == "preposition_type" else "Choose case:"
         await update.message.reply_text(
             prompt,
-            reply_markup=_value_entry_markup(next_field, update.effective_user.id),
+            reply_markup=_clarify_value_markup(context, next_field, update.effective_user.id),
         )
         return ADD_EDIT
 

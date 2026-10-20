@@ -14,6 +14,7 @@ from ..app_config import (
     is_owner,
 )
 from ..common.lang import _quiz_dir_labels, _user_interface_lang
+from ..common.add_words_gate import add_words_enabled
 from ..i18n import t
 from ..labels import (
     PARSE_VF_TEXT,
@@ -23,10 +24,10 @@ from ..labels import (
 
 
 def _main_menu_keys(user_id):
-    """Main menu. The "Add words" button is owner-only (P3.2)."""
+    """Main menu; bot Add words stays hidden while the feature is disabled."""
     lang = _user_interface_lang(user_id)
     first_row = [t(lang, "tests"), t(lang, "db_search")]
-    if is_owner(user_id):
+    if is_owner(user_id) and add_words_enabled():
         first_row.insert(0, t(lang, "add_word"))
     return [
         first_row,
@@ -288,7 +289,7 @@ def _case_type_markup():
     return _preset_value_markup(CASE_TYPES)
 
 
-def _value_entry_markup(field, user_id):
+def _value_entry_markup(field, user_id, allow_stop=True):
     """Keyboard shown when entering a value for `field` during clarify.
 
     Controlled-vocabulary fields get preset buttons; everything else gets the
@@ -301,7 +302,27 @@ def _value_entry_markup(field, user_id):
     if field == "case_type":
         return _case_type_markup()
     lang = _user_interface_lang(user_id)
-    return ReplyKeyboardMarkup([[t(lang, "back"), t(lang, "stop")]], resize_keyboard=True)
+    row = [t(lang, "back")]
+    if allow_stop:
+        row.append(t(lang, "stop"))
+    return ReplyKeyboardMarkup([row], resize_keyboard=True)
+
+
+def _learning_preview_markup(user_id):
+    lang = _user_interface_lang(user_id)
+    return ReplyKeyboardMarkup(
+        [[t(lang, "learning_next"), t(lang, "learning_skip")],
+         [t(lang, "clarify_fields"), t(lang, "back")]], resize_keyboard=True,
+    )
+
+
+def _learning_question_markup(user_id):
+    lang = _user_interface_lang(user_id)
+    return ReplyKeyboardMarkup(
+        [[I_DONT_KNOW_TEXT, t(lang, "input_err")],
+         [t(lang, "learning_skip"), t(lang, "clarify_fields"), t(lang, "back")]],
+        resize_keyboard=True,
+    )
 
 
 def _add_keys(user_id):

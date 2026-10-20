@@ -100,31 +100,19 @@ async def _open_synonyms_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def _return_from_synonyms(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix="✅ Done."):
     """Handle return from synonyms."""
     from ..handlers.db_search import _send_db_search_prompt
-    from ..handlers.quiz import (
-        _send_article_prompt,
-        _send_de_ru_prompt,
-        _send_pl_sg_prompt,
-        _send_ru_de_prompt,
-    )
+    from ..common.quiz_resume import RETURN_POINT_KEY, capture_return_point, render_existing_frame
+    from ..app_config import LEARNING_QUIZ
 
-    anchor_id = context.user_data.get("syn_anchor_id")
     return_state = context.user_data.get("syn_return_state")
-    context.user_data.pop("syn_auto_candidates", None)
-    context.user_data.pop("syn_anchor_id", None)
-    context.user_data.pop("syn_return_state", None)
-    entry = get_word_by_id(get_db_path(), anchor_id) if anchor_id else None
-    if entry:
-        context.user_data["quiz_entry"] = entry
-    if return_state == QUIZ_RU_DE:
-        return await _send_ru_de_prompt(update, context, prefix)
-    if return_state == QUIZ_DE_RU:
-        return await _send_de_ru_prompt(update, context, prefix)
-    if return_state == QUIZ_PL_SG:
-        return await _send_pl_sg_prompt(update, context, prefix)
-    if return_state == QUIZ_ARTICLE:
-        return await _send_article_prompt(update, context, prefix)
+    for key in ("syn_auto_candidates", "syn_anchor_id", "syn_return_state"):
+        context.user_data.pop(key, None)
     if return_state == DB_SEARCH_VIEW:
         return await _send_db_search_prompt(update, update.effective_user.id, prefix)
+    if RETURN_POINT_KEY in context.user_data or return_state in (
+        QUIZ_RU_DE, QUIZ_DE_RU, QUIZ_PL_SG, QUIZ_ARTICLE, LEARNING_QUIZ,
+    ):
+        capture_return_point(context, return_state)
+        return await render_existing_frame(update, context, prefix)
     return await _back_to_tests(update, context)
 
 
@@ -132,7 +120,7 @@ async def synonyms_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle synonyms menu."""
     text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "stop":
-        return await _back_to_tests(update, context)
+        return await _return_from_synonyms(update, context, None)
     if _action_key_from_text(text, update.effective_user.id) == "back":
         return await _return_from_synonyms(update, context, None)
     anchor_id = context.user_data.get("syn_anchor_id")
