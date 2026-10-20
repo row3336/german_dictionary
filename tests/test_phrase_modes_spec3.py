@@ -123,11 +123,13 @@ class PhraseCasingTest(unittest.TestCase):
 
 class PhraseSelectionStateTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        # These tests isolate routing/bucket cleanup; atomic entry/replay has a
-        # real in-memory DB and PTB dispatch fixture in the new written suite.
+        # These tests isolate routing only. Real atomic entry/reset and failed
+        # send recovery use in-memory SQLite plus actual PTB in the oral suite.
         self.enterContext(patch('bot.written.service.preflight', return_value=None))
 
-    async def test_phrase_selection_clears_only_phrase_stale_buckets(self):
+    async def test_l1_to_de_phrase_delegates_before_resetting_existing_buckets(self):
+        from copy import deepcopy
+        from bot.app_config import ORAL_QUIZ
         context = SimpleNamespace(user_data={
             "quiz_direction_base": "ru_de",
             "quiz_entry": {"id": "stale-word"},
@@ -140,41 +142,46 @@ class PhraseSelectionStateTest(unittest.IsolatedAsyncioTestCase):
             "session_correct_phrase_ru_de": 4,
             "session_wrong_phrase_ru_de": 2,
         })
-        update = SimpleNamespace(
-            effective_user=SimpleNamespace(id=1),
-            message=SimpleNamespace(text="Phrases"),
-        )
+        before = deepcopy(context.user_data)
+        update = SimpleNamespace(effective_user=SimpleNamespace(id=1),
+                                 message=SimpleNamespace(text="Phrases"))
         with (
             patch("bot.handlers.menu._action_key_from_text", return_value="quiz_phrases"),
-            patch("bot.handlers.menu._send_ru_de_prompt", new=AsyncMock(return_value=QUIZ_RU_DE)) as sender,
+            patch("bot.handlers.menu.start_oral_quiz_locked", new=AsyncMock(return_value=ORAL_QUIZ)) as sender,
+            patch("bot.handlers.menu._send_ru_de_prompt", side_effect=AssertionError('written phrase route')),
         ):
             state = await quiz_ru_de_menu_choice(update, context)
+        self.assertEqual(state, ORAL_QUIZ)
+        self.assertEqual(context.user_data, before)
+        sender.assert_awaited_once_with(update, context, "phrase_ru_de")
 
-        self.assertEqual(state, QUIZ_RU_DE)
-        self.assertEqual(context.user_data["quiz_mode"], "phrase_ru_de")
-        self.assertNotIn("phrase_ru_de", context.user_data["retry_queue"])
-        self.assertNotIn("phrase_ru_de", context.user_data["retry_counts"])
-        self.assertNotIn("phrase_ru_de", context.user_data["retry_since_last"])
-        self.assertNotIn("phrase_ru_de", context.user_data["fsrs_cycle_queue"])
-        self.assertEqual(context.user_data["retry_queue"]["ru_de"], ["word"])
-        self.assertEqual(context.user_data["session_seen_phrase_ru_de"], set())
-        self.assertNotIn("quiz_entry", context.user_data)
-        self.assertNotIn("quiz_last_answered_entry", context.user_data)
-        sender.assert_awaited_once_with(update, context, None)
-
-    async def test_de_to_l1_phrase_selection_uses_phrase_de_mode(self):
+    async def test_de_to_l1_phrase_selection_uses_exact_oral_mode(self):
+        from bot.app_config import ORAL_QUIZ
         context = SimpleNamespace(user_data={"quiz_direction_base": "de_uk"})
-        update = SimpleNamespace(
-            effective_user=SimpleNamespace(id=1),
-            message=SimpleNamespace(text="Фрази"),
-        )
+        update = SimpleNamespace(effective_user=SimpleNamespace(id=1),
+                                 message=SimpleNamespace(text="Фрази"))
         with (
             patch("bot.handlers.menu._action_key_from_text", return_value="quiz_phrases"),
-            patch("bot.handlers.menu._send_de_ru_prompt", new=AsyncMock(return_value=99)) as sender,
+            patch("bot.handlers.menu.start_oral_quiz_locked", new=AsyncMock(return_value=ORAL_QUIZ)) as sender,
+            patch("bot.handlers.menu._send_de_ru_prompt", side_effect=AssertionError('written phrase route')),
         ):
             state = await quiz_ru_de_menu_choice(update, context)
-        self.assertEqual(state, 99)
-        self.assertEqual(context.user_data["quiz_mode"], "phrase_de_uk")
+        self.assertEqual(state, ORAL_QUIZ)
+        self.assertEqual(context.user_data, {"quiz_direction_base": "de_uk"})
+        sender.assert_awaited_once_with(update, context, "phrase_de_uk")
+
+    async def test_words_l1_to_de_keep_written_entry_and_exact_mode(self):
+        context = SimpleNamespace(user_data={"quiz_direction_base": "ru_de"})
+        update = SimpleNamespace(effective_user=SimpleNamespace(id=1),
+                                 message=SimpleNamespace(text="Words"))
+        with (
+            patch("bot.handlers.menu._action_key_from_text", return_value="quiz_words"),
+            patch("bot.handlers.menu._send_ru_de_prompt", new=AsyncMock(return_value=QUIZ_RU_DE)) as sender,
+            patch("bot.handlers.menu.start_oral_quiz_locked", side_effect=AssertionError('oral written-word route')),
+        ):
+            state = await quiz_ru_de_menu_choice(update, context)
+        self.assertEqual(state, QUIZ_RU_DE)
+        self.assertEqual(context.user_data["quiz_mode"], "ru_de")
         sender.assert_awaited_once_with(update, context, None)
 
 

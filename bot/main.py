@@ -67,6 +67,7 @@ from .app_config import (
     LEARNING_REMINDER_INTERVAL_KEY,
     LEARNING_SETTINGS_MENU,
     MENU,
+    ORAL_QUIZ,
     OWNER_DICT_LANG_KEY,
     OWNER_INTERFACE_LANG_KEY,
     QUIZ_ARTICLE,
@@ -196,6 +197,7 @@ from .handlers.clarify_fields import (
     _resume_after_clarify,
     clarify_fields_input,
 )
+from .oral.handlers import oral_quiz
 from .handlers.quiz import (
     quiz_article,
     quiz_de_ru,
@@ -575,6 +577,7 @@ def main():
             ADD_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_confirm)],
             ADD_CLARIFY: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_clarify)],
             ADD_EDIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, clarify_fields_input)],
+            ORAL_QUIZ: [MessageHandler(filters.TEXT & ~filters.COMMAND, oral_quiz)],
             QUIZ_RU_DE: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_ru_de)],
             QUIZ_DE_RU: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_de_ru)],
             QUIZ_PL_SG: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_pl_sg)],

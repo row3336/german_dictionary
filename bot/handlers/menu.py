@@ -43,6 +43,8 @@ from ..handlers.access import access_allowed, show_rejected_screen
 from ..handlers.db_search import _send_db_search_prompt
 from ..handlers.learning import _send_learning_menu
 from ..handlers.owner_stats import _format_progress_text, _stat_keyboard
+from ..oral.domain import MODES as ORAL_MODES
+from ..oral.handlers import start_oral_quiz_locked
 from ..handlers.quiz import _send_de_ru_prompt, _send_pl_sg_prompt, _send_ru_de_prompt, serialized_written_entry
 from ..handlers.settings import _ask_dictionary_language, _ask_interface_language
 from ..i18n import normalize_interface_lang, t
@@ -300,6 +302,8 @@ async def quiz_ru_de_menu_choice(update: Update, context: ContextTypes.DEFAULT_T
     if action in {"quiz_words", "quiz_phrases", "standard_fsrs"}:
         base_mode = context.user_data.get("quiz_direction_base") or _mode_l1_de(user_id)
         mode = phrase_mode(base_mode) if action == "quiz_phrases" else base_mode
+        if mode in ORAL_MODES:
+            return await start_oral_quiz_locked(update, context, mode)
         context.user_data["quiz_mode"] = mode
         _reset_retry_state(context, mode)
         _reset_fsrs_cycle_state(context, mode)

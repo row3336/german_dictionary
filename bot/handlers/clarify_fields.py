@@ -25,6 +25,7 @@ from ..app_config import (
     LEARNING_QUIZ,
     MENU,
     PREPOSITION_TYPES,
+    ORAL_QUIZ,
     QUIZ_ARTICLE,
     QUIZ_DE_RU,
     QUIZ_PL_SG,
@@ -163,6 +164,9 @@ def _clarify_screen(context: ContextTypes.DEFAULT_TYPE, user_id):
 
 def _add_int_mode_for_return_state(user_id, return_state, selected_mode=None):
     """Resolve the progress mode supplied by a directional FSRS quiz."""
+    if return_state == ORAL_QUIZ:
+        from ..oral.domain import MODES
+        return selected_mode if selected_mode in MODES else None
     if return_state == QUIZ_RU_DE:
         base_mode = _mode_l1_de(user_id)
         return selected_mode if selected_mode in direction_mode_family(base_mode) else base_mode
@@ -630,6 +634,20 @@ async def _resume_after_clarify(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     async with study_lock(update.effective_user.id):
+        from ..oral import handlers as oral_handlers
+        frame = oral_handlers._live_frame(context)
+        if (context.user_data.get("edit_source") == "quiz"
+                and context.user_data.get("edit_return_state") == ORAL_QUIZ
+                and frame and frame.get("pending_render")):
+            # A failed return still belongs to ADD_EDIT in PTB. Finish its oral
+            # presentation before this reply can be interpreted as an edit.
+            handled, result = await oral_handlers._preflight(update, context)
+            if not handled:
+                handled, result = await oral_handlers._drain(update, context)
+            if handled:
+                if result == ORAL_QUIZ:
+                    close_return_point(context)
+                return result
         return await _clarify_fields_input_locked(update, context)
 
 

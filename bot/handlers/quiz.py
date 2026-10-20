@@ -14,6 +14,8 @@ from ..common.quiz_resume import register_renderer, _render_legacy_frame
 from ..common.study_lock import study_lock, invalidate_study_frames
 from ..written import service as written_service, state as written_state
 from ..study.answers import StaleStudyAction
+from ..oral import handlers as oral_handlers
+from ..oral.domain import MODES as ORAL_MODES
 
 from telegram import ReplyKeyboardMarkup, Update
 from telegram.ext import ContextTypes
@@ -536,6 +538,8 @@ async def _repeat_current_pl_sg(update, context, prefix_text):
 async def _send_written_prompt(update, context, prefix_text, state):
     uid = update.effective_user.id
     mode = _written_mode(context, uid, state)
+    if mode in ORAL_MODES:
+        return await oral_handlers.start_oral_quiz_locked(update, context, mode)
     frame = written_state.ensure_frame(context, mode, state)
     transport = written_state.transport_id(update)
     pending = frame.get('next_view')
@@ -860,6 +864,9 @@ def _serialized_written(state):
                 receipt = written_service.preflight(
                     get_db_path(), update.effective_user.id, written_state.transport_id(update))
                 if receipt:
+                    if receipt.get('replayed') and oral_handlers._live_frame(context):
+                        _, result = await oral_handlers._preflight(update, context)
+                        return result
                     other_state = _other_flow_state(context)
                     if receipt.get('replayed') and other_state is not None:
                         return other_state
@@ -878,6 +885,17 @@ def _serialized_written(state):
                             return await _send_written_prompt(update, context, pending['prefix'], frame['return_state'])
                         return frame['return_state']
                     return receipt.get('return_state', TESTS_MENU)
+                live_oral = oral_handlers._live_frame(context)
+                if live_oral:
+                    drained, result = await oral_handlers._drain(update, context)
+                    if drained:
+                        return result
+                if state in (QUIZ_RU_DE, QUIZ_DE_RU):
+                    if live_oral:
+                        return await oral_handlers.oral_quiz_locked(update, context)
+                    mode = _written_mode(context, update.effective_user.id, state)
+                    if mode in ORAL_MODES:
+                        return await oral_handlers.start_oral_quiz_locked(update, context, mode)
                 other_state = _other_flow_state(context)
                 if state is not None and other_state is not None:
                     return other_state
