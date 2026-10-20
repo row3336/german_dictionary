@@ -28,8 +28,8 @@ def pick_dice_pronoun(recent=None):
     """Return a random dice pronoun, excluding the recently shown ones.
 
     Pass the last two shown pronouns (`recent`): excluding both guarantees a
-    pronoun never repeats more than once per 3 shows, so all six get covered
-    without a near-immediate repeat. Accepts a single pronoun or an iterable.
+    pronoun does not repeat within any three consecutive shows. This random
+    helper does not guarantee a six-form pass. Accepts a pronoun or an iterable.
     Falls back to the full set if exclusion would empty the pool.
     """
     if isinstance(recent, str):
@@ -41,8 +41,8 @@ def pick_dice_pronoun(recent=None):
 # Placeholder shown in place of a hidden conjugated form (Feature B "hide forms").
 _MASK = "***"
 
-# Präteritum is only stored for a closed set of verbs (spec #3): the six modals
-# plus werden/sein/haben. Matched by infinitive; no schema flag needed.
+# Präteritum preparation/testing is limited to the six modals plus werden/sein/haben.
+# Reference storage retains Präteritum for other verbs as well.
 PRAETERITUM_INFINITIVES = frozenset(
     {"können", "müssen", "wollen", "sollen", "dürfen", "mögen", "werden", "sein", "haben"}
 )

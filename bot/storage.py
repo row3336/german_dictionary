@@ -780,13 +780,6 @@ def set_word_conjugation(db_path, word_id, praesens, praeteritum=""):
     stored_praeteritum = parse_conjugation(praeteritum) if str(praeteritum or "").strip() else ""
     init_db(db_path)
     with _connect(db_path) as conn:
-        # spec #3 invariant enforced at the single write chokepoint: only the closed
-        # Präteritum list keeps a Präteritum block. Force-blank it for any other verb,
-        # whatever the caller (apply script, VF parser, clarify) supplied.
-        if stored_praeteritum:
-            row = conn.execute("SELECT infinitive FROM words WHERE id = ?", (word_id,)).fetchone()
-            if not takes_praeteritum(row["infinitive"] if row else ""):
-                stored_praeteritum = ""
         conn.execute(
             "UPDATE words SET conjugation_praesens = ?, conjugation_praeteritum = ? WHERE id = ?",
             (stored_praesens, stored_praeteritum, word_id),

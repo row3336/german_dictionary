@@ -32,6 +32,7 @@ from bot.i18n import t  # noqa: E402
 from bot.storage import (  # noqa: E402
     init_db,
     register_or_update_user,
+    set_user_status,
     set_user_dict_lang,
     set_user_interface_lang,
     set_word_conjugation,
@@ -144,6 +145,8 @@ class _Query:
 class _CbUpdate:
     def __init__(self, data, uid, mid):
         self.callback_query = _Query(data, uid, mid)
+        self.effective_user = type("U", (), {"id": uid})()
+        self.effective_chat = type("C", (), {"id": uid})()
 
 
 class _Base(unittest.TestCase):
@@ -158,6 +161,7 @@ class _Base(unittest.TestCase):
         os.environ["OWNER_ID"] = str(OWNER)
         self.addCleanup(self._restore)
         register_or_update_user(self.db, GUEST, "g", "G")
+        set_user_status(self.db, GUEST, "approved")
         set_user_interface_lang(self.db, GUEST, "ru")
         set_user_dict_lang(self.db, GUEST, "ru")
 
@@ -180,6 +184,9 @@ class _Base(unittest.TestCase):
             "VALUES (?, ?, ?, 3, ?, 2.5, '2020-01-01')",
             (GUEST, wid, mode, reps),
         )
+        conn.execute("UPDATE words SET is_separable=0 WHERE id=?", (wid,))
+        from bot.conjugation.schema import admit_if_qualified
+        admit_if_qualified(conn, GUEST, wid, mode, reps)
         conn.commit()
         conn.close()
         set_word_conjugation(self.db, wid, GOOD)
@@ -294,8 +301,8 @@ class HideToggleTest(_Base):
         self.assertIn("***", text)
         self.assertNotIn("gehe\n", text)
         # button now offers "show" (показать), not "hide"
-        self.assertEqual(_kb_texts(markup), [t("ru", "conjugation_show")])
-        self.assertEqual(_kb_texts(markup), ["показать"])
+        self.assertEqual(_kb_texts(markup)[0], t("ru", "conjugation_show"))
+        self.assertEqual(_kb_texts(markup)[0], "показать")
 
     def test_show_reveals_card_and_flips_label_to_hide(self):
         self._add_eligible_verb("w1", "gehen")
@@ -307,8 +314,8 @@ class HideToggleTest(_Base):
         text, markup = cb.callback_query.message.edits[-1]
         self.assertNotIn("***", text)
         self.assertIn("gehe", text)
-        self.assertEqual(_kb_texts(markup), [t("ru", "conjugation_hide")])
-        self.assertEqual(_kb_texts(markup), ["скрыть"])
+        self.assertEqual(_kb_texts(markup)[0], t("ru", "conjugation_hide"))
+        self.assertEqual(_kb_texts(markup)[0], "скрыть")
 
     def test_stale_card_tap_is_noop(self):
         self._add_eligible_verb("w1", "gehen")

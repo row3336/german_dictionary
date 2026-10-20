@@ -21,6 +21,7 @@ from bot.i18n import t  # noqa: E402
 from bot.storage import (  # noqa: E402
     init_db,
     register_or_update_user,
+    set_user_status,
     set_user_dict_lang,
     set_user_interface_lang,
     set_word_conjugation,
@@ -78,6 +79,7 @@ class _Base(unittest.TestCase):
         os.environ["OWNER_ID"] = str(OWNER)
         self.addCleanup(self._restore)
         register_or_update_user(self.db, GUEST, "g", "G")
+        set_user_status(self.db, GUEST, "approved")
         set_user_interface_lang(self.db, GUEST, "ru")
         set_user_dict_lang(self.db, GUEST, "ru")
 
@@ -99,6 +101,9 @@ class _Base(unittest.TestCase):
             "VALUES (?, ?, ?, 3, ?, 2.5, '2020-01-01')",
             (GUEST, wid, mode, reps),
         )
+        conn.execute("UPDATE words SET is_separable=0 WHERE id=?", (wid,))
+        from bot.conjugation.schema import admit_if_qualified
+        admit_if_qualified(conn, GUEST, wid, mode, reps)
         conn.commit()
         conn.close()
         set_word_conjugation(self.db, wid, GOOD)
@@ -130,11 +135,11 @@ class MenuEntryTest(_Base):
 
 
 class CarouselFlowTest(_Base):
-    def test_empty_pool_bails_to_tests_menu(self):
+    def test_empty_preparation_keeps_access_to_tests(self):
         upd, ctx = _Update("", GUEST), _Ctx()
         state = _run(start_conjugation(upd, ctx))
-        self.assertEqual(state, TESTS_MENU)
-        self.assertIn(t("ru", "conjugation_empty"), upd.message.replies)
+        self.assertEqual(state, CONJUGATION_MENU)
+        self.assertIn(t("ru", "conjugation_preparation_empty"), upd.message.replies)
 
     def test_start_shows_card_and_keyboard(self):
         self._add_eligible_verb("w1", "gehen")
@@ -142,7 +147,7 @@ class CarouselFlowTest(_Base):
         state = _run(start_conjugation(upd, ctx))
         self.assertEqual(state, CONJUGATION_MENU)
         # A primer message carries the persistent carousel keyboard; the card follows.
-        self.assertEqual(_kb_texts(upd.message.markups[0]), ["далее", "🎲 кубик", "стоп"])
+        self.assertEqual(_kb_texts(upd.message.markups[0]), ["далее", "🎲 кубик", t("ru", "conjugation_test"), "стоп"])
         self.assertIn("*gehen* — идти", upd.message.replies[1])
 
     def test_next_counts_current_and_advances(self):
@@ -154,7 +159,7 @@ class CarouselFlowTest(_Base):
         upd = _Update("далее", GUEST)
         state = _run(conjugation_input(upd, ctx))
         self.assertEqual(state, CONJUGATION_MENU)
-        # the card that was on screen got counted (progress++) for this user
+        # the preparation view counter advances; no graded SRS answer is inferred
         self.assertEqual(self._seen_count(shown_first), 1)
         self.assertEqual(ctx.user_data["conjugation_session_count"], 1)
         # a (different) card is now shown

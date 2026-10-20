@@ -43,6 +43,7 @@ from .app_config import (
     ALGO_SETTINGS_EDIT,
     ALGO_SETTINGS_MENU,
     CONJUGATION_MENU,
+    CONJUGATION_TEST,
     DB_SEARCH,
     DB_SEARCH_VIEW,
     DUMP_MENU,
@@ -124,6 +125,7 @@ from .handlers.learning import (
     learning_quiz,
 )
 from .handlers.conjugation import conjugation_card_callback, conjugation_input
+from .handlers.conjugation_test import conjugation_test_input
 from .handlers.add_words import (
     add_clarify,
     add_confirm,
@@ -482,7 +484,14 @@ def main():
             DB_SEARCH_VIEW: [MessageHandler(filters.TEXT & ~filters.COMMAND, db_search_view)],
             LEARNING_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, learning_menu_choice)],
             LEARNING_QUIZ: [MessageHandler(filters.TEXT & ~filters.COMMAND, learning_quiz)],
-            CONJUGATION_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, conjugation_input)],
+            CONJUGATION_MENU: [
+                CallbackQueryHandler(conjugation_card_callback, pattern=r"^conj:"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, conjugation_input),
+            ],
+            CONJUGATION_TEST: [
+                CallbackQueryHandler(conjugation_card_callback, pattern=r"^conj:"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, conjugation_test_input),
+            ],
             QUIZ_RU_DE_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_ru_de_menu_choice)],
             SETTINGS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, settings_menu_choice)],
             LANGUAGE_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, language_menu_choice)],
