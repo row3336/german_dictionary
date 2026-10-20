@@ -12,6 +12,10 @@ DICT_LANGS = (DICT_RU, DICT_UK, DICT_EN)
 
 TEXTS = {
     "en": {
+        "stat_words": "words",
+        "stat_phrases": "phrases",
+        "stat_today_heading": "today completed:",
+        "stat_total": "Total",
         "add_words_disabled": "Add words is temporarily disabled. Please use the main menu.",
         "clarify_answer_first": "Answer the current question first to open its card.",
         "conjugation_test": "Test",
@@ -307,6 +311,10 @@ TEXTS = {
         "donate_invalid_amount": "Enter a whole number of Stars (1–100000). Try again:",
     },
     "ru": {
+        "stat_words": "слова",
+        "stat_phrases": "фразы",
+        "stat_today_heading": "сегодня пройдено:",
+        "stat_total": "Всего",
         "add_words_disabled": "Добавление слов временно отключено. Воспользуйся главным меню.",
         "clarify_answer_first": "Сначала ответь на текущий вопрос, чтобы открыть карточку.",
         "conjugation_test": "Тест",
@@ -597,6 +605,10 @@ TEXTS = {
         "donate_invalid_amount": "Введите целое число звёзд (1–100000). Попробуйте ещё раз:",
     },
     "uk": {
+        "stat_words": "слова",
+        "stat_phrases": "фрази",
+        "stat_today_heading": "сьогодні пройдено:",
+        "stat_total": "Усього",
         "add_words_disabled": "Додавання слів тимчасово вимкнено. Скористайся головним меню.",
         "clarify_answer_first": "Спочатку дай відповідь на поточне запитання, щоб відкрити картку.",
         "conjugation_test": "Тест",

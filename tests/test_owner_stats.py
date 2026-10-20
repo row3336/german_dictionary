@@ -1,9 +1,7 @@
-"""Spec #11 — owner-only [progress]/[users] stat toggle.
+"""Retained storage aggregates and role-aware statistics navigation.
 
-`list_user_activity` aggregates per-user activity (quiz_events count + words
-moved from learning into FSRS); the stat screen gets an inline toggle for the
-owner only (guests keep today's plain screen); tapping progress/users edits
-the same message in place.
+The legacy storage activity fields stay compatible. The owner's displayed FSRS
+word counter and exact-mode breakdown have dedicated new_logic coverage.
 """
 
 import asyncio
@@ -174,9 +172,11 @@ class FormatUsersTextTest(unittest.TestCase):
 
 
 class OwnerStatKeyboardTest(unittest.TestCase):
-    def test_two_buttons_progress_and_users(self):
+    def test_owner_has_progress_users_and_word_types(self):
         markup = OS._owner_stat_keyboard()
         self.assertIsInstance(markup, InlineKeyboardMarkup)
+        self.assertEqual([button.text for row in markup.inline_keyboard for button in row],
+                         ["progress", "users", "word types"])
 
 
 # --- menu.py "stat" action: inline toggle for owner only ------------------------
@@ -230,11 +230,14 @@ class StatScreenOwnerVsGuestTest(unittest.TestCase):
         _, kwargs = update.message.calls[0]
         self.assertIsInstance(kwargs.get("reply_markup"), InlineKeyboardMarkup)
 
-    def test_guest_gets_plain_screen_no_inline(self):
+    def test_guest_gets_progress_and_dictionary_inline_views(self):
         update = _Update(U1, t("en", "stat"))
         _run(menu_choice(update, _Ctx()))
         _, kwargs = update.message.calls[0]
-        self.assertIsInstance(kwargs.get("reply_markup"), ReplyKeyboardMarkup)
+        markup = kwargs.get("reply_markup")
+        self.assertIsInstance(markup, InlineKeyboardMarkup)
+        self.assertEqual([button.text for row in markup.inline_keyboard for button in row],
+                         ["progress", "word types in db"])
 
 
 # --- stat_toggle_callback: owner-gated edit-in-place ----------------------------
@@ -256,6 +259,7 @@ class _FakeQuery:
 class _FakeCbUpdate:
     def __init__(self, query):
         self.callback_query = query
+        self.effective_user = query.from_user
 
 
 class _FailingQuery(_FakeQuery):

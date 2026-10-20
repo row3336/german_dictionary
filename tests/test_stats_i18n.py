@@ -3,8 +3,7 @@
 The screen (shown to everyone via the 'Statistics' button) used to render every
 label in English. Labels now go through t(); the FSRS direction tokens follow the
 user's dictionary language (Ru>De / Ua>De / En>De), and the today-FSRS counters
-read the user's own quiz mode (not a hardcoded ru_de). German word-type names at
-the end stay as-is.
+read the user's own quiz mode (not a hardcoded ru_de). German word-type names have a separate dictionary view.
 """
 
 import os
@@ -16,7 +15,7 @@ from _telegram_stub import install
 
 install()
 
-from bot.handlers.owner_stats import _format_progress_text  # noqa: E402
+from bot.handlers.owner_stats import _format_progress_text, _format_word_types_text  # noqa: E402
 from bot.i18n import TEXTS  # noqa: E402
 from bot.storage import (  # noqa: E402
     add_word,
@@ -67,7 +66,7 @@ class StatsI18nTest(unittest.TestCase):
         set_user_interface_lang(self.db, GUEST, "ru")
         text = _format_progress_text(GUEST)
         # sample of localized labels present
-        for key in ("stat_words_in_dict", "stat_never_touched", "stat_word_types", "stat_wrong_fsrs"):
+        for key in ("stat_words_in_dict", "stat_never_touched", "stat_today_heading", "stat_wrong_fsrs"):
             self.assertIn(TEXTS["ru"][key], text)
         # the English originals must be gone
         for raw in ("words in dict", "never touched", "word types:", "wrong fsrs", "5+ correct streak"):
@@ -79,7 +78,8 @@ class StatsI18nTest(unittest.TestCase):
         set_user_interface_lang(self.db, GUEST, "ru")
         set_user_dict_lang(self.db, GUEST, "uk")
         text = _format_progress_text(GUEST)
-        self.assertIn("verb = ", text)      # German type name kept as-is
+        self.assertNotIn("verb = ", text)
+        self.assertIn("verb = ", _format_word_types_text("ru"))
         self.assertIn("Ua > De", text)      # direction follows dict language
         self.assertIn("De > Ua", text)
         self.assertNotIn("Ru>De", text)
@@ -105,7 +105,8 @@ class StatsI18nTest(unittest.TestCase):
         set_user_interface_lang(self.db, GUEST, "en")
         text = _format_progress_text(GUEST)
         self.assertIn("words in dict = ", text)
-        self.assertIn("word types:", text)
+        self.assertNotIn("word types:", text)
+        self.assertIn("Total = 1\n\nverb = 1", _format_word_types_text("en"))
 
 
 if __name__ == "__main__":

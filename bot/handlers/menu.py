@@ -39,7 +39,7 @@ from ..common.txlog import reset_undo_progress
 from ..handlers.access import access_allowed, show_rejected_screen
 from ..handlers.db_search import _send_db_search_prompt
 from ..handlers.learning import _send_learning_menu
-from ..handlers.owner_stats import _format_progress_text, _owner_stat_keyboard
+from ..handlers.owner_stats import _format_progress_text, _stat_keyboard
 from ..handlers.quiz import _send_de_ru_prompt, _send_pl_sg_prompt, _send_ru_de_prompt
 from ..handlers.settings import _ask_dictionary_language, _ask_interface_language
 from ..i18n import normalize_interface_lang, t
@@ -184,12 +184,9 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if action == "stat":
         text = f"```text\n{_format_progress_text(user_id)}\n```"
-        if _is_owner_only(user_id):
-            # Spec #11: owner gets a [progress]/[users] inline toggle on this message;
-            # the persistent reply-keyboard from before this screen is left as-is.
-            await update.message.reply_text(text, reply_markup=_owner_stat_keyboard(), parse_mode="Markdown")
-        else:
-            await update.message.reply_text(text, reply_markup=_main_menu_markup(user_id), parse_mode="Markdown")
+        await update.message.reply_text(
+            text, reply_markup=_stat_keyboard(user_id), parse_mode="Markdown"
+        )
         return MENU
 
     await update.message.reply_text(t(_user_interface_lang(user_id), "unknown_menu"))
