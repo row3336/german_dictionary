@@ -2175,9 +2175,11 @@ def _dedupe_entry(conn, entry):
             ),
         ).fetchone()
     else:
+        # Homographs of different parts of speech are distinct dictionary words.
         row = conn.execute(
-            "SELECT id FROM words WHERE lower(trim(german)) = ? LIMIT 1",
-            (key_value,),
+            "SELECT id FROM words WHERE lower(trim(german)) = ? "
+            "AND lower(trim(type)) = ? LIMIT 1",
+            (key_value, key_type),
         ).fetchone()
     if row:
         raise ValueError("Already in database.")
@@ -2253,10 +2255,13 @@ def normalize_word_entry(entry):
 
 
 def add_word(db_path, entry):
-    """Handle add word."""
-    init_db(db_path)
+    """Insert one word with both validated reference tables in the same write."""
     entry = _normalize_word_entry_for_storage(entry)
     entry["is_separable"] = _safe_is_separable(entry.get("is_separable"))
+    for field in ("conjugation_praesens", "conjugation_praeteritum"):
+        raw = entry.get(field, "")
+        entry[field] = parse_conjugation(raw) if str(raw or "").strip() else ""
+    init_db(db_path)
     if entry.get("id") in (None, "", "unique"):
         entry["id"] = str(uuid.uuid4())
 
@@ -2267,8 +2272,8 @@ def add_word(db_path, entry):
             INSERT INTO words (
                 id, type, article, german, plural, infinitive, prateritum, partizip2, komparativ, superlativ,
                 russian, ukrainian, english, image, example, topic, preposition_type, case_type, cefr_level,
-                is_separable, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                is_separable, conjugation_praesens, conjugation_praeteritum, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             """,
             (
                 entry["id"],
@@ -2291,6 +2296,8 @@ def add_word(db_path, entry):
                 _safe_text(entry.get("case_type", "")),
                 _safe_cefr_level(entry.get("cefr_level", "")),
                 entry["is_separable"],
+                entry["conjugation_praesens"],
+                entry["conjugation_praeteritum"],
             ),
         )
     return entry

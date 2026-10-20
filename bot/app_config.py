@@ -154,10 +154,9 @@ ALLOWED_AI_TYPES = {
 # spec #1: a preposition carries a semantic category + the case it governs. Both
 # are owner-curated controlled vocabularies — validated to these sets on EVERY
 # write path (clarify buttons/text, AI parsing); free text is never stored.
-# '' means "not a preposition / not yet annotated". 'final' is intentionally
-# omitted (owner hasn't met that category yet; add later if needed). Order is the
-# button layout order in the clarify cascade.
-PREPOSITION_TYPES = ("local", "temporal", "modal", "kausal")
+# '' means "not a preposition / not yet annotated". Order is the button
+# layout order in the clarify cascade.
+PREPOSITION_TYPES = ("local", "temporal", "modal", "kausal", "final")
 # 'wechsel' = two-way (Wechselpräposition): Dativ on Wo?, Akkusativ on Wohin?.
 CASE_TYPES = ("dativ", "akkusativ", "genitiv", "wechsel")
 CEFR_LEVELS = ("A1", "A2", "B1", "B2", "C1", "C2")

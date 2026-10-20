@@ -311,7 +311,7 @@ def _ai_prompt(word, clarification):
         "For verb return: type, infinitive, prateritum, partizip2, russian. "
         "For adjektiv return: type, german, komparativ, superlativ, russian. "
         "For praeposition return: type, german, russian, preposition_type, case_type. "
-        "preposition_type is the semantic category, one of: local, temporal, modal, kausal. "
+        f"preposition_type is the semantic category, one of: {', '.join(PREPOSITION_TYPES)}. "
         "case_type is the governed case, one of: dativ, akkusativ, genitiv, wechsel "
         "(wechsel = two-way Wechselpraeposition: Dativ on Wo?, Akkusativ on Wohin?). "
         "If unsure about either, return an empty string for it. "
