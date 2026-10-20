@@ -28,6 +28,7 @@ from bot.storage import (  # noqa: E402
     learning_mark_preview_next,
     register_or_update_user,
     set_user_interface_lang,
+    set_user_status,
 )
 from bot.ui import keyboards as K  # noqa: E402
 
@@ -76,6 +77,7 @@ class RawButtonI18nTest(unittest.TestCase):
         os.environ["OWNER_ID"] = str(OWNER)
         self.addCleanup(self._restore)
         register_or_update_user(self.db, GUEST, "g", "G")
+        set_user_status(self.db, GUEST, "approved")
         set_user_interface_lang(self.db, GUEST, "ru")
 
     def _restore(self):

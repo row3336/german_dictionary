@@ -10,6 +10,7 @@ import sys
 import tempfile
 import types
 import unittest
+from unittest.mock import patch
 
 # Stub telegram before importing keyboards (PTB isn't installed in the test env).
 if "telegram" not in sys.modules:
@@ -62,10 +63,17 @@ class OwnerGatingTest(unittest.TestCase):
                 os.environ[k] = v
 
     def test_main_menu_add_word_owner_only(self):
+        # Accepted temporary default: Add is hidden from both roles.
         owner = _flat(K._main_menu_keys(OWNER))
         guest = _flat(K._main_menu_keys(GUEST))
-        self.assertTrue(any("Add" in x or "Добав" in x or "Додат" in x for x in owner))
+        self.assertFalse(any("Add" in x or "Добав" in x or "Додат" in x for x in owner))
         self.assertFalse(any("Add" in x or "Добав" in x or "Додат" in x for x in guest))
+        # Enabling only this preserved internal path still respects owner rights.
+        with patch("bot.common.add_words_gate.ADD_WORDS_ENABLED", True):
+            owner = _flat(K._main_menu_keys(OWNER))
+            guest = _flat(K._main_menu_keys(GUEST))
+            self.assertTrue(any("Add" in x or "Добав" in x or "Додат" in x for x in owner))
+            self.assertFalse(any("Add" in x or "Добав" in x or "Додат" in x for x in guest))
 
     def test_settings_menu_dump_owner_only(self):
         owner = _flat(K._settings_menu_keys(OWNER))

@@ -350,6 +350,18 @@ for fault in ('sql', 'format', 'send'):
 
 
 class IndependentOralMainQA(unittest.TestCase):
+    def setUp(self):
+        import os
+        from pathlib import Path
+        from uuid import uuid4
+        stand = Path('/Users/wf/py/_agent_work/888_german_dictionary/new_logic_20261020')
+        # Legacy tests may remove runner variables. Each real-dispatch fixture
+        # supplies its own safe paths and restores the caller after the test.
+        self.enterContext(patch.dict(os.environ, {
+            'DB_PATH': str(stand / ('qa-oral-dispatch-'+uuid4().hex+'.sqlite')),
+            'TMPDIR': str(stand),
+        }))
+
     def run_case(self, body):
         import os
         import subprocess
