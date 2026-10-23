@@ -198,10 +198,26 @@ async def _apply_input_err(update, context, mode):
     _remove_pending_retry(context, mode, receipt['word_id'])
     _set_retry_since_last(context, mode, _retry_since_last(context, mode)+1)
     context.user_data['last_answered_ok'] = True
+    if (frame['phase'] == 'question' and frame['question_id'] == receipt['word_id']
+            and context.user_data.get('quiz_is_retry')):
+        # A forced tail drill may already be visible when its original is fixed.
+        # Retire that question while keeping its consumed presentation budget.
+        written_state.establish_view(context, mode, frame['return_state'], None)
+        frame['advance_transport'] = written_state.transport_id(update)
     written_state.publish(context)
     await _set_reaction(context, update.effective_user.id,
         context.user_data.get('last_answered_message_id'), [])
     return True
+
+
+async def _correct_written_answer(update, context, mode, state):
+    applied = await _apply_input_err(update, context, mode)
+    prefix = t(_user_interface_lang(update.effective_user.id),
+               'input_err_fixed' if applied else 'input_err_nothing')
+    frame = context.user_data.get(written_state.FRAME) or {}
+    if applied and frame.get('advance_transport') == written_state.transport_id(update):
+        return await _send_written_prompt(update, context, prefix, state)
+    return await _render_current_written(update, context, state, prefix)
 
 
 _REPLAYED_LEARNING_SEND = object()
@@ -617,10 +633,7 @@ async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if action == "stop":
         return await _stop_with_summary(update, context, mode)
     if action == "input_err":
-        applied = await _apply_input_err(update, context, mode)
-        lang = _user_interface_lang(update.effective_user.id)
-        prefix = t(lang, "input_err_fixed") if applied else t(lang, "input_err_nothing")
-        return await _repeat_current_ru_de(update, context, prefix)
+        return await _correct_written_answer(update, context, mode, QUIZ_RU_DE)
     if action == "send_learn":
         added = _send_entry_to_learning(update, context, entry_key="quiz_entry")
         outcome = await _learning_send_outcome(update, context, QUIZ_RU_DE)
@@ -672,10 +685,7 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if action == "stop":
         return await _stop_with_summary(update, context, mode)
     if action == "input_err":
-        applied = await _apply_input_err(update, context, mode)
-        lang = _user_interface_lang(update.effective_user.id)
-        prefix = t(lang, "input_err_fixed") if applied else t(lang, "input_err_nothing")
-        return await _repeat_current_de_ru(update, context, prefix)
+        return await _correct_written_answer(update, context, mode, QUIZ_DE_RU)
     if action == "send_learn":
         added = _send_entry_to_learning(update, context, entry_key="quiz_entry")
         outcome = await _learning_send_outcome(update, context, QUIZ_DE_RU)
@@ -735,10 +745,7 @@ async def quiz_pl_sg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if action == "stop":
         return await _stop_with_summary(update, context, _mode_pl_sg(update.effective_user.id))
     if action == "input_err":
-        applied = await _apply_input_err(update, context, _mode_pl_sg(update.effective_user.id))
-        lang = _user_interface_lang(update.effective_user.id)
-        prefix = t(lang, "input_err_fixed") if applied else t(lang, "input_err_nothing")
-        return await _repeat_current_pl_sg(update, context, prefix)
+        return await _correct_written_answer(update, context, mode, QUIZ_PL_SG)
     if action == "send_learn":
         added = _send_entry_to_learning(update, context, entry_key="quiz_entry")
         outcome = await _learning_send_outcome(update, context, QUIZ_PL_SG)
@@ -796,9 +803,7 @@ async def quiz_article(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if _action_key_from_text(text, update.effective_user.id) == "stop":
         return await _stop_with_summary(update, context, MODE_ARTICLE)
     if _action_key_from_text(text, update.effective_user.id) == 'input_err':
-        applied = await _apply_input_err(update, context, MODE_ARTICLE)
-        return await _render_current_written(update, context, QUIZ_ARTICLE,
-            t(_user_interface_lang(update.effective_user.id), 'input_err_fixed' if applied else 'input_err_nothing'))
+        return await _correct_written_answer(update, context, MODE_ARTICLE, QUIZ_ARTICLE)
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_ARTICLE)
     if _action_key_from_text(text, update.effective_user.id) == "clarify_fields":

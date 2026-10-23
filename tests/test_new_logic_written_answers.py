@@ -448,6 +448,144 @@ class WrittenTests(unittest.TestCase):
         self.assertEqual(self.ctx.user_data['session_wrong_ru_de'], 0)
         self.assertEqual([r['action_kind'] for r in self.rows('study_deliveries')], ['written_enter', 'written_retry'])
 
+    def test_last_original_correction_cancels_its_displayed_tail_retry(self):
+        self.pool = ['a']; self.baseline()
+        with patch.object(Q, '_force_take_retry_entry', sessions._force_take_retry_entry):
+            self.start(); self.answer('wrong')
+            self.assertEqual(self.ctx.user_data['quiz_entry']['id'], 'a')
+            self.assertTrue(self.ctx.user_data['quiz_is_retry'])
+            self.assertEqual(self.ctx.user_data['retry_counts']['ru_de']['a'], 1)
+            self.answer('fix')
+        self.assertNotIn('quiz_entry', self.ctx.user_data)
+        self.assertFalse(self.ctx.user_data.get('quiz_is_retry', False))
+        self.assertEqual(self.ctx.user_data[W.FRAME]['phase'], 'completed')
+        self.assertEqual(self.srs(), update_fsrs(BASE, 5, DAY, 1.65))
+        self.assertEqual(len(self.rows('quiz_events')), 1)
+        self.assertEqual(self.rows('quiz_events')[0]['is_correct'], 1)
+        self.assertEqual(self.ctx.user_data['session_correct_ru_de'], 1)
+        self.assertEqual(self.ctx.user_data['session_wrong_ru_de'], 0)
+        self.assertEqual(self.ctx.user_data['retry_counts']['ru_de']['a'], 1)
+
+    def test_real_tail_replies_and_correction_have_one_original_in_all_l1_modes(self):
+        for pair, lang in (('ru_de', 'ru'), ('uk_de', 'uk'), ('en_de', 'en')):
+            with self.subTest(pair=pair), patch.object(Q, '_user_dict_lang', return_value=lang), \
+                 patch.object(Q, '_force_take_retry_entry', sessions._force_take_retry_entry):
+                self.pair = pair; self.pool = ['a']; self.ctx.user_data.clear()
+                self.baseline(pair); self.start(); self.answer('wrong')
+                wrong = self.srs(pair)
+                self.answer('der Hund Hunde'); self.answer('wrong')
+                self.assertTrue(self.ctx.user_data['quiz_is_retry'])
+                self.assertEqual(self.srs(pair), wrong)
+                self.assertEqual(len([r for r in self.rows('quiz_events') if r['mode'] == pair]), 1)
+                self.assertEqual(self.ctx.user_data['session_wrong_'+pair], 1)
+                self.assertEqual(self.ctx.user_data['retry_counts'][pair]['a'], 3)
+                correction = self.update('fix'); self.answer('', update=correction)
+                self.assertNotIn('quiz_entry', self.ctx.user_data)
+                self.assertEqual(self.ctx.user_data[W.FRAME]['phase'], 'completed')
+                self.assertEqual(self.srs(pair), update_fsrs(BASE, 5, DAY, 1.65))
+                self.assertEqual(self.ctx.user_data['retry_counts'][pair]['a'], 3)
+                self.assertEqual(self.ctx.user_data['session_correct_'+pair], 1)
+                self.assertEqual(self.ctx.user_data['session_wrong_'+pair], 0)
+                before = copy.deepcopy(self.ctx.user_data)
+                with patch.object(Q, '_pick_due_entry', side_effect=AssertionError('replay picker')):
+                    self.answer('', update=correction)
+                self.assertEqual(self.ctx.user_data, before)
+        self.assertEqual(len(self.rows('quiz_events')), 3)
+        self.assertEqual(len(self.rows('transaction_log')), 6)
+
+    def test_last_word_correction_advances_to_another_original_or_retry(self):
+        for next_retry in (False, True):
+            with self.subTest(next_retry=next_retry), \
+                 patch.object(Q, '_force_take_retry_entry', sessions._force_take_retry_entry):
+                self.ctx.user_data.clear(); self.pool = ['a']; self.start(); self.answer('wrong')
+                if next_retry:
+                    sessions._register_retry_result(self.ctx, self.pair, 'b', False, False, 7)
+                else:
+                    self.pool = ['b']
+                before_events = len(self.rows('quiz_events'))
+                self.answer('fix')
+                self.assertEqual(self.ctx.user_data['quiz_entry']['id'], 'b')
+                self.assertEqual(bool(self.ctx.user_data.get('quiz_is_retry')), next_retry)
+                self.assertEqual(self.ctx.user_data['retry_counts'][self.pair]['a'], 1)
+                self.assertEqual(len(self.rows('quiz_events')), before_events)
+                self.assertEqual(self.ctx.user_data['session_correct_'+self.pair], 1)
+                self.assertEqual(self.ctx.user_data['session_wrong_'+self.pair], 0)
+
+    def test_correction_preserves_a_distinct_displayed_retry_and_its_action(self):
+        self.pool = ['a']; self.start()
+        sessions._register_retry_result(self.ctx, self.pair, 'b', False, False, 7)
+        with patch.object(Q, '_force_take_retry_entry', sessions._force_take_retry_entry):
+            self.answer('wrong')
+            self.assertEqual(self.ctx.user_data['quiz_entry']['id'], 'b')
+            self.assertTrue(self.ctx.user_data['quiz_is_retry'])
+            action = self.ctx.user_data[W.FRAME]['action_key']
+            with patch.object(Q, '_pick_due_entry', side_effect=AssertionError('preserve B')):
+                self.answer('fix')
+        self.assertEqual(self.ctx.user_data['quiz_entry']['id'], 'b')
+        self.assertTrue(self.ctx.user_data['quiz_is_retry'])
+        self.assertEqual(self.ctx.user_data[W.FRAME]['action_key'], action)
+        self.assertEqual(self.ctx.user_data['retry_counts'][self.pair]['b'], 1)
+        self.assertEqual(self.ctx.user_data['retry_queue'][self.pair], [])
+        self.assertEqual(len(self.rows('quiz_events')), 1)
+
+    def test_last_word_correction_recovery_never_grades_or_skips_the_next_question(self):
+        self.baseline()
+        for boundary in ('picker', 'media', 'format', 'send'):
+            for fresh in (False, True):
+                with self.subTest(boundary=boundary, fresh=fresh), \
+                     patch.object(Q, '_force_take_retry_entry', sessions._force_take_retry_entry):
+                    self.ctx.user_data.clear(); self.pool = ['a']; before_srs = self.srs()
+                    self.start(); self.answer('wrong'); self.pool = ['b']
+                    before_events = len(self.rows('quiz_events'))
+                    correction = self.update('fix')
+                    if boundary == 'send':
+                        correction.message.fail_once = True
+                        with self.assertRaisesRegex(RuntimeError, 'synthetic send failure'):
+                            self.answer('', update=correction)
+                    else:
+                        target = {'picker': '_pick_due_entry', 'media': 'resolve_bot_word_media',
+                                  'format': '_written_question'}[boundary]
+                        with patch.object(Q, target, side_effect=sqlite3.OperationalError('fix next read')):
+                            with self.assertRaisesRegex(sqlite3.OperationalError, 'fix next read'):
+                                self.answer('', update=correction)
+                    self.assertEqual(self.srs(), update_fsrs(before_srs, 5, DAY, 1.65))
+                    self.assertNotEqual(self.ctx.user_data[W.FRAME]['question_id'], 'a')
+                    self.answer('', update=self.update('der Hund Hunde') if fresh else correction)
+                    self.assertEqual(self.ctx.user_data['quiz_entry']['id'], 'b')
+                    self.assertFalse(self.ctx.user_data.get('quiz_is_retry', False))
+                    self.assertEqual(self.ctx.user_data['retry_counts'][self.pair]['a'], 1)
+                    self.assertEqual(len(self.rows('quiz_events')), before_events)
+                    self.assertEqual(self.ctx.user_data['session_correct_'+self.pair], 1)
+                    self.assertEqual(self.ctx.user_data['session_wrong_'+self.pair], 0)
+                    self.assertNotIn('next_view', self.ctx.user_data[W.FRAME])
+                    self.assertFalse(self.ctx.user_data[W.FRAME]['pending_render'])
+
+    def test_completed_last_word_correction_send_replay_and_undo(self):
+        self.pool = ['a']; self.baseline()
+        with patch.object(Q, '_force_take_retry_entry', sessions._force_take_retry_entry):
+            self.start(); self.answer('wrong'); wrong = self.srs()
+            correction = self.update('fix'); correction.message.fail_once = True
+            with self.assertRaisesRegex(RuntimeError, 'synthetic send failure'):
+                self.answer('', update=correction)
+            self.assertEqual(self.ctx.user_data[W.FRAME]['phase'], 'completed')
+            self.assertNotIn('quiz_entry', self.ctx.user_data)
+            with patch.object(Q, '_pick_due_entry', side_effect=AssertionError('render only')):
+                self.answer('', update=correction)
+            self.assertFalse(self.ctx.user_data[W.FRAME]['pending_render'])
+            self.assertEqual(len(self.rows('quiz_events')), 1)
+            answers.undo_steps('synthetic', 7, 1, 900)
+            self.assertEqual(self.srs(), wrong)
+            self.assertEqual(self.rows('quiz_events')[0]['is_correct'], 0)
+            self.answer('', update=correction)
+            self.assertEqual(self.srs(), wrong)
+            self.assertNotIn('quiz_entry', self.ctx.user_data)
+            answers.undo_steps('synthetic', 7, 1, 901)
+            self.assertEqual(self.srs(), BASE)
+            self.assertEqual(self.rows('quiz_events'), [])
+            self.answer('', update=correction)
+            self.assertEqual(self.srs(), BASE)
+            self.assertEqual(self.rows('quiz_events'), [])
+
     def test_pending_user_cannot_write_answer(self):
         self.start()
         with self.assertRaises(PermissionError): self.answer('', update=self.update(I_DONT_KNOW_TEXT, user=9))
