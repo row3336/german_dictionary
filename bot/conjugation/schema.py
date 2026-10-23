@@ -61,12 +61,23 @@ def admit_if_qualified(conn, user_id, word_id, mode, repetitions, now_iso=None):
     if mode not in ('ru_de', 'uk_de', 'en_de') or int(repetitions or 0) < 2:
         return False
     now_iso = now_iso or datetime.now(timezone.utc).isoformat()
-    cursor = conn.execute(
-        """INSERT INTO conjugation_admissions(user_id,pair,word_id,admitted_at)
-           SELECT ?,?,id,? FROM words WHERE id=? AND type='verb'
-           ON CONFLICT(user_id,pair,word_id) DO NOTHING""",
-        (int(user_id), mode, now_iso, word_id),
-    )
+    columns = {r[1] for r in conn.execute("PRAGMA table_info(conjugation_admissions)")}
+    if "study_generation" in columns:
+        from ..study.generations import generation_for
+        generation = generation_for(conn, user_id, word_id)
+        cursor = conn.execute(
+            """INSERT INTO conjugation_admissions(user_id,pair,word_id,admitted_at,study_generation)
+               SELECT ?,?,id,?,? FROM words WHERE id=? AND type='verb'
+               ON CONFLICT(user_id,pair,word_id) DO UPDATE SET admitted_at=excluded.admitted_at,
+               study_generation=excluded.study_generation
+               WHERE conjugation_admissions.study_generation!=excluded.study_generation""",
+            (int(user_id), mode, now_iso, generation, word_id))
+    else:
+        cursor = conn.execute(
+            """INSERT INTO conjugation_admissions(user_id,pair,word_id,admitted_at)
+               SELECT ?,?,id,? FROM words WHERE id=? AND type='verb'
+               ON CONFLICT(user_id,pair,word_id) DO NOTHING""",
+            (int(user_id), mode, now_iso, word_id))
     return bool(cursor.rowcount)
 
 

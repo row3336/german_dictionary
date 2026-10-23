@@ -14,7 +14,7 @@ from bot.storage import init_db
 from bot.study import answers, deliveries, repository as repo
 from bot.study.srs import apply_answer, update_fsrs
 
-STAND = Path("/Users/wf/py/_agent_work/888_german_dictionary/new_logic_core_tests")
+STAND = Path("/Users/wf/py/_agent_work/888_german_dictionary/k12_impl_20261023/regression_core")
 NOW = datetime(2026, 10, 20, 14, 0, tzinfo=timezone.utc)
 
 
@@ -25,8 +25,8 @@ class CoreTest(unittest.TestCase):
         init_db(self.db)
         with repo.transaction(self.db) as conn:
             conn.executemany("INSERT INTO users(user_id,status) VALUES (?,'approved')", [(1,), (2,)])
-            conn.executemany("INSERT INTO words(id,type,german) VALUES (?,'verb',?)",
-                             [("a", "haben"), ("b", "sein")])
+            conn.executemany("INSERT INTO words(id,type,german,infinitive) VALUES (?,'verb',?,?)",
+                             [("a", "haben", "haben"), ("b", "sein", "sein")])
         self.serial = 0
 
     def grade(self, key="a1", word="a", kind="wrong", update_id=None, user=1, **kwargs):

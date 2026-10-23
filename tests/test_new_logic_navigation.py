@@ -49,7 +49,7 @@ class NavigationTest(unittest.TestCase):
         self.a = add_word(self.db, {"id": "a", "type": "nomen", "article": "das",
             "german": "Haus", "plural": "Häuser", "russian": "дом",
             "ukrainian": "дім", "english": "house", "image": "shared image"})
-        self.b = add_word(self.db, {"id": "b", "type": "verb", "german": "gehen",
+        self.b = add_word(self.db, {"id": "b", "type": "verb", "german": "gehen", "reflexive_case": "none",
             "infinitive": "gehen", "russian": "идти", "ukrainian": "йти"})
         self.ctx = SimpleNamespace(user_data={"quiz_entry": self.b,
             "quiz_last_answered_entry": self.a, "quiz_mode": "ru_de",

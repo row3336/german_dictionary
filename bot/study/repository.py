@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 
 from .srs import default_srs
+from .generations import generation_for, capture_generations, assert_generation, StaleGeneration
 
 
 @contextmanager
@@ -70,11 +71,11 @@ def capture_snapshot(conn, user_id, word_id, modes=None,
         if row is None:
             raise ValueError("event does not belong to user")
         events[str(event_id)] = row
-    return {"version": 2, "user_id": int(user_id), "word_id": word_id,
+    return {"version": 3, "generations": capture_generations(conn, user_id, [*ids, *(r["word_id"] for r in events.values())]), "user_id": int(user_id), "word_id": word_id,
             "modes": modes, "progress": progress,
             "learning_item": items[0]["before"] if items else None,
             "affected_learning_items": items, "event_before": events,
-            "created_event_ids": []}
+            "created_event_ids": [], "created_event_owners": {}}
 
 
 def _restore_learning(conn, user_id, word_id, row):
@@ -194,8 +195,26 @@ def restore_snapshot(conn, snapshot):
     validate_snapshot(snapshot)
     user_id = int(snapshot.get("user_id") or 0)
     word_id = str(snapshot.get("word_id") or "")
+    is_v3 = int(snapshot.get("version", 1)) >= 3
+    generations = snapshot.get("generations") if is_v3 else None
+    outcomes = {}
+
+    def allowed(wid):
+        if is_v3 and (not isinstance(generations, dict) or wid not in generations):
+            outcomes[wid] = "unknown_generation"
+            return False
+        expected = generations[wid] if is_v3 else 0
+        try:
+            assert_generation(conn, user_id, wid, expected)
+        except StaleGeneration:
+            outcomes[wid] = "stale_generation"
+            return False
+        outcomes[wid] = "restored"
+        return True
+
+    main_allowed = allowed(word_id)
     word_exists = bool(conn.execute("SELECT 1 FROM words WHERE id=?", (word_id,)).fetchone())
-    for mode in snapshot.get("modes") or []:
+    for mode in (snapshot.get("modes") or []) if main_allowed else []:
         row = (snapshot.get("progress") or {}).get(mode)
         if row and word_exists:
             conn.execute("""INSERT INTO progress
@@ -211,45 +230,76 @@ def restore_snapshot(conn, snapshot):
     items = snapshot.get("affected_learning_items")
     if items is None:
         items = [{"word_id": word_id, "before": snapshot.get("learning_item")}]
-    restored = word_exists
+    restored = word_exists and main_allowed
     for item in items:
         if item.get("user_id", user_id) != user_id:
             raise ValueError("snapshot crosses users")
-        restored = _restore_learning(conn, user_id, item["word_id"], item.get("before")) or restored
+        if allowed(item["word_id"]):
+            restored = _restore_learning(conn, user_id, item["word_id"], item.get("before")) or restored
     from ..learning_store import touch_batch
-    for batch_id in {item["before"]["batch_id"] for item in items if item.get("before")}:
+    for batch_id in {item["before"]["batch_id"] for item in items if item.get("before") and outcomes.get(item["word_id"]) == "restored"}:
         touch_batch(conn, user_id, batch_id)
-    if int(snapshot.get("version", 1)) >= 2:
+    if int(snapshot.get("version", 1)) >= 2 and not snapshot.get("legacy_event_counts"):
         for event_id in snapshot.get("created_event_ids") or []:
-            conn.execute("DELETE FROM quiz_events WHERE user_id=? AND id=?", (user_id, event_id))
+            event = conn.execute("SELECT word_id,study_generation FROM quiz_events WHERE user_id=? AND id=?", (user_id, event_id)).fetchone()
+            owner = (snapshot.get("created_event_owners") or {}).get(str(event_id))
+            if int(snapshot.get("version", 1)) >= 3:
+                known = owner and event and owner.get("word_id") == event[0] and owner.get("study_generation") == event[1]
+            else:
+                known = event and event[0] == word_id and event[1] == 0
+            if known and allowed(event[0]):
+                conn.execute("DELETE FROM quiz_events WHERE user_id=? AND id=?", (user_id, event_id))
         for event_id, row in (snapshot.get("event_before") or {}).items():
             # A deleted parent is deliberately never resurrected.
-            if conn.execute("SELECT 1 FROM words WHERE id=?", (row["word_id"],)).fetchone():
+            if allowed(row["word_id"]) and row.get("study_generation", 0) == generation_for(conn, user_id, row["word_id"]) and conn.execute("SELECT 1 FROM words WHERE id=?", (row["word_id"],)).fetchone():
                 conn.execute("""UPDATE quiz_events SET is_correct=?,prev_is_correct=?,created_at=?
                     WHERE user_id=? AND id=? AND word_id=? AND mode=?""",
                     (row["is_correct"], row.get("prev_is_correct"), row["created_at"],
                      user_id, int(event_id), row["word_id"], row["mode"]))
     else:
-        for mode in snapshot.get("modes") or []:
+        for mode in (snapshot.get("modes") or []) if main_allowed else []:
             target = int((snapshot.get("event_counts") or {}).get(mode, 0))
             conn.execute("""DELETE FROM quiz_events WHERE id IN (
-                SELECT id FROM quiz_events WHERE user_id=? AND word_id=? AND mode=?
+                SELECT id FROM quiz_events WHERE user_id=? AND word_id=? AND mode=? AND study_generation=?
                 ORDER BY id DESC LIMIT MAX(0,(SELECT COUNT(*) FROM quiz_events
-                WHERE user_id=? AND word_id=? AND mode=?)-?))""",
-                (user_id, word_id, mode, user_id, word_id, mode, target))
+                WHERE user_id=? AND word_id=? AND mode=? AND study_generation=?)-?))""",
+                (user_id, word_id, mode, generation_for(conn,user_id,word_id), user_id, word_id, mode, generation_for(conn,user_id,word_id), target))
+    snapshot["restore_outcomes"] = outcomes
     return restored
 
 
 def append_event(conn, user_id, word_id, mode, is_correct, now=None):
+    generation = generation_for(conn, user_id, word_id)
     previous = conn.execute("""SELECT is_correct FROM quiz_events
-        WHERE user_id=? AND word_id=? AND mode=? ORDER BY id DESC LIMIT 1""",
-        (user_id, word_id, mode)).fetchone()
+        WHERE user_id=? AND word_id=? AND mode=? AND study_generation=? ORDER BY id DESC LIMIT 1""",
+        (user_id, word_id, mode, generation)).fetchone()
     return conn.execute("""INSERT INTO quiz_events
-        (user_id,word_id,mode,is_correct,prev_is_correct,created_at) VALUES (?,?,?,?,?,?)""",
+        (user_id,word_id,mode,is_correct,prev_is_correct,created_at,study_generation) VALUES (?,?,?,?,?,?,?)""",
         (user_id, word_id, mode, int(is_correct), previous[0] if previous else None,
-         utc_iso(now))).lastrowid
+         utc_iso(now), generation)).lastrowid
 
 
 def append_transaction(conn, user_id, action, payload):
     return conn.execute("INSERT INTO transaction_log(user_id,action,payload) VALUES (?,?,?)",
                         (user_id, action, json.dumps(payload, ensure_ascii=False))).lastrowid
+
+
+def record_created_events(conn, snapshot, event_ids):
+    snapshot["created_event_ids"] = list(event_ids)
+    owners = {}
+    for eid in event_ids:
+        row = conn.execute("SELECT word_id,study_generation FROM quiz_events WHERE user_id=? AND id=?",
+                           (snapshot["user_id"], eid)).fetchone()
+        if row is None or snapshot["generations"].get(row[0]) != row[1]:
+            raise ValueError("created event has unknown snapshot participant")
+        owners[str(eid)] = {"word_id": row[0], "study_generation": row[1]}
+    snapshot["created_event_owners"] = owners
+
+
+def assert_snapshot_generations(conn, snapshot):
+    validate_snapshot(snapshot)
+    ids = {snapshot["word_id"], *(x["word_id"] for x in snapshot.get("affected_learning_items", [])),
+           *(x["word_id"] for x in snapshot.get("event_before", {}).values())}
+    for wid in ids:
+        expected = snapshot.get("generations", {}).get(wid) if snapshot.get("version", 1) >= 3 else 0
+        assert_generation(conn, snapshot["user_id"], wid, expected)

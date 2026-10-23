@@ -11,6 +11,7 @@ from .app_config import CASE_TYPES, CEFR_LEVELS, PREPOSITION_TYPES, get_owner_id
 from .common.conjugation import parse_conjugation, takes_praeteritum
 from .text_utils import ABSENT_PLURAL_MARKERS, cap_word, split_plural_forms
 from .study import srs as study_srs
+from .common import verb_construction as construction
 
 DEFAULT_EASE = 2.5
 MIN_EASE = 1.3
@@ -182,13 +183,24 @@ def _repair_word_fk_tables(conn):
     conn.execute("PRAGMA foreign_keys = ON")
 
 
-def init_db(db_path):
+def init_db(db_path, *, _additive_only=False):
     """Handle init db."""
     with _connect(db_path) as conn:
         version = int(conn.execute("PRAGMA user_version").fetchone()[0])
-        if version > 18:
-            raise RuntimeError(f"database schema v{version} is newer than supported v18")
+        if version > 19:
+            raise RuntimeError(f"database schema v{version} is newer than supported v19")
         fresh = not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='words'").fetchone()
+        if not fresh and version == 19:
+            for table, column in (("words", "reflexive_case"), ("quiz_events", "study_generation"),
+                                  ("conjugation_passes", "prompt_snapshot_json"),
+                                  ("conjugation_admissions", "study_generation"),
+                                  ("study_word_generations", "generation"), ("study_reset_operations", "manifest_sha256")):
+                if column not in {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}:
+                    raise RuntimeError("incomplete schema19: " + table + "." + column)
+            return
+        if not fresh and version < 19 and not _additive_only:
+            from .common.db_safety import DestructiveMigrationRequired
+            raise DestructiveMigrationRequired("schema19 requires explicit migration")
         conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS words (
@@ -412,9 +424,13 @@ def init_db(db_path):
             """
         )
         _ensure_schema(conn)
-        if fresh or version == 18:
+        if fresh or version == 19:
             from .study.schema_v18 import ensure_schema
             ensure_schema(conn)
+            from .study.schema_v19 import ensure_schema as ensure_v19
+            ensure_v19(conn)
+            if fresh:
+                conn.execute("PRAGMA user_version=19")
 
 
 def _ensure_schema(conn):
@@ -689,7 +705,7 @@ def _entry_key(entry):
     """Handle entry key."""
     entry_type = _normalize_text(entry.get("type", ""))
     if entry_type == "verb":
-        return ("verb", _normalize_text(entry.get("infinitive", "")))
+        return construction.identity(entry)
     return (entry_type or "nomen", _normalize_text(entry.get("german", "")))
 
 
@@ -698,6 +714,7 @@ def _row_to_entry(row):
     entry = {
         "id": row["id"],
         "type": row["type"],
+        "reflexive_case": row["reflexive_case"] if "reflexive_case" in row.keys() else None,
         "article": row["article"] or "",
         "german": row["german"] or "",
         "plural": row["plural"] or "",
@@ -758,7 +775,7 @@ def load_words(db_path):
     with _connect(db_path) as conn:
         rows = conn.execute(
             """
-            SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, komparativ, superlativ,
+            SELECT id, reflexive_case, conjugation_praesens, conjugation_praeteritum, is_separable, type, article, german, plural, infinitive, prateritum, partizip2, komparativ, superlativ,
             russian, ukrainian, english, topic
             FROM words
             ORDER BY created_at ASC
@@ -780,14 +797,8 @@ def set_word_conjugation(db_path, word_id, praesens, praeteritum=""):
     format. Empty string clears a block; any non-empty value must be a valid
     6-line block or ValueError is raised (single validator for every write path).
     """
-    stored_praesens = parse_conjugation(praesens) if str(praesens or "").strip() else ""
-    stored_praeteritum = parse_conjugation(praeteritum) if str(praeteritum or "").strip() else ""
-    init_db(db_path)
-    with _connect(db_path) as conn:
-        conn.execute(
-            "UPDATE words SET conjugation_praesens = ?, conjugation_praeteritum = ? WHERE id = ?",
-            (stored_praesens, stored_praeteritum, word_id),
-        )
+    return update_word_fields(db_path, word_id, {
+        "conjugation_praesens": praesens, "conjugation_praeteritum": praeteritum})
 
 
 def next_conjugation_word(db_path, user_id, mode, min_repetitions=CONJUGATION_MIN_REPETITIONS):
@@ -803,7 +814,7 @@ def next_conjugation_word(db_path, user_id, mode, min_repetitions=CONJUGATION_MI
     with _connect(db_path) as conn:
         row = conn.execute(
             """
-            SELECT w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum,
+            SELECT w.id, w.reflexive_case, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum,
                    w.partizip2, w.komparativ, w.superlativ, w.russian, w.ukrainian, w.english,
                    w.image, w.example, w.topic, w.preposition_type, w.case_type,
                    w.conjugation_praesens, w.conjugation_praeteritum, w.is_separable,
@@ -1211,7 +1222,7 @@ def get_statistics_snapshot(db_path, user_id, mode):
                       SELECT 1
                       FROM quiz_events e
                       WHERE e.user_id = ?
-                        AND e.word_id = w.id
+                        AND e.word_id = w.id AND e.study_generation=COALESCE((SELECT generation FROM study_word_generations sg WHERE sg.user_id=e.user_id AND sg.word_id=e.word_id),0)
                         AND date(e.created_at) >= date(?)
                         AND date(e.created_at) < date(?)
                   )
@@ -1245,7 +1256,7 @@ def get_statistics_snapshot(db_path, user_id, mode):
                     SELECT 1
                     FROM quiz_events e
                     WHERE e.user_id = ?
-                      AND e.word_id = w.id
+                      AND e.word_id = w.id AND e.study_generation=COALESCE((SELECT generation FROM study_word_generations sg WHERE sg.user_id=e.user_id AND sg.word_id=e.word_id),0)
                 )
                 """,
                 (user_id,),
@@ -1410,47 +1421,15 @@ def count_learning_done_in_week(db_path, user_id, week_start=None):
 def snapshot_user_word_state(db_path, user_id, word_id, modes=None):
     """Handle snapshot user word state for rollback."""
     init_db(db_path)
-    user_id = int(user_id)
-    word_id = _safe_text(word_id)
-    selected_modes = [str(m) for m in (modes or []) if str(m)]
+    from .study.repository import capture_snapshot
     with _connect(db_path) as conn:
-        progress_rows = {}
-        for mode in selected_modes:
-            row = conn.execute(
-                """
-                SELECT user_id, word_id, mode, interval, repetitions, ease, due, updated_at
-                FROM progress
-                WHERE user_id = ? AND word_id = ? AND mode = ?
-                """,
-                (user_id, word_id, mode),
-            ).fetchone()
-            progress_rows[mode] = dict(row) if row else None
-
-        li_row = conn.execute(
-            "SELECT * FROM learning_items WHERE user_id = ? AND word_id = ?",
-            (user_id, word_id),
-        ).fetchone()
-
-        event_counts = {}
-        for mode in selected_modes:
-            cnt = conn.execute(
-                """
-                SELECT COUNT(*) AS cnt
-                FROM quiz_events
-                WHERE user_id = ? AND word_id = ? AND mode = ?
-                """,
-                (user_id, word_id, mode),
-            ).fetchone()["cnt"]
-            event_counts[mode] = int(cnt or 0)
-
-    return {
-        "user_id": user_id,
-        "word_id": word_id,
-        "modes": selected_modes,
-        "progress": progress_rows,
-        "learning_item": dict(li_row) if li_row else None,
-        "event_counts": event_counts,
-    }
+        snapshot = capture_snapshot(conn, int(user_id), _safe_text(word_id), modes)
+        snapshot["legacy_event_counts"] = True
+        snapshot["event_counts"] = {mode: conn.execute(
+            """SELECT COUNT(*) FROM quiz_events WHERE user_id=? AND word_id=? AND mode=?
+            AND study_generation=?""", (user_id, word_id, mode, snapshot["generations"][word_id])).fetchone()[0]
+            for mode in snapshot["modes"]}
+        return snapshot
 
 
 def restore_user_word_state(db_path, snapshot):
@@ -2113,7 +2092,7 @@ def find_existing_word(db_path, raw_word):
     with _connect(db_path) as conn:
         row = conn.execute(
             """
-            SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian,
+            SELECT id, reflexive_case, conjugation_praesens, conjugation_praeteritum, is_separable, type, article, german, plural, infinitive, prateritum, partizip2, russian,
             ukrainian, english, topic, preposition_type, case_type
             FROM words
             WHERE lower(trim(german)) = ?
@@ -2131,7 +2110,7 @@ def find_existing_word(db_path, raw_word):
         # Fallback for composite verb forms like "hat gesehen" and multi-value fields.
         rows = conn.execute(
             """
-            SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian,
+            SELECT id, reflexive_case, conjugation_praesens, conjugation_praeteritum, is_separable, type, article, german, plural, infinitive, prateritum, partizip2, russian,
             ukrainian, english, topic
             FROM words
             """
@@ -2152,12 +2131,11 @@ def find_existing_word(db_path, raw_word):
 
 def _dedupe_entry(conn, entry):
     """Handle dedupe entry."""
-    key_type, key_value = _entry_key(entry)
+    key = _entry_key(entry)
+    key_type, key_value = key[:2]
     if key_type == "verb":
-        row = conn.execute(
-            "SELECT id FROM words WHERE type = 'verb' AND lower(trim(infinitive)) = ? LIMIT 1",
-            (key_value,),
-        ).fetchone()
+        construction.assert_identity(conn, entry)
+        return
     elif key_type == "praeposition":
         # spec #1: the same preposition spelling can be several distinct words, one
         # per (preposition_type, case_type) meaning — each with its own translation
@@ -2257,6 +2235,7 @@ def normalize_word_entry(entry):
 def add_word(db_path, entry):
     """Insert one word with both validated reference tables in the same write."""
     entry = _normalize_word_entry_for_storage(entry)
+    entry = construction.normalize_entry(entry)
     entry["is_separable"] = _safe_is_separable(entry.get("is_separable"))
     for field in ("conjugation_praesens", "conjugation_praeteritum"):
         raw = entry.get(field, "")
@@ -2266,14 +2245,15 @@ def add_word(db_path, entry):
         entry["id"] = str(uuid.uuid4())
 
     with _connect(db_path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
         _dedupe_entry(conn, entry)
         conn.execute(
             """
             INSERT INTO words (
                 id, type, article, german, plural, infinitive, prateritum, partizip2, komparativ, superlativ,
                 russian, ukrainian, english, image, example, topic, preposition_type, case_type, cefr_level,
-                is_separable, conjugation_praesens, conjugation_praeteritum, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                is_separable, conjugation_praesens, conjugation_praeteritum, reflexive_case, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             """,
             (
                 entry["id"],
@@ -2298,8 +2278,10 @@ def add_word(db_path, entry):
                 entry["is_separable"],
                 entry["conjugation_praesens"],
                 entry["conjugation_praeteritum"],
+                entry["reflexive_case"],
             ),
         )
+        conn.execute("INSERT OR IGNORE INTO topics(name) VALUES (?)", (_safe_text(entry.get("topic", "1")) or "1",))
     return entry
 
 
@@ -2356,7 +2338,7 @@ def select_due(
                 SELECT 1
                 FROM quiz_events e
                 WHERE e.user_id = ?
-                  AND e.word_id = w.id
+                  AND e.word_id = w.id AND e.study_generation=COALESCE((SELECT generation FROM study_word_generations sg WHERE sg.user_id=e.user_id AND sg.word_id=e.word_id),0)
                   AND e.mode != 'learning'
             )
             OR (? = 1 AND p.word_id IS NOT NULL)
@@ -2390,7 +2372,7 @@ def select_due(
                 SELECT 1
                 FROM quiz_events qe2
                 WHERE qe2.user_id = ?
-                  AND qe2.word_id = w.id
+                  AND qe2.word_id = w.id AND qe2.study_generation=COALESCE((SELECT generation FROM study_word_generations sg WHERE sg.user_id=qe2.user_id AND sg.word_id=qe2.word_id),0)
                   AND qe2.mode = ?
                   AND qe2.is_correct = 1
                   AND date(qe2.created_at) = date(?)
@@ -2402,13 +2384,13 @@ def select_due(
 
     query = f"""
         SELECT
-            w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ, w.russian,
+            w.id, w.reflexive_case, w.conjugation_praesens, w.conjugation_praeteritum, w.is_separable, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ, w.russian,
             w.ukrainian, w.english, w.image, w.example, w.topic, w.preposition_type, w.case_type, ldone.done_at AS learning_done_at,
             CASE WHEN EXISTS (
                 SELECT 1
                 FROM quiz_events qe
                 WHERE qe.user_id = ?
-                  AND qe.word_id = w.id
+                  AND qe.word_id = w.id AND qe.study_generation=COALESCE((SELECT generation FROM study_word_generations sg WHERE sg.user_id=qe.user_id AND sg.word_id=qe.word_id),0)
                   AND qe.mode != 'learning'
             ) THEN 1 ELSE 0 END AS has_non_learning_history,
             p.interval AS p_interval, p.repetitions AS p_repetitions, p.ease AS p_ease, p.due AS p_due
@@ -2657,12 +2639,12 @@ def learning_pick_new_words(db_path, user_id, limit, topics=None, cefr_levels=No
     with _connect(db_path) as conn:
         rows = conn.execute(
             """
-            SELECT w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ,
+            SELECT w.id, w.reflexive_case, w.conjugation_praesens, w.conjugation_praeteritum, w.is_separable, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ,
                    w.russian, w.ukrainian, w.english, w.topic, w.preposition_type, w.case_type
             FROM words w
             WHERE NOT EXISTS (
                 SELECT 1 FROM quiz_events e
-                WHERE e.user_id = ? AND e.word_id = w.id
+                WHERE e.user_id = ? AND e.word_id = w.id AND e.study_generation=COALESCE((SELECT generation FROM study_word_generations sg WHERE sg.user_id=e.user_id AND sg.word_id=e.word_id),0)
             )
               AND NOT EXISTS (
                 SELECT 1 FROM learning_items li
@@ -2702,7 +2684,7 @@ def learning_preview_entry(db_path, user_id):
         row = conn.execute(
             """
             SELECT
-                w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ,
+                w.id, w.reflexive_case, w.conjugation_praesens, w.conjugation_praeteritum, w.is_separable, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ,
                 w.russian, w.ukrainian, w.english, w.image, w.example, w.topic, w.preposition_type, w.case_type,
                 li.step_index AS learning_step,
                 li.next_due AS learning_due,
@@ -2737,7 +2719,7 @@ def learning_due_entries(db_path, user_id, exclude_word_id=None):
     now_iso = _utc_now_iso()
     base_query = """
             SELECT
-                w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ,
+                w.id, w.reflexive_case, w.conjugation_praesens, w.conjugation_praeteritum, w.is_separable, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ,
                 w.russian, w.ukrainian, w.english, w.image, w.example, w.topic, w.preposition_type, w.case_type,
                 li.step_index AS learning_step,
                 li.next_due AS learning_due,
@@ -3054,7 +3036,7 @@ def fsrs_due_forecast(db_path, user_id, mode):
                     SELECT 1
                     FROM quiz_events e
                     WHERE e.user_id = ?
-                      AND e.word_id = w.id
+                      AND e.word_id = w.id AND e.study_generation=COALESCE((SELECT generation FROM study_word_generations sg WHERE sg.user_id=e.user_id AND sg.word_id=e.word_id),0)
                       AND e.mode != 'learning'
                 )
                 OR (LOWER(TRIM(w.type)) = 'phrase' AND p.word_id IS NOT NULL)
@@ -3126,30 +3108,8 @@ def log_quiz_event(db_path, user_id, word_id, mode, is_correct):
     """Handle log quiz event."""
     init_db(db_path)
     with _connect(db_path) as conn:
-        prev = conn.execute(
-            """
-            SELECT is_correct
-            FROM quiz_events
-            WHERE user_id = ? AND word_id = ? AND mode = ?
-            ORDER BY id DESC
-            LIMIT 1
-            """,
-            (int(user_id), _safe_text(word_id), _safe_text(mode)),
-        ).fetchone()
-        prev_is_correct = None if not prev else int(prev["is_correct"])
-        conn.execute(
-            """
-            INSERT INTO quiz_events (user_id, word_id, mode, is_correct, prev_is_correct, created_at)
-            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-            """,
-            (
-                int(user_id),
-                _safe_text(word_id),
-                _safe_text(mode),
-                1 if bool(is_correct) else 0,
-                prev_is_correct,
-            ),
-        )
+        from .study.repository import append_event
+        append_event(conn, int(user_id), _safe_text(word_id), _safe_text(mode), bool(is_correct))
 
 
 def mark_last_quiz_event_correct(db_path, user_id, word_id, mode):
@@ -3169,6 +3129,7 @@ def mark_last_quiz_event_correct(db_path, user_id, word_id, mode):
             WHERE id = (
                 SELECT id FROM quiz_events
                 WHERE user_id = ? AND word_id = ? AND mode = ?
+                AND study_generation=COALESCE((SELECT generation FROM study_word_generations g WHERE g.user_id=quiz_events.user_id AND g.word_id=quiz_events.word_id),0)
                 ORDER BY id DESC
                 LIMIT 1
             )
@@ -3182,7 +3143,7 @@ def list_words_for_translations_backfill(db_path, limit=0):
     """Handle list words for translations backfill."""
     init_db(db_path)
     query = """
-        SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian, ukrainian, english, topic
+        SELECT id, reflexive_case, conjugation_praesens, conjugation_praeteritum, is_separable, type, article, german, plural, infinitive, prateritum, partizip2, russian, ukrainian, english, topic
         FROM words
         WHERE trim(coalesce(ukrainian, '')) = '' OR trim(coalesce(english, '')) = ''
         ORDER BY created_at ASC
@@ -3218,66 +3179,49 @@ def update_word_translations(db_path, word_id, ukrainian=None, english=None):
 
 
 def update_word_fields(db_path, word_id, fields):
-    """Handle update word fields."""
-    allowed = {
-        "type",
-        "article",
-        "german",
-        "plural",
-        "infinitive",
-        "prateritum",
-        "partizip2",
-        "komparativ",
-        "superlativ",
-        "russian",
-        "ukrainian",
-        "english",
-        "image",
-        "example",
-        "topic",
-        "preposition_type",
-        "case_type",
-        "cefr_level",
-        "is_separable",
-    }
+    """Validate old+patch on one writer; construction repairs require manifest."""
     init_db(db_path)
     with _connect(db_path) as conn:
-        existing_cols = {
-            row["name"] if isinstance(row, sqlite3.Row) else row[1]
-            for row in conn.execute("PRAGMA table_info(words)").fetchall()
-        }
-    values = {}
-    for key, value in dict(fields or {}).items():
-        if key not in allowed:
-            continue
-        if key not in existing_cols:
-            continue
-        # spec #1: the two preposition columns are a controlled vocabulary. Guard the
-        # storage layer too (defense in depth behind the clarify/AI validation): only
-        # a known value or '' (clears the field) is ever written — never free text.
-        if key in ("preposition_type", "case_type"):
-            normalized = _safe_text(value).strip().lower()
-            allowed_vocab = PREPOSITION_TYPES if key == "preposition_type" else CASE_TYPES
-            if normalized and normalized not in allowed_vocab:
-                continue
-            values[key] = normalized
-            continue
-        if key == "cefr_level":
-            values[key] = _safe_cefr_level(value)
-            continue
-        if key == "is_separable":
-            values[key] = _safe_is_separable(value)
-            continue
-        values[key] = _safe_text(value)
-    if not values:
-        return
-
-    parts = [f"{key} = ?" for key in values]
-    params = list(values.values()) + [_safe_text(word_id)]
-    query = f"UPDATE words SET {', '.join(parts)}, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
-
-    with _connect(db_path) as conn:
-        conn.execute(query, tuple(params))
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT * FROM words WHERE id=?", (word_id,)).fetchone()
+        if not row:
+            return
+        old = dict(row)
+        allowed = set(old) - {"id", "created_at", "updated_at"}
+        patch = {k: v for k, v in dict(fields or {}).items() if k in allowed}
+        if not patch:
+            return
+        candidate = _normalize_word_entry_for_storage({**old, **patch})
+        structural = {"type", "german", "infinitive", "reflexive_case", "conjugation_praesens", "conjugation_praeteritum"}
+        if structural.intersection(patch):
+            legacy_unchanged = old.get("reflexive_case") is None and "reflexive_case" not in patch and all(
+                candidate.get(k) == old.get(k) for k in ("type", "german", "infinitive"))
+            candidate = construction.normalize_entry(candidate, allow_legacy=legacy_unchanged)
+            changed = (old.get("type"), old.get("infinitive"), old.get("reflexive_case")) != (candidate.get("type"), candidate.get("infinitive"), candidate.get("reflexive_case"))
+            if changed:
+                if old.get("reflexive_case") is None and candidate.get("reflexive_case") == "none":
+                    raise ValueError("legacy confirmation requires verified manifest")
+                if any(conn.execute(f"SELECT 1 FROM {table} WHERE word_id=? LIMIT 1", (word_id,)).fetchone()
+                       for table in ("progress", "learning_items", "quiz_events", "conjugation_admissions")):
+                    raise ValueError("construction with study history requires repair manifest")
+            if candidate.get("type") == "verb":
+                construction.assert_identity(conn, candidate, exclude_id=word_id)
+        if "is_separable" in patch:
+            candidate["is_separable"] = _safe_is_separable(patch["is_separable"])
+        if "cefr_level" in patch:
+            candidate["cefr_level"] = _safe_cefr_level(patch["cefr_level"])
+        for key, vocab in (("preposition_type", PREPOSITION_TYPES), ("case_type", CASE_TYPES)):
+            if key in patch:
+                value = _safe_text(patch[key]).strip().lower()
+                if value and value not in vocab:
+                    raise ValueError("invalid " + key)
+                candidate[key] = value
+        keys = set(patch)
+        if structural.intersection(patch):
+            keys.update({"infinitive", "german", "reflexive_case", "conjugation_praesens", "conjugation_praeteritum"})
+        keys = sorted(keys)
+        conn.execute("UPDATE words SET " + ",".join(k + "=?" for k in keys) +
+                     ",updated_at=CURRENT_TIMESTAMP WHERE id=?", [candidate[k] for k in keys] + [word_id])
 
 
 def delete_word(db_path, word_id):
@@ -3359,7 +3303,7 @@ def get_synonym_group(db_path, word_id):
         group_id = int(row["group_id"])
         rows = conn.execute(
             """
-            SELECT w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ, w.russian
+            SELECT w.id, w.reflexive_case, w.conjugation_praesens, w.conjugation_praeteritum, w.is_separable, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ, w.russian
             , w.ukrainian, w.english, w.topic, w.preposition_type, w.case_type
             FROM word_synonyms s
             JOIN words w ON w.id = s.word_id
@@ -3449,7 +3393,7 @@ def list_synonym_candidates_by_ru(db_path, anchor_word_id):
     with _connect(db_path) as conn:
         rows = conn.execute(
             """
-            SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian
+            SELECT id, reflexive_case, conjugation_praesens, conjugation_praeteritum, is_separable, type, article, german, plural, infinitive, prateritum, partizip2, russian
             , ukrainian, english, image, example, topic, preposition_type, case_type
             FROM words
             WHERE lower(trim(type)) = ?
@@ -3473,7 +3417,7 @@ def get_word_by_id(db_path, word_id):
     with _connect(db_path) as conn:
         row = conn.execute(
             """
-            SELECT id, type, article, german, plural, infinitive, prateritum, partizip2,
+            SELECT id, reflexive_case, type, article, german, plural, infinitive, prateritum, partizip2,
               komparativ, superlativ, russian, ukrainian, english, image, example,
               topic, preposition_type, case_type,
               conjugation_praesens, conjugation_praeteritum, cefr_level, is_separable
@@ -3494,7 +3438,7 @@ def list_all_words(db_path):
     with _connect(db_path) as conn:
         rows = conn.execute(
             """
-            SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian
+            SELECT id, reflexive_case, conjugation_praesens, conjugation_praeteritum, type, article, german, plural, infinitive, prateritum, partizip2, russian
             , ukrainian, english, image, example, topic, preposition_type, case_type,
               is_separable
             FROM words
@@ -3510,7 +3454,7 @@ def list_words_by_topic(db_path, topic):
     with _connect(db_path) as conn:
         rows = conn.execute(
             """
-            SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian
+            SELECT id, reflexive_case, conjugation_praesens, conjugation_praeteritum, is_separable, type, article, german, plural, infinitive, prateritum, partizip2, russian
             , ukrainian, english, image, example, topic, preposition_type, case_type
             FROM words
             WHERE topic = ?
@@ -3528,7 +3472,7 @@ def list_learning_active_words(db_path, user_id):
         rows = conn.execute(
             """
             SELECT
-                w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.russian
+                w.id, w.reflexive_case, w.conjugation_praesens, w.conjugation_praeteritum, w.is_separable, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.russian
                 , w.ukrainian, w.english, w.topic, w.preposition_type, w.case_type
             FROM learning_items li
             JOIN words w ON w.id = li.word_id
@@ -3581,6 +3525,7 @@ def get_word_study_status(db_path, user_id, word_id):
             SELECT 1
             FROM quiz_events
             WHERE user_id = ? AND word_id = ?
+            AND study_generation=COALESCE((SELECT generation FROM study_word_generations g WHERE g.user_id=quiz_events.user_id AND g.word_id=quiz_events.word_id),0)
             LIMIT 1
             """,
             (uid, wid),
@@ -3617,12 +3562,12 @@ def list_learning_queue_words(db_path, user_id, topics=None, cefr_levels=None):
         rows = conn.execute(
             """
             SELECT
-                w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.russian
+                w.id, w.reflexive_case, w.conjugation_praesens, w.conjugation_praeteritum, w.is_separable, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.russian
                 , w.ukrainian, w.english, w.topic, w.preposition_type, w.case_type
             FROM words w
             WHERE NOT EXISTS (
                 SELECT 1 FROM quiz_events e
-                WHERE e.user_id = ? AND e.word_id = w.id
+                WHERE e.user_id = ? AND e.word_id = w.id AND e.study_generation=COALESCE((SELECT generation FROM study_word_generations sg WHERE sg.user_id=e.user_id AND sg.word_id=e.word_id),0)
             )
               AND NOT EXISTS (
                 SELECT 1 FROM learning_items li
@@ -3649,7 +3594,7 @@ def find_word_by_value(db_path, token):
     with _connect(db_path) as conn:
         row = conn.execute(
             """
-            SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian
+            SELECT id, reflexive_case, conjugation_praesens, conjugation_praeteritum, is_separable, type, article, german, plural, infinitive, prateritum, partizip2, russian
             , ukrainian, english, image, example, topic, preposition_type, case_type
             FROM words
             WHERE id = ?
@@ -3703,7 +3648,7 @@ def search_word(db_path, token):
     with _connect(db_path) as conn:
         row = conn.execute(
             """
-            SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian
+            SELECT id, reflexive_case, conjugation_praesens, conjugation_praeteritum, is_separable, type, article, german, plural, infinitive, prateritum, partizip2, russian
             , ukrainian, english, image, example, topic, preposition_type, case_type
             FROM words
             WHERE id = ?
@@ -3744,7 +3689,7 @@ def search_word(db_path, token):
         like_stripped = _sqlite_like_pattern(stripped)
         rows = conn.execute(
             """
-            SELECT id, type, article, german, plural, infinitive, prateritum, partizip2, russian
+            SELECT id, reflexive_case, conjugation_praesens, conjugation_praeteritum, is_separable, type, article, german, plural, infinitive, prateritum, partizip2, russian
             , ukrainian, english, image, example, topic, preposition_type, case_type
             FROM words
             WHERE lower(german) LIKE ? ESCAPE '\\'
@@ -3872,7 +3817,7 @@ def list_pending_word_flags(db_path, limit=0):
             f.user_id AS flag_user_id,
             f.comment AS flag_comment,
             f.created_at AS flag_created_at,
-            w.id, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ, w.russian
+            w.id, w.reflexive_case, w.conjugation_praesens, w.conjugation_praeteritum, w.is_separable, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ, w.russian
             , w.ukrainian, w.english, w.topic, w.preposition_type, w.case_type
         FROM word_flags f
         JOIN words w ON w.id = f.word_id
@@ -4121,7 +4066,7 @@ def list_words_for_vf_recheck(db_path, only_unchecked=False):
     with _connect(db_path) as conn:
         rows = conn.execute(
             """
-            SELECT id, type, article, german, infinitive, vf_checked_at
+            SELECT id, reflexive_case, conjugation_praesens, conjugation_praeteritum, is_separable, type, article, german, infinitive, vf_checked_at
             FROM words
             ORDER BY created_at ASC
             """
@@ -4198,3 +4143,10 @@ def save_vf_check_result(
                 _safe_text(source_hash),
             ),
         )
+
+
+def find_verb_identity_candidates(db_path, infinitive):
+    """All exact construction candidates, including both AKK and DAT IDs."""
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        return [_row_to_entry(row) for row in construction.identity_candidates(conn, infinitive)]

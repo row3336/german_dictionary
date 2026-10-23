@@ -5,6 +5,7 @@ from datetime import date, datetime, timezone
 
 from . import deliveries, repository as repo
 from .srs import apply_answer, default_srs
+from .generations import assert_generation, generation_for
 
 
 class StaleStudyAction(ValueError):
@@ -90,7 +91,7 @@ def _record_recovery(conn, user_id, transport_update_id, flow_id, action_kind, r
 def apply_original_answer(db_path, user_id, word_id, mode, answer_kind, action_key,
                           transport_update_id, expected_revision, now=None, *,
                           flow_id, live_revision, interval_divisor=1.0,
-                          learning_transition=None, target_resolver=None, srs_day=None):
+                          learning_transition=None, target_resolver=None, srs_day=None, expected_generation=0):
     """Persist one original answer. Replay never invokes target_resolver."""
     # No explicit clock preserves the legacy host-local date.today() contract.
     day = srs_day or (now.date() if now is not None else date.today())
@@ -109,6 +110,7 @@ def apply_original_answer(db_path, user_id, word_id, mode, answer_kind, action_k
             word_id = target["word_id"]
             mode = target.get("mode", mode)
         _validate_target(conn, user_id, word_id, expected_revision, live_revision)
+        assert_generation(conn, user_id, word_id, expected_generation)
         if answer_kind not in {"correct", "wrong", "idk"}:
             raise ValueError("unsupported answer kind")
         snapshot = repo.capture_snapshot(conn, user_id, word_id, [mode])
@@ -119,7 +121,7 @@ def apply_original_answer(db_path, user_id, word_id, mode, answer_kind, action_k
             after = apply_answer(before_srs, answer_kind, day, interval_divisor)
             repo.set_progress(conn, user_id, word_id, mode, after, now)
         event_id = repo.append_event(conn, user_id, word_id, mode, answer_kind == "correct", now)
-        snapshot["created_event_ids"] = [event_id]
+        repo.record_created_events(conn, snapshot, [event_id])
         return _finish(conn, user_id, action_key, transport_update_id, flow_id, "answer",
                        word_id, mode, snapshot, after, expected_revision, event_id,
                        answer_kind=answer_kind)
@@ -148,6 +150,7 @@ def correct_last_answer(db_path, user_id, parent_action_key, action_key,
             raise StaleStudyAction("original answer is unavailable")
         if parent["flow_id"] != flow_id or parent["answer_kind"] == "correct":
             raise StaleStudyAction("answer cannot be corrected")
+        repo.assert_snapshot_generations(conn, parent["before"])
         word_id, mode, event_id = parent["word_id"], parent["mode"], parent["event_id"]
         _validate_target(conn, user_id, word_id, expected_revision, live_revision)
         event = conn.execute("SELECT is_correct FROM quiz_events WHERE user_id=? AND id=?",
@@ -170,7 +173,7 @@ def correct_last_answer(db_path, user_id, parent_action_key, action_key,
 def apply_preview_transition(db_path, user_id, word_id, action_kind, action_key,
                              transport_update_id, expected_revision, now=None, *,
                              flow_id, live_revision, transition,
-                             affected_learning_ids=None):
+                             affected_learning_ids=None, expected_generations=None):
     """Capture every affected row before one preview next/skip finalization."""
     now = now or datetime.now(timezone.utc)
     with repo.transaction(db_path) as conn:
@@ -184,6 +187,8 @@ def apply_preview_transition(db_path, user_id, word_id, action_kind, action_key,
                                     action_kind, recovered)
         _validate_target(conn, user_id, word_id, expected_revision, live_revision)
         ids = affected_learning_ids(conn) if callable(affected_learning_ids) else affected_learning_ids
+        for wid in dict.fromkeys([word_id, *(ids or [])]):
+            assert_generation(conn, user_id, wid, (expected_generations or {}).get(wid, 0))
         snapshot = repo.capture_snapshot(conn, user_id, word_id, [], affected_learning_ids=ids)
         after = transition(conn, snapshot, now)
         return _finish(conn, user_id, action_key, transport_update_id, flow_id, action_kind,
@@ -252,7 +257,8 @@ def undo_transaction(conn, user_id, tx_id):
         conn.execute("UPDATE study_actions SET state='undone' WHERE user_id=? AND action_key=?",
                      (user_id, action_key))
     conn.execute("DELETE FROM transaction_log WHERE user_id=? AND id=?", (user_id, tx_id))
-    return {"tx_id": tx_id, "status": "restored" if restored else "skipped"}
+    return {"tx_id": tx_id, "status": "restored" if restored else "skipped",
+            "participants": snapshot.get("restore_outcomes", {}) if isinstance(locals().get("snapshot"), dict) else {}}
 
 
 def _advance_undo(conn, user_id, delivery, one_step=False):

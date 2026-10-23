@@ -168,7 +168,7 @@ class LearningTests(unittest.TestCase):
 
     def test_close_flow_preserves_pass_results_and_late_replay_rights_and_sql_rollback(self):
         with repository.transaction(self.db) as conn:
-            conn.execute("INSERT INTO conjugation_admissions VALUES (1,'ru_de','a','now')")
+            conn.execute("INSERT INTO conjugation_admissions(user_id,pair,word_id,admitted_at) VALUES (1,'ru_de','a','now')")
             conn.execute("""INSERT INTO conjugation_blocks(user_id,pair,word_id,tense)
                 VALUES (1,'ru_de','a','praesens')""")
             conn.execute("""INSERT INTO conjugation_passes(id,user_id,pair,word_id,tense,cycle,status,

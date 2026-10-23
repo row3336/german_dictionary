@@ -48,7 +48,7 @@ from pathlib import Path
 # 17 = remove weak-form modes, schema, settings, progress, and history. This is a
 #      destructive schema/data migration and is never run by ordinary startup.
 ADDITIVE_SCHEMA_VERSION = 15
-SCHEMA_VERSION = 18
+SCHEMA_VERSION = 19
 
 
 class DestructiveMigrationRequired(RuntimeError):
@@ -75,6 +75,8 @@ _COUNT_TABLES = (
     "conjugation_blocks",
     "conjugation_passes",
     "conjugation_answers",
+    "study_word_generations",
+    "study_reset_operations",
 )
 
 # Keep the db_events timeline bounded (it's tiny, but never let it grow forever).
@@ -225,8 +227,13 @@ def run_healthcheck(db_path):
         required = {"study_actions", "study_deliveries", "conjugation_admissions",
                     "conjugation_blocks", "conjugation_passes", "conjugation_answers"}
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        missing = sorted(required - tables) if version == 18 else []
-        if version == 18:
+        missing = sorted(required - tables) if version >= 18 else []
+        if version >= 19:
+            missing.extend(sorted({"study_word_generations", "study_reset_operations"} - tables))
+            for table, column in (("words", "reflexive_case"), ("conjugation_passes", "prompt_snapshot_json"), ("quiz_events", "study_generation"), ("conjugation_admissions", "study_generation")):
+                if column not in {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}:
+                    missing.append(table + "." + column)
+        if version >= 18:
             columns = {r[1] for r in conn.execute("PRAGMA table_info(learning_items)")}
             missing.extend("learning_items." + c for c in
                            ("recovery_remaining", "first_due_pending") if c not in columns)
@@ -623,7 +630,7 @@ def _apply_migration_dispatcher(db_path, today=None, expected_fingerprint=None):
     before = table_counts(db_path)
     steps = {}
     if pre < ADDITIVE_SCHEMA_VERSION:
-        init_db(db_path)  # add-only schema through v15; version marker stays unchanged
+        init_db(db_path, _additive_only=True)  # add-only schema through v15; version marker stays unchanged
         steps["additive_to_v15"] = _finalize_additive_normalization(db_path, pre)
     conn = sqlite3.connect(db_path)
     try:
@@ -635,7 +642,7 @@ def _apply_migration_dispatcher(db_path, today=None, expected_fingerprint=None):
                 "source DB changed after destructive migration dry-run; run a new dry-run"
             )
         current = int(conn.execute("PRAGMA user_version").fetchone()[0])
-        if current not in {ADDITIVE_SCHEMA_VERSION, 16, 17}:
+        if current not in {ADDITIVE_SCHEMA_VERSION, 16, 17, 18}:
             raise RuntimeError(
                 f"migration dispatcher requires v{ADDITIVE_SCHEMA_VERSION}, v16, or v17, "
                 f"got v{current}"
@@ -652,6 +659,11 @@ def _apply_migration_dispatcher(db_path, today=None, expected_fingerprint=None):
             from ..study.schema_v18 import migrate
             steps["study_v18"] = migrate(conn)
             conn.execute("PRAGMA user_version = 18")
+            current = 18
+        if current == 18:
+            from ..study.schema_v19 import migrate as migrate_v19
+            steps["reflexive_v19"] = migrate_v19(conn)
+            conn.execute("PRAGMA user_version = 19")
         counts_in_transaction = _table_counts(conn)
         _validate_destructive_counts(before, counts_in_transaction, steps)
         integrity = conn.execute("PRAGMA integrity_check").fetchone()[0]

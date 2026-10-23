@@ -23,6 +23,7 @@ from bot.common import session as sessions, quiz_resume
 from bot.handlers import quiz as Q
 from bot.study import answers, repository
 from bot.study.schema_v18 import ensure_schema
+from bot.study.schema_v19 import ensure_schema as ensure_schema19
 from bot.study.srs import update_fsrs
 from bot.written import state as W
 
@@ -67,8 +68,9 @@ class WrittenTests(unittest.TestCase):
             CREATE TABLE learning_items(user_id INTEGER,word_id TEXT,status TEXT,preview_done INTEGER);
         ''')
         ensure_schema(self.conn)
+        ensure_schema19(self.conn)
         for wid in ('a', 'b', 'c'):
-            self.conn.execute("INSERT INTO words VALUES(?,'nomen','Hund','der','Hunde','собака','собака','dog','',0,'','')", (wid,))
+            self.conn.execute("INSERT INTO words(id,type,german,article,plural,russian,ukrainian,english,infinitive,is_separable,conjugation_praesens,conjugation_praeteritum) VALUES(?,'nomen','Hund','der','Hunde','собака','собака','dog','',0,'','')", (wid,))
         self.conn.commit()
         self.pool = ['a', 'b', 'c']
         self.pair = 'ru_de'
@@ -300,7 +302,7 @@ class WrittenTests(unittest.TestCase):
 
     def test_start_closes_live_permissions_once_preserving_persisted_conjugation(self):
         from bot.handlers import menu
-        self.conn.execute("INSERT INTO conjugation_admissions VALUES(7,'ru_de','a','before')")
+        self.conn.execute("INSERT INTO conjugation_admissions(user_id,pair,word_id,admitted_at) VALUES(7,'ru_de','a','before')")
         self.conn.execute("INSERT INTO conjugation_blocks(user_id,pair,word_id,tense,phase,due) VALUES(7,'ru_de','a','praesens','test','2026-10-21')")
         self.conn.execute("""INSERT INTO conjugation_passes(id,user_id,pair,word_id,tense,cycle,status,
             pronoun_order_json,expected_forms_json,baseline_srs_json,started_at)

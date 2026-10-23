@@ -26,6 +26,7 @@ from bot.oral import domain, handlers as H, repository as R, view
 from bot.oral.service import OralService, accepted_frame
 from bot.study import answers
 from bot.study.schema_v18 import ensure_schema
+from bot.study.schema_v19 import ensure_schema as ensure_schema19
 from bot.study.srs import update_fsrs
 
 DAY = date(2026, 10, 20)
@@ -76,6 +77,7 @@ class OralTests(unittest.TestCase):
                 PRIMARY KEY(user_id,word_id));
         ''')
         ensure_schema(self.conn)
+        ensure_schema19(self.conn)
         self.conn.commit()
         self.options = {'gap': 3, 'limit': 4, 'topics': None, 'cefr_levels': None, 'dict_lang': 'ru'}
         self.serial = 0

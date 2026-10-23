@@ -12,6 +12,7 @@ from bot.conjugation.schema import ensure_schema, seed_admissions, admit_if_qual
 from bot.conjugation.service import ConjugationService
 from bot.study.srs import update_fsrs
 from bot.study.schema_v18 import ensure_schema as ensure_v18
+from bot.study.schema_v19 import ensure_schema as ensure_v19
 
 TODAY = date(2026, 10, 20)
 NOW = datetime(2026, 10, 20, 16, tzinfo=timezone.utc)
@@ -33,9 +34,11 @@ class ConjugationTests(unittest.TestCase):
                 PRIMARY KEY(user_id,word_id,mode));
             CREATE TABLE conjugation_progress(user_id INTEGER,word_id TEXT,seen_count INTEGER,
                 last_seen_at TEXT,PRIMARY KEY(user_id,word_id));
+            CREATE TABLE quiz_events(id INTEGER PRIMARY KEY,user_id INTEGER,word_id TEXT,mode TEXT,created_at TEXT);
             CREATE TABLE learning_items(user_id INTEGER,word_id TEXT,status TEXT,preview_done INTEGER);
         ''')
         ensure_v18(self.conn)
+        ensure_v19(self.conn)
         self.conn.commit()
         self.seq = 0
         self.service = ConjugationService('synthetic', connect=self.connection)
@@ -54,8 +57,9 @@ class ConjugationTests(unittest.TestCase):
         self.seq += 1
         return self.seq
 
-    def add(self, wid='a', infinitive='gehen', separable=0, pair='ru_de', user=7, reps=2):
-        self.conn.execute('INSERT OR IGNORE INTO words VALUES (?,?,?,?,?,?,?)',
+    def add(self, wid='a', infinitive=None, separable=0, pair='ru_de', user=7, reps=2):
+        infinitive = infinitive or ('gehen' if wid == 'a' else 'gehen_' + wid)
+        self.conn.execute('INSERT OR IGNORE INTO words(id,type,german,infinitive,is_separable,conjugation_praesens,conjugation_praeteritum) VALUES (?,?,?,?,?,?,?)',
                           (wid, 'verb', infinitive, infinitive, separable, TABLE, TABLE))
         self.conn.execute('INSERT INTO progress VALUES (?,?,?,?)', (user, wid, pair, reps))
         seed_admissions(self.conn, NOW.isoformat())

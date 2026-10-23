@@ -10,8 +10,9 @@ from unittest.mock import patch
 from bot.common import db_safety
 from bot.storage import init_db
 from bot.study import repository as repo, schema_v18
+from tests.test_reflexive_db19 import old_schema
 
-STAND = Path("/Users/wf/py/_agent_work/888_german_dictionary/new_logic_core_tests")
+STAND = Path("/Users/wf/py/_agent_work/888_german_dictionary/k12_impl_20261023/regression_migration")
 
 
 class Migration18Test(unittest.TestCase):
@@ -19,17 +20,11 @@ class Migration18Test(unittest.TestCase):
         STAND.mkdir(parents=True, exist_ok=True)
         db = str(Path(tempfile.mkdtemp(prefix=f"migration-{version}-", dir=STAND)) / "synthetic.sqlite")
         init_db(db)
+        old_schema(db, version)
         with repo.transaction(db) as conn:
-            # Derive a genuine old schema: v18-only columns and objects are absent.
-            for table in ("conjugation_answers", "conjugation_passes", "conjugation_blocks",
-                          "conjugation_admissions", "study_actions", "study_deliveries"):
-                conn.execute(f"DROP TABLE {table}")
-            conn.execute("ALTER TABLE learning_items DROP COLUMN recovery_remaining")
-            conn.execute("ALTER TABLE learning_items DROP COLUMN first_due_pending")
-            conn.execute(f"PRAGMA user_version={version}")
             conn.execute("INSERT INTO users(user_id,status) VALUES (1,'approved')")
-            conn.executemany("INSERT INTO words(id,type,german) VALUES (?,'verb',?)",
-                             [("a", "haben"), ("b", "sein"), ("c", "werden")])
+            conn.executemany("INSERT INTO words(id,type,german,infinitive) VALUES (?,'verb',?,?)",
+                             [("a", "haben", "haben"), ("b", "sein", "sein"), ("c", "werden", "werden")])
             conn.execute("INSERT INTO learning_batches(id,user_id) VALUES ('batch',1)")
             conn.executemany("""INSERT INTO learning_items
                 (user_id,word_id,batch_id,preview_done,step_index,next_due,status)
@@ -53,8 +48,12 @@ class Migration18Test(unittest.TestCase):
 
     def contents(self, db, tables):
         with repo.transaction(db) as conn:
-            return {table: [tuple(row) for row in conn.execute(f"SELECT * FROM {table} ORDER BY rowid")]
-                    for table in tables}
+            result = {}
+            for table in tables:
+                columns = [r[1] for r in conn.execute(f"PRAGMA table_info({table})")
+                           if r[1] not in {"reflexive_case", "study_generation"}]
+                result[table] = [tuple(row) for row in conn.execute(f"SELECT {','.join(columns)} FROM {table} ORDER BY rowid")]
+            return result
 
     def test_17_to_18_preserves_exact_historical_rows_and_seeds_only_known_admissions(self):
         db = self.make_db()
@@ -62,8 +61,8 @@ class Migration18Test(unittest.TestCase):
         learning_before = self.contents(db, ["learning_items"])["learning_items"]
         report = db_safety._apply_migration_dispatcher(db)
         self.assertEqual(report["from_version"], 17)
-        self.assertEqual(report["to_version"], 18)
-        self.assertEqual(set(report["steps"]), {"study_v18"})
+        self.assertEqual(report["to_version"], 19)
+        self.assertEqual(set(report["steps"]), {"study_v18", "reflexive_v19"})
         self.assertEqual(self.contents(db, before), before)
         with repo.transaction(db) as conn:
             rows = [dict(r) for r in conn.execute("SELECT * FROM learning_items ORDER BY word_id")]
@@ -93,7 +92,7 @@ class Migration18Test(unittest.TestCase):
                 self.assertEqual(seen, [17])
                 self.assertEqual(list(report["steps"]),
                                  (["phrase_modes_v16"] if source == 15 else []) +
-                                 (["remove_weak_v17"] if source <= 16 else []) + ["study_v18"])
+                                 (["remove_weak_v17"] if source <= 16 else []) + ["study_v18", "reflexive_v19"])
                 self.assertTrue(report["healthcheck"]["ok"])
 
     def test_v18_failure_rolls_back_schema_marker_and_old_data(self):
@@ -130,7 +129,7 @@ class Migration18Test(unittest.TestCase):
         with self.assertRaises(db_safety.DestructiveMigrationRequired):
             db_safety.prepare_storage_safely(db, str(Path(db).parent / "backups"))
         with repo.transaction(db) as conn:
-            conn.execute("PRAGMA user_version=19")
+            conn.execute("PRAGMA user_version=20")
         with self.assertRaisesRegex(RuntimeError, "newer"):
             db_safety._apply_migration_dispatcher(db)
         with self.assertRaisesRegex(RuntimeError, "newer"):
