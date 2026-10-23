@@ -3092,6 +3092,15 @@ def update_word_fields(db_path, word_id, fields):
         old = dict(row)
         allowed = set(old) - {"id", "created_at", "updated_at"}
         patch = {k: v for k, v in dict(fields or {}).items() if k in allowed}
+        # Keep legacy preposition edits tolerant while validating verb metadata
+        # strictly. Remove only invalid controlled keys before merging old+patch.
+        for key, vocab in (("preposition_type", PREPOSITION_TYPES), ("case_type", CASE_TYPES)):
+            if key in patch:
+                value = _safe_text(patch[key]).strip().lower()
+                if value and value not in vocab:
+                    del patch[key]
+                else:
+                    patch[key] = value
         if not patch:
             return
         candidate = _normalize_word_entry_for_storage({**old, **patch})
@@ -3113,12 +3122,6 @@ def update_word_fields(db_path, word_id, fields):
             candidate["is_separable"] = _safe_is_separable(patch["is_separable"])
         if "cefr_level" in patch:
             candidate["cefr_level"] = _safe_cefr_level(patch["cefr_level"])
-        for key, vocab in (("preposition_type", PREPOSITION_TYPES), ("case_type", CASE_TYPES)):
-            if key in patch:
-                value = _safe_text(patch[key]).strip().lower()
-                if value and value not in vocab:
-                    raise ValueError("invalid " + key)
-                candidate[key] = value
         keys = set(patch)
         if structural.intersection(patch):
             keys.update({"infinitive", "german", "reflexive_case", "conjugation_praesens", "conjugation_praeteritum"})
