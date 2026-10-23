@@ -68,7 +68,34 @@ def search_entries(db_path, token):
     return match_entries(_read_rows(db_path), token)
 
 
-def read_search_entry(db_path, word_id):
-    """Refresh one snapshot ID without a text lookup or schema mutation."""
-    rows = _read_rows(db_path, word_id)
-    return rows[0] if rows else None
+def read_search_entry(db_path, word_id, *, user_id=None, conn=None):
+    """Refresh an ID; an explicit user open reserves row+generation on one snapshot.
+
+    Schema18 readers stay read-only and use generation0 without creating tables.
+    A provided connection belongs to its caller and is never committed/closed.
+    """
+    if conn is None:
+        uri = Path(db_path).resolve().as_uri() + "?mode=ro"
+        with closing(sqlite3.connect(uri, uri=True)) as opened:
+            opened.row_factory = sqlite3.Row
+            return read_search_entry(db_path, word_id, user_id=user_id, conn=opened)
+    conn.execute("SAVEPOINT search_entry_snapshot")
+    try:
+        cursor = conn.execute("SELECT * FROM words WHERE id=?", (str(word_id),))
+        row = cursor.fetchone()
+        if row is None:
+            return None
+        from .storage import _row_to_entry
+        if not hasattr(row, 'keys'):
+            row = dict(zip((column[0] for column in cursor.description), row))
+        entry = _row_to_entry(row)
+        if user_id is not None:
+            exists = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='study_word_generations'").fetchone()
+            generation = None
+            if exists:
+                generation = conn.execute("SELECT generation FROM study_word_generations WHERE user_id=? AND word_id=?", (user_id, str(word_id))).fetchone()
+            entry['study_generation'] = generation[0] if generation else 0
+            entry['study_generations'] = {entry['id']: entry['study_generation']}
+        return entry
+    finally:
+        conn.execute("RELEASE search_entry_snapshot")

@@ -661,7 +661,7 @@ class OriginalPoolTests(unittest.TestCase):
             calls.append(kwargs)
             return [dict(row) for row in h.conn.execute("SELECT * FROM words WHERE topic IN (" +
                 ",".join("?" for _ in kwargs["topics"]) + ") ORDER BY id", kwargs["topics"])]
-        with patch.object(session, "resolve_quiz_filter", side_effect=lambda uid: wf.resolve_quiz_filter(uid, conn=h.conn)), \
+        with patch.object(session, "resolve_quiz_filter", side_effect=lambda uid, conn=None: wf.resolve_quiz_filter(uid, conn=conn if conn is not None else h.conn)), \
              patch.object(session, "select_due", side_effect=fetch), \
              patch.object(session, "_mode_l1_de", return_value="ru_de"), \
              patch.object(session, "_mode_de_l1", return_value="de_ru"), \
@@ -701,13 +701,19 @@ class OriginalPoolTests(unittest.TestCase):
             config["browsing_level"] = "A2"
             conn.execute("UPDATE user_settings SET value=? WHERE user_id=7 AND key=?",
                          (json.dumps(config), wf.BOOK_FILTER_KEY))
-        with patch.object(oral_repo, "due", side_effect=AssertionError("unchanged fingerprint must retain pool")):
+        hidden = copy.deepcopy(frame['hidden'])
+        budget = {key: copy.deepcopy(frame[key]) for key in ('retry_queue', 'retry_counts', 'since_retry')}
+        with patch.object(oral_repo, "due", wraps=oral_repo.due) as eligibility, \
+             patch.object(oral_repo.random, "shuffle", side_effect=AssertionError("unchanged fingerprint must not rebuild or shuffle the pool")):
             with h.transaction("synthetic") as conn:
                 entry = oral_repo.pick_original(conn, 7, "de_ru", h.options,
                     oral_fixture.DAY, {frame["hidden"]["word_id"]}, frame)
         self.assertEqual(entry["id"], old_pool[0])
         self.assertEqual(frame["original_pool"], old_pool[1:])
         self.assertEqual(frame["original_filter_fingerprint"], fingerprint)
+        eligibility.assert_called_once()
+        self.assertEqual(frame['hidden'], hidden)
+        self.assertEqual({key: frame[key] for key in budget}, budget)
 
     def test_B05_oral_due_respects_empty_topics_and_cefr(self):
         h = self.harness()

@@ -37,6 +37,7 @@ def establish_view(context, mode, return_state, entry):
     frame['revision'] += 1
     frame['phase'] = 'question' if entry else 'completed'
     frame['question_id'] = entry.get('id') if entry else None
+    frame['study_generation'] = entry.get('study_generation', 0) if entry else None
     frame['action_key'] = uuid4().hex if entry else None
     if entry:
         context.user_data['quiz_entry'] = entry
@@ -53,3 +54,11 @@ def publish(context):
     publish_view(context, caller_kind='written', mode=frame['mode'], phase=frame['phase'],
                  current_question_id=frame['question_id'], visible_answer_id=visible.get('id'),
                  flow_id=frame['flow_id'], view_revision=frame['revision'])
+
+
+def selected_generations(frame):
+    """Read immutable reservation metadata, never a refreshed dictionary row."""
+    from ..study.generations import frame_generations
+    current = ({'id': frame['question_id'], 'study_generation': frame.get('study_generation', 0)}
+               if frame.get('question_id') else None)
+    return frame_generations(current, (frame.get('next_view') or {}).get('entry'))

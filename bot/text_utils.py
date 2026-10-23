@@ -19,21 +19,13 @@ def normalize_lookup_text(text):
 
 
 def normalize_russian_singular(text):
-    text = str(text).strip()
-    if "/" in text:
-        text = text.split("/", 1)[0].strip()
-    return text
+    from .common.translation_hints import first_display_variant
+    return first_display_variant(text)
 
 
 def russian_variants(text):
-    source = str(text or "")
-    parts = re.split(r"[,/;]", source)
-    out = []
-    for part in parts:
-        value = normalize_answer(part)
-        if value:
-            out.append(value)
-    return out
+    from .common.translation_hints import parse_translation_hints
+    return [normalize_answer(part) for part in parse_translation_hints(text).variants]
 
 
 def md_escape(text):
@@ -136,3 +128,8 @@ def try_parse_json(text):
             except json.JSONDecodeError:
                 return None
         return None
+
+
+def german_form_variants(text):
+    """Legacy delimiter semantics for German fields, without parsing L1 hints."""
+    return [normalize_answer(part) for part in re.split(r"[,/;]", str(text or "")) if part.strip()]

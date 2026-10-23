@@ -160,7 +160,8 @@ def preview_entry(conn, user_id):
         FROM learning_items li JOIN words w ON w.id=li.word_id
         WHERE li.user_id=? AND li.status='active' AND li.preview_done=0
         ORDER BY li.created_at ASC LIMIT 1""", (user_id,)).fetchone()
-    return _row_to_entry(row) if row else None
+    from .study.generations import selected_entry
+    return selected_entry(conn, user_id, _row_to_entry(row), preview_affected_ids(conn, user_id, row['id'])) if row else None
 
 
 def due_entries(conn, user_id, now=None):
@@ -174,7 +175,8 @@ def due_entries(conn, user_id, now=None):
         ORDER BY CASE WHEN li.step_index=0 THEN 0 ELSE 1 END,
         CASE WHEN li.step_index=0 THEN li.created_at ELSE NULL END,li.next_due,li.updated_at""",
         (user_id, stamp(now))).fetchall()
-    return [_row_to_entry(row) for row in rows]
+    from .study.generations import selected_entry
+    return [selected_entry(conn, user_id, _row_to_entry(row)) for row in rows]
 
 
 def recover_ready_previews(conn, user_id, now):

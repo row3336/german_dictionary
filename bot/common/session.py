@@ -172,12 +172,18 @@ def _reset_fsrs_cycle_state(context, mode=None):
 
 
 def _pick_due_entry(context, user_id, mode, word_type=None):
-    """Handle pick due entry."""
+    """Reserve against current eligibility; cached pools are not live questions."""
+    from ..study.repository import transaction
+    with transaction(get_db_path()) as conn:
+        return _pick_due_entry_conn(context, user_id, mode, word_type, conn)
+
+
+def _pick_due_entry_conn(context, user_id, mode, word_type, conn):
     direction_modes = set(direction_mode_family(_mode_l1_de(user_id)))
     direction_modes.update(direction_mode_family(_mode_de_l1(user_id)))
     is_fsrs_mode = mode in direction_modes or mode == _mode_pl_sg(user_id)
 
-    qf = resolve_quiz_filter(user_id)
+    qf = resolve_quiz_filter(user_id, conn=conn)
 
     def _fetch_due():
         if qf.topics == [] or qf.cefr_levels == []:
@@ -190,6 +196,7 @@ def _pick_due_entry(context, user_id, mode, word_type=None):
             topics=qf.topics,
             cefr_levels=qf.cefr_levels,
             exclude_correct_today=is_fsrs_mode,
+            conn=conn,
         )
 
     def _build_fsrs_queue(entries):
@@ -253,10 +260,18 @@ def _pick_due_entry(context, user_id, mode, word_type=None):
             if not queue:
                 return None
             bucket[mode] = queue
-        entry = queue.pop(0)
-        reserved.add(entry.get("id"))
-        last_ids[mode] = entry.get("id")
-        return entry
+        # A pool member has never been reserved or shown. Re-read eligibility
+        # and generation on this transaction before it becomes a live question.
+        eligible = {entry['id']: entry for entry in _fetch_due()}
+        while queue:
+            cached = queue.pop(0)
+            entry = eligible.get(cached.get('id'))
+            if entry is None:
+                continue
+            reserved.add(entry.get("id"))
+            last_ids[mode] = entry.get("id")
+            return entry
+        return None
 
     due = _fetch_due()
     if not due:

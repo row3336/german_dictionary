@@ -12,6 +12,7 @@ from ..common.study_lock import invalidate_study_frames, study_lock
 from ..common.word_filter import resolve_quiz_filter
 from ..i18n import t
 from ..study.answers import StaleStudyAction
+from ..study.generations import StaleGeneration
 from ..written.state import transport_id
 from . import domain, view
 from .service import OralService, accepted_frame
@@ -77,8 +78,14 @@ async def _render(update, context, *, refresh=False, prefix=None):
     frame.update(pending_render={'refresh': refresh, 'prefix': prefix},
                  render_transport=transport_id(update), render_revision=frame['revision'])
     if refresh or prefix or not frame.get('view'):
-        shown = (_service().refresh(update.effective_user.id, frame,
-                 domain.dictionary_language(frame['mode'])) if refresh else frame)
+        try:
+            shown = (_service().refresh(update.effective_user.id, frame,
+                     domain.dictionary_language(frame['mode'])) if refresh else frame)
+        except StaleGeneration:
+            from ..study.answers import reject_stale
+            reject_stale(get_db_path(), update.effective_user.id, transport_id(update), frame['flow_id'])
+            invalidate_study_frames(context)
+            return await _back_to_main_menu(update, context)
         frame['view'] = view.message(shown, _user_interface_lang(update.effective_user.id), prefix)
     text, kwargs = frame['view']
     await _reply_text_with_retry(update.message, text, **kwargs)
@@ -107,7 +114,13 @@ async def _drain(update, context):
     frame = _live_frame(context)
     if not frame or not frame.get('pending_render'):
         return False, None
-    receipt = _service().bind_render(update.effective_user.id, transport_id(update), frame)
+    try:
+        receipt = _service().bind_render(update.effective_user.id, transport_id(update), frame)
+    except StaleGeneration:
+        from ..study.answers import reject_stale
+        reject_stale(get_db_path(), update.effective_user.id, transport_id(update), frame['flow_id'])
+        invalidate_study_frames(context)
+        return True, await _back_to_main_menu(update, context)
     if not receipt.get('replayed') and receipt.get('invalidate_frame'):
         invalidate_study_frames(context)
         return True, await _back_to_main_menu(update, context)
@@ -167,6 +180,17 @@ async def oral_quiz(update, context):
 
 async def oral_quiz_locked(update, context):
     """Directional legacy/mixed-menu adapters already hold study_lock."""
+    try:
+        return await _oral_quiz_current(update, context)
+    except StaleGeneration:
+        from ..study.answers import reject_stale
+        frame = context.user_data.get(FRAME) or {}
+        reject_stale(get_db_path(), update.effective_user.id, transport_id(update), frame.get('flow_id', 'oral'))
+        invalidate_study_frames(context)
+        return await _back_to_main_menu(update, context)
+
+
+async def _oral_quiz_current(update, context):
     handled, result = await _preflight(update, context)
     if handled:
         return result
@@ -196,6 +220,8 @@ async def oral_quiz_locked(update, context):
         return ORAL_QUIZ
     try:
         receipt = _service().transition(uid, frame, action, transport_id(update), _options(uid))
+    except StaleGeneration:
+        raise
     except StaleStudyAction:
         # Deletion is handled through the explicit owner-delete adapter;
         # a stale unsolicited answer never selects another target.

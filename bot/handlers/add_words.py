@@ -64,7 +64,7 @@ from ..text_utils import cap_word as _cap_word
 from ..text_utils import md_escape as _md_escape
 from ..text_utils import normalize_lookup_text as _normalize_lookup_text
 from ..text_utils import normalize_russian_singular as _normalize_russian_singular
-from ..text_utils import russian_variants as _russian_variants
+from ..text_utils import german_form_variants as _german_form_variants
 from ..text_utils import try_parse_json as _try_parse_json
 from ..text_utils import type_label as _type_label
 from ..ui.formatting import _entry_translation, _format_word_card
@@ -248,13 +248,13 @@ def _exists_word_for_type(forced_type, lookup_word):
             continue
         if forced_type == "verb":
             variants = {_normalize_lookup_text(entry.get("infinitive", ""))}
-            variants.update(_russian_variants(entry.get("prateritum", "")))
-            variants.update(_russian_variants(entry.get("partizip2", "")))
+            variants.update(_german_form_variants(entry.get("prateritum", "")))
+            variants.update(_german_form_variants(entry.get("partizip2", "")))
         elif forced_type == "phrase":
             variants = {_normalize_lookup_text(entry.get("german", ""))}
         else:
             variants = {_normalize_lookup_text(entry.get("german", ""))}
-            variants.update(_russian_variants(entry.get("plural", "")))
+            variants.update(_german_form_variants(entry.get("plural", "")))
         if word in variants:
             return True
     return False

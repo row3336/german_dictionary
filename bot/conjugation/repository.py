@@ -61,6 +61,7 @@ def blocks(conn, user_id, pair):
         item = dict(row)
         entry = word(conn, item['word_id'])
         if current_admission(conn, user_id, pair, item['word_id']) and eligible_word(entry) and forms_for(entry, item['tense']):
+            item['study_generation'] = generation_for(conn, user_id, item['word_id'])
             item['entry'] = entry
             result.append(item)
     return result
@@ -89,6 +90,7 @@ def preparation(conn, user_id, pair):
             for tense in ('praesens', 'praeteritum'):
                 if any(x['tense'] == tense and x['phase'] == 'test' for x in items if x['word_id'] == entry['id']):
                     entry['conjugation_' + tense] = ''
+            entry['study_generation'] = generation_for(conn, user_id, entry['id'])
             return {'entry': entry, 'blocks': [x for x in items if x['word_id'] == entry['id']]}
     return None
 

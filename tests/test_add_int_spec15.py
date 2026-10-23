@@ -87,11 +87,12 @@ class _Ctx:
 
 class AddIntFlowTest(unittest.TestCase):
     def setUp(self):
-        tmp = tempfile.NamedTemporaryFile(delete=False)
-        tmp.close()
-        self.db = tmp.name
-        self.addCleanup(lambda: os.unlink(self.db))
+        folder = tempfile.mkdtemp(prefix='add-int-')
+        self.db = os.path.join(folder, 'synthetic.sqlite')
         init_db(self.db)
+        from bot.study.repository import transaction
+        with transaction(self.db) as conn:
+            conn.executemany("INSERT INTO users(user_id,status) VALUES(?,'approved')", [(OWNER,), (GUEST,)])
         self._old = {k: os.environ.get(k) for k in ("DB_PATH", "OWNER_ID")}
         os.environ["DB_PATH"] = self.db
         os.environ["OWNER_ID"] = str(OWNER)

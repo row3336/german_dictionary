@@ -14,6 +14,8 @@ from ..common.quiz_resume import register_renderer, _render_legacy_frame
 from ..common.study_lock import study_lock, invalidate_study_frames
 from ..written import service as written_service, state as written_state
 from ..study.answers import StaleStudyAction
+from ..study.generations import StaleGeneration
+from ..common.verb_construction import validate_quiz_entry, InvalidClassification, InvalidForms
 from ..oral import handlers as oral_handlers
 from ..oral.domain import MODES as ORAL_MODES
 
@@ -328,11 +330,14 @@ def _synonym_entries(entry):
     group = get_synonym_group(get_db_path(), wid)
     if not group:
         return [entry]
-    return group
+    from ..common.verb_construction import synonym_compatible
+    return [entry, *(candidate for candidate in group if candidate.get("id") != wid
+                     and synonym_compatible(entry, candidate))]
 
 
 def _check_ru_de_strict(entry, answer_text):
     """Handle check ru de strict."""
+    validate_quiz_entry(entry)
     entry_type = (entry.get("type") or "").strip().lower()
     parts = _split_answer_parts(answer_text)
     synonyms = _synonym_entries(entry)
@@ -588,6 +593,11 @@ async def _send_written_prompt(update, context, prefix_text, state):
                     break
         if not entry:
             entry = _force_take_retry_entry(context, mode)
+        if entry and 'study_generation' not in entry:
+            from ..study.generations import selected_entry
+            from ..study.repository import transaction
+            with transaction(get_db_path()) as conn:
+                entry = selected_entry(conn, uid, entry)
         pending['entry'], pending['selected'] = entry, True
     if not pending['adopted']:
         entry = pending['entry']
@@ -905,11 +915,31 @@ def _serialized_written(state):
                 if state is not None and other_state is not None:
                     return other_state
                 if other_state is None:
-                    drained, result = await _drain_unshown_written(update, context)
+                    try:
+                        drained, result = await _drain_unshown_written(update, context)
+                    except StaleGeneration:
+                        from ..study.answers import reject_stale
+                        frame = context.user_data.get(written_state.FRAME) or {}
+                        reject_stale(get_db_path(), update.effective_user.id, written_state.transport_id(update), frame.get('flow_id', 'written'))
+                        invalidate_study_frames(context)
+                        return await _back_to_main_menu(update, context)
                     if drained:
                         return result
                 try:
                     return await handler(update, context)
+                except (InvalidClassification, InvalidForms):
+                    from ..study.answers import reject_stale
+                    frame = context.user_data.get(written_state.FRAME) or {}
+                    reject_stale(get_db_path(), update.effective_user.id, written_state.transport_id(update), frame.get('flow_id', 'written'))
+                    invalidate_study_frames(context)
+                    await _reply_text_with_retry(update.message, t(_user_interface_lang(update.effective_user.id), 'quiz_invalid_construction'))
+                    return await _back_to_main_menu(update, context)
+                except StaleGeneration:
+                    from ..study.answers import reject_stale
+                    frame = context.user_data.get(written_state.FRAME) or {}
+                    reject_stale(get_db_path(), update.effective_user.id, written_state.transport_id(update), frame.get('flow_id', 'written'))
+                    invalidate_study_frames(context)
+                    return await _back_to_main_menu(update, context)
                 except StaleStudyAction:
                     frame = context.user_data.get(written_state.FRAME)
                     if not frame:
@@ -959,6 +989,7 @@ async def _render_existing_written(update, context, point, prefix_text):
     if frame['phase'] == 'question':
         entry = get_word_by_id(get_db_path(), frame['question_id'])
         if entry:
+            entry['study_generation'] = frame.get('study_generation', 0)
             context.user_data['quiz_entry'] = resolve_bot_word_media(get_db_path(), update.effective_user.id, entry)
         else:
             frame['phase'], frame['question_id'], frame['action_key'] = 'completed', None, None

@@ -12,6 +12,8 @@ DICT_LANGS = (DICT_RU, DICT_UK, DICT_EN)
 
 TEXTS = {
     "en": {
+        "study_card_stale": "This card has changed. Open it again to continue. No result was recorded.",
+        "quiz_invalid_construction": "This verb card needs its construction or forms checked. No result was recorded.",
         'search_exact': 'Exact matches',
         'search_similar': 'Similar matches',
         'search_page': '{kind}: {start}–{end} of {total}.',
@@ -343,6 +345,8 @@ TEXTS = {
         "donate_invalid_amount": "Enter a whole number of Stars (1–100000). Try again:",
     },
     "ru": {
+        "study_card_stale": "Карточка изменилась. Открой её снова, чтобы продолжить. Результат не записан.",
+        "quiz_invalid_construction": "Нужно проверить конструкцию или формы этой карточки. Результат не записан.",
         'search_exact': 'Точные совпадения',
         'search_similar': 'Похожие совпадения',
         'search_page': '{kind}: {start}–{end} из {total}.',
@@ -669,6 +673,8 @@ TEXTS = {
         "donate_invalid_amount": "Введите целое число звёзд (1–100000). Попробуйте ещё раз:",
     },
     "uk": {
+        "study_card_stale": "Картка змінилася. Відкрий її знову, щоб продовжити. Результат не записано.",
+        "quiz_invalid_construction": "Потрібно перевірити конструкцію або форми цієї картки. Результат не записано.",
         'search_exact': 'Точні збіги',
         'search_similar': 'Схожі збіги',
         'search_page': '{kind}: {start}–{end} із {total}.',

@@ -39,6 +39,8 @@ from ..common.study_lock import study_lock, invalidate_study_frames
 from ..common.quiz_resume import register_renderer, publish_view, RETURN_POINT_KEY, PUBLISHED_VIEW_KEY
 from .. import learning_store
 from ..study import answers, deliveries, repository
+from ..study.generations import frame_generations, assert_generations, StaleGeneration
+from ..common.verb_construction import display_infinitive, construction_label, reflexive_hint, InvalidClassification, InvalidForms
 from ..handlers.quiz import _check_ru_de_strict, _set_reaction
 from ..i18n import t
 from ..storage import (
@@ -252,9 +254,15 @@ async def _drain_pending_learning_view(update, context):
     if not frame or not frame.get("pending_render"):
         return False, None
     uid, transport = update.effective_user.id, _transport_id(update)
-    result = answers.record_control_transition(get_db_path(), uid, transport,
-        frame["flow_id"], "learning_drain_view",
-        lambda conn: {"flow_id": frame["flow_id"], "revision": frame["revision"]})
+    try:
+        result = answers.record_control_transition(get_db_path(), uid, transport,
+            frame["flow_id"], "learning_drain_view",
+            lambda conn: {"flow_id": frame["flow_id"], "revision": frame["revision"]},
+            expected_generations=frame_generations((frame.get("current") or {}).get("entry")))
+    except StaleGeneration:
+        answers.reject_stale(get_db_path(), uid, transport, frame["flow_id"])
+        invalidate_study_frames(context)
+        return True, await _send_learning_menu(update, uid)
     if result.get("replayed"):
         return True, await _handle_replay(update, context, result)
     if _learning_recovery(context, result):
@@ -278,6 +286,7 @@ def _send_entry_to_learning(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             deliveries.commit_delivery(conn, uid, transport, result)
         else:
             entry = context.user_data.get(entry_key)
+            assert_generations(conn, uid, frame_generations(entry))
             if not entry or not conn.execute("SELECT 1 FROM words WHERE id=?", (entry.get("id"),)).fetchone():
                 result = {"added": 0}
             else:
@@ -364,7 +373,7 @@ def _format_learning_preview_line(entry, dict_lang):
     """Handle format learning preview line."""
     word_type = (entry.get("type") or "").strip().lower()
     if word_type == "verb":
-        left = _low_word(entry.get("infinitive", "")).strip()
+        left = _low_word(display_infinitive(entry)) + reflexive_hint(entry)
     else:
         article = (entry.get("article") or "").strip()
         left = f"{article} {_cap_word(entry.get('german', ''))}".strip()
@@ -592,10 +601,22 @@ async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if receipt is not None:
             return await _handle_replay(update, context, receipt)
         context.user_data.pop(_PENDING_NAVIGATION, None)
-        drained, state = await _drain_pending_learning_view(update, context)
-        if drained:
-            return state
-        return await _learning_quiz_locked(update, context)
+        try:
+            drained, state = await _drain_pending_learning_view(update, context)
+            if drained:
+                return state
+            return await _learning_quiz_locked(update, context)
+        except (InvalidClassification, InvalidForms):
+            frame = context.user_data.get(FRAME) or {}
+            answers.reject_stale(get_db_path(), update.effective_user.id, _transport_id(update), frame.get('flow_id', 'learning'))
+            invalidate_study_frames(context)
+            await _reply_text_with_retry(update.message, t(_user_interface_lang(update.effective_user.id), 'quiz_invalid_construction'))
+            return await _send_learning_menu(update, update.effective_user.id)
+        except (StaleGeneration, answers.StaleStudyAction):
+            frame = context.user_data.get(FRAME) or {}
+            answers.reject_stale(get_db_path(), update.effective_user.id, _transport_id(update), frame.get('flow_id', 'learning'))
+            invalidate_study_frames(context)
+            return await _send_learning_menu(update, update.effective_user.id)
 
 
 def _learning_recovery(context, receipt):
@@ -613,7 +634,8 @@ async def _learning_quiz_locked(update, context):
     frame = _legacy_frame(context)
     if action in ("back", "clarify_fields"):
         result = answers.record_control_transition(get_db_path(), uid, transport, frame["flow_id"], action,
-            lambda conn: {"flow_id": frame["flow_id"], "revision": frame["revision"]})
+            lambda conn: {"flow_id": frame["flow_id"], "revision": frame["revision"]},
+        expected_generations=frame_generations((frame.get("current") or {}).get("entry")))
         if _learning_recovery(context, result):
             return await _send_learning_menu(update, uid)
         if action == "back":
@@ -624,7 +646,8 @@ async def _learning_quiz_locked(update, context):
         last = frame.get("last_answer")
         if not last or last.get("ok") or frame["phase"] == "preview":
             result = answers.record_control_transition(get_db_path(), uid, transport, frame["flow_id"], "input_err_empty",
-                lambda conn: {"flow_id": frame["flow_id"], "revision": frame["revision"]})
+                lambda conn: {"flow_id": frame["flow_id"], "revision": frame["revision"]},
+        expected_generations=frame_generations((frame.get("current") or {}).get("entry")))
             if _learning_recovery(context, result):
                 return await _send_learning_menu(update, uid)
             return await _render_learning_frame(update, context, t(_user_interface_lang(uid), "input_err_nothing"))
@@ -636,7 +659,8 @@ async def _learning_quiz_locked(update, context):
 
         receipt = answers.correct_last_answer(get_db_path(), uid, last["action_key"], last["correction_key"],
             transport, frame["revision"], flow_id=frame["flow_id"],
-            live_revision=lambda: context.user_data[FRAME]["revision"], learning_transition=correct)
+            live_revision=lambda: context.user_data[FRAME]["revision"], learning_transition=correct,
+            expected_generations=frame_generations((frame.get("current") or {}).get("entry")))
         if _learning_recovery(context, receipt):
             return await _send_learning_menu(update, uid)
         if receipt.get("replayed"):
@@ -665,7 +689,7 @@ async def _learning_quiz_locked(update, context):
             transport, frame["revision"], flow_id=frame["flow_id"],
             live_revision=lambda: context.user_data[FRAME]["revision"],
             affected_learning_ids=lambda conn: learning_store.preview_affected_ids(conn, uid, entry["id"]),
-            transition=preview)
+            transition=preview, expected_generations=entry.get("study_generations"))
         if _learning_recovery(context, receipt):
             return await _send_learning_menu(update, uid)
         if receipt.get("replayed"):
@@ -690,7 +714,8 @@ async def _learning_quiz_locked(update, context):
 
     receipt = answers.apply_original_answer(get_db_path(), uid, entry["id"], "learning", kind, slot["action_key"],
         transport, frame["revision"], flow_id=frame["flow_id"],
-        live_revision=lambda: context.user_data[FRAME]["revision"], learning_transition=grade)
+        live_revision=lambda: context.user_data[FRAME]["revision"], learning_transition=grade,
+        expected_generation=entry.get("study_generation", 0), expected_generations=frame_generations(entry))
     if _learning_recovery(context, receipt):
         return await _send_learning_menu(update, uid)
     if receipt.get("replayed"):

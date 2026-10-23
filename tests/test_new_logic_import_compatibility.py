@@ -14,6 +14,7 @@ install()
 from bot import storage
 from bot.app_config import PREPOSITION_TYPES
 from bot.common.conjugation import parse_conjugation
+from bot.common.verb_construction import LegacyIdentityCollision, InvalidClassification
 from bot.conjugation.domain import forms_for
 from bot.handlers.add_words import _ai_prompt, _normalize_ai_entry
 from bot.handlers.clarify_fields import _set_entry_field
@@ -33,14 +34,14 @@ class ImportCompatibilityTest(unittest.TestCase):
         env = patch.dict(os.environ, {'DB_PATH': self.db, 'OWNER_ID': '0'})
         env.start(); self.addCleanup(env.stop)
         storage.init_db(self.source)
-        storage.add_word(self.source, {'id': 'old', 'type': 'verb', 'infinitive': 'laufen',
+        storage.add_word(self.source, {'id': 'old', 'type': 'verb', 'reflexive_case': 'none', 'infinitive': 'laufen',
             'german': 'laufen', 'russian': 'бежать', 'ukrainian': 'бігти', 'english': 'run',
             'topic': 'first', 'cefr_level': 'B1', 'is_separable': 0,
             'image': 'old-image', 'example': 'old-example'})
         storage.set_word_conjugation(self.source, 'old', PRESENT, PAST)
         # Existing paused aliases remain dictionary data, not deletion targets.
         for word in ('unterhalten', 'erinnern'):
-            storage.add_word(self.source, {'id': 'old-' + word, 'type': 'verb', 'infinitive': word,
+            storage.add_word(self.source, {'id': 'old-' + word, 'type': 'verb', 'reflexive_case': 'none', 'infinitive': word,
                                           'german': word, 'is_separable': 0})
         with repository.transaction(self.source) as conn:
             conn.executemany("INSERT INTO users(user_id,status) VALUES(?,'approved')", [(1,), (2,)])
@@ -64,7 +65,7 @@ class ImportCompatibilityTest(unittest.TestCase):
             return tuple(conn.iterdump())
 
     def verb(self, ident='new', **fields):
-        return {'id': ident, 'type': 'verb', 'infinitive': 'gehen', 'german': 'gehen',
+        return {'id': ident, 'type': 'verb', 'reflexive_case': 'none', 'infinitive': 'gehen', 'german': 'gehen',
                 'is_separable': 0, 'conjugation_praesens': PRESENT,
                 'conjugation_praeteritum': PAST, **fields}
 
@@ -90,10 +91,18 @@ class ImportCompatibilityTest(unittest.TestCase):
         storage.add_word(self.db, {'id': 'noun-first', 'type': 'nomen', 'german': 'Bitte', 'article': 'die'})
         storage.add_word(self.db, {'id': 'adverb-next', 'type': 'adverb', 'german': 'bitte'})
         # A noun spelling can also be a verb's display alias; verb identity remains infinitive.
-        storage.add_word(self.db, self.verb('verb-alias', german='Bitte'))
+        # Explicit pre-classification legacy data, not a permitted new verb.
+        with repository.transaction(self.db) as conn:
+            conn.execute("INSERT INTO words(id,type,infinitive,german,reflexive_case) VALUES('verb-alias','verb','gehen','Bitte',NULL)")
         before = self.dump()
         with self.assertRaises(ValueError):
             storage.add_word(self.db, self.verb('verb-duplicate', infinitive=' GEHEN ', german='other alias'))
+        self.assertEqual(self.dump(), before)
+        with self.assertRaises(LegacyIdentityCollision):
+            storage.add_word(self.db, self.verb('valid-duplicate', infinitive=' GEHEN ', german='gehen'))
+        self.assertEqual(self.dump(), before)
+        with self.assertRaises(InvalidClassification):
+            storage.add_word(self.db, self.verb('invalid-verified', german='Bitte'))
         self.assertEqual(self.dump(), before)
 
     def test_find_existing_word_keeps_its_broad_lookup_contract(self):
@@ -176,10 +185,10 @@ class ImportCompatibilityTest(unittest.TestCase):
         baseline = {table: self.rows(table) for table in tables}
         storage.add_word(self.db, self.verb('new-complete', topic='second', cefr_level='A2'))
         # Omitted tables on another new word do not clear any existing reference data.
-        storage.add_word(self.db, {'id': 'new-omitted', 'type': 'verb', 'infinitive': 'bleiben', 'german': 'bleiben'})
+        storage.add_word(self.db, {'id': 'new-omitted', 'type': 'verb', 'reflexive_case': 'none', 'infinitive': 'bleiben', 'german': 'bleiben'})
         complete = self.dump()
         with self.assertRaises(ValueError):
-            storage.add_word(self.db, {'id': 'old', 'type': 'verb', 'infinitive': 'laufen', 'german': 'laufen'})
+            storage.add_word(self.db, {'id': 'old', 'type': 'verb', 'reflexive_case': 'none', 'infinitive': 'laufen', 'german': 'laufen'})
         with self.assertRaises(ValueError):
             storage.add_word(self.db, self.verb('new-complete', topic='third'))
         self.assertEqual(self.dump(), complete)

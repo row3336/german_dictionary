@@ -34,7 +34,8 @@ def dictionary_language(mode):
 
 def slot(entry, retry=False, presentation=0):
     return {'word_id': entry['id'], 'entry': entry, 'action_key': uuid4().hex,
-            'retry': retry, 'presentation': presentation}
+            'retry': retry, 'presentation': presentation,
+            'study_generation': entry.get('study_generation', 0)}
 
 
 def choose(frame, pick_original, get_word, gap):

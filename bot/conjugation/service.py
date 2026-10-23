@@ -6,6 +6,7 @@ from datetime import date, datetime, timedelta, timezone
 
 from ..storage import _connect
 from ..study.srs import default_srs
+from ..study.generations import assert_generation, assert_generations, StaleGeneration
 from . import repository as repo
 from .domain import PAIRS, StaleAction, check_form, reduce_pass
 
@@ -27,6 +28,21 @@ class ConjugationService:
                 result = dict(old.get('result') or json.loads(old.get('result_json') or '{}'))
                 result['replayed'] = True
                 return result
+            rows = conn.execute("""SELECT result_json FROM study_deliveries
+                WHERE user_id=? AND action_key=? AND action_kind=? AND state='committed'
+                ORDER BY transport_update_id""", (user_id, action_key, kind)).fetchall() if action_key else []
+            for prior in rows:
+                result = json.loads(prior[0])
+                original = (kind == 'conjugation_answer' and type(result.get('ok')) is bool
+                            and result.get('answered_pass_id') and (result.get('last_answer') or {}).get('id'))
+                correction = (kind == 'conjugation_correction' and result.get('fixed') is True
+                              and result.get('answer_id') and result.get('corrected_pass_id'))
+                if not (original or correction):
+                    continue
+                result = {**result, 'replayed': True}
+                begin_delivery(conn, user_id, transport_id, flow_id, kind, action_key=action_key)
+                commit_delivery(conn, user_id, transport_id, result, action_key=action_key)
+                return result
             recovered = recover_pending_undo(conn, user_id)
             if pair not in PAIRS:
                 raise StaleAction('invalid pair')
@@ -44,14 +60,16 @@ class ConjugationService:
             else:
                 try:
                     result = command(conn)
-                except StaleAction:
+                except (StaleAction, StaleGeneration):
                     result = {'stale': True}
-            result.update({'flow_id': flow_id, 'pair': pair})
+            result.update({'flow_id': flow_id, 'pair': pair, 'action_key': action_key})
             commit_delivery(conn, user_id, transport_id, result, action_key=action_key)
             return result
 
-    def preparation(self, user_id, pair, transport_id, flow_id, *, viewed_id=None):
+    def preparation(self, user_id, pair, transport_id, flow_id, *, viewed_id=None, expected_generation=0):
         def command(conn):
+            if viewed_id:
+                assert_generation(conn, user_id, viewed_id, expected_generation)
             repo.sync_blocks(conn, user_id, pair)
             if viewed_id and any(b['word_id'] == viewed_id and b['phase'] == 'preparation'
                                  for b in repo.blocks(conn, user_id, pair)):
@@ -61,9 +79,10 @@ class ConjugationService:
         return self._command(user_id, pair, transport_id, flow_id, 'conjugation_next', None, command)
 
     def transition(self, user_id, pair, word_id, tense, revision, cycle, operation,
-                   transport_id, flow_id, *, today=None, now=None):
+                   transport_id, flow_id, *, today=None, now=None, expected_generation=0):
         today, stamp = self._clock(today, now)
         def command(conn):
+            assert_generation(conn, user_id, word_id, expected_generation)
             current = repo.block(conn, user_id, pair, word_id, tense)
             if not current or current['revision'] != revision or current['cycle'] != cycle:
                 raise StaleAction('stale preparation')
@@ -121,7 +140,7 @@ class ConjugationService:
         def command(conn):
             try:
                 current = repo.assert_pass(conn, user_id, pair, pass_id, revision)
-            except StaleAction:
+            except (StaleAction, StaleGeneration):
                 # Explicit deletion/reclassification may invalidate the current
                 # word. Keep the history and advance only to an eligible rest.
                 old = repo.pass_row(conn, user_id, pass_id)
@@ -163,11 +182,13 @@ class ConjugationService:
             if not last or last['id'] != answer_id or last['is_correct'] or last['corrected'] or last['answer_day'] != today.isoformat():
                 return {'fixed': False}
             current = repo.pass_row(conn, user_id, last['pass_id'])
-            if not current or current['pair'] != pair or current['status'] == 'reset':
+            if not current or current['pair'] != pair or current['status'] == 'reset' or not repo.pass_generation_valid(conn, current) or not repo.current_admission(conn, user_id, pair, current['word_id']):
                 raise StaleAction('old correction')
             b = repo.block(conn, user_id, pair, current['word_id'], current['tense'], valid=False)
             if not b or not repo.eligible_word(repo.word(conn, current['word_id'])) or b['cycle'] != current['cycle'] or b['phase'] != 'test':
                 raise StaleAction('ineligible correction')
+            if current_question and current_question['pass_id'] != current['id']:
+                repo.assert_pass(conn, user_id, pair, current_question['pass_id'], current_question['revision'])
             expected = json.loads(current['expected_forms_json'])[last['pronoun_group']]
             conn.execute('UPDATE conjugation_answers SET is_correct=1,corrected=1,answer_text=? WHERE id=?', (expected, answer_id))
             self._reduce(conn, current, today, stamp)
@@ -176,8 +197,6 @@ class ConjugationService:
             question = current_question
             if question and question['pass_id'] == current['id']:
                 question = repo.question(conn, repo.pass_row(conn, user_id, current['id']))
-            elif question and not repo.eligible_word(repo.word(conn, question['word_id'])):
-                question = self._test_view(conn, user_id, pair, today, stamp)['question']
             scheduled = [b for b in repo.blocks(conn, user_id, pair) if b['phase'] == 'test']
             return {'fixed': True, 'question': question, 'corrected_pass_id': current['id'],
                     'answer_id': answer_id, 'parent_action_key': last['action_key'],
@@ -186,8 +205,9 @@ class ConjugationService:
         return self._command(user_id, pair, transport_id, session_id, 'conjugation_correction',
                              'conjugation-correction:'+str(answer_id), command)
 
-    def stop(self, user_id, pair, session_id, transport_id, touched=(), *, today=None):
+    def stop(self, user_id, pair, session_id, transport_id, touched=(), *, today=None, expected_generations=None):
         def command(conn):
+            assert_generations(conn, user_id, expected_generations or {})
             conn.execute(
                 'UPDATE conjugation_answers SET correction_session_id=NULL WHERE user_id=? AND correction_session_id=?',
                 (user_id, session_id),
@@ -202,14 +222,17 @@ class ConjugationService:
             if question:
                 try:
                     current = repo.assert_pass(conn, user_id, pair, question['pass_id'], question['revision'])
-                except StaleAction:
+                except (StaleAction, StaleGeneration):
                     return output
                 output['question'] = repo.question(conn, current)
             return output
 
-    def control(self, user_id, pair, transport_id, flow_id, kind, resolve):
+    def control(self, user_id, pair, transport_id, flow_id, kind, resolve, *, expected_generations=None):
         """Persist a UI-only transition after delivery lookup, without a grade."""
-        return self._command(user_id, pair, transport_id, flow_id, kind, None, lambda conn: resolve())
+        def command(conn):
+            assert_generations(conn, user_id, expected_generations or {})
+            return resolve()
+        return self._command(user_id, pair, transport_id, flow_id, kind, None, command)
 
     @staticmethod
     def _clock(today, now):

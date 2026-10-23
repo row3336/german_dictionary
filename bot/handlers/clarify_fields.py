@@ -12,6 +12,11 @@ _clarify_fields_markup). The FSM state stays ADD_EDIT
 """
 
 from types import SimpleNamespace
+from uuid import uuid4
+
+from ..study import answers, manual_interval
+from ..study.generations import StaleGeneration
+from ..written.state import transport_id
 
 from telegram import MessageEntity, ReplyKeyboardMarkup, Update
 from telegram.ext import ContextTypes
@@ -54,7 +59,6 @@ from ..common.lang import (
     direction_mode_family,
 )
 from ..common.navigation import _action_key_from_text, _back_to_main_menu, _back_to_tests, _reply_text_with_retry
-from ..common.txlog import _capture_transaction_snapshot, _log_transaction
 from ..handlers.quiz import (
     _interval_divisor_for_mode,
 )
@@ -64,14 +68,11 @@ from ..storage import (
     QUIZ_ARTICLE as MODE_ARTICLE,
     add_error_report,
     delete_word,
-    get_progress,
     get_word_by_id,
     normalize_word_entry,
-    set_progress,
     set_user_word_media,
     set_user_word_translation,
     set_word_conjugation,
-    simulate_fsrs_advance,
     update_word_fields,
 )
 from ..text_utils import type_label as _type_label
@@ -289,6 +290,33 @@ def _set_entry_field_value(entry, field, value):
     return _set_entry_field(entry, f"{field}={value}")
 
 
+def _preserve_selection(fresh, selected):
+    if fresh is None:
+        return None
+    return {**fresh, **{key: selected[key] for key in ('study_generation', 'study_generations')
+                       if key in (selected or {})}}
+
+
+def _visible_selection(context, word_id):
+    data = context.user_data
+    oral = data.get('oral_frame') or {}
+    learning = data.get('learning_frame') or {}
+    point = data.get(RETURN_POINT_KEY)
+    kind = point.caller_kind if point is not None else (data.get(PUBLISHED_VIEW_KEY) or {}).get('caller_kind')
+    candidates = [(oral.get('last_visible') or {}).get('entry') if kind == 'oral' else None,
+                  (learning.get('current') or {}).get('entry') if kind == 'learning' and learning.get('phase') == 'preview' else None,
+                  data.get('quiz_last_answered_entry'), data.get('quiz_entry')]
+    for candidate in candidates:
+        if candidate and candidate.get('id') == word_id:
+            return candidate
+    frame = data.get('quiz_written_frame') or {}
+    receipt = frame.get('last_receipt') or {}
+    if receipt.get('word_id') == word_id:
+        before = receipt.get('before') or {}
+        return {'id': word_id, 'study_generation': before.get('generations', {}).get(word_id, 0)}
+    return {}
+
+
 def _get_clarify_target(context: ContextTypes.DEFAULT_TYPE, prefer_current=False):
     """Select a visible answer, never the next hidden question."""
     point = context.user_data.get(RETURN_POINT_KEY)
@@ -296,6 +324,7 @@ def _get_clarify_target(context: ContextTypes.DEFAULT_TYPE, prefer_current=False
     if point is not None or published:
         word_id = point.visible_answer_id if point is not None else published.get("visible_answer_id")
         entry = get_word_by_id(get_db_path(), word_id) if word_id else None
+        entry = _preserve_selection(entry, _visible_selection(context, word_id))
         return (entry, "Visible answer:") if entry else (None, "")
     current = context.user_data.get("quiz_entry")
     if prefer_current and context.user_data.get("learning_preview_mode") and current:
@@ -541,10 +570,11 @@ async def _handle_conjugation_input(update, context, entry_key, entry, stage, ac
 def _initialize_clarify_entry(context, entry, return_state, search_origin=None):
     """Set an explicit edit target; callers decide whether a study point exists."""
     context.user_data["edit_source"] = "quiz"
+    context.user_data["clarify_flow_id"] = uuid4().hex
     context.user_data["quiz_edit_entry"] = entry
     context.user_data["edit_stage"] = "pick_field"
     context.user_data["edit_return_state"] = return_state
-    for key in ("edit_field", "prep_cascade", "add_int_mode", "add_int_preview", "clarify_from_report"):
+    for key in ("edit_field", "prep_cascade", "add_int_mode", "add_int_preview", "add_int_action_key", "add_int_expected_generation", "add_int_selection", "clarify_from_report"):
         context.user_data.pop(key, None)
     if search_origin is None:
         context.user_data.pop(ORIGIN_KEY, None)
@@ -593,7 +623,7 @@ async def open_search_entry(update, context, entry_id, origin):
             or origin.get("revision") != state.get("revision")
             or origin.get("word_id") != entry_id):
         return None
-    entry = read_search_entry(get_db_path(), entry_id)
+    entry = read_search_entry(get_db_path(), entry_id, user_id=uid)
     if not entry:
         await update.callback_query.message.reply_text(
             t(_user_interface_lang(uid), "search_card_unavailable").format(id=entry_id))
@@ -618,8 +648,13 @@ async def open_clarify_from_report(update: Update, context: ContextTypes.DEFAULT
     _resume_after_clarify has no quiz_entry -> _back_to_tests). Messages are sent
     via the callback's chat (a callback has no update.message).
     """
+    from ..search import read_search_entry
+    entry = read_search_entry(get_db_path(), entry['id'], user_id=update.effective_user.id)
+    if entry is None:
+        return await _back_to_tests(update, context)
     context.user_data.pop(ORIGIN_KEY, None)
     close_return_point(context)
+    context.user_data["clarify_flow_id"] = uuid4().hex
     context.user_data["edit_source"] = "quiz"
     context.user_data["quiz_edit_entry"] = entry
     context.user_data["edit_stage"] = "pick_field"
@@ -685,6 +720,10 @@ async def _resume_after_clarify(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     async with study_lock(update.effective_user.id):
+        receipt = (manual_interval.preflight(get_db_path(), update.effective_user.id, transport_id(update))
+                   if context.user_data.get('edit_source') == 'quiz' else None)
+        if receipt is not None and receipt.get('delivery_kind') in ('manual_interval', 'clarify_stale'):
+            return ADD_EDIT if context.user_data.get('quiz_edit_entry') else context.user_data.get('edit_return_state')
         from ..oral import handlers as oral_handlers
         frame = oral_handlers._live_frame(context)
         if (context.user_data.get("edit_source") == "quiz"
@@ -699,7 +738,22 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
                 if result == ORAL_QUIZ:
                     close_return_point(context)
                 return result
-        return await _clarify_fields_input_locked(update, context)
+        try:
+            return await _clarify_fields_input_locked(update, context)
+        except (StaleGeneration, answers.StaleStudyAction):
+            flow = context.user_data.get('clarify_flow_id', 'clarify')
+            answers.record_control_transition(get_db_path(), update.effective_user.id, transport_id(update), flow,
+                'clarify_stale', lambda conn: {'stale': True, 'invalidate_frame': True, 'kind': 'clarify_stale'})
+            await _reply_text_with_retry(update.message, t(_user_interface_lang(update.effective_user.id), 'study_card_stale'))
+            if context.user_data.get(ORIGIN_KEY):
+                return await return_to_search(update, context)
+            from ..common.study_lock import invalidate_study_frames
+            invalidate_study_frames(context)
+            context.user_data.pop('quiz_edit_entry', None)
+            context.user_data.pop('add_int_preview', None)
+            context.user_data.pop('add_int_action_key', None)
+            context.user_data['edit_stage'] = 'pick_field'
+            return await _back_to_tests(update, context)
 
 
 async def _clarify_fields_input_locked(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -734,6 +788,7 @@ async def _clarify_fields_input_locked(update: Update, context: ContextTypes.DEF
         current = read_search_entry(get_db_path(), origin["word_id"]) if valid else None
         if current is None:
             return await return_to_search(update, context, t(_user_interface_lang(uid), "search_stale"))
+        current = _preserve_selection(current, context.user_data.get("quiz_edit_entry"))
         context.user_data["quiz_edit_entry"] = current
         if (context.user_data.get("edit_stage") == "enter_value"
                 and context.user_data.get("edit_field") not in _allowed_clarify_fields(
@@ -877,8 +932,12 @@ async def _clarify_fields_input_locked(update: Update, context: ContextTypes.DEF
             )
             return ADD_EDIT
         mode = context.user_data.get("add_int_mode")
-        srs = get_progress(get_db_path(), uid, entry.get("id"), mode)
-        preview = simulate_fsrs_advance(srs, n, interval_divisor=_interval_divisor_for_mode(uid, mode))
+        expected = entry.get('study_generation', 0)
+        preview = manual_interval.preview(get_db_path(), uid, entry.get('id'), mode, n,
+            expected_generation=expected, interval_divisor=_interval_divisor_for_mode(uid, mode))
+        context.user_data['add_int_expected_generation'] = expected
+        context.user_data['add_int_selection'] = {'word_id': entry['id'], 'mode': mode, 'generation': expected}
+        context.user_data['add_int_action_key'] = uuid4().hex
         context.user_data["add_int_preview"] = preview
         context.user_data["edit_stage"] = "add_int_confirm"
         await update.message.reply_text(
@@ -890,16 +949,31 @@ async def _clarify_fields_input_locked(update: Update, context: ContextTypes.DEF
     if stage == "add_int_confirm":
         uid = update.effective_user.id
         lang = _user_interface_lang(uid)
-        mode = context.user_data.pop("add_int_mode", None)
-        preview = context.user_data.pop("add_int_preview", None)
-        context.user_data["edit_stage"] = "pick_field"
+        mode = context.user_data.get("add_int_mode")
+        preview = context.user_data.get("add_int_preview")
         if text == SYN_CONFIRM_TEXT and mode and preview:
-            snapshot = _capture_transaction_snapshot(uid, entry.get("id"), [mode])
-            set_progress(get_db_path(), uid, entry.get("id"), mode, preview)
-            _log_transaction(uid, f"add_int:{mode}", snapshot)
+            selected = context.user_data.get('add_int_selection') or {
+                'word_id': entry.get('id'), 'mode': mode,
+                'generation': context.user_data.get('add_int_expected_generation', entry.get('study_generation', 0))}
+            if selected['word_id'] != entry.get('id') or selected['mode'] != mode:
+                raise answers.StaleStudyAction('manual interval selection changed')
+            action_key = context.user_data.setdefault('add_int_action_key', uuid4().hex)
+            receipt = manual_interval.confirm(get_db_path(), uid, entry.get('id'), mode, preview,
+                action_key, transport_id(update),
+                expected_generation=selected['generation'],
+                flow_id=context.user_data.get('clarify_flow_id', 'manual_interval'))
+            if receipt.get('invalidate_frame'):
+                from ..common.study_lock import invalidate_study_frames
+                invalidate_study_frames(context)
+                return await _back_to_tests(update, context)
+            if receipt.get('replayed'):
+                return ADD_EDIT
             note = t(lang, "add_int_done").format(due=preview["due"])
         else:
             note = t(lang, "clarify_choose_action")  # anything else cancels, no write
+        for key in ('add_int_mode', 'add_int_preview', 'add_int_action_key', 'add_int_expected_generation', 'add_int_selection'):
+            context.user_data.pop(key, None)
+        context.user_data['edit_stage'] = 'pick_field'
         await update.message.reply_text(note, reply_markup=_clarify_screen(context, uid))
         return ADD_EDIT
 

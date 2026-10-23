@@ -5,7 +5,7 @@ from datetime import date, datetime, timezone
 
 from . import deliveries, repository as repo
 from .srs import apply_answer, default_srs
-from .generations import assert_generation, generation_for
+from .generations import assert_generation, generation_for, assert_generations, StaleGeneration
 
 
 class StaleStudyAction(ValueError):
@@ -66,9 +66,9 @@ def _save_action(conn, user_id, action_key, flow_id, kind, word_id, mode, receip
 
 def _finish(conn, user_id, action_key, transport_update_id, flow_id, kind,
             word_id, mode, snapshot, after, revision, event_id=None,
-            parent_action_key=None, answer_kind=None):
+            parent_action_key=None, answer_kind=None, transaction_kind=None):
     payload = {"snapshot": snapshot, "action_key": action_key}
-    tx_id = repo.append_transaction(conn, user_id, kind, payload)
+    tx_id = repo.append_transaction(conn, user_id, transaction_kind or kind, payload)
     receipt = {"version": 2, "state": "applied", "action_key": action_key,
                "parent_action_key": parent_action_key, "flow_id": flow_id,
                "word_id": word_id, "mode": mode, "kind": kind,
@@ -91,7 +91,7 @@ def _record_recovery(conn, user_id, transport_update_id, flow_id, action_kind, r
 def apply_original_answer(db_path, user_id, word_id, mode, answer_kind, action_key,
                           transport_update_id, expected_revision, now=None, *,
                           flow_id, live_revision, interval_divisor=1.0,
-                          learning_transition=None, target_resolver=None, srs_day=None, expected_generation=0):
+                          learning_transition=None, target_resolver=None, srs_day=None, expected_generation=0, expected_generations=None):
     """Persist one original answer. Replay never invokes target_resolver."""
     # No explicit clock preserves the legacy host-local date.today() contract.
     day = srs_day or (now.date() if now is not None else date.today())
@@ -110,6 +110,7 @@ def apply_original_answer(db_path, user_id, word_id, mode, answer_kind, action_k
             word_id = target["word_id"]
             mode = target.get("mode", mode)
         _validate_target(conn, user_id, word_id, expected_revision, live_revision)
+        assert_generations(conn, user_id, expected_generations or {})
         assert_generation(conn, user_id, word_id, expected_generation)
         if answer_kind not in {"correct", "wrong", "idk"}:
             raise ValueError("unsupported answer kind")
@@ -130,7 +131,7 @@ def apply_original_answer(db_path, user_id, word_id, mode, answer_kind, action_k
 def correct_last_answer(db_path, user_id, parent_action_key, action_key,
                         transport_update_id, expected_revision, now=None, *,
                         flow_id, live_revision, interval_divisor=1.0,
-                        learning_transition=None, srs_day=None):
+                        learning_transition=None, srs_day=None, expected_generations=None):
     """Replace a wrong result from its original baseline, retaining its event."""
     day = srs_day or (now.date() if now is not None else date.today())
     now = now or datetime.now(timezone.utc)
@@ -150,6 +151,7 @@ def correct_last_answer(db_path, user_id, parent_action_key, action_key,
             raise StaleStudyAction("original answer is unavailable")
         if parent["flow_id"] != flow_id or parent["answer_kind"] == "correct":
             raise StaleStudyAction("answer cannot be corrected")
+        assert_generations(conn, user_id, expected_generations or {})
         repo.assert_snapshot_generations(conn, parent["before"])
         word_id, mode, event_id = parent["word_id"], parent["mode"], parent["event_id"]
         _validate_target(conn, user_id, word_id, expected_revision, live_revision)
@@ -188,6 +190,8 @@ def apply_preview_transition(db_path, user_id, word_id, action_kind, action_key,
         _validate_target(conn, user_id, word_id, expected_revision, live_revision)
         ids = affected_learning_ids(conn) if callable(affected_learning_ids) else affected_learning_ids
         for wid in dict.fromkeys([word_id, *(ids or [])]):
+            if expected_generations is not None and wid not in expected_generations:
+                raise StaleGeneration("preview participant was not selected: " + str(wid))
             assert_generation(conn, user_id, wid, (expected_generations or {}).get(wid, 0))
         snapshot = repo.capture_snapshot(conn, user_id, word_id, [], affected_learning_ids=ids)
         after = transition(conn, snapshot, now)
@@ -196,7 +200,7 @@ def apply_preview_transition(db_path, user_id, word_id, action_kind, action_key,
 
 
 def record_control_transition(db_path, user_id, transport_update_id, flow_id,
-                              action_kind, resolve):
+                              action_kind, resolve, *, expected_generations=None):
     """Deduplicate next/reveal/stop before resolving the live frame."""
     with repo.transaction(db_path) as conn:
         authorize_user(conn, user_id)
@@ -207,6 +211,7 @@ def record_control_transition(db_path, user_id, transport_update_id, flow_id,
         if recovered:
             return _record_recovery(conn, user_id, transport_update_id, flow_id,
                                     action_kind, recovered)
+        assert_generations(conn, user_id, expected_generations or {})
         result = resolve(conn)
         deliveries.begin_delivery(conn, user_id, transport_update_id, flow_id, action_kind)
         deliveries.commit_delivery(conn, user_id, transport_update_id, result)
@@ -322,3 +327,30 @@ def undo_steps(db_path, user_id, count, transport_update_id, flow_id="undo"):
 def resume_pending_undo(db_path, user_id):
     with repo.transaction(db_path) as conn:
         return recover_pending_undo(conn, user_id)
+
+
+def reject_stale(db_path, user_id, transport_update_id, flow_id):
+    """Remember a rejected input without evaluating or resolving its old target."""
+    return record_control_transition(db_path, user_id, transport_update_id, flow_id,
+        "stale_frame", lambda conn: {"stale": True, "invalidate_frame": True, "flow_id": flow_id})
+
+
+def apply_manual_progress(db_path, user_id, word_id, mode, preview, action_key,
+                          transport_update_id, *, expected_generation=0, flow_id="manual_interval"):
+    """One frozen manual interval, one undo unit; never a quiz answer/event."""
+    with repo.transaction(db_path) as conn:
+        authorize_user(conn, user_id)
+        accepted = _accepted(conn, user_id, action_key, transport_update_id, flow_id, "manual_interval")
+        if accepted is not None:
+            return accepted
+        recovered = recover_pending_undo(conn, user_id)
+        if recovered:
+            return _record_recovery(conn, user_id, transport_update_id, flow_id, "manual_interval", recovered)
+        assert_generation(conn, user_id, word_id, expected_generation)
+        if not conn.execute("SELECT 1 FROM words WHERE id=?", (word_id,)).fetchone():
+            raise StaleStudyAction("manual interval parent no longer exists")
+        snapshot = repo.capture_snapshot(conn, user_id, word_id, [mode])
+        repo.set_progress(conn, user_id, word_id, mode, preview)
+        return _finish(conn, user_id, action_key, transport_update_id, flow_id,
+            "manual_interval", word_id, mode, snapshot, dict(preview), 0,
+            transaction_kind="add_int:" + mode)

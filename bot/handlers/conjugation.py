@@ -3,6 +3,9 @@
 import logging
 import uuid
 
+from ..common.verb_construction import display_infinitive, construction_label, reflexive_hint
+from ..study.generations import frame_generations
+
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, Update
 from telegram.error import TelegramError
 from telegram.ext import ContextTypes
@@ -80,17 +83,29 @@ def _reset_dice(context):
     context.user_data.pop(_DICE_RECENT, None)
 
 
+
+def _selected_generations(frame):
+    expected = frame_generations(frame.get('entry'))
+    question = frame.get('question')
+    if question:
+        expected[question['word_id']] = question.get('study_generation', 0)
+    for block in frame.get('scheduled', []):
+        expected.setdefault(block['word_id'], block.get('study_generation', 0))
+    return expected
+
+
 def _block_button(frame, block, operation, lang, include_word=False):
     token = uuid.uuid4().hex[:16]
     frame["callbacks"][token] = {
         "word_id": block["word_id"], "tense": block["tense"],
         "revision": block["revision"], "cycle": block["cycle"], "operation": operation,
+        "study_generation": block.get("study_generation", 0),
     }
     label = t(lang, "conjugation_ready" if operation == "ready" else "conjugation_return").format(
         tense="Präsens" if block["tense"] == "praesens" else "Präteritum")
     if include_word:
         entry = block.get("entry") or {}
-        label = str(entry.get("german") or entry.get("infinitive") or block["word_id"]) + " · " + label
+        label = (display_infinitive(entry) or block["word_id"]) + reflexive_hint(entry) + " · " + label
     return InlineKeyboardButton(label, callback_data="conj:" + operation + ":" + token)
 
 
@@ -129,13 +144,24 @@ async def _show_card(update, context, entry):
     context.user_data[_CARD_ENTRIES] = {mid: {"entry": entry, "masked": False}} if mid is not None else {}
 
 
+async def _close_stale(update, context):
+    context.user_data.pop(FRAME, None)
+    context.user_data.pop(_CURRENT_ID, None)
+    context.user_data.pop(_CARD_ENTRIES, None)
+    _reset_dice(context)
+    await _reply_text_with_retry(update.message, t(_user_interface_lang(update.effective_user.id), 'conjugation_stale'))
+    return await _back_to_tests(update, context)
+
+
 async def _render_preparation(update, context, result, primer=False):
     uid = update.effective_user.id
     if _recovered_undo(context, result):
         return await _back_to_tests(update, context)
     frame = context.user_data[FRAME]
     if result.get("stale"):
-        return CONJUGATION_MENU
+        if result.get('replayed'):
+            return CONJUGATION_MENU
+        return await _close_stale(update, context)
     if result.get("replayed"):
         if (not frame.get("pending_render")
                 or frame.get("pending_render_transport") != _transport_id(update)
@@ -196,10 +222,15 @@ async def _roll_dice(update, context):
         return CONJUGATION_MENU
     recent = context.user_data.get(_DICE_RECENT) or []
     receipt = _service().control(uid, frame["pair"], _transport_id(update), frame["flow_id"],
-                                 "conjugation_dice", lambda: {"pronoun": pick_dice_pronoun(recent[-2:])})
+                                 "conjugation_dice", lambda: {"pronoun": pick_dice_pronoun(recent[-2:])},
+                                 expected_generations=_selected_generations(frame))
     if _recovered_undo(context, receipt):
         return await _back_to_tests(update, context)
-    if receipt.get("replayed") or receipt.get("stale"):
+    if receipt.get("stale"):
+        if receipt.get('replayed'):
+            return CONJUGATION_MENU
+        return await _close_stale(update, context)
+    if receipt.get("replayed"):
         return CONJUGATION_MENU
     pronoun = receipt["pronoun"]
     context.user_data[_DICE_RECENT] = (recent + [pronoun])[-2:]
@@ -230,7 +261,8 @@ async def conjugation_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = (update.message.text or "").strip()
         action = _action_key_from_text(text, uid)
         if text == t(lang, "conjugation_stop") or action in ("stop", "back"):
-            receipt = _service().stop(uid, frame["pair"], frame["flow_id"], _transport_id(update))
+            receipt = _service().stop(uid, frame["pair"], frame["flow_id"], _transport_id(update),
+                                      expected_generations=_selected_generations(frame))
             if _recovered_undo(context, receipt):
                 return await _back_to_tests(update, context)
             if receipt.get("replayed"):
@@ -250,7 +282,8 @@ async def conjugation_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await _roll_dice(update, context)
         if text == t(lang, "conjugation_next"):
             viewed = context.user_data.get(_CURRENT_ID)
-            result = _service().preparation(uid, frame["pair"], _transport_id(update), frame["flow_id"], viewed_id=viewed)
+            result = _service().preparation(uid, frame["pair"], _transport_id(update), frame["flow_id"], viewed_id=viewed,
+                expected_generation=(frame.get("entry") or {}).get("study_generation", 0))
             if not result.get("replayed") and not result.get("stale") and viewed:
                 context.user_data[_SESSION_COUNT] = context.user_data.get(_SESSION_COUNT, 0) + 1
             return await _render_preparation(update, context, result)
@@ -293,10 +326,15 @@ async def conjugation_card_callback(update: Update, context: ContextTypes.DEFAUL
             if not target or target["operation"] != "page":
                 return
             result = _service().control(uid, frame["pair"], _transport_id(update), frame["flow_id"],
-                                         "conjugation_page", lambda: {"page": target["page"]})
+                                         "conjugation_page", lambda: {"page": target["page"]},
+                                         expected_generations=_selected_generations(frame))
             if _recovered_undo(context, result):
                 return await _back_to_tests(proxy_update, context)
-            if not result.get("replayed") and not result.get("stale"):
+            if result.get('stale'):
+                if result.get('replayed'):
+                    return
+                return await _close_stale(proxy_update, context)
+            if not result.get("replayed"):
                 _remember_callback_commit(context, transport)
                 frame["page"] = result["page"]
                 from .conjugation_test import _render_test_locked
@@ -308,10 +346,15 @@ async def conjugation_card_callback(update: Update, context: ContextTypes.DEFAUL
                 return
             result = _service().transition(
                 uid, frame["pair"], target["word_id"], target["tense"], target["revision"],
-                target["cycle"], target["operation"], _transport_id(update), frame["flow_id"])
+                target["cycle"], target["operation"], _transport_id(update), frame["flow_id"],
+                expected_generation=target.get("study_generation", 0))
             if _recovered_undo(context, result):
                 return await _back_to_tests(proxy_update, context)
-            if result.get("stale") or result.get("replayed"):
+            if result.get("stale"):
+                if result.get('replayed'):
+                    return
+                return await _close_stale(proxy_update, context)
+            if result.get("replayed"):
                 return
             _remember_callback_commit(context, transport)
             if frame["kind"] == "test":
@@ -325,10 +368,15 @@ async def conjugation_card_callback(update: Update, context: ContextTypes.DEFAUL
         if not state:
             return
         receipt = _service().control(uid, frame["pair"], _transport_id(update), frame["flow_id"],
-                                     "conjugation_visibility", lambda: {"masked": data[1] == "hide"})
+                                     "conjugation_visibility", lambda: {"masked": data[1] == "hide"},
+                                     expected_generations=_selected_generations(frame))
         if _recovered_undo(context, receipt):
             return await _back_to_tests(proxy_update, context)
-        if receipt.get("replayed") or receipt.get("stale"):
+        if receipt.get("stale"):
+            if receipt.get('replayed'):
+                return
+            return await _close_stale(proxy_update, context)
+        if receipt.get("replayed"):
             return
         _remember_callback_commit(context, transport)
         state["masked"] = receipt["masked"]

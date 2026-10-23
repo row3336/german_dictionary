@@ -3,6 +3,7 @@
 import random
 
 from ..app_config import is_owner
+from ..study.generations import selected_entry
 from ..storage import _cefr_filter_sql, _topic_filter_sql, _row_to_entry
 from ..common.word_filter import resolve_quiz_filter, effective_filter_fingerprint
 
@@ -21,7 +22,7 @@ def word(conn, user_id, word_id, dict_lang):
         if not is_owner(user_id):
             column = {'ru': 'russian', 'uk': 'ukrainian', 'en': 'english'}[dict_lang]
             entry['my_translation'] = media[column] or ''
-    return entry
+    return selected_entry(conn, user_id, entry)
 
 
 def due(conn, user_id, mode, options, today, excluded=()):
@@ -34,10 +35,10 @@ def due(conn, user_id, mode, options, today, excluded=()):
              """(EXISTS (SELECT 1 FROM learning_items l WHERE l.user_id=?
                  AND l.word_id=w.id AND l.status IN ('completed','skipped'))
                  OR EXISTS (SELECT 1 FROM quiz_events e WHERE e.user_id=?
-                 AND e.word_id=w.id AND e.mode!='learning')
+                 AND e.word_id=w.id AND e.study_generation=COALESCE((SELECT generation FROM study_word_generations sg WHERE sg.user_id=e.user_id AND sg.word_id=e.word_id),0) AND e.mode!='learning')
                  OR (?=1 AND p.word_id IS NOT NULL))""",
              """NOT EXISTS (SELECT 1 FROM quiz_events e WHERE e.user_id=?
-                 AND e.word_id=w.id AND e.mode=? AND e.is_correct=1
+                 AND e.word_id=w.id AND e.study_generation=COALESCE((SELECT generation FROM study_word_generations sg WHERE sg.user_id=e.user_id AND sg.word_id=e.word_id),0) AND e.mode=? AND e.is_correct=1
                  AND date(e.created_at)=date(?))"""]
     params = [today.isoformat(), today.isoformat(), user_id, user_id, user_id,
               int(phrase), user_id, mode, today.isoformat()]
@@ -56,7 +57,7 @@ def due(conn, user_id, mode, options, today, excluded=()):
         (SELECT MAX(l.updated_at) FROM learning_items l WHERE l.user_id=?
          AND l.word_id=w.id AND l.status IN ('completed','skipped')) AS done_at,
         EXISTS(SELECT 1 FROM quiz_events e WHERE e.user_id=? AND e.word_id=w.id
-               AND e.mode!='learning') AS history
+               AND e.study_generation=COALESCE((SELECT generation FROM study_word_generations sg WHERE sg.user_id=e.user_id AND sg.word_id=e.word_id),0) AND e.mode!='learning') AS history
         FROM words w LEFT JOIN progress p ON p.word_id=w.id AND p.user_id=? AND p.mode=?
         WHERE """ + ' AND '.join(where) + ' ORDER BY p.due,w.created_at',
         [user_id, user_id, user_id, mode, *params]).fetchall()
@@ -78,8 +79,10 @@ def pick_original(conn, user_id, mode, options, today, excluded, frame):
     if qf.topics == [] or qf.cefr_levels == []:
         pool.clear()
         return None
+    eligible_ids = None
     if not pool:
         candidates = due(conn, user_id, mode, options, today, sorted(excluded))
+        eligible_ids = {row['id'] for row in candidates}
         fresh, scheduled = [], []
         for row in candidates:
             target = fresh if (row['done_at'] and not row['history']
@@ -95,9 +98,11 @@ def pick_original(conn, user_id, mode, options, today, excluded, frame):
             if scheduled:
                 for _ in range(min(len(scheduled), random.randint(2, 3))):
                     pool.append(scheduled.pop(0))
+    if eligible_ids is None:
+        eligible_ids = {row['id'] for row in due(conn, user_id, mode, options, today, sorted(excluded))}
     while pool:
         wid = pool.pop(0)
-        if wid not in excluded:
+        if wid not in excluded and wid in eligible_ids:
             entry = word(conn, user_id, wid, options['dict_lang'])
             if entry:
                 reserved.add(wid)

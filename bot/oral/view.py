@@ -3,6 +3,7 @@
 from telegram import ReplyKeyboardMarkup
 
 from ..i18n import t
+from ..common.verb_construction import display_infinitive, construction_label, reflexive_hint
 from ..ui.formatting import (
     _entry_translation, _example_lines, _format_de_ru_question, _format_ru_question,
     _md_escape,
@@ -23,7 +24,9 @@ def question(entry, mode):
 def answer(entry, mode):
     if mode.removeprefix('phrase_').startswith('de_'):
         return '>>>    *' + _md_escape(_entry_translation(entry, dictionary_language(mode))) + '*'
-    return '>>>    *' + _md_escape(str(entry.get('german') or '').strip()) + '*'
+    value = (display_infinitive(entry) + reflexive_hint(entry)
+             if entry.get('type') == 'verb' else str(entry.get('german') or '').strip())
+    return '>>>    *' + _md_escape(value) + '*'
 
 
 def markup(frame, lang):

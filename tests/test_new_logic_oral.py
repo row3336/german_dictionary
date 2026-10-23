@@ -697,10 +697,6 @@ class OralMainIntegrationTests(unittest.TestCase):
                 def delete_word(_db, wid):
                     result = h.conn.execute('DELETE FROM words WHERE id=?', (wid,)).rowcount
                     h.conn.commit(); return bool(result)
-                def set_progress(_db, uid, wid, mode, srs):
-                    study_repo.set_progress(h.conn, uid, wid, mode, srs, NOW); h.conn.commit()
-                def log(uid, action, snapshot):
-                    study_repo.append_transaction(h.conn, uid, action, {'snapshot': snapshot}); h.conn.commit()
                 try:
                     h.add('a', 'b'); h.add('p', kind='phrase')
                     h.conn.execute('CREATE TABLE IF NOT EXISTS user_settings(user_id INTEGER,key TEXT,value TEXT,PRIMARY KEY(user_id,key))')
@@ -734,10 +730,6 @@ class OralMainIntegrationTests(unittest.TestCase):
                         stack.enter_context(patch.object(clarify, 'get_word_by_id', side_effect=lambda _db, wid: oral_repo.word(h.conn, UID, wid, 'ru')))
                         stack.enter_context(patch.object(clarify, '_format_word_card', side_effect=lambda entry, *a, **k: entry['german']))
                         stack.enter_context(patch.object(clarify, '_clarify_screen', return_value=None))
-                        stack.enter_context(patch.object(clarify, 'get_progress', side_effect=lambda _db, uid, wid, mode: study_repo.get_progress(h.conn, uid, wid, mode, DAY)))
-                        stack.enter_context(patch.object(clarify, 'set_progress', side_effect=set_progress))
-                        stack.enter_context(patch.object(clarify, '_capture_transaction_snapshot', side_effect=lambda uid, wid, modes: study_repo.capture_snapshot(h.conn, uid, wid, modes)))
-                        stack.enter_context(patch.object(clarify, '_log_transaction', side_effect=log))
                         stack.enter_context(patch.object(clarify, 'delete_word', side_effect=delete_word))
                         stack.enter_context(patch.object(notify, 'get_preference', side_effect=lambda _db, uid, kind: preferences.read_preference(h.conn, uid, kind)))
                         stack.enter_context(patch.object(quiz, '_pick_due_entry', side_effect=lambda context, uid, mode, **kw: oral_repo.pick_original(h.conn, uid, mode, h.options, DAY,

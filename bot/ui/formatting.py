@@ -8,6 +8,7 @@ from ..common.bot_media import resolve_bot_word_media
 from ..common.lang import _user_dict_lang
 from ..common.translation_view import translation_card_lines
 from ..common.conjugation import format_conjugation_block
+from ..common.verb_construction import display_infinitive, construction_label, reflexive_hint
 from ..i18n import t
 from ..storage import get_word_study_status
 from ..text_utils import cap_plural as _cap_plural
@@ -97,7 +98,7 @@ def _type_hint(entry):
     word_type = _low_word(entry.get("type", ""))
     if not word_type:
         return ""
-    parts = [word_type]
+    parts = [construction_label(entry)]
     if word_type == "praeposition":
         parts.extend(_preposition_hint_parts(entry))
     return f" ({', '.join(parts)})"
@@ -189,9 +190,9 @@ def _format_word_card(entry, title="Word card:", user_id=None):
         title,
         f"id: {entry.get('id', '')}",
         f"status: {status_line or '-'}",
-        f"type: {entry.get('type', '')}",
+        f"type: {construction_label(entry)}",
         f"article: {entry.get('article', '') or '-'}",
-        f"german: {entry.get('german', '') or '-'}",
+        f"german: {(display_infinitive(entry) if entry.get('type') == 'verb' else entry.get('german', '')) or '-'}",
         f"infinitive: {entry.get('infinitive', '') or '-'}",
         f"plural: {entry.get('plural', '') or '-'}",
         f"prateritum: {entry.get('prateritum', '') or '-'}",
@@ -248,9 +249,9 @@ def _format_conjugation_card(entry, dict_lang, mask=False):
     With ``mask=True`` (Feature B "hide forms") every conjugated form renders as
     ``***`` with the pronoun column intact, so the user can recite from memory.
     """
-    word = str(entry.get("german") or entry.get("infinitive") or "").strip()
+    word = display_infinitive(entry)
     translation = _entry_translation(entry, dict_lang)
-    header = f"*{_md_escape(word)}*"
+    header = f"*{_md_escape(word)}*{_md_escape(reflexive_hint(entry))}"
     if translation:
         header += f" — {_md_escape(translation)}"
     parts = [header]
@@ -288,8 +289,8 @@ def _format_de_ru_question(entry):
         if plural:
             lines.append(f"_  pl. die {_md_escape(plural)}_")
     elif word_type == "verb":
-        infinitive = _low_word(entry.get("infinitive", ""))
-        lines.append(_md_escape(infinitive))
+        infinitive = _low_word(display_infinitive(entry))
+        lines.append(_md_escape(infinitive + reflexive_hint(entry)))
         pr = _low_word(entry.get("prateritum", ""))
         if pr:
             lines.append(f"_  {_md_escape(pr)}_")
@@ -384,6 +385,8 @@ def _format_feedback_ru_de(entry, ok, lang="en"):
         base = _low_word(entry.get("german", ""))
         answer = f"{article} {base}".strip() if article else base
     headline = f"{status} >>>     *{_md_escape(answer)}*"
+    if word_type == "verb":
+        headline += _md_escape(reflexive_hint(entry))
     lines = [headline]
 
     if word_type == "nomen":
@@ -438,7 +441,7 @@ def _format_learning_preview_prompt(entry, dict_lang):
         if plural:
             lines.append(f"_pl. die {_md_escape(plural)}_")
     elif word_type == "verb":
-        infinitive = _low_word(entry.get("infinitive", ""))
+        infinitive = _low_word(display_infinitive(entry))
         lines.append(f"*{_md_escape(infinitive)}*")
         pr = _low_word(entry.get("prateritum", ""))
         p2 = _expected_partizip2(entry)
@@ -492,7 +495,7 @@ def _format_topic_learning_line(entry):
     entry_type = str(entry.get("type", "")).strip().lower()
     topic = str(entry.get("topic", "")).strip() or "-"
     if entry_type == "verb":
-        base = str(entry.get("infinitive", "")).strip()
+        base = display_infinitive(entry) + reflexive_hint(entry)
     else:
         base = str(entry.get("german", "")).strip()
     if entry_type == "nomen":

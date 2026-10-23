@@ -740,6 +740,8 @@ def _row_to_entry(row):
             else None
         ),
     }
+    if "selected_generation" in row.keys():
+        entry["study_generation"] = row["selected_generation"]
     if "seen_count" in row.keys():
         entry["seen_count"] = int(row["seen_count"] or 0)
     if "last_seen_at" in row.keys():
@@ -2302,6 +2304,7 @@ def select_due(
     cefr_levels=None,
     today=None,
     exclude_correct_today=False,
+    conn=None,
 ):
     """Handle select due.
 
@@ -2311,7 +2314,8 @@ def select_due(
     if today is None:
         today = date.today()
     due_today = today.isoformat()
-    init_db(db_path)
+    if conn is None:
+        init_db(db_path)
 
     where_clauses = [
         "COALESCE(p.due, ?) <= ?",
@@ -2378,6 +2382,7 @@ def select_due(
 
     query = f"""
         SELECT
+            COALESCE((SELECT generation FROM study_word_generations sg WHERE sg.user_id=? AND sg.word_id=w.id),0) AS selected_generation,
             w.id, w.reflexive_case, w.conjugation_praesens, w.conjugation_praeteritum, w.is_separable, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ, w.russian,
             w.ukrainian, w.english, w.image, w.example, w.topic, w.preposition_type, w.case_type, ldone.done_at AS learning_done_at,
             CASE WHEN EXISTS (
@@ -2408,9 +2413,10 @@ def select_due(
 
     # Param order must match placeholder order in the query above:
     # has_non_learning_history (user_id), progress join (user_id, mode), ldone (user_id).
-    params = [int(user_id), int(user_id), mode, int(user_id)] + where_params
-    with _connect(db_path) as conn:
-        rows = conn.execute(query, tuple(params)).fetchall()
+    params = [int(user_id), int(user_id), int(user_id), mode, int(user_id)] + where_params
+    from contextlib import nullcontext
+    with (_connect(db_path) if conn is None else nullcontext(conn)) as active:
+        rows = active.execute(query, tuple(params)).fetchall()
 
     result = []
     for row in rows:
@@ -2670,30 +2676,10 @@ def learning_add_word_by_id(db_path, user_id, word_id, batch_id, first_delay_sec
 
 
 def learning_preview_entry(db_path, user_id):
-    """Handle learning preview entry."""
     init_db(db_path)
+    from .learning_store import preview_entry
     with _connect(db_path) as conn:
-        row = conn.execute(
-            """
-            SELECT
-                w.id, w.reflexive_case, w.conjugation_praesens, w.conjugation_praeteritum, w.is_separable, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ,
-                w.russian, w.ukrainian, w.english, w.image, w.example, w.topic, w.preposition_type, w.case_type,
-                li.step_index AS learning_step,
-                li.next_due AS learning_due,
-                li.batch_id AS learning_batch_id,
-                li.recovery_remaining AS learning_recovery_remaining,
-                li.first_due_pending AS learning_first_due_pending
-            FROM learning_items li
-            JOIN words w ON w.id = li.word_id
-            WHERE li.user_id = ?
-              AND li.status = 'active'
-              AND li.preview_done = 0
-            ORDER BY li.created_at ASC
-            LIMIT 1
-            """,
-            (int(user_id),),
-        ).fetchone()
-    return _row_to_entry(row) if row else None
+        return preview_entry(conn, user_id)
 
 
 def learning_mark_preview_next(db_path, user_id, word_id, first_interval_seconds):
@@ -2706,52 +2692,10 @@ def learning_mark_preview_next(db_path, user_id, word_id, first_interval_seconds
 
 
 def learning_due_entries(db_path, user_id, exclude_word_id=None):
-    """Return due learning entries."""
     init_db(db_path)
-    now_iso = _utc_now_iso()
-    base_query = """
-            SELECT
-                w.id, w.reflexive_case, w.conjugation_praesens, w.conjugation_praeteritum, w.is_separable, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ,
-                w.russian, w.ukrainian, w.english, w.image, w.example, w.topic, w.preposition_type, w.case_type,
-                li.step_index AS learning_step,
-                li.next_due AS learning_due,
-                li.batch_id AS learning_batch_id,
-                li.recovery_remaining AS learning_recovery_remaining,
-                li.first_due_pending AS learning_first_due_pending
-            FROM learning_items li
-            JOIN words w ON w.id = li.word_id
-            WHERE li.user_id = ?
-              AND li.status = 'active'
-              AND li.preview_done = 1
-              AND li.first_due_pending = 0
-              AND li.next_due <= ?
-    """
-    order_clause = """
-            ORDER BY
-              CASE WHEN li.step_index = 0 THEN 0 ELSE 1 END ASC,
-              CASE WHEN li.step_index = 0 THEN li.created_at ELSE NULL END ASC,
-              li.next_due ASC,
-              li.updated_at ASC
-    """
+    from .learning_store import due_entries
     with _connect(db_path) as conn:
-        if exclude_word_id:
-            rows = conn.execute(
-                f"""
-                {base_query}
-                  AND w.id != ?
-                {order_clause}
-                """,
-                (int(user_id), now_iso, _safe_text(exclude_word_id)),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                f"""
-                {base_query}
-                {order_clause}
-                """,
-                (int(user_id), now_iso),
-            ).fetchall()
-    return [_row_to_entry(row) for row in rows]
+        return [entry for entry in due_entries(conn, user_id) if entry['id'] != exclude_word_id]
 
 
 def learning_due_entry(db_path, user_id, exclude_word_id=None):
@@ -3267,6 +3211,19 @@ def add_synonym_link(db_path, anchor_word_id, target_word_id):
         return False, None
     init_db(db_path)
     with _connect(db_path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        from .common.verb_construction import synonym_compatible
+        members = conn.execute("""SELECT DISTINCT w.* FROM words w
+            WHERE w.id IN (?,?) OR w.id IN
+            (SELECT s.word_id FROM word_synonyms s WHERE s.group_id IN
+             (SELECT group_id FROM word_synonyms WHERE word_id IN (?,?)))""", (a,b,a,b)).fetchall()
+        entries = [dict(row) for row in members]
+        if not {a,b}.issubset({entry['id'] for entry in entries}):
+            return False, None
+        # Validate the complete union before creating even an empty group.
+        if any(not synonym_compatible(left, right)
+               for index, left in enumerate(entries) for right in entries[index+1:]):
+            return False, None
         g1 = _get_or_create_group(conn, a)
         g2 = _get_or_create_group(conn, b)
         if g1 == g2:
