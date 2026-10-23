@@ -114,9 +114,8 @@ class SelectDueGatingTests(unittest.TestCase):
 
 class ForecastPhraseScheduleTests(unittest.TestCase):
     def setUp(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.db = os.path.join(tmp.name, "forecast.db")
+        tmp = tempfile.mkdtemp(prefix="retained-forecast-")
+        self.db = os.path.join(tmp, "forecast.db")
         init_db(self.db)
         self.today = date.today().isoformat()
         self.future = (date.today() + timedelta(days=7)).isoformat()

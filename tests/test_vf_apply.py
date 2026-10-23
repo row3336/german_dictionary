@@ -115,7 +115,7 @@ class ApplyTest(unittest.TestCase):
 
     def test_apply_batch_writes_words_and_conjugation(self):
         entries = [
-            {"type": "verb", "infinitive": "gehen", "russian": "идти", "topic": "1", "conjugation_praesens": GEHEN_CONJ},
+            {"type": "verb", "reflexive_case": "none", "infinitive": "gehen", "russian": "идти", "topic": "1", "conjugation_praesens": GEHEN_CONJ},
             {"type": "nomen", "article": "das", "german": "Haus", "plural": "Häuser", "russian": "дом", "topic": "1"},
         ]
         added, updated, dups, errors = AF.apply_batch(self.db, entries)
@@ -132,6 +132,7 @@ class ApplyTest(unittest.TestCase):
         entries = [
             {
                 "type": "verb",
+                "reflexive_case": "none",
                 "infinitive": f"verb-{index}",
                 "russian": "глагол",
                 "topic": "1",

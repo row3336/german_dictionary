@@ -354,7 +354,9 @@ class IndependentOralMainQA(unittest.TestCase):
         import os
         from pathlib import Path
         from uuid import uuid4
-        stand = Path('/Users/wf/py/_agent_work/888_german_dictionary/new_logic_20261020')
+        stand = Path(os.environ.get('TMPDIR', Path('/Users/wf/py/_agent_work/888_german_dictionary/new_logic_20261020').as_posix()))
+        if not stand.resolve().is_relative_to(Path('/Users/wf/py/_agent_work/888_german_dictionary').resolve()):
+            stand = Path('/Users/wf/py/_agent_work/888_german_dictionary/new_logic_20261020')
         # Legacy tests may remove runner variables. Each real-dispatch fixture
         # supplies its own safe paths and restores the caller after the test.
         self.enterContext(patch.dict(os.environ, {

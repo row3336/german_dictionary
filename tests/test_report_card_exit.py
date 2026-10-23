@@ -23,7 +23,7 @@ if "dotenv" not in sys.modules:  # some bot modules do `from dotenv import load_
 
 from bot.app_config import ADD_EDIT, MENU, TESTS_MENU  # noqa: E402
 from bot.handlers.clarify_fields import _exit_clarify, open_clarify_from_report
-from bot.storage import init_db
+from bot.storage import add_word, init_db
 
 OWNER = 999
 
@@ -61,6 +61,7 @@ class ReportCardExitTest(unittest.TestCase):
         self.db = tmp.name
         self.addCleanup(lambda: os.unlink(self.db))
         init_db(self.db)
+        add_word(self.db, {"id": "w1", "german": "Buch", "type": "nomen", "article": "das"})
         self._old = {k: os.environ.get(k) for k in ("DB_PATH", "OWNER_ID")}
         os.environ["DB_PATH"] = self.db
         os.environ["OWNER_ID"] = str(OWNER)

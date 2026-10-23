@@ -7,6 +7,9 @@ import unittest
 
 from bot.common.db_safety import (
     SCHEMA_VERSION,
+    DestructiveMigrationRequired,
+    _apply_migration_dispatcher,
+    database_fingerprint,
     apply_migrations_safely,
     get_user_version,
     run_healthcheck,
@@ -120,7 +123,13 @@ class MigrationFromOldSchemaTest(unittest.TestCase):
         conn.commit()
         conn.close()
 
-        init_db(db)  # run the migration
+        set_user_version(db, 0)  # Explicit legacy source marker.
+        before = database_fingerprint(db)
+        with self.assertRaises(DestructiveMigrationRequired):
+            init_db(db)
+        self.assertEqual(database_fingerprint(db), before)
+        _apply_migration_dispatcher(db)
+        self.assertEqual(get_user_version(db), SCHEMA_VERSION)
 
         cols = _schema(db)
         for col in ("ukrainian", "english", "topic", "image", "example",

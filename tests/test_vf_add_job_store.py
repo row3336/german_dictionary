@@ -5,7 +5,8 @@ import sqlite3
 import tempfile
 import unittest
 
-from bot.common.db_safety import SCHEMA_VERSION
+from bot.common.db_safety import (SCHEMA_VERSION, DestructiveMigrationRequired,
+    database_fingerprint, get_user_version, set_user_version)
 from bot.storage import init_db
 from bot.verb_forms_parsing import job_store as JS
 
@@ -53,9 +54,8 @@ class VfAddJobStoreTest(unittest.TestCase):
         self.assertEqual(items[0]["result"]["infinitive"], "gehen")  # JSON round-trips
         self.assertEqual(items[1]["error"], "fetch failed")
 
-    def test_type_hint_column_added_to_legacy_items_table(self):
-        # a pre-type_hint vf_add_items table gains the column on init_db, add-only,
-        # without touching existing rows
+    def test_explicit_additive_component_adds_type_hint_to_legacy_items_table(self):
+        """Explicit additive normalization preserves a legacy row; startup stays guarded."""
         conn = sqlite3.connect(self.db)
         conn.execute("DROP TABLE vf_add_items")
         conn.execute(
@@ -66,7 +66,13 @@ class VfAddJobStoreTest(unittest.TestCase):
         conn.execute("INSERT INTO vf_add_items (job_id, position, word) VALUES (1, 0, 'legacy')")
         conn.commit()
         conn.close()
-        init_db(self.db)  # re-run migration
+        set_user_version(self.db, 0)
+        before = database_fingerprint(self.db)
+        with self.assertRaises(DestructiveMigrationRequired):
+            init_db(self.db)
+        self.assertEqual(database_fingerprint(self.db), before)
+        init_db(self.db, _additive_only=True)
+        self.assertEqual(get_user_version(self.db), 0)
         conn = sqlite3.connect(self.db)
         cols = {r[1] for r in conn.execute("PRAGMA table_info(vf_add_items)")}
         row = conn.execute("SELECT word, type_hint FROM vf_add_items WHERE word='legacy'").fetchone()

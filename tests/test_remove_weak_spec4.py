@@ -52,16 +52,16 @@ def _schema(db_path):
 
 class FreshSchemaWithoutWeakTest(unittest.TestCase):
     def test_fresh_database_has_no_weak_schema(self):
-        with tempfile.TemporaryDirectory() as directory:
-            db = os.path.join(directory, "words.db")
-            init_db(db)
-            tables, columns, indexes = _schema(db)
-            with closing(sqlite3.connect(db)) as conn:
-                setting_keys = {
-                    row[0]
-                    for table in ("user_settings", "app_settings")
-                    for row in conn.execute(f"SELECT key FROM {table}")
-                }
+        directory = tempfile.mkdtemp(prefix="retained-weak-")
+        db = os.path.join(directory, "words.db")
+        init_db(db)
+        tables, columns, indexes = _schema(db)
+        with closing(sqlite3.connect(db)) as conn:
+            setting_keys = {
+                row[0]
+                for table in ("user_settings", "app_settings")
+                for row in conn.execute(f"SELECT key FROM {table}")
+            }
 
         self.assertNotIn("form_stats", tables)
         self.assertNotIn("review_stage_snapshot", columns["quiz_events"])
@@ -69,35 +69,34 @@ class FreshSchemaWithoutWeakTest(unittest.TestCase):
         self.assertTrue({"weak_drill_gap", "weak_drill_repeats"}.isdisjoint(setting_keys))
 
     def test_old_snapshot_form_stats_payload_is_ignored(self):
-        with tempfile.TemporaryDirectory() as directory:
-            db = os.path.join(directory, "words.db")
-            init_db(db)
-            word_id = add_word(
-                db,
-                {
-                    "type": "nomen",
-                    "article": "das",
-                    "german": "Haus",
-                    "plural": "Häuser",
-                    "russian": "дом",
-                },
-            )["id"]
-            snapshot = {
+        directory = tempfile.mkdtemp(prefix="retained-weak-")
+        db = os.path.join(directory, "words.db")
+        init_db(db)
+        word_id = add_word(
+            db,
+            {
+                "type": "nomen",
+                "article": "das",
+                "german": "Haus",
+                "plural": "Häuser",
+                "russian": "дом",
+            },
+        )["id"]
+        snapshot = {
+            "user_id": 7,
+            "word_id": word_id,
+            "modes": ["ru_de"],
+            "progress": {"ru_de": None},
+            "form_stats": {
                 "user_id": 7,
                 "word_id": word_id,
-                "modes": ["ru_de"],
-                "progress": {"ru_de": None},
-                "form_stats": {
-                    "user_id": 7,
-                    "word_id": word_id,
-                    "article_errors": 2,
-                },
-                "learning_item": None,
-                "event_counts": {"ru_de": 0},
-            }
-
-            self.assertTrue(restore_user_word_state(db, snapshot))
-            self.assertNotIn("form_stats", _schema(db)[0])
+                "article_errors": 2,
+            },
+            "learning_item": None,
+            "event_counts": {"ru_de": 0},
+        }
+        self.assertTrue(restore_user_word_state(db, snapshot))
+        self.assertNotIn("form_stats", _schema(db)[0])
 
     def test_ru_de_handler_has_no_form_stats_call(self):
         source = (Path(__file__).parents[1] / "bot" / "handlers" / "quiz.py").read_text(
@@ -131,10 +130,15 @@ class FreshSchemaWithoutWeakTest(unittest.TestCase):
 
 class RemoveWeakMigrationV17Test(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.db = os.path.join(self.tmp.name, "words.db")
-        self.backups = os.path.join(self.tmp.name, "backups")
+        self.tmp = tempfile.mkdtemp(prefix="retained-fixture-")
+        self.db = os.path.join(self.tmp, "words.db")
+        self.backups = os.path.join(self.tmp, "backups")
         init_db(self.db)
+        with closing(sqlite3.connect(self.db)) as conn:
+            # Historical fixtures must not retain the v19 generation index/column.
+            conn.execute("DROP INDEX quiz_events_generation")
+            conn.execute("ALTER TABLE quiz_events DROP COLUMN study_generation")
+            conn.commit()
         set_user_version(self.db, 16)
         with closing(sqlite3.connect(self.db)) as conn:
             conn.execute("ALTER TABLE quiz_events ADD COLUMN review_stage_snapshot INTEGER")
@@ -246,7 +250,7 @@ class RemoveWeakMigrationV17Test(unittest.TestCase):
             conn.commit()
 
     def tearDown(self):
-        self.tmp.cleanup()
+        pass  # Retain the synthetic runtime under the runner's explicit TMPDIR.
 
     def _rows(self, sql, params=()):
         with closing(sqlite3.connect(self.db)) as conn:
@@ -353,27 +357,24 @@ class RemoveWeakMigrationV17Test(unittest.TestCase):
 
 class MigrationSequenceTest(unittest.TestCase):
     def test_v15_runs_v16_then_v17_in_exact_order(self):
-        with tempfile.TemporaryDirectory() as directory:
-            db = os.path.join(directory, "words.db")
-            init_db(db)
-            set_user_version(db, 15)
-            observed = []
-            original_v16 = db_safety._migrate_phrase_modes_v16
-            original_v17 = db_safety._migrate_remove_weak_v17
-
-            def observe_v16(conn, today=None):
-                observed.append(("v16", conn.execute("PRAGMA user_version").fetchone()[0]))
-                return original_v16(conn, today=today)
-
-            def observe_v17(conn):
-                observed.append(("v17", conn.execute("PRAGMA user_version").fetchone()[0]))
-                return original_v17(conn)
-
-            with (
-                patch("bot.common.db_safety._migrate_phrase_modes_v16", side_effect=observe_v16),
-                patch("bot.common.db_safety._migrate_remove_weak_v17", side_effect=observe_v17),
-            ):
-                apply_destructive_migrations_safely(db, os.path.join(directory, "backups"))
+        directory = tempfile.mkdtemp(prefix="retained-weak-")
+        db = os.path.join(directory, "words.db")
+        init_db(db)
+        set_user_version(db, 15)
+        observed = []
+        original_v16 = db_safety._migrate_phrase_modes_v16
+        original_v17 = db_safety._migrate_remove_weak_v17
+        def observe_v16(conn, today=None):
+            observed.append(("v16", conn.execute("PRAGMA user_version").fetchone()[0]))
+            return original_v16(conn, today=today)
+        def observe_v17(conn):
+            observed.append(("v17", conn.execute("PRAGMA user_version").fetchone()[0]))
+            return original_v17(conn)
+        with (
+            patch("bot.common.db_safety._migrate_phrase_modes_v16", side_effect=observe_v16),
+            patch("bot.common.db_safety._migrate_remove_weak_v17", side_effect=observe_v17),
+        ):
+            apply_destructive_migrations_safely(db, os.path.join(directory, "backups"))
 
         self.assertEqual(observed, [("v16", 15), ("v17", 16)] * 2)
 

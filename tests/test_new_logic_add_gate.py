@@ -98,7 +98,7 @@ class AddGateTest(unittest.TestCase):
     def test_cached_add_edit_rejects_but_ordinary_clarify_stays_open(self):
         ctx = self.context(); ctx.user_data.update(edit_source="add", edit_stage="enter_value", edit_field="ru")
         self.assertEqual(asyncio.run(C.clarify_fields_input(update(text="new"), ctx)), MENU)
-        entry = add_word(self.db, {"id": "a", "type": "verb", "german": "gehen", "infinitive": "gehen", "russian": "идти"})
+        entry = add_word(self.db, {"reflexive_case": "none", "id": "a", "type": "verb", "german": "gehen", "infinitive": "gehen", "russian": "идти"})
         ctx.user_data.update(edit_source="quiz", quiz_edit_entry=entry, edit_stage="pick_field")
         self.assertEqual(asyncio.run(C.clarify_fields_input(update(text="image"), ctx)), ADD_EDIT)
 

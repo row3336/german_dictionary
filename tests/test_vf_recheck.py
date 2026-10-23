@@ -87,7 +87,7 @@ class RecheckTest(unittest.TestCase):
         self._old = os.environ.get("DB_PATH")
         os.environ["DB_PATH"] = self.db
         self.addCleanup(lambda: os.environ.__setitem__("DB_PATH", self._old) if self._old else os.environ.pop("DB_PATH", None))
-        self.gehen = add_word(self.db, {"type": "verb", "infinitive": "gehen", "russian": "идти", "topic": "1"})["id"]
+        self.gehen = add_word(self.db, {"reflexive_case": "none", "type": "verb", "infinitive": "gehen", "russian": "идти", "topic": "1"})["id"]
         self.haus = add_word(self.db, {"type": "nomen", "article": "das", "german": "Haus", "russian": "дом", "topic": "1"})["id"]
         self.mit = add_word(self.db, {
             "type": "praeposition", "german": "mit", "russian": "с", "topic": "1",

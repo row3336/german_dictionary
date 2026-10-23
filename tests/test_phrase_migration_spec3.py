@@ -23,10 +23,15 @@ from bot.storage import init_db, select_due, update_progress
 
 class PhraseMigrationV16Test(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.db = os.path.join(self.tmp.name, "words.db")
-        self.backups = os.path.join(self.tmp.name, "backups")
+        self.tmp = tempfile.mkdtemp(prefix="retained-fixture-")
+        self.db = os.path.join(self.tmp, "words.db")
+        self.backups = os.path.join(self.tmp, "backups")
         init_db(self.db)
+        with closing(sqlite3.connect(self.db)) as conn:
+            # Historical fixtures must not retain the v19 generation index/column.
+            conn.execute("DROP INDEX quiz_events_generation")
+            conn.execute("ALTER TABLE quiz_events DROP COLUMN study_generation")
+            conn.commit()
         set_user_version(self.db, 15)
         self.migration_day = date(2026, 8, 29)
         with closing(sqlite3.connect(self.db)) as conn:
@@ -94,7 +99,7 @@ class PhraseMigrationV16Test(unittest.TestCase):
             conn.commit()
 
     def tearDown(self):
-        self.tmp.cleanup()
+        pass  # Retain the synthetic runtime under the runner's explicit TMPDIR.
 
     def _rows(self, sql, params=()):
         with closing(sqlite3.connect(self.db)) as conn:

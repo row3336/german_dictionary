@@ -10,9 +10,8 @@ from bot.storage import add_word, get_word_by_id, init_db, update_word_fields
 
 class SeparableStorageTest(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        self.db = os.path.join(self.tmp.name, "words.db")
+        self.tmp = tempfile.mkdtemp(prefix="retained-fixture-")
+        self.db = os.path.join(self.tmp, "words.db")
         init_db(self.db)
 
     def _add(self, infinitive, value):
@@ -20,6 +19,7 @@ class SeparableStorageTest(unittest.TestCase):
             self.db,
             {
                 "type": "verb",
+                "reflexive_case": "none",
                 "infinitive": infinitive,
                 "russian": infinitive,
                 "topic": "1",

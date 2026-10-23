@@ -15,8 +15,8 @@ from scripts.reconcile_book_topics import (
 
 class ReconcileBookTopicsTest(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self.tmp.name)
+        self.tmp = tempfile.mkdtemp(prefix="retained-fixture-")
+        self.root = Path(self.tmp)
         self.db = self.root / "words.db"
         init_db(self.db)
         with sqlite3.connect(self.db) as conn:
@@ -40,7 +40,7 @@ class ReconcileBookTopicsTest(unittest.TestCase):
         set_user_setting(self.db, 7, "topic_filter", "02,4,01")
 
     def tearDown(self):
-        self.tmp.cleanup()
+        pass  # Retain the synthetic runtime under the runner's explicit TMPDIR.
 
     def _snapshot(self):
         with sqlite3.connect(self.db) as conn:

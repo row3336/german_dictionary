@@ -148,6 +148,8 @@ class _LearningDbTest(unittest.TestCase):
             {"id": "unique", "type": "nomen", "article": "der", "german": "Ingenieur",
              "plural": "Ingenieure", "russian": "инженер", "ukrainian": "інженер", "english": "engineer", "topic": "1"},
         )
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("UPDATE topics SET level='A1' WHERE name='1'")
 
     def _restore(self):
         for k, v in self._old.items():

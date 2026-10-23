@@ -103,7 +103,7 @@ class SnapshotTest(unittest.TestCase):
         self.db = _mk_db(words=3)
         self.work = tempfile.mkdtemp()
         self.addCleanup(lambda: os.unlink(self.db))
-        self.addCleanup(lambda: shutil.rmtree(self.work, ignore_errors=True))
+        # Retain the synthetic work directory under the runner's explicit TMPDIR.
 
     def test_snapshot_is_valid_gzip_with_expected_meta(self):
         now = datetime(2026, 7, 12, 3, 0, tzinfo=timezone.utc)
@@ -179,7 +179,7 @@ class SendPipelineTest(unittest.TestCase):
         self.db = _mk_db(words=2)
         self.work = tempfile.mkdtemp()
         self.addCleanup(lambda: os.unlink(self.db))
-        self.addCleanup(lambda: shutil.rmtree(self.work, ignore_errors=True))
+        # Retain the synthetic work directory under the runner's explicit TMPDIR.
 
     def test_success_sends_document_and_cleans_up(self):
         client = FakeClient()
@@ -245,7 +245,7 @@ class EncryptionTest(unittest.TestCase):
         self.db = _mk_db(words=2)
         self.work = tempfile.mkdtemp()
         self.addCleanup(lambda: os.unlink(self.db))
-        self.addCleanup(lambda: shutil.rmtree(self.work, ignore_errors=True))
+        # Retain the synthetic work directory under the runner's explicit TMPDIR.
 
     def test_file_roundtrip(self):
         pub_b64, priv_b64 = C.generate_keypair()

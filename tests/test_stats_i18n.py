@@ -45,7 +45,7 @@ class StatsI18nTest(unittest.TestCase):
         self.addCleanup(self._restore)
         register_or_update_user(self.db, GUEST, "g", "G")
         # one verb so 'word types:' has a German type line
-        add_word(self.db, {"type": "verb", "german": "gehen", "infinitive": "gehen", "russian": "идти", "topic": "1"})
+        add_word(self.db, {"reflexive_case": "none", "type": "verb", "german": "gehen", "infinitive": "gehen", "russian": "идти", "topic": "1"})
 
     def _restore(self):
         for k, v in self._old.items():

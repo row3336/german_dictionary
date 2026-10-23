@@ -61,8 +61,8 @@ class Migration18Test(unittest.TestCase):
         learning_before = self.contents(db, ["learning_items"])["learning_items"]
         report = db_safety._apply_migration_dispatcher(db)
         self.assertEqual(report["from_version"], 17)
-        self.assertEqual(report["to_version"], 19)
-        self.assertEqual(set(report["steps"]), {"study_v18", "reflexive_v19"})
+        self.assertEqual(report["to_version"], 20)
+        self.assertEqual(set(report["steps"]), {"study_v18", "reflexive_v19", "learning_requests_v20"})
         self.assertEqual(self.contents(db, before), before)
         with repo.transaction(db) as conn:
             rows = [dict(r) for r in conn.execute("SELECT * FROM learning_items ORDER BY word_id")]
@@ -92,7 +92,7 @@ class Migration18Test(unittest.TestCase):
                 self.assertEqual(seen, [17])
                 self.assertEqual(list(report["steps"]),
                                  (["phrase_modes_v16"] if source == 15 else []) +
-                                 (["remove_weak_v17"] if source <= 16 else []) + ["study_v18", "reflexive_v19"])
+                                 (["remove_weak_v17"] if source <= 16 else []) + ["study_v18", "reflexive_v19", "learning_requests_v20"])
                 self.assertTrue(report["healthcheck"]["ok"])
 
     def test_v18_failure_rolls_back_schema_marker_and_old_data(self):
@@ -129,7 +129,7 @@ class Migration18Test(unittest.TestCase):
         with self.assertRaises(db_safety.DestructiveMigrationRequired):
             db_safety.prepare_storage_safely(db, str(Path(db).parent / "backups"))
         with repo.transaction(db) as conn:
-            conn.execute("PRAGMA user_version=20")
+            conn.execute("PRAGMA user_version=21")
         with self.assertRaisesRegex(RuntimeError, "newer"):
             db_safety._apply_migration_dispatcher(db)
         with self.assertRaisesRegex(RuntimeError, "newer"):

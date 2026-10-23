@@ -5,6 +5,7 @@ default. Strictly user-scoped — one user's algo never affects another or the o
 """
 
 import os
+import sqlite3
 import tempfile
 import unittest
 
@@ -96,6 +97,9 @@ class TopicFilterPerUserTest(unittest.TestCase):
     def setUp(self):
         self.db = _mk()
         init_db(self.db)
+        with sqlite3.connect(self.db) as conn:
+            conn.executemany("INSERT INTO topics(name, level) VALUES (?, 'A1')",
+                             [("1",), ("2",), ("food",)])
         self._old_db_path = os.environ.get("DB_PATH")
         os.environ["DB_PATH"] = self.db
 
@@ -119,7 +123,7 @@ class TopicFilterPerUserTest(unittest.TestCase):
     def test_for_query_parses_per_user(self):
         set_user_setting(self.db, U1, TOPIC_FILTER_KEY, "2+food")
         self.assertEqual(_topic_filter_for_query(U1), ["2", "food"])
-        self.assertEqual(_topic_filter_for_query(U2), ["1"])  # default topic
+        self.assertEqual(_topic_filter_for_query(U2), ["1", "2", "food"])  # Absent legacy filter selects all A1 topics.
 
     def test_global_fallback_then_own_override(self):
         set_setting(self.db, TOPIC_FILTER_KEY, "3")  # legacy/global default

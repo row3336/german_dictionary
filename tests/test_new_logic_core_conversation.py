@@ -13,7 +13,9 @@ from pathlib import Path
 
 def synthetic_dispatch_environment():
     from bot.storage import init_db
-    stand = Path('/Users/wf/py/_agent_work/888_german_dictionary/new_logic_learning_tests')
+    stand = Path(os.environ.get('TMPDIR', Path('/Users/wf/py/_agent_work/888_german_dictionary/new_logic_learning_tests').as_posix()))
+    if not stand.resolve().is_relative_to(Path('/Users/wf/py/_agent_work/888_german_dictionary').resolve()):
+        stand = Path('/Users/wf/py/_agent_work/888_german_dictionary/new_logic_learning_tests')
     stand.mkdir(parents=True, exist_ok=True)
     db = str(Path(tempfile.mkdtemp(prefix='dispatch-', dir=stand)) / 'synthetic.sqlite')
     init_db(db)

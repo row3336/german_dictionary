@@ -28,7 +28,9 @@ def actual_suite():
     from bot.written.state import establish_view, FRAME
 
     NOW=datetime(2026,10,23,12,tzinfo=timezone.utc)
-    STAND=Path('/Users/wf/py/_agent_work/888_german_dictionary/k15_impl_20261023')
+    STAND= Path(os.environ.get('TMPDIR', Path('/Users/wf/py/_agent_work/888_german_dictionary/k15_impl_20261023').as_posix()))
+    if not STAND.resolve().is_relative_to(Path('/Users/wf/py/_agent_work/888_german_dictionary').resolve()):
+        STAND = Path('/Users/wf/py/_agent_work/888_german_dictionary/k15_impl_20261023')
 
     class OfflineRequest(BaseRequest):
         attempts=0

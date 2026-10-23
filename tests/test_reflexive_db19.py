@@ -117,11 +117,11 @@ class ReflexiveDB19Test(unittest.TestCase):
         for source in (0, 14, 15, 16, 17, 18):
             old_schema(db, source)
             report = db_safety._apply_migration_dispatcher(db)
-            assert report["to_version"] == 19
+            assert report["to_version"] == 20
             assert report["healthcheck"]["ok"]
             assert not db_safety._apply_migration_dispatcher(db)["migrated"]
             with repo.transaction(db) as conn:
-                conn.execute("PRAGMA user_version=20")
+                conn.execute("PRAGMA user_version=21")
             with self.assertRaisesRegex(RuntimeError, "newer"):
                 storage.init_db(db)
             with self.assertRaisesRegex(RuntimeError, "newer"):

@@ -68,7 +68,9 @@ class _Context:
 
 class RetryInputErrBudgetTest(unittest.TestCase):
     def setUp(self):
-        stand = Path('/Users/wf/py/_agent_work/888_german_dictionary/k15_impl_20261023')
+        stand = Path(os.environ.get('TMPDIR', Path('/Users/wf/py/_agent_work/888_german_dictionary/k15_impl_20261023').as_posix()))
+        if not stand.resolve().is_relative_to(Path('/Users/wf/py/_agent_work/888_german_dictionary').resolve()):
+            stand = Path('/Users/wf/py/_agent_work/888_german_dictionary/k15_impl_20261023')
         stand.mkdir(parents=True, exist_ok=True)
         self.db = str(Path(tempfile.mkdtemp(prefix='retry-budget-', dir=stand)) / 'synthetic.sqlite')
         init_db(self.db)

@@ -50,7 +50,7 @@ class UserVersionTest(unittest.TestCase):
         d = tempfile.mkdtemp()
         db = os.path.join(d, "words.db")
         init_db(db)
-        self.assertEqual(get_user_version(db), 0)  # init_db must not touch the marker
+        self.assertEqual(get_user_version(db), SCHEMA_VERSION)  # Fresh init_db creates the current schema
         set_user_version(db, 7)
         self.assertEqual(get_user_version(db), 7)
 

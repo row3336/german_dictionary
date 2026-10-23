@@ -40,7 +40,11 @@ class _Msg:
 
 
 class _Update:
+    _next_id = 100
+
     def __init__(self, uid, text=""):
+        self.update_id = type(self)._next_id
+        type(self)._next_id += 1
         self.message = _Msg(text)
         self.effective_user = type("U", (), {"id": uid, "username": "u", "first_name": "U"})()
         self.effective_chat = type("C", (), {"id": uid})()
@@ -74,6 +78,7 @@ class QuizI18nTest(unittest.TestCase):
         # words (so it's the 'nothing due' path, not spec #8's 'no words for topic').
         conn = sqlite3.connect(self.db)
         conn.execute("INSERT INTO words (id, type, topic) VALUES ('seed', 'nomen', '1')")
+        conn.execute("INSERT INTO topics (name, level) VALUES ('1', 'A1')")
         conn.commit()
         conn.close()
 
@@ -156,7 +161,7 @@ class QuizI18nTest(unittest.TestCase):
         state = _run(Q.quiz_ru_de(update, _Ctx()))
         self.assertEqual(state, QUIZ_RU_DE)
         first_text = update.message.calls[0][0]
-        self.assertEqual(first_text, TEXTS["ru"]["nothing_to_send"])
+        self.assertEqual(first_text, TEXTS["ru"]["learning_request_missing"])
 
 
 if __name__ == "__main__":
