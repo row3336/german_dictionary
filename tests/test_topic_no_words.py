@@ -54,7 +54,7 @@ class CountWordsForTopicsTest(unittest.TestCase):
 
     def test_none_means_all(self):
         self.assertEqual(count_words_for_topics(self.db, None), 3)
-        self.assertEqual(count_words_for_topics(self.db, []), 3)
+        self.assertEqual(count_words_for_topics(self.db, []), 0)
 
 
 class QuizNoWordsKeyTest(unittest.TestCase):

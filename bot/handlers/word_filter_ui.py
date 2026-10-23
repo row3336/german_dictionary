@@ -1,279 +1,230 @@
-"""Word-filter screens S0–S3 (spec_topics_levels.md §4).
-
-One inline message, edited in place as the user drills the fork:
-
-    S0 fork ─▶ S1 CEFR levels          (tap = toggle, mode -> cefr)
-           └▶ S2 book-levels ─▶ S3 topics of that level  (mode -> topics)
-
-Only the live branch renders its stored selection; the other one is drawn empty and
-its first tap selects from scratch (bug #28) — otherwise an inactive branch looks
-fully applied while filtering nothing.
-
-Inline `wf:` buttons drive the drill (a global CallbackQueryHandler, so they survive
-a restart — all state lives in the DB, nothing in memory). The reply keyboard carries
-only `back`, which returns to the calling menu (via `topic_return`) and prints a summary
-of the now-active filter. `style="success"` (Bot API 9.4) greens the active choices;
-the checkmarks in the code block carry the same state for older clients.
-
-All screen layouts are pure (DB in, (text, rows) out) so they unit-test without PTB.
-"""
+"""Revision-checked word-filter screens; browsing never activates a branch."""
 
 import logging
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
-from ..app_config import CEFR_LEVELS, TOPIC_FILTER_KEY, TOPIC_FILTER_EDIT, get_db_path
+from ..app_config import CEFR_LEVELS, TOPIC_FILTER_EDIT
 from ..common.lang import _user_interface_lang
-from ..common.topics import filter_is_all, resolve_active, sorted_topics, toggle as topic_toggle
-from ..common.word_filter import (
-    MODE_CEFR,
-    MODE_TOPICS,
-    get_active_book_level,
-    get_filter_mode,
-    resolve_quiz_filter,
-    set_active_book_level,
-    set_filter_mode,
-)
+from ..common import word_filter as wf
 from ..i18n import t
-from ..storage import (
-    count_words_for_book_level,
-    count_words_for_cefr,
-    get_user_levels,
-    get_user_setting,
-    list_book_levels,
-    list_cefr_levels_with_words,
-    list_topics_with_level,
-    set_user_levels,
-    set_user_setting,
-    toggle_user_level,
-)
 
 logger = logging.getLogger(__name__)
 
-# callback_data vocabulary
+# Old mutation callbacks must be rejected rather than interpreted as v2 toggles.
 CB_FORK_CEFR = "wf:fork:cefr"
 CB_FORK_TOPICS = "wf:fork:topics"
-CB_CEFR = "wf:cefr:"      # + <LEVEL> | 'all'
-CB_BLVL = "wf:blvl:"      # + <LEVEL>
-CB_TOPIC = "wf:topic:"    # + <name> | 'all'
-CB_BACK = "wf:back:"      # + 'fork' | 'blvl'
-
+CB_CEFR = "wf:cefr:"
+CB_BLVL = "wf:blvl:"
+CB_TOPIC = "wf:topic:"
+CB_BACK = "wf:back:"
+V2 = "wf:v2:"
 _LEVELS_PER_ROW = 3
 _TOPICS_PER_ROW = 5
 
 
-def _btn(text, data, active):
+def callback_data(operation, revision, level="", token=""):
+    parts = ["wf", "v2", operation, str(revision)]
+    if level or token:
+        parts.append(level)
+    if token:
+        parts.append(token)
+    value = ":".join(parts)
+    if len(value.encode("utf-8")) > 64:
+        raise ValueError("callback exceeds Telegram's byte limit")
+    return value
+
+
+def _btn(text, data, active=False):
     return InlineKeyboardButton(text, callback_data=data, style="success" if active else None)
 
 
-def _branch_active(user_id, mode):
-    """Whether `mode` is the branch the quiz filter currently runs on (bug #28).
-
-    Each branch keeps its own stored selection regardless of which one is live, so
-    an inactive branch would render fully green while filtering nothing. Drawing it
-    empty keeps the screen honest: nothing is selected here *yet*, and the first tap
-    is a fresh choice rather than a toggle against invisible state.
-    """
-    return get_filter_mode(user_id) == mode
+def _nav(lang, state, target, level="", label=None):
+    return _btn(label or t(lang, "wf_btn_back"), callback_data("n", state["revision"], target, level))
 
 
-def _level_topics_with_desc(db, level):
-    """(name, description) for topics assigned to `level`, in canonical order."""
-    rows = [(n, d) for n, d, lv in list_topics_with_level(db) if lv == level]
-    order = {n: i for i, n in enumerate(sorted_topics([n for n, _ in rows]))}
-    return sorted(rows, key=lambda nd: order[nd[0]])
+def _summary(state, lang):
+    qf = wf.filter_from_state(state)
+    if qf.mode == wf.MODE_CEFR:
+        value = "all" if qf.cefr_levels is None else "+".join(qf.cefr_levels) or "∅"
+        return t(lang, "wf_summary_cefr").format(value=value)
+    selected = state["config"]["selected_levels"]
+    parts = [f"{lv}: " + ("+".join(wf.selected_topics(state, lv)) or "∅") for lv in selected]
+    return t(lang, "wf_summary_topics").format(level="+".join(selected) or "∅", value="; ".join(parts) or "∅")
 
 
-# --- S0 fork ---
+def _needs_refresh(state):
+    config = state["config"]
+    return (not state["valid"] or not config["selected_levels"]
+            or any(lv not in state["available_levels"] or not wf.selected_topics(state, lv)
+                   or (config["topics_by_level"][lv] != "all"
+                       and set(config["topics_by_level"][lv]) - set(state["by_level"][lv]))
+                   for lv in config["selected_levels"]))
 
-def render_fork(user_id):
+
+def render_fork(user_id, state=None):
+    state = state or wf.read_filter_state(user_id)
     lang = _user_interface_lang(user_id)
-    mode = get_filter_mode(user_id)
-    text = t(lang, "wf_fork_title")
     rows = [[
-        _btn(t(lang, "wf_btn_cefr"), CB_FORK_CEFR, mode == MODE_CEFR),
-        _btn(t(lang, "wf_btn_topics"), CB_FORK_TOPICS, mode == MODE_TOPICS),
+        _btn(t(lang, "wf_btn_cefr"), callback_data("n", state["revision"], "cefr"), state["mode"] == wf.MODE_CEFR),
+        _btn(t(lang, "wf_btn_topics"), callback_data("n", state["revision"], "book_entry"), state["mode"] == wf.MODE_TOPICS),
     ]]
-    return text, InlineKeyboardMarkup(rows)
+    return t(lang, "wf_fork_title"), InlineKeyboardMarkup(rows)
 
 
-# --- S1 CEFR levels ---
-
-def render_cefr(user_id):
+def render_cefr(user_id, state=None):
+    state = state or wf.read_filter_state(user_id)
     lang = _user_interface_lang(user_id)
-    db = get_db_path()
-    levels = list_cefr_levels_with_words(db)  # dynamic: only levels that have words
-    live = _branch_active(user_id, MODE_CEFR)
-    selected = set(get_user_levels(db, user_id)) if live else set()
-    all_selected = live and len(selected) >= len(CEFR_LEVELS)
-    body = "\n".join(
-        f"[{'✅' if lv in selected else '  '}] {lv} (words: {count_words_for_cefr(db, lv)})"
-        for lv in levels
-    ) or "—"
-    text = f"{t(lang, 'wf_cefr_title')}\n\n```text\n{body}\n```"
-    rows = []
-    for i in range(0, len(levels), _LEVELS_PER_ROW):
-        rows.append([_btn(lv, CB_CEFR + lv, lv in selected) for lv in levels[i : i + _LEVELS_PER_ROW]])
-    rows.append([_btn(t(lang, "wf_btn_all"), CB_CEFR + "all", all_selected)])
-    rows.append([InlineKeyboardButton(t(lang, "wf_btn_back"), callback_data=CB_BACK + "fork")])
-    return text, InlineKeyboardMarkup(rows)
+    levels = [lv for lv in CEFR_LEVELS if state["cefr_counts"].get(lv)]
+    selected = set(state["cefr_levels"]) if state["mode"] == wf.MODE_CEFR else set()
+    body = "\n".join(f"[{'✅' if lv in selected else '  '}] {lv} (words: {state['cefr_counts'][lv]})" for lv in levels) or "∅"
+    rows = [[_btn(lv, callback_data("c", state["revision"], lv), lv in selected)
+             for lv in levels[i:i + _LEVELS_PER_ROW]] for i in range(0, len(levels), _LEVELS_PER_ROW)]
+    rows.append([_btn(t(lang, "wf_btn_all"), callback_data("c", state["revision"], "all"), len(selected) == len(CEFR_LEVELS))])
+    rows.append([_nav(lang, state, "fork")])
+    return f"{t(lang, 'wf_cefr_title')}\n\n{body}", InlineKeyboardMarkup(rows)
 
 
-# --- S2 book-levels ---
-
-def render_booklevels(user_id):
+def render_booklevels(user_id, state=None):
+    state = state or wf.read_filter_state(user_id)
     lang = _user_interface_lang(user_id)
-    db = get_db_path()
-    levels = list_book_levels(db)  # dynamic: only levels whose topics hold words
-    active = get_active_book_level(user_id) if _branch_active(user_id, MODE_TOPICS) else None
-    body = "\n".join(
-        f"{lv} (words: {count_words_for_book_level(db, lv)})" for lv in levels
-    ) or t(lang, "wf_booklevel_empty")
-    text = f"{t(lang, 'wf_booklevel_title')}\n\n```text\n{body}\n```"
-    rows = []
-    for i in range(0, len(levels), _LEVELS_PER_ROW):
-        rows.append([_btn(lv, CB_BLVL + lv, lv == active) for lv in levels[i : i + _LEVELS_PER_ROW]])
-    rows.append([InlineKeyboardButton(t(lang, "wf_btn_back"), callback_data=CB_BACK + "fork")])
-    return text, InlineKeyboardMarkup(rows)
+    available = state["available_levels"]
+    selected = set(state["config"]["selected_levels"]) if state["mode"] == wf.MODE_TOPICS else set()
+    # A saved level that disappeared remains removable, while a valid selected
+    # level keeps the minimum-one invariant. Opening the screen never repairs it.
+    removable = selected - set(available) if selected.intersection(available) else set()
+    levels = [lv for lv in CEFR_LEVELS if lv in available or lv in removable]
+    counts = {lv: sum(r["word_count"] for r in state["registry"] if r["level"] == lv) for lv in levels}
+    body = "\n".join(f"[{'✅' if lv in selected else '  '}] {lv} (words: {counts[lv]})" for lv in levels) or t(lang, "wf_booklevel_empty")
+    rows = [[_btn(lv + (" ∅" if lv in removable else ""), callback_data("l", state["revision"], lv), lv in selected)
+             for lv in levels[i:i + _LEVELS_PER_ROW]] for i in range(0, len(levels), _LEVELS_PER_ROW)]
+    browse = [lv for lv in available if lv in selected]
+    if browse:
+        cursor = state["config"]["browsing_level"]
+        cursor = cursor if cursor in browse else browse[0]
+        rows.append([_nav(lang, state, "topics", cursor, t(lang, "wf_btn_edit_topics"))])
+    if _needs_refresh(state):
+        body += "\n\n" + t(lang, "wf_refresh")
+    rows.append([_nav(lang, state, "fork")])
+    return f"{t(lang, 'wf_booklevel_title')}\n\n{body}\n\n{_summary(state, lang)}", InlineKeyboardMarkup(rows)
 
 
-# --- S3 topics of the active level ---
-
-def render_topics(user_id):
+def render_topics(user_id, level=None, state=None):
+    state = state or wf.read_filter_state(user_id)
     lang = _user_interface_lang(user_id)
-    db = get_db_path()
-    level = get_active_book_level(user_id)
-    pairs = _level_topics_with_desc(db, level)
-    names = [n for n, _ in pairs]
-    # An empty filter string resolves to an empty set, which is exactly the
-    # "nothing picked here yet" look the inactive branch needs.
-    raw = get_user_setting(db, user_id, TOPIC_FILTER_KEY, "") if _branch_active(user_id, MODE_TOPICS) else ""
-    active = resolve_active(raw, names)
-    body = "\n".join(
-        f"[{'✅' if n in active else '  '}] [{n}] {(d or '').strip() or '—'}" for n, d in pairs
-    ) or "—"
-    text = f"{t(lang, 'wf_topics_title')} ({level})\n\n```text\n{body}\n```"
-    rows = []
-    ordered = sorted_topics(names)
-    for i in range(0, len(ordered), _TOPICS_PER_ROW):
-        rows.append([_btn(n, CB_TOPIC + n, n in active) for n in ordered[i : i + _TOPICS_PER_ROW]])
-    rows.append([_btn(t(lang, "wf_btn_all"), CB_TOPIC + "all", filter_is_all(raw))])
-    rows.append([InlineKeyboardButton(t(lang, "wf_btn_back"), callback_data=CB_BACK + "blvl")])
+    config = state["config"]
+    browse = [lv for lv in config["selected_levels"] if lv in state["available_levels"]]
+    if level is None:
+        level = config["browsing_level"]
+        if level not in browse:
+            level = browse[0] if browse else (state["available_levels"][0] if len(state["available_levels"]) == 1 else None)
+    if level not in state["available_levels"]:
+        return render_booklevels(user_id, state)
+    names = state["by_level"][level]
+    tokens = wf.topic_tokens(names)
+    reverse = {name: token for token, name in tokens.items()}
+    active = set(wf.selected_topics(state, level)) if state["mode"] == wf.MODE_TOPICS else set()
+    descriptions = {r["name"]: r["description"] for r in state["registry"]}
+    body = "\n".join(f"[{'✅' if n in active else '  '}] [{n}] {(descriptions[n] or '').strip() or '—'}" for n in names) or "∅"
+    rows = [[_btn(n, callback_data("t", state["revision"], level, reverse[n]), n in active)
+             for n in names[i:i + _TOPICS_PER_ROW]] for i in range(0, len(names), _TOPICS_PER_ROW)]
+    if state["mode"] == wf.MODE_TOPICS and browse:
+        all_selected = all(config["topics_by_level"][lv] == "all" for lv in config["selected_levels"])
+        rows.append([_btn(t(lang, "wf_btn_all_selected"), callback_data("a", state["revision"]), all_selected)])
+    if len(browse) > 1:
+        rows.append([_nav(lang, state, "topics", lv, lv) for lv in browse if lv != level])
+    rows.append([_nav(lang, state, "books")])
+    if _needs_refresh(state):
+        body += "\n\n" + t(lang, "wf_refresh")
+    text = f"{t(lang, 'wf_topics_title')} ({level})\n\n{body}\n\n{_summary(state, lang)}"
     return text, InlineKeyboardMarkup(rows)
 
-
-# --- entry (replaces the old topic-filter screen at every quiz entry point) ---
 
 async def send_word_filter_screen(update, context, user_id, return_to):
-    """Open the filter at S0. Reply keyboard carries `back` -> caller; inline drills."""
     lang = _user_interface_lang(user_id)
     context.user_data["topic_return"] = return_to
     context.user_data["wf_active"] = True
-    await update.message.reply_text(
-        t(lang, "wf_fork_title"),
-        reply_markup=ReplyKeyboardMarkup([[t(lang, "back")]], resize_keyboard=True),
-    )
+    await update.message.reply_text(t(lang, "wf_fork_title"),
+        reply_markup=ReplyKeyboardMarkup([[t(lang, "back")]], resize_keyboard=True))
     text, kb = render_fork(user_id)
     await update.message.reply_text(text, reply_markup=kb)
     return TOPIC_FILTER_EDIT
 
 
-# --- summary printed when the user leaves via reply-back ---
-
 def filter_summary(user_id):
-    """One-line summary of the active filter for the leave-message."""
-    lang = _user_interface_lang(user_id)
-    qf = resolve_quiz_filter(user_id)
-    if qf.mode == MODE_CEFR:
-        value = "all" if qf.cefr_levels is None else "+".join(qf.cefr_levels)
-        return t(lang, "wf_summary_cefr").format(value=value)
-    level = get_active_book_level(user_id)
-    raw = get_user_setting(get_db_path(), user_id, TOPIC_FILTER_KEY, "")
-    value = "all" if not raw or filter_is_all(raw) else "+".join(sorted_topics(qf.topics or []))
-    return t(lang, "wf_summary_topics").format(level=level, value=value)
+    return _summary(wf.read_filter_state(user_id), _user_interface_lang(user_id))
 
-
-# --- inline callback: drives the whole drill ---
 
 async def word_filter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle a tap on any `wf:` inline button (global handler)."""
     query = update.callback_query
     user_id = query.from_user.id
     lang = _user_interface_lang(user_id)
-    db = get_db_path()
     data = query.data or ""
-
-    render = None
-    if data == CB_FORK_CEFR:
-        render = render_cefr
-    elif data == CB_FORK_TOPICS:
-        levels = list_book_levels(db)
-        if len(levels) == 1:
-            # Skip a redundant level screen while the library has only one book
-            # level. Do not assume A1: the sole populated level may change later.
-            previous = get_active_book_level(user_id)
-            level = levels[0]
-            set_active_book_level(user_id, level)
-            if previous != level:
-                set_user_setting(db, user_id, TOPIC_FILTER_KEY, "all")
-            render = render_topics
-        else:
-            # With multiple levels the intermediate S2 screen becomes useful.
-            # Zero configured levels also land here; the dedicated empty-state
-            # guard is tracked separately from this navigation rule.
-            render = render_booklevels
-    elif data == CB_BACK + "fork":
-        render = render_fork
-    elif data == CB_BACK + "blvl":
-        render = render_booklevels
-    elif data.startswith(CB_CEFR):
-        # The screen was drawn empty while this branch was inactive, so the first
-        # tap has to mean "select this", not "toggle it off" (bug #28).
-        fresh = not _branch_active(user_id, MODE_CEFR)
-        set_filter_mode(user_id, MODE_CEFR)
-        key = data[len(CB_CEFR):]
-        if key == "all":
-            set_user_levels(db, user_id, CEFR_LEVELS)
-        elif fresh:
-            set_user_levels(db, user_id, [key])
-        else:
-            ok, _ = toggle_user_level(db, user_id, key)
-            if not ok:  # would drop the last level — keep at least one
-                await query.answer(t(lang, "topic_filter_need_one"), show_alert=True)
-                return
-        render = render_cefr
-    elif data.startswith(CB_BLVL):
-        level = data[len(CB_BLVL):]
-        set_filter_mode(user_id, MODE_TOPICS)
-        set_active_book_level(user_id, level)
-        set_user_setting(db, user_id, TOPIC_FILTER_KEY, "all")  # fresh level -> all
-        render = render_topics
-    elif data.startswith(CB_TOPIC):
-        fresh = not _branch_active(user_id, MODE_TOPICS)  # see the CEFR branch above
-        set_filter_mode(user_id, MODE_TOPICS)
-        level = get_active_book_level(user_id)
-        names = [n for n, _ in _level_topics_with_desc(db, level)]
-        key = data[len(CB_TOPIC):]
-        if key == "all":
-            set_user_setting(db, user_id, TOPIC_FILTER_KEY, "all")
-        elif fresh and key in names:
-            set_user_setting(db, user_id, TOPIC_FILTER_KEY, key)
-        elif key in names:
-            raw = get_user_setting(db, user_id, TOPIC_FILTER_KEY, "")
-            new, rejected = topic_toggle(raw, key, names)
-            if rejected:
-                await query.answer(t(lang, "topic_filter_need_one"), show_alert=True)
-                return
-            set_user_setting(db, user_id, TOPIC_FILTER_KEY, new)
-        render = render_topics
-    else:
-        await query.answer()
-        return
-
-    await query.answer()
-    text, kb = render(user_id)
+    state = wf.read_filter_state(user_id)
+    alert, target, level = None, "books", None
     try:
-        await query.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
-    except Exception:  # identical content (double-tap) or edit race — safe to ignore
+        # Navigation also checks current access; callback payload never chooses actor.
+        from ..storage import _connect
+        from ..app_config import get_db_path
+        from ..study.answers import authorize_user
+        with _connect(get_db_path()) as conn:
+            authorize_user(conn, user_id)
+        if data in (CB_FORK_CEFR, CB_FORK_TOPICS, CB_BACK + "fork", CB_BACK + "blvl"):
+            target = {CB_FORK_CEFR: "cefr", CB_FORK_TOPICS: "book_entry",
+                      CB_BACK + "fork": "fork", CB_BACK + "blvl": "books"}[data]
+        else:
+            parts = data.split(":")
+            if not data.startswith(V2) or len(parts) < 4:
+                raise wf.FilterCommandError("stale")
+            op, revision = parts[2], int(parts[3])
+            if str(revision) != parts[3] or revision != state["revision"]:
+                raise wf.FilterCommandError("stale")
+            if op == "n" and 5 <= len(parts) <= 6:
+                target = parts[4]
+                level = parts[5] if len(parts) == 6 else None
+                if target not in ("fork", "cefr", "book_entry", "books", "topics"):
+                    raise wf.FilterCommandError("invalid")
+                if target == "topics" and (level not in state["available_levels"]
+                        or (state["mode"] == wf.MODE_TOPICS and level not in state["config"]["selected_levels"])):
+                    raise wf.FilterCommandError("invalid")
+            elif op in ("c", "l") and len(parts) == 5:
+                state = wf.apply_filter_command(user_id, revision, "cefr" if op == "c" else "level", parts[4])
+                target = "cefr" if op == "c" else "books"
+            elif op == "t" and len(parts) == 6:
+                level = parts[4]
+                state = wf.apply_filter_command(user_id, revision, "topic", level, parts[5])
+                target = "topics"
+            elif op == "a" and len(parts) == 4:
+                state = wf.apply_filter_command(user_id, revision, "all")
+                target = "topics"
+            else:
+                raise wf.FilterCommandError("invalid")
+    except PermissionError:
+        await query.answer(t(lang, "wf_refresh"), show_alert=True)
+        return
+    except ValueError as exc:
+        alert = t(lang, "wf_need_one" if str(exc) == "need_one" else "wf_refresh")
+        state = wf.read_filter_state(user_id)
+    if target == "book_entry":
+        # Explicit S3 Back keeps the "books" route, including already-issued
+        # callbacks. Only entering from the fork may skip the level screen.
+        target = "books"
+        if len(state["available_levels"]) == 1:
+            sole_level = state["available_levels"][0]
+            # A shortcut must not hide the explicit level-selection recovery.
+            # Inactive valid branches still support the fresh first topic tap.
+            can_browse = state["valid"] and (
+                state["mode"] != wf.MODE_TOPICS or sole_level in state["config"]["selected_levels"])
+            if can_browse:
+                target, level = "topics", sole_level
+    render = {"fork": render_fork, "cefr": render_cefr, "books": render_booklevels}
+    if target == "topics":
+        text, kb = render_topics(user_id, level, state)
+    else:
+        text, kb = render[target](user_id, state)
+    await query.answer(alert, show_alert=bool(alert))
+    try:
+        await query.edit_message_text(text, reply_markup=kb)
+    except Exception:
         logger.debug("word_filter edit skipped", exc_info=True)

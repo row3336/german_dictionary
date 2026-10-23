@@ -32,7 +32,7 @@ class IndependentImportCompatibility(unittest.TestCase):
                 conn.execute("INSERT INTO users(user_id,status) VALUES(?,'approved')", (uid,))
                 for mode in ("ru_de", "uk_de", "en_de", "de_ru", "oral_ru_de"):
                     conn.execute("INSERT INTO progress(user_id,word_id,mode,interval,repetitions,ease,due) VALUES(?,'retained',?,17,4,2.8,'2099-01-01')", (uid, mode))
-                conn.execute("INSERT INTO conjugation_admissions VALUES(?,'ru_de','retained','old-admission')", (uid,))
+                conn.execute("INSERT INTO conjugation_admissions(user_id,pair,word_id,admitted_at) VALUES(?,'ru_de','retained','old-admission')", (uid,))
                 conn.execute("INSERT INTO conjugation_blocks(user_id,pair,word_id,tense,phase,due,cycle,revision) VALUES(?,'ru_de','retained','praesens','test','2099-02-01',3,8)", (uid,))
                 conn.execute("INSERT INTO user_settings VALUES(?,'synthetic-retained','original')", (uid,))
                 conn.execute("INSERT INTO user_word_media(user_id,word_id,image,example,russian) VALUES(?,'retained','personal-image','personal-example','личный перевод')", (uid,))
@@ -53,7 +53,7 @@ class IndependentImportCompatibility(unittest.TestCase):
             return dict(row) if row else None
 
     def verb(self, ident="new", infinitive="reisen", **fields):
-        return {"id": ident, "type": "verb", "german": infinitive, "infinitive": infinitive,
+        return {"id": ident, "type": "verb", "german": infinitive, "infinitive": infinitive, "reflexive_case": "none",
                 "conjugation_praesens": PRESENT, "conjugation_praeteritum": PAST,
                 "is_separable": 0, **fields}
 
@@ -171,7 +171,7 @@ class IndependentImportCompatibility(unittest.TestCase):
         for ident, tables in (("present-only", {"conjugation_praesens": PRESENT}),
                               ("past-only", {"conjugation_praeteritum": PAST}), ("neither", {})):
             storage.add_word(copy, {"id": ident, "type": "verb", "german": ident,
-                                   "infinitive": ident, "is_separable": 0, **tables})
+                                   "infinitive": ident, "reflexive_case": "none", "is_separable": 0, **tables})
             row = self.row(ident, copy)
             self.assertEqual(row["conjugation_praesens"], tables.get("conjugation_praesens", ""))
             self.assertEqual(row["conjugation_praeteritum"], tables.get("conjugation_praeteritum", ""))
@@ -189,7 +189,7 @@ class IndependentImportCompatibility(unittest.TestCase):
         with self.assertRaises(ValueError):
             storage.add_word(self.db, self.verb("alias", " FAHREN ", german="display alias"))
         with self.assertRaises(ValueError):
-            storage.add_word(self.db, {"id": "retained", "type": "verb", "german": "fahren", "infinitive": "fahren"})
+            storage.add_word(self.db, {"id": "retained", "type": "verb", "german": "fahren", "infinitive": "fahren", "reflexive_case": "none"})
         self.assertEqual(self.dump(), baseline)
 
 

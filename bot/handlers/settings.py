@@ -48,7 +48,7 @@ from ..common.settings import (
     _learning_reminder_interval,
     _session_retry_gap,
     _session_retry_iterations,
-    _topic_filter_value,
+    _topic_filter_label,
 )
 from ..handlers.access import access_allowed, notify_owner_access_request
 from ..i18n import dict_choices, interface_choices, parse_dict_choice, parse_interface_choice, t
@@ -118,7 +118,7 @@ async def _send_algo_settings_menu(update: Update, user_id):
     msg = "\n".join(
         [
             f"{t(lang, 'algo_settings')}:",
-            f"{t(lang, 'topic_filter')} = {_topic_filter_value(user_id)}",
+            f"{t(lang, 'topic_filter')} = {_topic_filter_label(user_id)}",
             f"{t(lang, 'algo_topics_label')} = {topics_line}",
         ]
     )

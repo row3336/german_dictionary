@@ -15,7 +15,7 @@ from ..app_config import (
 )
 from ..common.lang import _mode_de_l1, _mode_l1_de, _mode_pl_sg, direction_mode_family
 from ..common.settings import _session_retry_gap, _session_retry_iterations
-from ..common.word_filter import resolve_quiz_filter
+from ..common.word_filter import resolve_quiz_filter, effective_filter_fingerprint
 from ..retry_logic import maybe_take_retry_entry, register_retry_result
 from ..storage import get_word_by_id, select_due
 
@@ -161,13 +161,14 @@ def _reaction_emoji_for_streak(streak):
 
 def _reset_fsrs_cycle_state(context, mode=None):
     """Handle reset fsrs cycle state."""
-    bucket = context.user_data.get("fsrs_cycle_queue")
-    if not isinstance(bucket, dict):
-        return
-    if mode:
-        bucket.pop(mode, None)
-        return
-    context.user_data.pop("fsrs_cycle_queue", None)
+    for key in ("fsrs_cycle_queue", "fsrs_cycle_filter", "fsrs_cycle_reserved"):
+        bucket = context.user_data.get(key)
+        if not isinstance(bucket, dict):
+            continue
+        if mode:
+            bucket.pop(mode, None)
+        else:
+            context.user_data.pop(key, None)
 
 
 def _pick_due_entry(context, user_id, mode, word_type=None):
@@ -176,8 +177,11 @@ def _pick_due_entry(context, user_id, mode, word_type=None):
     direction_modes.update(direction_mode_family(_mode_de_l1(user_id)))
     is_fsrs_mode = mode in direction_modes or mode == _mode_pl_sg(user_id)
 
+    qf = resolve_quiz_filter(user_id)
+
     def _fetch_due():
-        qf = resolve_quiz_filter(user_id)
+        if qf.topics == [] or qf.cefr_levels == []:
+            return []
         return select_due(
             get_db_path(),
             user_id=user_id,
@@ -218,9 +222,28 @@ def _pick_due_entry(context, user_id, mode, word_type=None):
     last_id = last_ids.get(mode)
     if is_fsrs_mode:
         bucket = context.user_data.setdefault("fsrs_cycle_queue", {})
+        fingerprints = context.user_data.setdefault("fsrs_cycle_filter", {})
+        reservations = context.user_data.setdefault("fsrs_cycle_reserved", {})
+        reserved = reservations.setdefault(mode, set())
+        # Retain both accepted originals and selections already returned to the
+        # presentation layer, including a pending media-delivery reservation.
+        excluded = set(context.user_data.get(_session_key(mode), ())) | set(reserved)
+        frame = context.user_data.get("quiz_written_frame") or {}
+        if frame.get("mode") == mode:
+            if frame.get("question_id"):
+                excluded.add(frame["question_id"])
+            pending = frame.get("next_view") or {}
+            if pending.get("entry"):
+                excluded.add(pending["entry"]["id"])
+        fingerprint = effective_filter_fingerprint(qf)
+        if fingerprints.get(mode) != fingerprint:
+            bucket[mode] = []
+            fingerprints[mode] = fingerprint
         queue = bucket.get(mode)
+        if queue:
+            queue[:] = [entry for entry in queue if entry.get("id") not in excluded]
         if not queue:
-            due = _fetch_due()
+            due = [entry for entry in _fetch_due() if entry.get("id") not in excluded]
             if not due:
                 return None
             pool = [w for w in due if w.get("id") != last_id] if len(due) > 1 else due
@@ -231,6 +254,7 @@ def _pick_due_entry(context, user_id, mode, word_type=None):
                 return None
             bucket[mode] = queue
         entry = queue.pop(0)
+        reserved.add(entry.get("id"))
         last_ids[mode] = entry.get("id")
         return entry
 

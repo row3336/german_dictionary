@@ -18,6 +18,9 @@ U = 1000
 
 def _add(db, german, wtype, russian, topic, cefr=""):
     entry = {"german": german, "type": wtype, "russian": russian, "topic": topic, "cefr_level": cefr}
+    if wtype == "verb":
+        entry["reflexive_case"] = "none"
+        entry["infinitive"] = german
     if wtype == "nomen":
         entry["article"] = "das"
     storage.add_word(db, entry)
@@ -73,10 +76,10 @@ class WordFilterResolverTest(unittest.TestCase):
         storage.set_user_setting(self.db, U, TOPIC_FILTER_KEY, "1")
         qf = wf.resolve_quiz_filter(U)
         self.assertEqual(qf.topics, ["1"])
-        # a selection that doesn't belong to the active level falls back to the whole level
+        # A stale selection must remain empty rather than broaden to all topics.
         storage.set_user_setting(self.db, U, TOPIC_FILTER_KEY, "2")  # 2 is B1, level is A1
         qf = wf.resolve_quiz_filter(U)
-        self.assertEqual(set(qf.topics), {"1", "3"})
+        self.assertEqual(qf.topics, [])
 
     # --- CEFR mode ---
 

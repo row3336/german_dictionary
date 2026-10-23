@@ -3,7 +3,8 @@
 import random
 
 from ..app_config import is_owner
-from ..storage import _cefr_filter_sql, _row_to_entry
+from ..storage import _cefr_filter_sql, _topic_filter_sql, _row_to_entry
+from ..common.word_filter import resolve_quiz_filter, effective_filter_fingerprint
 
 
 def word(conn, user_id, word_id, dict_lang):
@@ -40,9 +41,9 @@ def due(conn, user_id, mode, options, today, excluded=()):
                  AND date(e.created_at)=date(?))"""]
     params = [today.isoformat(), today.isoformat(), user_id, user_id, user_id,
               int(phrase), user_id, mode, today.isoformat()]
-    topics = [str(value).strip() for value in options.get('topics') or [] if str(value).strip()]
-    if topics:
-        where.append('w.topic IN ({})'.format(','.join('?' for _ in topics)))
+    topic_clause, topics = _topic_filter_sql(options.get('topics'))
+    if topic_clause:
+        where.append(topic_clause)
         params.extend(topics)
     clause, levels = _cefr_filter_sql(options.get('cefr_levels'))
     if clause:
@@ -63,7 +64,20 @@ def due(conn, user_id, mode, options, today, excluded=()):
 
 
 def pick_original(conn, user_id, mode, options, today, excluded, frame):
+    # Options belong to the original frame. Refresh the effective filter on this
+    # transaction, without touching any published/reserved slot or retry budget.
+    qf = resolve_quiz_filter(user_id, conn=conn)
+    fingerprint = effective_filter_fingerprint(qf)
+    options = {**options, 'topics': qf.topics, 'cefr_levels': qf.cefr_levels}
     pool = frame['original_pool']
+    if frame.get('original_filter_fingerprint') != fingerprint:
+        pool.clear()
+        frame['original_filter_fingerprint'] = fingerprint
+    reserved = set(frame.get('original_reserved_ids', []))
+    excluded = set(excluded) | reserved
+    if qf.topics == [] or qf.cefr_levels == []:
+        pool.clear()
+        return None
     if not pool:
         candidates = due(conn, user_id, mode, options, today, sorted(excluded))
         fresh, scheduled = [], []
@@ -86,5 +100,7 @@ def pick_original(conn, user_id, mode, options, today, excluded, frame):
         if wid not in excluded:
             entry = word(conn, user_id, wid, options['dict_lang'])
             if entry:
+                reserved.add(wid)
+                frame['original_reserved_ids'] = sorted(reserved)
                 return entry
     return None

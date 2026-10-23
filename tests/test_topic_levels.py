@@ -13,6 +13,9 @@ from bot import storage
 
 def _add(db, german, wtype, russian, topic, cefr=""):
     entry = {"german": german, "type": wtype, "russian": russian, "topic": topic, "cefr_level": cefr}
+    if wtype == "verb":
+        entry["reflexive_case"] = "none"
+        entry["infinitive"] = german
     if wtype == "nomen":
         entry["article"] = "das"
     storage.add_word(db, entry)

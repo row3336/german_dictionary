@@ -865,21 +865,12 @@ def count_words(db_path):
 
 
 def count_words_for_topics(db_path, topics=None):
-    """Number of words matching a topic filter (spec #8).
-
-    topics=None/empty means 'all' (no filter) -> every word. Used to tell 'no words
-    under the selected topics at all' apart from 'words exist but none are due'.
-    """
+    """None is unrestricted; an explicit empty selection matches no words."""
+    clause, params = _topic_filter_sql(topics, column="topic")
     init_db(db_path)
-    clean = [_safe_text(x) for x in (topics or []) if _safe_text(x)]
     with _connect(db_path) as conn:
-        if not clean:
-            row = conn.execute("SELECT COUNT(*) AS cnt FROM words").fetchone()
-        else:
-            placeholders = ",".join("?" for _ in clean)
-            row = conn.execute(
-                f"SELECT COUNT(*) AS cnt FROM words WHERE topic IN ({placeholders})", clean
-            ).fetchone()
+        row = conn.execute("SELECT COUNT(*) AS cnt FROM words" +
+                           (" WHERE " + clause if clause else ""), params).fetchone()
     return int(row["cnt"])
 
 
@@ -2178,19 +2169,24 @@ def _safe_cefr_level(value):
 _normalize_level = _safe_cefr_level
 
 
-def _cefr_filter_sql(cefr_levels):
-    """Build the CEFR level restriction for a word query (spec_topics_levels.md §3).
-
-    Returns ('w.cefr_level IN (?,?)', [levels]) for a non-empty valid selection, else
-    ('', []). None/empty means NO restriction — the caller adds nothing (in CEFR mode
-    that is the 'all six levels selected' case, which by design shows every word,
-    including those with an empty cefr_level).
-    """
-    clean = [_safe_cefr_level(x) for x in (cefr_levels or []) if _safe_cefr_level(x)]
-    if not clean:
+def _topic_filter_sql(topics, column="w.topic"):
+    """Preserve the distinction between unrestricted None and explicit empty."""
+    if topics is None:
         return "", []
-    placeholders = ",".join("?" for _ in clean)
-    return f"w.cefr_level IN ({placeholders})", clean
+    clean = list(dict.fromkeys(_safe_text(x) for x in topics if _safe_text(x)))
+    if not clean:
+        return "0", []
+    return f"{column} IN ({','.join('?' for _ in clean)})", clean
+
+
+def _cefr_filter_sql(cefr_levels):
+    """None means unrestricted; invalid or empty explicit sets match no words."""
+    if cefr_levels is None:
+        return "", []
+    clean = list(dict.fromkeys(_safe_cefr_level(x) for x in cefr_levels if _safe_cefr_level(x)))
+    if not clean:
+        return "0", []
+    return f"w.cefr_level IN ({','.join('?' for _ in clean)})", clean
 
 
 def _normalize_word_entry_for_storage(entry):
@@ -2356,12 +2352,10 @@ def select_due(
     if word_type:
         where_clauses.insert(0, "w.type = ?")
         where_params.insert(0, word_type)
-    if topics:
-        clean_topics = [_safe_text(x) for x in topics if _safe_text(x)]
-        if clean_topics:
-            placeholders = ",".join("?" for _ in clean_topics)
-            where_clauses.append(f"w.topic IN ({placeholders})")
-            where_params.extend(clean_topics)
+    topic_clause, topic_params = _topic_filter_sql(topics)
+    if topic_clause:
+        where_clauses.append(topic_clause)
+        where_params.extend(topic_params)
     cefr_clause, cefr_params = _cefr_filter_sql(cefr_levels)
     if cefr_clause:
         where_clauses.append(cefr_clause)
@@ -2627,12 +2621,10 @@ def learning_pick_new_words(db_path, user_id, limit, topics=None, cefr_levels=No
         return []
     where_topics = ""
     params = [int(user_id), int(user_id)]
-    if topics:
-        clean_topics = [_safe_text(x) for x in topics if _safe_text(x)]
-        if clean_topics:
-            placeholders = ",".join("?" for _ in clean_topics)
-            where_topics = f" AND w.topic IN ({placeholders})"
-            params.extend(clean_topics)
+    topic_clause, topic_params = _topic_filter_sql(topics)
+    if topic_clause:
+        where_topics = f" AND {topic_clause}"
+        params.extend(topic_params)
     cefr_clause, cefr_params = _cefr_filter_sql(cefr_levels)
     where_cefr = f" AND {cefr_clause}" if cefr_clause else ""
     params.extend(cefr_params)
@@ -3549,12 +3541,10 @@ def list_learning_queue_words(db_path, user_id, topics=None, cefr_levels=None):
     init_db(db_path)
     where_topics = ""
     params = [int(user_id), int(user_id)]
-    if topics:
-        clean_topics = [_safe_text(x) for x in topics if _safe_text(x)]
-        if clean_topics:
-            placeholders = ",".join("?" for _ in clean_topics)
-            where_topics = f" AND w.topic IN ({placeholders})"
-            params.extend(clean_topics)
+    topic_clause, topic_params = _topic_filter_sql(topics)
+    if topic_clause:
+        where_topics = f" AND {topic_clause}"
+        params.extend(topic_params)
     cefr_clause, cefr_params = _cefr_filter_sql(cefr_levels)
     where_cefr = f" AND {cefr_clause}" if cefr_clause else ""
     params.extend(cefr_params)

@@ -44,7 +44,7 @@ class IndependentNavigationQA(unittest.TestCase):
             "german": "Haus", "russian": "shared-ru", "ukrainian": "shared-uk",
             "english": "shared-en"})
         self.b = add_word(self.db, {"id": "qa-b", "type": "verb", "german": "gehen",
-            "infinitive": "gehen", "russian": "идти", "ukrainian": "йти"})
+            "infinitive": "gehen", "reflexive_case": "none", "russian": "идти", "ukrainian": "йти"})
 
     def test_expired_old_vf_callback_still_returns_working_menu(self):
         upd = update()

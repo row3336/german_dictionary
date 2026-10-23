@@ -87,6 +87,9 @@ class LearningI18nTest(unittest.TestCase):
         register_or_update_user(self.db, GUEST, "g", "G")
         set_user_status(self.db, GUEST, "approved")
         set_user_interface_lang(self.db, GUEST, "ru")
+        # The language scenarios require an explicitly configured populated book level.
+        from bot.storage import set_topic_level
+        set_topic_level(self.db, "1", "A1")
 
     def _restore(self):
         for k, v in self._old.items():

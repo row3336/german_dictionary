@@ -153,27 +153,22 @@ def _parse_topic_filter(raw):
 
 
 def _topic_filter_for_query(user_id):
-    """Handle topic filter for query."""
-    raw = _topic_filter_value(user_id)
-    topics = _parse_topic_filter(raw)
-    return topics or None
+    """Compatibility topic-axis adapter; preserve explicit empty selections."""
+    from .word_filter import resolve_quiz_filter
+    return resolve_quiz_filter(user_id).topics
 
 
-def _topic_filter_label(user_id):
-    """Handle topic filter label."""
-    raw = _topic_filter_value(user_id)
-    topics = _parse_topic_filter(raw)
-    if not topics:
-        return "all"
-    return "+".join(topics)
+def _topic_filter_label(user_id, conn=None):
+    """The same effective snapshot that drives quiz selection and counts."""
+    from .word_filter import filter_label_from_state, read_filter_state
+    return filter_label_from_state(read_filter_state(user_id, conn=conn))
 
 
-def _topic_filter_banner(user_id):
-    """Handle topic filter banner (localized #15). 'all'/topic ids stay as-is —
-    they're filter keywords the user can also type (see topic_filter_hint)."""
+def _topic_filter_banner(user_id, conn=None):
+    """Localized banner over the current effective book-topic or CEFR filter."""
     from ..i18n import t
     from .lang import _user_interface_lang
 
-    label = _topic_filter_label(user_id)
+    label = _topic_filter_label(user_id, conn=conn)
     heading = t(_user_interface_lang(user_id), "topic_filter_banner")
     return f"{heading}\n\n🟥 *{_md_escape(label)}* 🟥"

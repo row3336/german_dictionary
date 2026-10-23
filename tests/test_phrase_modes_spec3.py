@@ -46,8 +46,9 @@ class PhraseModeHelpersTest(unittest.TestCase):
 
 class PhraseDueAndStatsTest(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.db = os.path.join(self.tmp.name, "words.db")
+        # Keep only this test-created runtime in the runner's TMPDIR stand.
+        self.tmp = tempfile.mkdtemp(prefix="phrase-spec3-")
+        self.db = os.path.join(self.tmp, "words.db")
         init_db(self.db)
         with closing(sqlite3.connect(self.db)) as conn:
             conn.executemany(
@@ -63,9 +64,6 @@ class PhraseDueAndStatsTest(unittest.TestCase):
                 [("word", "ru_de"), ("phrase", "phrase_ru_de")],
             )
             conn.commit()
-
-    def tearDown(self):
-        self.tmp.cleanup()
 
     def test_due_selection_isolates_words_and_phrases_by_exact_mode(self):
         word_due = select_due(self.db, user_id=1, mode="ru_de", today=date.today())

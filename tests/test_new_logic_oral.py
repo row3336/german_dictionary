@@ -53,6 +53,10 @@ class OralTests(unittest.TestCase):
         self.conn.row_factory = sqlite3.Row
         self.addCleanup(self.conn.close)
         self.conn.executescript('''
+            CREATE TABLE user_settings(user_id INTEGER,key TEXT,value TEXT,PRIMARY KEY(user_id,key));
+            CREATE TABLE user_levels(user_id INTEGER,level TEXT,PRIMARY KEY(user_id,level));
+            CREATE TABLE topics(name TEXT PRIMARY KEY,description TEXT DEFAULT '',level TEXT);
+            INSERT INTO topics(name,level) VALUES('1','A1');
             CREATE TABLE users(user_id INTEGER PRIMARY KEY,status TEXT);
             INSERT INTO users VALUES(7,'approved'),(8,'approved'),(9,'pending');
             CREATE TABLE words(id TEXT PRIMARY KEY,type TEXT,german TEXT,article TEXT,plural TEXT,
@@ -699,9 +703,18 @@ class OralMainIntegrationTests(unittest.TestCase):
                     study_repo.append_transaction(h.conn, uid, action, {'snapshot': snapshot}); h.conn.commit()
                 try:
                     h.add('a', 'b'); h.add('p', kind='phrase')
-                    h.conn.execute('CREATE TABLE user_settings(user_id INTEGER,key TEXT,value TEXT,PRIMARY KEY(user_id,key))')
+                    h.conn.execute('CREATE TABLE IF NOT EXISTS user_settings(user_id INTEGER,key TEXT,value TEXT,PRIMARY KEY(user_id,key))')
                     h.conn.commit()
                     with ExitStack() as stack:
+                        # Manual interval simulation and written answers have their
+                        # own default-day boundary; pin it to the existing DAY oracle.
+                        class FixedDay(__import__('datetime').date):
+                            @classmethod
+                            def today(cls):
+                                return DAY
+                        from bot.study import answers as study_answers, srs as study_srs
+                        stack.enter_context(patch.object(study_srs, 'date', FixedDay))
+                        stack.enter_context(patch.object(study_answers, 'date', FixedDay))
                         stack.enter_context(patch.dict('os.environ', {'BOT_TOKEN': '123456:synthetic', 'OWNER_ID': str(UID)}))
                         for name in ('load_dotenv', '_configure_logging', 'require_supported_ptb', '_prepare_storage',
                             '_configure_learning_reminders', '_configure_fsrs_reports', '_configure_access_reminders', '_configure_owner_digest'):

@@ -33,6 +33,9 @@ U = 777
 def _add(db, german, wtype, russian, topic, cefr=""):
     from bot.storage import add_word
     e = {"german": german, "type": wtype, "russian": russian, "topic": topic, "cefr_level": cefr}
+    if wtype == "verb":
+        e["reflexive_case"] = "none"
+        e["infinitive"] = german
     if wtype == "nomen":
         e["article"] = "das"
     add_word(db, e)
@@ -40,6 +43,18 @@ def _add(db, german, wtype, russian, topic, cefr=""):
 
 class _Query:
     def __init__(self, data, uid):
+        # These pre-v2 screen tests retain their operation vocabulary; translate
+        # it into a CURRENT rendered command. Raw legacy rejection is covered by K16.
+        state = wf.read_filter_state(uid)
+        rev = state["revision"]
+        if data.startswith(UI.CB_CEFR):
+            data = UI.callback_data("c", rev, data[len(UI.CB_CEFR):])
+        elif data.startswith(UI.CB_BLVL):
+            data = UI.callback_data("l", rev, data[len(UI.CB_BLVL):])
+        elif data.startswith(UI.CB_TOPIC):
+            name = data[len(UI.CB_TOPIC):]
+            data = (UI.callback_data("a", rev) if name == "all" else
+                    UI.callback_data("t", rev, state["config"]["browsing_level"], wf.topic_token(name)))
         self.data = data
         self.from_user = type("U", (), {"id": uid})()
         self.edits = []
@@ -59,7 +74,25 @@ class _Ctx:
 
 
 def _cbs(markup):
-    return [b.callback_data for row in markup.inline_keyboard for b in row]
+    """Semantic button identities, independent of revision/token transport."""
+    state = wf.read_filter_state(U)
+    names = {wf.topic_token(r["name"]): r["name"] for r in state["registry"]}
+    result = []
+    for row in markup.inline_keyboard:
+        for button in row:
+            value = button.callback_data
+            parts = value.split(":")
+            if value.startswith(UI.V2):
+                op = parts[2]
+                if op == "c": value = UI.CB_CEFR + parts[4]
+                elif op == "l": value = UI.CB_BLVL + parts[4]
+                elif op == "t": value = UI.CB_TOPIC + names[parts[5]]
+                elif op == "a": value = UI.CB_TOPIC + "all"
+                elif op == "n":
+                    value = {"cefr": UI.CB_FORK_CEFR, "book_entry": UI.CB_FORK_TOPICS,
+                             "books": UI.CB_BACK + "blvl", "fork": UI.CB_BACK + "fork"}.get(parts[4], value)
+            result.append(value)
+    return result
 
 
 def _run(query):
@@ -79,6 +112,8 @@ class WordFilterUITest(unittest.TestCase):
         self.addCleanup(self._restore)
         register_or_update_user(self.db, U, "u", "U")
         set_user_interface_lang(self.db, U, "ru")
+        from bot.storage import set_user_status
+        set_user_status(self.db, U, "approved")
         # A1: topic 1 (Haus A1, Buch A2); B1: topic 2 (reisen B1). No C-level words.
         _add(self.db, "Haus", "nomen", "дом", "1", "A1")
         _add(self.db, "Buch", "nomen", "книга", "1", "A2")
@@ -172,7 +207,7 @@ class WordFilterUITest(unittest.TestCase):
         wf.set_filter_mode(U, "cefr")
         _run(_Query(UI.CB_TOPIC + "1", U))
         self.assertEqual(wf.get_filter_mode(U), "topics")
-        self.assertEqual(get_user_setting(self.db, U, TOPIC_FILTER_KEY, ""), "1")
+        self.assertEqual(wf.read_filter_state(U)["config"]["topics_by_level"]["A1"], ["1"])
 
     def test_entering_a_branch_without_tapping_changes_nothing(self):
         wf.set_filter_mode(U, "topics")
@@ -189,13 +224,15 @@ class WordFilterUITest(unittest.TestCase):
         _run(_Query(UI.CB_CEFR + "all", U))
         self.assertEqual(len(get_user_levels(self.db, U)), 6)
 
-    def test_booklevel_pick_sets_level_mode_and_resets_topics(self):
+    def test_booklevel_pick_adds_level_and_preserves_other_topics(self):
         from bot.storage import set_user_setting
         set_user_setting(self.db, U, TOPIC_FILTER_KEY, "1")  # stale narrow selection
         _run(_Query(UI.CB_BLVL + "B1", U))
         self.assertEqual(wf.get_filter_mode(U), "topics")
         self.assertEqual(wf.get_active_book_level(U), "B1")
-        self.assertEqual(get_user_setting(self.db, U, TOPIC_FILTER_KEY, ""), "all")
+        state = wf.read_filter_state(U)
+        self.assertEqual(state["config"]["topics_by_level"], {"A1": ["1"], "B1": "all"})
+        self.assertEqual(get_user_setting(self.db, U, TOPIC_FILTER_KEY, ""), "1")
 
     def test_book_topics_with_multiple_levels_opens_level_picker(self):
         q = _Query(UI.CB_FORK_TOPICS, U)
@@ -229,7 +266,7 @@ class WordFilterUITest(unittest.TestCase):
         self.assertIn(UI.CB_TOPIC + "1", _cbs(kb))
         self.assertNotIn(UI.CB_BLVL + "A1", _cbs(kb))
 
-    def test_book_topics_with_single_nondefault_level_selects_it(self):
+    def test_book_topics_with_single_nondefault_level_requires_explicit_repair(self):
         from bot.storage import _connect, set_user_setting
         with _connect(self.db) as conn:
             conn.execute("DELETE FROM words WHERE topic = '1'")
@@ -237,11 +274,19 @@ class WordFilterUITest(unittest.TestCase):
         q = _Query(UI.CB_FORK_TOPICS, U)
         _run(q)
         text, kb = q.edits[-1]
-        self.assertEqual(wf.get_active_book_level(U), "B1")
-        self.assertEqual(get_user_setting(self.db, U, TOPIC_FILTER_KEY, ""), "all")
-        self.assertEqual(text, UI.render_topics(U)[0])
-        self.assertIn(UI.CB_TOPIC + "2", _cbs(kb))
-        self.assertNotIn(UI.CB_BLVL + "B1", _cbs(kb))
+        self.assertEqual(wf.get_active_book_level(U), "A1")
+        self.assertEqual(get_user_setting(self.db, U, TOPIC_FILTER_KEY, ""), "1")
+        self.assertTrue(wf.read_filter_state(U)["legacy"])
+        self.assertEqual(text, UI.render_booklevels(U)[0])
+        self.assertNotIn(UI.CB_TOPIC + "2", _cbs(kb))
+        self.assertIn(UI.CB_BLVL + "B1", _cbs(kb))
+        # Recovery requires the explicit level tap; it remains on S2.
+        pick = _Query(UI.CB_BLVL + "B1", U)
+        _run(pick)
+        self.assertEqual(wf.read_filter_state(U)["config"]["selected_levels"], ["B1"])
+        self.assertEqual(pick.edits[-1][0], UI.render_booklevels(U)[0])
+        self.assertEqual(wf.resolve_quiz_filter(U).topics, ["2"])
+        self.assertEqual(get_user_setting(self.db, U, TOPIC_FILTER_KEY, ""), "1")
 
     def test_topic_toggle(self):
         wf.set_active_book_level(U, "A1")
