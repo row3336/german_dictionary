@@ -48,7 +48,7 @@ from pathlib import Path
 # 17 = remove weak-form modes, schema, settings, progress, and history. This is a
 #      destructive schema/data migration and is never run by ordinary startup.
 ADDITIVE_SCHEMA_VERSION = 15
-SCHEMA_VERSION = 19
+SCHEMA_VERSION = 20
 
 
 class DestructiveMigrationRequired(RuntimeError):
@@ -77,6 +77,7 @@ _COUNT_TABLES = (
     "conjugation_answers",
     "study_word_generations",
     "study_reset_operations",
+    "learning_requests",
 )
 
 # Keep the db_events timeline bounded (it's tiny, but never let it grow forever).
@@ -233,6 +234,12 @@ def run_healthcheck(db_path):
             for table, column in (("words", "reflexive_case"), ("conjugation_passes", "prompt_snapshot_json"), ("quiz_events", "study_generation"), ("conjugation_admissions", "study_generation")):
                 if column not in {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}:
                     missing.append(table + "." + column)
+        if version >= 20:
+            missing.extend(sorted({'learning_requests'} - tables))
+            for column in ('user_id', 'word_id', 'status', 'request_id', 'queued_at',
+                           'consumed_at', 'word_generation', 'learning_lifecycle'):
+                if column not in {r[1] for r in conn.execute('PRAGMA table_info(learning_requests)')}:
+                    missing.append('learning_requests.' + column)
         if version >= 18:
             columns = {r[1] for r in conn.execute("PRAGMA table_info(learning_items)")}
             missing.extend("learning_items." + c for c in
@@ -642,9 +649,9 @@ def _apply_migration_dispatcher(db_path, today=None, expected_fingerprint=None):
                 "source DB changed after destructive migration dry-run; run a new dry-run"
             )
         current = int(conn.execute("PRAGMA user_version").fetchone()[0])
-        if current not in {ADDITIVE_SCHEMA_VERSION, 16, 17, 18}:
+        if current not in {ADDITIVE_SCHEMA_VERSION, 16, 17, 18, 19}:
             raise RuntimeError(
-                f"migration dispatcher requires v{ADDITIVE_SCHEMA_VERSION}, v16, or v17, "
+                f"migration dispatcher requires v{ADDITIVE_SCHEMA_VERSION}, v16, v17, v18, or v19, "
                 f"got v{current}"
             )
         if current == ADDITIVE_SCHEMA_VERSION:
@@ -664,6 +671,11 @@ def _apply_migration_dispatcher(db_path, today=None, expected_fingerprint=None):
             from ..study.schema_v19 import migrate as migrate_v19
             steps["reflexive_v19"] = migrate_v19(conn)
             conn.execute("PRAGMA user_version = 19")
+            current = 19
+        if current == 19:
+            from ..study.schema_v20 import migrate as migrate_v20
+            steps["learning_requests_v20"] = migrate_v20(conn)
+            conn.execute("PRAGMA user_version = 20")
         counts_in_transaction = _table_counts(conn)
         _validate_destructive_counts(before, counts_in_transaction, steps)
         integrity = conn.execute("PRAGMA integrity_check").fetchone()[0]

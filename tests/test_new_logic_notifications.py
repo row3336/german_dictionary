@@ -92,7 +92,7 @@ class NotificationTest(unittest.TestCase):
             add_word(self.db, {"id": f"w{index}", "type": "nomen", "article": "das",
                 "german": f"Wort{index}", "russian": f"слово{index}", "topic": "one" if index < 5 else "two"})
         add_word(self.db, {"id": "p", "type": "phrase", "german": "Eine Phrase", "russian": "фраза"})
-        add_word(self.db, {"id": "oral", "type": "verb", "german": "gehen", "infinitive": "gehen", "russian": "идти"})
+        add_word(self.db, {"id": "oral", "type": "verb", "german": "gehen", "infinitive": "gehen", "russian": "идти", "reflexive_case": "none"})
         with closing(sqlite3.connect(self.db)) as conn:
             for index in range(12):
                 conn.execute("INSERT INTO quiz_events(user_id,word_id,mode,is_correct,created_at) VALUES(?,?,?,0,'2020-01-01')", (USER, f"w{index}", "ru_de"))
@@ -132,7 +132,7 @@ class NotificationTest(unittest.TestCase):
     def test_old_active_learning_does_not_suppress_new_words_but_today_start_does(self):
         N.set_preference(self.db, USER, "quiz", enabled=False)
         self.enable_new()
-        add_word(self.db, {"id": "old", "type": "verb", "german": "gehen", "infinitive": "gehen", "russian": "идти"})
+        add_word(self.db, {"id": "old", "type": "verb", "german": "gehen", "infinitive": "gehen", "russian": "идти", "reflexive_case": "none"})
         with closing(sqlite3.connect(self.db)) as conn:
             conn.execute("INSERT INTO learning_items(user_id,word_id,batch_id,next_due,status) VALUES(?,?,?,'2099-01-01','active')", (USER, "old", "old-batch"))
             conn.commit()

@@ -24,6 +24,7 @@ from bot.handlers import quiz as Q
 from bot.study import answers, repository
 from bot.study.schema_v18 import ensure_schema
 from bot.study.schema_v19 import ensure_schema as ensure_schema19
+from bot.study.schema_v20 import ensure_schema as ensure_schema20
 from bot.study.srs import update_fsrs
 from bot.written import state as W
 
@@ -69,6 +70,7 @@ class WrittenTests(unittest.TestCase):
         ''')
         ensure_schema(self.conn)
         ensure_schema19(self.conn)
+        ensure_schema20(self.conn)
         for wid in ('a', 'b', 'c'):
             self.conn.execute("INSERT INTO words(id,type,german,article,plural,russian,ukrainian,english,infinitive,is_separable,conjugation_praesens,conjugation_praeteritum) VALUES(?,'nomen','Hund','der','Hunde','собака','собака','dog','',0,'','')", (wid,))
         self.conn.commit()

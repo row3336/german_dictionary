@@ -6,6 +6,7 @@ from datetime import date, datetime, timezone
 from . import deliveries, repository as repo
 from .srs import apply_answer, default_srs
 from .generations import assert_generation, generation_for, assert_generations, StaleGeneration
+from ..learning_requests import assert_lifecycles
 
 
 class StaleStudyAction(ValueError):
@@ -91,7 +92,7 @@ def _record_recovery(conn, user_id, transport_update_id, flow_id, action_kind, r
 def apply_original_answer(db_path, user_id, word_id, mode, answer_kind, action_key,
                           transport_update_id, expected_revision, now=None, *,
                           flow_id, live_revision, interval_divisor=1.0,
-                          learning_transition=None, target_resolver=None, srs_day=None, expected_generation=0, expected_generations=None):
+                          learning_transition=None, target_resolver=None, srs_day=None, expected_generation=0, expected_generations=None, expected_lifecycles=None):
     """Persist one original answer. Replay never invokes target_resolver."""
     # No explicit clock preserves the legacy host-local date.today() contract.
     day = srs_day or (now.date() if now is not None else date.today())
@@ -114,6 +115,10 @@ def apply_original_answer(db_path, user_id, word_id, mode, answer_kind, action_k
         assert_generation(conn, user_id, word_id, expected_generation)
         if answer_kind not in {"correct", "wrong", "idk"}:
             raise ValueError("unsupported answer kind")
+        if mode == "learning":
+            if expected_lifecycles is not None and word_id not in expected_lifecycles:
+                raise StaleGeneration("Learning target was not selected")
+            assert_lifecycles(conn, user_id, expected_lifecycles or {word_id: 0})
         snapshot = repo.capture_snapshot(conn, user_id, word_id, [mode])
         if learning_transition:
             after = learning_transition(conn, snapshot, answer_kind, now)
@@ -131,7 +136,7 @@ def apply_original_answer(db_path, user_id, word_id, mode, answer_kind, action_k
 def correct_last_answer(db_path, user_id, parent_action_key, action_key,
                         transport_update_id, expected_revision, now=None, *,
                         flow_id, live_revision, interval_divisor=1.0,
-                        learning_transition=None, srs_day=None, expected_generations=None):
+                        learning_transition=None, srs_day=None, expected_generations=None, expected_lifecycles=None):
     """Replace a wrong result from its original baseline, retaining its event."""
     day = srs_day or (now.date() if now is not None else date.today())
     now = now or datetime.now(timezone.utc)
@@ -159,6 +164,11 @@ def correct_last_answer(db_path, user_id, parent_action_key, action_key,
                              (user_id, event_id)).fetchone()
         if not event or event[0]:
             raise StaleStudyAction("answer was already corrected or deleted")
+        if mode == "learning":
+            pins = parent['before'].get('learning_lifecycles') or {}
+            assert_lifecycles(conn, user_id, {wid: pins.get(wid, 0) for wid in
+                {word_id, *(i['word_id'] for i in parent['before'].get('affected_learning_items', []))}})
+            assert_lifecycles(conn, user_id, expected_lifecycles or {})
         snapshot = repo.capture_snapshot(conn, user_id, word_id, [mode], event_ids=[event_id])
         if learning_transition:
             after = learning_transition(conn, parent["before"], "correct", now)
@@ -175,7 +185,7 @@ def correct_last_answer(db_path, user_id, parent_action_key, action_key,
 def apply_preview_transition(db_path, user_id, word_id, action_kind, action_key,
                              transport_update_id, expected_revision, now=None, *,
                              flow_id, live_revision, transition,
-                             affected_learning_ids=None, expected_generations=None):
+                             affected_learning_ids=None, expected_generations=None, expected_lifecycles=None):
     """Capture every affected row before one preview next/skip finalization."""
     now = now or datetime.now(timezone.utc)
     with repo.transaction(db_path) as conn:
@@ -193,6 +203,9 @@ def apply_preview_transition(db_path, user_id, word_id, action_kind, action_key,
             if expected_generations is not None and wid not in expected_generations:
                 raise StaleGeneration("preview participant was not selected: " + str(wid))
             assert_generation(conn, user_id, wid, (expected_generations or {}).get(wid, 0))
+            if expected_lifecycles is not None and wid not in expected_lifecycles:
+                raise StaleGeneration('preview Learning participant was not selected: ' + str(wid))
+            assert_lifecycles(conn, user_id, {wid: (expected_lifecycles or {}).get(wid, 0)})
         snapshot = repo.capture_snapshot(conn, user_id, word_id, [], affected_learning_ids=ids)
         after = transition(conn, snapshot, now)
         return _finish(conn, user_id, action_key, transport_update_id, flow_id, action_kind,
@@ -200,7 +213,7 @@ def apply_preview_transition(db_path, user_id, word_id, action_kind, action_key,
 
 
 def record_control_transition(db_path, user_id, transport_update_id, flow_id,
-                              action_kind, resolve, *, expected_generations=None):
+                              action_kind, resolve, *, expected_generations=None, expected_lifecycles=None):
     """Deduplicate next/reveal/stop before resolving the live frame."""
     with repo.transaction(db_path) as conn:
         authorize_user(conn, user_id)
@@ -212,7 +225,10 @@ def record_control_transition(db_path, user_id, transport_update_id, flow_id,
             return _record_recovery(conn, user_id, transport_update_id, flow_id,
                                     action_kind, recovered)
         assert_generations(conn, user_id, expected_generations or {})
+        assert_lifecycles(conn, user_id, expected_lifecycles or {})
         result = resolve(conn)
+        if expected_lifecycles is not None:
+            result = {**result, 'learning_lifecycles': dict(expected_lifecycles)}
         deliveries.begin_delivery(conn, user_id, transport_update_id, flow_id, action_kind)
         deliveries.commit_delivery(conn, user_id, transport_update_id, result)
         return result

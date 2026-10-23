@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+from pathlib import Path
 import sqlite3
 import sys
 import tempfile
@@ -67,10 +68,9 @@ class _Context:
 
 class RetryInputErrBudgetTest(unittest.TestCase):
     def setUp(self):
-        tmp = tempfile.NamedTemporaryFile(delete=False)
-        tmp.close()
-        self.db = tmp.name
-        self.addCleanup(lambda: os.unlink(self.db))
+        stand = Path('/Users/wf/py/_agent_work/888_german_dictionary/k15_impl_20261023')
+        stand.mkdir(parents=True, exist_ok=True)
+        self.db = str(Path(tempfile.mkdtemp(prefix='retry-budget-', dir=stand)) / 'synthetic.sqlite')
         init_db(self.db)
         conn = sqlite3.connect(self.db)
         conn.execute(
@@ -161,19 +161,25 @@ class RetryInputErrBudgetTest(unittest.TestCase):
         self.assertEqual(context.user_data["retry_queue"][RETRY_MODE], [])
         self.assertNotIn(WORD_ID, context.user_data["retry_counts"][RETRY_MODE])
 
-    def test_send_learn_still_uses_full_cleanup(self):
+    def test_send_learn_enqueues_and_preserves_consumed_retry_budget(self):
         context = self._retry_context(count=2)
         update = _Update("send_learn")
-
-        with (
-            patch.object(learning_handler, "_send_entry_to_learning", return_value=True),
-            patch.object(quiz_handler, "_send_ru_de_prompt", new=AsyncMock(return_value=QUIZ_RU_DE)),
-        ):
+        update.update_id = 90001
+        with sqlite3.connect(self.db) as conn:
+            before = {table: conn.execute("SELECT * FROM " + table).fetchall()
+                      for table in ("progress", "quiz_events", "transaction_log")}
+        with patch.object(quiz_handler, "_send_written_prompt", new=AsyncMock(return_value=QUIZ_RU_DE)) as prompt:
             result = _run(quiz_handler.quiz_ru_de(update, context))
-
+        prompt.assert_awaited_once()
         self.assertEqual(result, QUIZ_RU_DE)
+        self.assertEqual(context.user_data["learning_send_receipt"]["enqueue_result"], "queued")
         self.assertEqual(context.user_data["retry_queue"][RETRY_MODE], [])
-        self.assertNotIn(WORD_ID, context.user_data["retry_counts"][RETRY_MODE])
+        self.assertEqual(context.user_data["retry_counts"][RETRY_MODE][WORD_ID], 2)
+        with sqlite3.connect(self.db) as conn:
+            self.assertEqual(conn.execute("SELECT word_id,status,learning_lifecycle FROM learning_requests").fetchall(), [(WORD_ID, "pending", 0)])
+            self.assertEqual(conn.execute("SELECT * FROM learning_items").fetchall(), [])
+            for table, rows in before.items():
+                self.assertEqual(conn.execute("SELECT * FROM " + table).fetchall(), rows)
 
 
 if __name__ == "__main__":

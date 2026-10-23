@@ -396,22 +396,24 @@ class LearningAcceptance(unittest.TestCase):
         upd = self.update(t("en", "send_learn"))
         real_connect = sqlite3.connect
         with patch.object(sqlite3, "connect", wraps=real_connect) as connections:
-            self.assertTrue(L._send_entry_to_learning(upd, self.ctx))
+            self.assertEqual(L._send_entry_to_learning(upd, self.ctx), L.EnqueueResult.QUEUED)
         self.assertEqual(connections.call_count, 1)
         class Poison:
             def get(self, key, default=None):
                 raise AssertionError("replay resolved the current target")
         self.ctx.user_data["quiz_entry"] = Poison()
-        self.assertFalse(L._send_entry_to_learning(upd, self.ctx))
-        self.assertEqual(len(self.read("learning_items")), 1)
+        self.assertEqual(L._send_entry_to_learning(upd, self.ctx), L.EnqueueResult.QUEUED)
+        self.assertEqual(self.read("learning_items"), [])
+        self.assertEqual([r["word_id"] for r in self.read("learning_requests")], ["a"])
+        self.assertTrue(self.ctx.user_data["learning_send_receipt"]["replayed"])
         recovery = self.update(t("en", "send_learn"))
         with repo.transaction(self.db) as conn:
             deliveries.begin_delivery(conn, 1, 99999, "qa-undo", "undo", result={"tx_ids": [], "cursor": 0, "outcomes": []})
         self.ctx.user_data.update(quiz_entry={"id": "b"}, learning_frame={"flow_id": "old"})
-        self.assertFalse(L._send_entry_to_learning(recovery, self.ctx))
+        self.assertEqual(L._send_entry_to_learning(recovery, self.ctx), L.EnqueueResult.STALE)
         self.assertNotIn(L.FRAME, self.ctx.user_data)
         self.ctx.user_data.update(quiz_entry={"id": "b"}, learning_frame={"flow_id": "new"})
-        self.assertFalse(L._send_entry_to_learning(recovery, self.ctx))
+        self.assertEqual(L._send_entry_to_learning(recovery, self.ctx), L.EnqueueResult.STALE)
         self.assertEqual(self.ctx.user_data[L.FRAME], {"flow_id": "new"})
         self.assertIsNone(self.row("b"))
 

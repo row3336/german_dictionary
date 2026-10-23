@@ -422,7 +422,11 @@ def actual_suite():
             self.assertEqual(data["learning_send_receipt"]["word_id"], "b")
             from bot.handlers.learning import _send_entry_to_learning
             isolated = SimpleNamespace(user_data={"quiz_edit_entry": {"id": "c"}})
-            self.assertFalse(_send_entry_to_learning(update, isolated, entry_key="quiz_edit_entry"))
+            from bot.learning_requests import EnqueueResult
+            self.assertEqual(_send_entry_to_learning(update, isolated, entry_key="quiz_edit_entry"), EnqueueResult.QUEUED)
+            with sqlite3.connect(self.db) as conn:
+                self.assertEqual(conn.execute("SELECT word_id,status FROM learning_requests WHERE user_id=?", (UID,)).fetchall(), [("b", "pending")])
+                self.assertEqual(conn.execute("SELECT COUNT(*) FROM learning_items WHERE user_id=?", (UID,)).fetchone()[0], 0)
             self.assertTrue(isolated.user_data["learning_send_receipt"]["replayed"])
             self.assertEqual(isolated.user_data["learning_send_receipt"]["word_id"], "b")
             for key, value in before.items():

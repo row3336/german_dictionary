@@ -41,6 +41,10 @@ def selected_entry(conn, user_id, entry, participant_ids=()):
     expected = capture_generations(conn, user_id, [entry['id'], *participant_ids])
     result['study_generation'] = expected[entry['id']]
     result['study_generations'] = expected
+    from ..learning_requests import capture_lifecycles
+    lifecycles = capture_lifecycles(conn, user_id, expected)
+    result['learning_lifecycle'] = lifecycles[entry['id']]
+    result['learning_lifecycles'] = lifecycles
     return result
 
 

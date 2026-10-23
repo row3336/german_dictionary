@@ -71,7 +71,11 @@ def capture_snapshot(conn, user_id, word_id, modes=None,
         if row is None:
             raise ValueError("event does not belong to user")
         events[str(event_id)] = row
-    return {"version": 3, "generations": capture_generations(conn, user_id, [*ids, *(r["word_id"] for r in events.values())]), "user_id": int(user_id), "word_id": word_id,
+    from ..learning_requests import capture_lifecycles
+    participants = [*ids, *(row['word_id'] for row in events.values())]
+    return {"version": 3, "learning_lifecycles": capture_lifecycles(conn, user_id, participants),
+            "generations": capture_generations(conn, user_id, participants),
+            "user_id": int(user_id), "word_id": word_id,
             "modes": modes, "progress": progress,
             "learning_item": items[0]["before"] if items else None,
             "affected_learning_items": items, "event_before": events,
@@ -154,6 +158,9 @@ def validate_snapshot(snapshot):
     if modes is not None and (not isinstance(modes, (list, tuple)) or
                               any(not isinstance(mode, str) for mode in modes)):
         raise ValueError("invalid snapshot modes")
+    for wid, value in _snapshot_mapping(snapshot.get('learning_lifecycles'), 'learning lifecycles').items():
+        if not isinstance(wid, str) or type(value) is not int or value < 0:
+            raise ValueError('invalid snapshot Learning lifecycle')
     progress = _snapshot_mapping(snapshot.get("progress"), "progress")
     for mode, row in progress.items():
         if not isinstance(mode, str):
@@ -212,9 +219,25 @@ def restore_snapshot(conn, snapshot):
         outcomes[wid] = "restored"
         return True
 
+    from ..learning_requests import assert_lifecycles
+    learning_outcomes = {}
+
+    def learning_allowed(wid):
+        if not allowed(wid):
+            return False
+        try:
+            assert_lifecycles(conn, user_id, {wid: (snapshot.get('learning_lifecycles') or {}).get(wid, 0)})
+        except StaleGeneration:
+            learning_outcomes[wid] = 'stale_learning_lifecycle'
+            return False
+        learning_outcomes[wid] = 'restored'
+        return True
+
     main_allowed = allowed(word_id)
     word_exists = bool(conn.execute("SELECT 1 FROM words WHERE id=?", (word_id,)).fetchone())
     for mode in (snapshot.get("modes") or []) if main_allowed else []:
+        if mode == "learning" and not learning_allowed(word_id):
+            continue
         row = (snapshot.get("progress") or {}).get(mode)
         if row and word_exists:
             conn.execute("""INSERT INTO progress
@@ -234,30 +257,32 @@ def restore_snapshot(conn, snapshot):
     for item in items:
         if item.get("user_id", user_id) != user_id:
             raise ValueError("snapshot crosses users")
-        if allowed(item["word_id"]):
+        if learning_allowed(item["word_id"]):
             restored = _restore_learning(conn, user_id, item["word_id"], item.get("before")) or restored
     from ..learning_store import touch_batch
-    for batch_id in {item["before"]["batch_id"] for item in items if item.get("before") and outcomes.get(item["word_id"]) == "restored"}:
+    for batch_id in {item["before"]["batch_id"] for item in items if item.get("before") and learning_outcomes.get(item["word_id"]) == "restored"}:
         touch_batch(conn, user_id, batch_id)
     if int(snapshot.get("version", 1)) >= 2 and not snapshot.get("legacy_event_counts"):
         for event_id in snapshot.get("created_event_ids") or []:
-            event = conn.execute("SELECT word_id,study_generation FROM quiz_events WHERE user_id=? AND id=?", (user_id, event_id)).fetchone()
+            event = conn.execute("SELECT word_id,study_generation,mode FROM quiz_events WHERE user_id=? AND id=?", (user_id, event_id)).fetchone()
             owner = (snapshot.get("created_event_owners") or {}).get(str(event_id))
             if int(snapshot.get("version", 1)) >= 3:
                 known = owner and event and owner.get("word_id") == event[0] and owner.get("study_generation") == event[1]
             else:
                 known = event and event[0] == word_id and event[1] == 0
-            if known and allowed(event[0]):
+            if known and allowed(event[0]) and (event[2] != "learning" or learning_allowed(event[0])):
                 conn.execute("DELETE FROM quiz_events WHERE user_id=? AND id=?", (user_id, event_id))
         for event_id, row in (snapshot.get("event_before") or {}).items():
             # A deleted parent is deliberately never resurrected.
-            if allowed(row["word_id"]) and row.get("study_generation", 0) == generation_for(conn, user_id, row["word_id"]) and conn.execute("SELECT 1 FROM words WHERE id=?", (row["word_id"],)).fetchone():
+            if (row["mode"] != "learning" or learning_allowed(row["word_id"])) and allowed(row["word_id"]) and row.get("study_generation", 0) == generation_for(conn, user_id, row["word_id"]) and conn.execute("SELECT 1 FROM words WHERE id=?", (row["word_id"],)).fetchone():
                 conn.execute("""UPDATE quiz_events SET is_correct=?,prev_is_correct=?,created_at=?
                     WHERE user_id=? AND id=? AND word_id=? AND mode=?""",
                     (row["is_correct"], row.get("prev_is_correct"), row["created_at"],
                      user_id, int(event_id), row["word_id"], row["mode"]))
     else:
         for mode in (snapshot.get("modes") or []) if main_allowed else []:
+            if mode == "learning" and not learning_allowed(word_id):
+                continue
             target = int((snapshot.get("event_counts") or {}).get(mode, 0))
             conn.execute("""DELETE FROM quiz_events WHERE id IN (
                 SELECT id FROM quiz_events WHERE user_id=? AND word_id=? AND mode=? AND study_generation=?
@@ -265,6 +290,7 @@ def restore_snapshot(conn, snapshot):
                 WHERE user_id=? AND word_id=? AND mode=? AND study_generation=?)-?))""",
                 (user_id, word_id, mode, generation_for(conn,user_id,word_id), user_id, word_id, mode, generation_for(conn,user_id,word_id), target))
     snapshot["restore_outcomes"] = outcomes
+    snapshot["learning_restore_outcomes"] = learning_outcomes
     return restored
 
 

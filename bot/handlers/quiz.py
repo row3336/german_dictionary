@@ -226,6 +226,7 @@ _REPLAYED_LEARNING_SEND = object()
 
 
 async def _learning_send_outcome(update, context, state):
+    from .learning import EnqueueResult, _learning_send_text
     receipt = context.user_data.get('learning_send_receipt') or {}
     if receipt.get('transport_update_id') != written_state.transport_id(update):
         return None
@@ -234,10 +235,56 @@ async def _learning_send_outcome(update, context, state):
     if receipt.get('recovered_undo'):
         invalidate_study_frames(context)
         return await _back_to_main_menu(update, context)
+    result = EnqueueResult(receipt.get('enqueue_result', 'stale'))
+    prefix = _learning_send_text(update.effective_user.id, result)
     frame = context.user_data.get(written_state.FRAME)
-    if frame:
+    if result == EnqueueResult.QUEUED:
+        mode = _written_mode(context, update.effective_user.id, state)
+        from ..common.session import _remove_pending_retry
+        _remove_pending_retry(context, mode, receipt.get('word_id'))
+    if result == EnqueueResult.QUEUED and (not frame or frame.get('question_id') == receipt.get('word_id')):
+        frame = written_state.ensure_frame(context, mode, state)
         frame['advance_transport'] = written_state.transport_id(update)
-    return None
+        return await _send_written_prompt(update, context, prefix, state)
+    if frame:
+        # A status-only re-render also owns its unfinished display, including a
+        # failure while formatting before _deliver_written_view is reached.
+        frame['next_view'] = {'transport': written_state.transport_id(update),
+            'revision': frame['revision'], 'prefix': prefix, 'selected': True,
+            'adopted': True, 'entry': context.user_data.get('quiz_entry')}
+    return await _render_current_written(update, context, state, prefix)
+
+
+async def _resume_learning_send_return(update, context):
+    """Finish a failed clarify return before ADD_EDIT can reload its old target.
+
+    The caller already owns the study lock. The flag lives in the exact written
+    frame, so navigation/replacement cannot bind an old return to a newer flow.
+    """
+    frame = context.user_data[written_state.FRAME]
+    transport = written_state.transport_id(update)
+    receipt = written_service.preflight(get_db_path(), update.effective_user.id, transport)
+    if receipt and not receipt.get('replayed') and receipt.get('invalidate_frame'):
+        invalidate_study_frames(context)
+        return await _back_to_main_menu(update, context)
+    if receipt:
+        pending = frame.get('next_view') or {}
+        if (frame.get('pending_render') and frame.get('render_transport') == transport
+                and frame.get('render_revision') == frame['revision']):
+            state = await _deliver_written_view(update, context, frame, frame['view'])
+        elif pending.get('transport') == transport and pending.get('revision') == frame['revision']:
+            state = await _send_written_prompt(update, context, pending['prefix'], frame['return_state'])
+        else:
+            return None
+    else:
+        drained, state = await _drain_unshown_written(update, context)
+        if not drained:
+            state = await _render_current_written(update, context, frame['return_state'])
+    frame.pop('learning_send_return_pending', None)
+    context.user_data.pop('quiz_edit_entry', None)
+    from ..common.quiz_resume import close_return_point
+    close_return_point(context)
+    return state
 
 
 # --- answer checking (Ru>De strict) ---
@@ -645,19 +692,9 @@ async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if action == "input_err":
         return await _correct_written_answer(update, context, mode, QUIZ_RU_DE)
     if action == "send_learn":
-        added = _send_entry_to_learning(update, context, entry_key="quiz_entry")
+        _send_entry_to_learning(update, context, entry_key="quiz_entry")
         outcome = await _learning_send_outcome(update, context, QUIZ_RU_DE)
-        if outcome is _REPLAYED_LEARNING_SEND:
-            return None
-        if outcome is not None:
-            return outcome
-        if added:
-            # Word is now in active learning (excluded from FSRS due) — drop it from the
-            # retry queue and move on to the NEXT word, not the one just sent.
-            _remove_from_retry(context, mode, (context.user_data.get("quiz_entry") or {}).get("id"))
-        lang = _user_interface_lang(update.effective_user.id)
-        prefix = t(lang, "added_to_learning") if added else t(lang, "nothing_to_send")
-        return await _send_ru_de_prompt(update, context, prefix)
+        return None if outcome is _REPLAYED_LEARNING_SEND else outcome
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_RU_DE)
     if _action_key_from_text(text, update.effective_user.id) == "clarify_fields":
@@ -697,17 +734,9 @@ async def quiz_de_ru(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if action == "input_err":
         return await _correct_written_answer(update, context, mode, QUIZ_DE_RU)
     if action == "send_learn":
-        added = _send_entry_to_learning(update, context, entry_key="quiz_entry")
+        _send_entry_to_learning(update, context, entry_key="quiz_entry")
         outcome = await _learning_send_outcome(update, context, QUIZ_DE_RU)
-        if outcome is _REPLAYED_LEARNING_SEND:
-            return None
-        if outcome is not None:
-            return outcome
-        if added:
-            _remove_from_retry(context, mode, (context.user_data.get("quiz_entry") or {}).get("id"))
-        lang = _user_interface_lang(update.effective_user.id)
-        prefix = t(lang, "added_to_learning") if added else t(lang, "nothing_to_send")
-        return await _send_de_ru_prompt(update, context, prefix)
+        return None if outcome is _REPLAYED_LEARNING_SEND else outcome
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_DE_RU)
     if _action_key_from_text(text, update.effective_user.id) == "clarify_fields":
@@ -757,17 +786,9 @@ async def quiz_pl_sg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if action == "input_err":
         return await _correct_written_answer(update, context, mode, QUIZ_PL_SG)
     if action == "send_learn":
-        added = _send_entry_to_learning(update, context, entry_key="quiz_entry")
+        _send_entry_to_learning(update, context, entry_key="quiz_entry")
         outcome = await _learning_send_outcome(update, context, QUIZ_PL_SG)
-        if outcome is _REPLAYED_LEARNING_SEND:
-            return None
-        if outcome is not None:
-            return outcome
-        if added:
-            _remove_from_retry(context, _mode_pl_sg(update.effective_user.id), (context.user_data.get("quiz_entry") or {}).get("id"))
-        lang = _user_interface_lang(update.effective_user.id)
-        prefix = t(lang, "added_to_learning") if added else t(lang, "nothing_to_send")
-        return await _send_pl_sg_prompt(update, context, prefix)
+        return None if outcome is _REPLAYED_LEARNING_SEND else outcome
     if text == FLAG_TEXT:
         return await _flag_current_word(update, context, QUIZ_PL_SG)
     if _action_key_from_text(text, update.effective_user.id) == "clarify_fields":

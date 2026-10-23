@@ -405,7 +405,12 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return DB_SEARCH
     if action == "db_search_topics_lern":
         context.user_data.pop("db_search_topic_pick", None)
-        entries = list_learning_queue_words(get_db_path(), user_id=user_id)
+        from ..study.repository import transaction
+        from ..common.word_filter import resolve_quiz_filter
+        from ..learning_requests import eligible_pool
+        with transaction(get_db_path()) as conn:
+            selected_filter = resolve_quiz_filter(user_id, conn=conn)
+            entries = eligible_pool(conn, user_id, selected_filter.topics, selected_filter.cefr_levels)
         if not entries:
             return await _send_db_search_prompt(update, user_id, t(_user_interface_lang(user_id), "no_queued_learning"))
         lines = [f"learning queue: {len(entries)} words", ""]

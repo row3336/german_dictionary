@@ -96,6 +96,11 @@ def read_search_entry(db_path, word_id, *, user_id=None, conn=None):
                 generation = conn.execute("SELECT generation FROM study_word_generations WHERE user_id=? AND word_id=?", (user_id, str(word_id))).fetchone()
             entry['study_generation'] = generation[0] if generation else 0
             entry['study_generations'] = {entry['id']: entry['study_generation']}
+            from .learning_requests import capture_lifecycles
+            has_lifecycles = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='learning_requests'").fetchone()
+            lifecycles = capture_lifecycles(conn, user_id, [entry['id']]) if has_lifecycles else {entry['id']: 0}
+            entry['learning_lifecycle'] = lifecycles[entry['id']]
+            entry['learning_lifecycles'] = lifecycles
         return entry
     finally:
         conn.execute("RELEASE search_entry_snapshot")

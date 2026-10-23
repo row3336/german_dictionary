@@ -187,20 +187,26 @@ def init_db(db_path, *, _additive_only=False):
     """Handle init db."""
     with _connect(db_path) as conn:
         version = int(conn.execute("PRAGMA user_version").fetchone()[0])
-        if version > 19:
-            raise RuntimeError(f"database schema v{version} is newer than supported v19")
+        if version > 20:
+            raise RuntimeError(f"database schema v{version} is newer than supported v20")
         fresh = not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='words'").fetchone()
-        if not fresh and version == 19:
+        if not fresh and version == 20:
             for table, column in (("words", "reflexive_case"), ("quiz_events", "study_generation"),
                                   ("conjugation_passes", "prompt_snapshot_json"),
                                   ("conjugation_admissions", "study_generation"),
-                                  ("study_word_generations", "generation"), ("study_reset_operations", "manifest_sha256")):
+                                  ("study_word_generations", "generation"), ("study_reset_operations", "manifest_sha256"),
+                                  ("learning_requests", "learning_lifecycle"), ("learning_requests", "request_id")):
                 if column not in {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}:
-                    raise RuntimeError("incomplete schema19: " + table + "." + column)
+                    raise RuntimeError("incomplete schema20: " + table + "." + column)
+            required = {'user_id', 'word_id', 'status', 'request_id', 'queued_at',
+                        'consumed_at', 'word_generation', 'learning_lifecycle'}
+            columns = {r[1] for r in conn.execute('PRAGMA table_info(learning_requests)')}
+            if required - columns:
+                raise RuntimeError('incomplete schema20: learning_requests.' + sorted(required - columns)[0])
             return
-        if not fresh and version < 19 and not _additive_only:
+        if not fresh and version < 20 and not _additive_only:
             from .common.db_safety import DestructiveMigrationRequired
-            raise DestructiveMigrationRequired("schema19 requires explicit migration")
+            raise DestructiveMigrationRequired("schema20 requires explicit migration")
         conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS words (
@@ -424,13 +430,15 @@ def init_db(db_path, *, _additive_only=False):
             """
         )
         _ensure_schema(conn)
-        if fresh or version == 19:
+        if fresh or version == 20:
             from .study.schema_v18 import ensure_schema
             ensure_schema(conn)
             from .study.schema_v19 import ensure_schema as ensure_v19
             ensure_v19(conn)
+            from .study.schema_v20 import ensure_schema as ensure_v20
+            ensure_v20(conn)
             if fresh:
-                conn.execute("PRAGMA user_version=19")
+                conn.execute("PRAGMA user_version=20")
 
 
 def _ensure_schema(conn):
@@ -2611,52 +2619,11 @@ def _mix_by_topic_proportional(entries, limit):
 
 
 def learning_pick_new_words(db_path, user_id, limit, topics=None, cefr_levels=None, mix=False):
-    """Pick new (never-seen, not-yet-in-learning) words to enqueue for learning.
-
-    This is the *selection* layer for the learning queue — the only place mix
-    mode acts. Mix mode never reorders the running queue's shows (that rule is
-    static, see handlers/learning.py:_pick_learning_due_entry); it only shapes
-    which words get drawn into the queue from the selected topic filter(s):
-      - mix OFF: words taken in their natural (added) order across the filter;
-      - mix ON: words drawn proportionally from each topic present, so a
-        multi-topic filter yields a balanced mix (weighted by queue size).
-    A single selected topic degrades to plain in-order selection from it.
-    """
+    """Read the same explicit-pending/never-seen pool used by atomic Add."""
     init_db(db_path)
-    if int(limit) <= 0:
-        return []
-    where_topics = ""
-    params = [int(user_id), int(user_id)]
-    topic_clause, topic_params = _topic_filter_sql(topics)
-    if topic_clause:
-        where_topics = f" AND {topic_clause}"
-        params.extend(topic_params)
-    cefr_clause, cefr_params = _cefr_filter_sql(cefr_levels)
-    where_cefr = f" AND {cefr_clause}" if cefr_clause else ""
-    params.extend(cefr_params)
+    from .learning_requests import pick
     with _connect(db_path) as conn:
-        rows = conn.execute(
-            """
-            SELECT w.id, w.reflexive_case, w.conjugation_praesens, w.conjugation_praeteritum, w.is_separable, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ,
-                   w.russian, w.ukrainian, w.english, w.topic, w.preposition_type, w.case_type
-            FROM words w
-            WHERE NOT EXISTS (
-                SELECT 1 FROM quiz_events e
-                WHERE e.user_id = ? AND e.word_id = w.id AND e.study_generation=COALESCE((SELECT generation FROM study_word_generations sg WHERE sg.user_id=e.user_id AND sg.word_id=e.word_id),0)
-            )
-              AND NOT EXISTS (
-                SELECT 1 FROM learning_items li
-                WHERE li.user_id = ? AND li.word_id = w.id
-              )
-            {where_topics}{where_cefr}
-            ORDER BY w.created_at ASC, w.id ASC
-            """.format(where_topics=where_topics, where_cefr=where_cefr),
-            (*params,),
-        ).fetchall()
-    entries = [_row_to_entry(row) for row in rows]
-    if not mix:
-        return entries[: int(limit)]
-    return _mix_by_topic_proportional(entries, int(limit))
+        return pick(conn, user_id, limit, topics, cefr_levels, mix)
 
 
 def learning_add_words(db_path, user_id, words, batch_id, first_delay_seconds):
@@ -3494,42 +3461,11 @@ def get_word_study_status(db_path, user_id, word_id):
 
 
 def list_learning_queue_words(db_path, user_id, topics=None, cefr_levels=None):
-    """Handle new words that have no first touch and are not completed in learning."""
+    """List precisely the eligible Add pool, excluding every active item."""
     init_db(db_path)
-    where_topics = ""
-    params = [int(user_id), int(user_id)]
-    topic_clause, topic_params = _topic_filter_sql(topics)
-    if topic_clause:
-        where_topics = f" AND {topic_clause}"
-        params.extend(topic_params)
-    cefr_clause, cefr_params = _cefr_filter_sql(cefr_levels)
-    where_cefr = f" AND {cefr_clause}" if cefr_clause else ""
-    params.extend(cefr_params)
+    from .learning_requests import eligible_pool
     with _connect(db_path) as conn:
-        rows = conn.execute(
-            """
-            SELECT
-                w.id, w.reflexive_case, w.conjugation_praesens, w.conjugation_praeteritum, w.is_separable, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.russian
-                , w.ukrainian, w.english, w.topic, w.preposition_type, w.case_type
-            FROM words w
-            WHERE NOT EXISTS (
-                SELECT 1 FROM quiz_events e
-                WHERE e.user_id = ? AND e.word_id = w.id AND e.study_generation=COALESCE((SELECT generation FROM study_word_generations sg WHERE sg.user_id=e.user_id AND sg.word_id=e.word_id),0)
-            )
-              AND NOT EXISTS (
-                SELECT 1 FROM learning_items li
-                WHERE li.user_id = ? AND li.word_id = w.id AND li.status = 'completed'
-              )
-            {where_topics}{where_cefr}
-            ORDER BY
-                CASE WHEN trim(coalesce(w.topic, '')) GLOB '[0-9]*' THEN 0 ELSE 1 END ASC,
-                CASE WHEN trim(coalesce(w.topic, '')) GLOB '[0-9]*' THEN CAST(trim(w.topic) AS INTEGER) ELSE NULL END ASC,
-                w.topic ASC,
-                w.created_at ASC
-            """.format(where_topics=where_topics, where_cefr=where_cefr),
-            tuple(params),
-        ).fetchall()
-    return [_row_to_entry(row) for row in rows]
+        return eligible_pool(conn, user_id, topics, cefr_levels)
 
 
 def find_word_by_value(db_path, token):

@@ -138,11 +138,11 @@ class LearningTests(unittest.TestCase):
                 result={"tx_ids": [], "cursor": 0, "outcomes": []})
         update = self.update("send_learn")
         self.ctx.user_data.update(quiz_entry={"id": "a"}, learning_frame={"flow_id": "old"})
-        self.assertFalse(handler._send_entry_to_learning(update, self.ctx))
+        self.assertEqual(handler._send_entry_to_learning(update, self.ctx), handler.EnqueueResult.STALE)
         self.assertTrue(self.ctx.user_data["learning_send_receipt"]["recovered_undo"])
         self.assertNotIn("learning_frame", self.ctx.user_data)
         self.ctx.user_data.update(quiz_entry={"id": "b"}, learning_frame={"flow_id": "new"})
-        self.assertFalse(handler._send_entry_to_learning(update, self.ctx))
+        self.assertEqual(handler._send_entry_to_learning(update, self.ctx), handler.EnqueueResult.STALE)
         self.assertTrue(self.ctx.user_data["learning_send_receipt"]["replayed"])
         self.assertEqual(self.ctx.user_data["learning_frame"], {"flow_id": "new"})
         self.assertEqual(self.ctx.user_data["quiz_entry"], {"id": "b"})
@@ -335,23 +335,24 @@ class LearningTests(unittest.TestCase):
             self.assertTrue(conn.in_transaction)
         self.assertEqual(self.marker(), "2026-10-21")
 
-    def test_send_learn_is_one_connection_deduplicates_before_target_and_retains_created_at(self):
+    def test_send_learn_is_one_connection_deduplicates_before_target_and_retains_fifo(self):
         self.ctx.user_data["quiz_entry"] = {"id": "a"}
         update = self.update("send_learn")
         original_connect = sqlite3.connect
         with patch.object(repository.sqlite3, "connect", wraps=original_connect) as connect:
-            self.assertTrue(handler._send_entry_to_learning(update, self.ctx))
+            self.assertEqual(handler._send_entry_to_learning(update, self.ctx), handler.EnqueueResult.QUEUED)
             self.assertEqual(connect.call_count, 1)
-        created = self.rows("learning_items")[0]["created_at"]
+        pending = self.rows("learning_requests")
         self.ctx.user_data["quiz_entry"] = {"id": "b"}
-        self.assertFalse(handler._send_entry_to_learning(update, self.ctx))
-        self.assertEqual([r["word_id"] for r in self.rows("learning_items")], ["a"])
+        self.assertEqual(handler._send_entry_to_learning(update, self.ctx), handler.EnqueueResult.QUEUED)
+        self.assertEqual(self.rows("learning_requests"), pending)
         self.assertEqual(self.ctx.user_data["learning_send_receipt"]["transport_update_id"], update.update_id)
         self.assertTrue(self.ctx.user_data["learning_send_receipt"]["replayed"])
         self.ctx.user_data["quiz_entry"] = {"id": "a"}
-        self.assertTrue(handler._send_entry_to_learning(self.update("send_learn"), self.ctx))
-        self.assertEqual(self.rows("learning_items")[0]["created_at"], created)
-        self.assertEqual(self.rows("learning_items")[0]["first_due_pending"], 1)
+        self.assertEqual(handler._send_entry_to_learning(self.update("send_learn"), self.ctx), handler.EnqueueResult.ALREADY_PENDING)
+        self.assertEqual(self.rows("learning_requests"), pending)
+        for table in ("learning_items", "progress", "quiz_events", "transaction_log"):
+            self.assertEqual(self.rows(table), [])
         self.assertIsNone(self.marker())
 
     def test_handler_grade_and_correction_replay_keep_b_without_extra_selection(self):
@@ -586,18 +587,22 @@ class LearningTests(unittest.TestCase):
         self.assertIsNone(self.ctx.user_data[handler.FRAME]["current"])
         self.assertEqual(len(self.rows("quiz_events")), 1)
 
-    def test_clarify_send_learn_restarts_current_as_preview_without_stale_question(self):
+    def test_clarify_send_learn_active_preserves_current_phase_without_picker(self):
         from bot.common.quiz_resume import capture_return_point, render_existing_frame
         from bot.app_config import LEARNING_QUIZ
         self.add(ready=True)
         asyncio.run(handler.learning_menu_choice(self.update("learning_start"), self.ctx))
         capture_return_point(self.ctx, LEARNING_QUIZ)
         self.ctx.user_data["quiz_edit_entry"] = {"id": "a"}
-        self.assertTrue(handler._send_entry_to_learning(self.update("send_learn"), self.ctx, "quiz_edit_entry"))
+        from copy import deepcopy
+        frame = deepcopy(self.ctx.user_data[handler.FRAME])
+        items = self.rows("learning_items")
+        self.assertEqual(handler._send_entry_to_learning(self.update("send_learn"), self.ctx, "quiz_edit_entry"), handler.EnqueueResult.ALREADY_ACTIVE)
         with patch.object(handler, "_pick_learning_due_entry", side_effect=AssertionError("picked")):
             asyncio.run(render_existing_frame(self.update("return"), self.ctx))
-        self.assertEqual(self.ctx.user_data[handler.FRAME]["phase"], "preview")
-        self.assertEqual(self.rows("learning_items")[0]["first_due_pending"], 1)
+        self.assertEqual(self.ctx.user_data[handler.FRAME], frame)
+        self.assertEqual(self.rows("learning_items"), items)
+        self.assertEqual(self.rows("learning_requests"), [])
         self.assertEqual(self.rows("quiz_events"), [])
 
 

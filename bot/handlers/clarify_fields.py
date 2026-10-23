@@ -293,7 +293,7 @@ def _set_entry_field_value(entry, field, value):
 def _preserve_selection(fresh, selected):
     if fresh is None:
         return None
-    return {**fresh, **{key: selected[key] for key in ('study_generation', 'study_generations')
+    return {**fresh, **{key: selected[key] for key in ('study_generation', 'study_generations', 'learning_lifecycle', 'learning_lifecycles')
                        if key in (selected or {})}}
 
 
@@ -313,7 +313,8 @@ def _visible_selection(context, word_id):
     receipt = frame.get('last_receipt') or {}
     if receipt.get('word_id') == word_id:
         before = receipt.get('before') or {}
-        return {'id': word_id, 'study_generation': before.get('generations', {}).get(word_id, 0)}
+        return {'id': word_id, 'study_generation': before.get('generations', {}).get(word_id, 0),
+                'learning_lifecycle': before.get('learning_lifecycles', {}).get(word_id, 0)}
     return {}
 
 
@@ -739,6 +740,11 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
                     close_return_point(context)
                 return result
         try:
+            written_frame = context.user_data.get('quiz_written_frame') or {}
+            if (written_frame.get('learning_send_return_pending')
+                    and not context.user_data.get(ORIGIN_KEY)):
+                from .quiz import _resume_learning_send_return
+                return await _resume_learning_send_return(update, context)
             return await _clarify_fields_input_locked(update, context)
         except (StaleGeneration, answers.StaleStudyAction):
             flow = context.user_data.get('clarify_flow_id', 'clarify')
@@ -1054,7 +1060,7 @@ async def _clarify_fields_input_locked(update: Update, context: ContextTypes.DEF
                 # A search action must not reuse a leftover Learning return-point.
                 send_context = (SimpleNamespace(user_data={"quiz_edit_entry": entry})
                                 if context.user_data.get(ORIGIN_KEY) else context)
-                added = _send_entry_to_learning(update, send_context, entry_key="quiz_edit_entry")
+                result = _send_entry_to_learning(update, send_context, entry_key="quiz_edit_entry")
                 send_receipt = send_context.user_data.get("learning_send_receipt", {})
                 context.user_data["learning_send_receipt"] = send_receipt
                 if send_receipt.get("replayed"):
@@ -1063,7 +1069,19 @@ async def _clarify_fields_input_locked(update: Update, context: ContextTypes.DEF
                     return await _back_to_main_menu(update, context)
                 state = context.user_data.get("edit_return_state")
                 lang = _user_interface_lang(uid)
-                prefix = t(lang, "added_to_learning") if added else t(lang, "nothing_to_send")
+                from .learning import _learning_send_text
+                prefix = _learning_send_text(uid, result)
+                if (not context.user_data.get(ORIGIN_KEY)
+                        and state in (QUIZ_RU_DE, QUIZ_DE_RU, QUIZ_PL_SG, QUIZ_ARTICLE)
+                        and context.user_data.get('quiz_written_frame')):
+                    from .quiz import _learning_send_outcome
+                    written_frame = context.user_data['quiz_written_frame']
+                    written_frame['learning_send_return_pending'] = True
+                    context.user_data.pop('quiz_edit_entry', None)
+                    close_return_point(context)
+                    resumed = await _learning_send_outcome(update, context, state)
+                    written_frame.pop('learning_send_return_pending', None)
+                    return resumed
                 if state == DB_SEARCH_VIEW:
                     if context.user_data.get(ORIGIN_KEY):
                         return await return_to_search(update, context, prefix)

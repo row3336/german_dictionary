@@ -125,6 +125,13 @@ def preview_transition(conn, user_id, word_id, action_kind, now, first_interval_
 
 def apply_answer(conn, snapshot, answer_kind, now, intervals=None):
     from .study.answers import StaleStudyAction
+    # Compatibility callers can pass a historical before directly. Preserve both
+    # barriers here too; live answers additionally validate before capture.
+    from .study.repository import assert_snapshot_generations
+    from .learning_requests import assert_lifecycles
+    assert_snapshot_generations(conn, snapshot)
+    assert_lifecycles(conn, snapshot['user_id'], {snapshot['word_id']:
+        (snapshot.get('learning_lifecycles') or {}).get(snapshot['word_id'], 0)})
     before = snapshot.get("learning_item")
     user_id, word_id = snapshot["user_id"], snapshot["word_id"]
     current = item(conn, user_id, word_id)
@@ -176,7 +183,7 @@ def due_entries(conn, user_id, now=None):
         CASE WHEN li.step_index=0 THEN li.created_at ELSE NULL END,li.next_due,li.updated_at""",
         (user_id, stamp(now))).fetchall()
     from .study.generations import selected_entry
-    return [selected_entry(conn, user_id, _row_to_entry(row)) for row in rows]
+    return [selected_entry(conn, user_id, _row_to_entry(row), preview_affected_ids(conn, user_id, row['id'])) for row in rows]
 
 
 def recover_ready_previews(conn, user_id, now):
