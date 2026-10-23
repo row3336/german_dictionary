@@ -3,22 +3,19 @@ topics / verbs / learning-queue), free-text word lookup -> word card ->
 clarify_fields entry, and the DB_SEARCH / DB_SEARCH_VIEW state handlers.
 """
 
-import logging
 import re
 from datetime import date
 
 from telegram import ReplyKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
-from ..app_config import ADD_EDIT, DB_SEARCH, DB_SEARCH_VIEW, MENU, get_db_path, is_owner
+from ..app_config import CASE_TYPES, DB_SEARCH, DB_SEARCH_VIEW, MENU, PREPOSITION_TYPES, get_db_path, is_owner
 from ..common.lang import _user_dict_lang, _user_interface_lang
 from ..common.navigation import _action_key_from_text
 from ..common.settings import _learning_daily_qty, _learning_schedule_seconds
 from ..common.topics import sorted_topics
 from ..i18n import t
 from ..storage import (
-    _safe_text,
-    get_word_by_id,
     map_synonym_group_ids,
     learning_add_word_by_id,
     learning_get_or_create_batch,
@@ -26,7 +23,7 @@ from ..storage import (
     list_learning_queue_words,
     list_topics,
     list_words_by_topic,
-    search_word,
+    search_entries,
 )
 from ..text_utils import cap_word as _cap_word
 from ..text_utils import low_word as _low_word
@@ -40,17 +37,11 @@ from ..ui.formatting import (
     _expected_partizip2,
     _case_label,
     _format_topic_learning_line,
-    _format_word_card,
-    _preposition_hint_parts,
 )
 from ..ui.keyboards import (
-    _clarify_fields_markup,
-    _db_search_variants_markup,
     _main_menu_markup,
 )
 
-
-logger = logging.getLogger(__name__)
 
 _EXACT_VARIANTS_KEY = "db_search_exact_variants"
 
@@ -199,198 +190,22 @@ def _format_db_search_card(entry, dict_lang):
     return _md_escape(german)
 
 
-def _select_db_search_exact(token):
-    """Return every exact match in the same priority tier as the old primary."""
-    candidate = _normalize_lookup_text(token)
-    if not candidate:
-        return []
-    rows = list_all_words(get_db_path())
-    exact_non_phrase = []
-    exact_phrase = []
-    for row in rows:
-        entry_type = _type_label(row.get("type", ""))
-        forms = {
-            _normalize_lookup_text(row.get("german", "")),
-            _normalize_lookup_text(row.get("infinitive", "")),
-            _normalize_lookup_text(row.get("plural", "")),
-            _normalize_lookup_text(row.get("prateritum", "")),
-            _normalize_lookup_text(row.get("partizip2", "")),
-            _normalize_lookup_text(row.get("russian", "")),
-            _normalize_lookup_text(row.get("ukrainian", "")),
-            _normalize_lookup_text(row.get("english", "")),
-        }
-        if candidate in forms:
-            if entry_type == "phrase":
-                exact_phrase.append(row)
-            else:
-                exact_non_phrase.append(row)
-    if exact_non_phrase:
-        return exact_non_phrase
-    if exact_phrase:
-        return exact_phrase
-    return []
-
-
-def _select_db_search_primary(token):
-    """Pick the legacy single primary while keeping LIKE fallback unchanged."""
-    exact = _select_db_search_exact(token)
-    if exact:
-        return exact[0]
-    return search_word(get_db_path(), token)
-
-
-def _is_semantic_preposition_set(entries):
-    """Only ambiguous exact preposition meanings enter the selection flow."""
-    return len(entries) > 1 and all(
-        _type_label(entry.get("type", "")) == "praeposition" for entry in entries
-    )
-
-
-def _format_semantic_variant_label(entry):
-    """Compact semantic label built from the existing preposition normalizers."""
-    parts = [
-        "+D/A" if part == "+D/A (Wechsel)" else part
-        for part in _preposition_hint_parts(entry)
-    ]
-    return f"{_low_word(entry.get('german', ''))} [{', '.join(parts)}]"
-
-
-def _build_semantic_variant_state(entries, query):
-    """Build a collision-free label-to-id map, or return collision details."""
-    label_to_id = {}
-    for entry in entries:
-        label = _format_semantic_variant_label(entry)
-        word_id = entry.get("id")
-        if not word_id or label in label_to_id:
-            return None, {
-                "label": label,
-                "word_ids": [label_to_id.get(label), word_id],
-            }
-        label_to_id[label] = word_id
-    return {
-        "query": str(query),
-        "label_to_id": label_to_id,
-        "word_ids": list(label_to_id.values()),
-    }, None
-
-
 def _clear_db_search_variants(context):
     """Drop the per-user ambiguity state when leaving its selection flow."""
     context.user_data.pop(_EXACT_VARIANTS_KEY, None)
 
 
-async def _show_saved_db_search_variants(update, context, message_key=None):
-    """Render only the saved labels; this path deliberately performs no DB query."""
-    user_id = update.effective_user.id
-    lang = _user_interface_lang(user_id)
-    state = context.user_data.get(_EXACT_VARIANTS_KEY) or {}
-    label_to_id = state.get("label_to_id")
-    labels = list(label_to_id) if isinstance(label_to_id, dict) else []
-    if not labels:
-        _clear_db_search_variants(context)
-        return await _send_db_search_prompt(
-            update, user_id, t(lang, "db_search_variant_unavailable")
-        )
-    await update.message.reply_text(
-        t(lang, message_key or "db_search_choose_variant"),
-        reply_markup=_db_search_variants_markup(labels, user_id),
-    )
-    return DB_SEARCH
-
-
-def _find_phrase_side_matches(token, primary_entry):
-    """Collect phrase matches containing token excluding primary card."""
-    candidate = _normalize_lookup_text(token)
-    if not candidate:
-        return []
-    primary_id = (primary_entry or {}).get("id")
-    out = []
-    for row in list_all_words(get_db_path()):
-        if _type_label(row.get("type", "")) != "phrase":
-            continue
-        if primary_id and row.get("id") == primary_id:
-            continue
-        phrase = _normalize_lookup_text(row.get("german", ""))
-        if not phrase:
-            continue
-        if candidate in phrase:
-            out.append(row)
-    return out
-
-
-async def _send_db_search_card(update, context, entry, query, show_variants=False):
-    """Render a chosen card and enter the existing clarify/full-card flow."""
-    user_id = update.effective_user.id
-    word_id = (entry or {}).get("id")
-    entry = get_word_by_id(get_db_path(), word_id) if word_id else None
-    if not entry or entry.get("id") != word_id:
-        return await _send_db_search_prompt(
-            update, user_id, t(_user_interface_lang(user_id), "not_found")
-        )
-    phrase_matches = _find_phrase_side_matches(query, entry)
-    await update.message.reply_text(
-        f"```text\n{_format_word_card(entry, title='Word card:', user_id=user_id)}\n```",
-        parse_mode="Markdown",
-    )
-    if phrase_matches:
-        lines = ["Phrase matches:"]
-        for item in phrase_matches:
-            phrase = _safe_text(item.get("german", "")).strip()
-            trans = _entry_translation(item, _user_dict_lang(user_id))
-            lines.append(f"- {phrase} -> {trans}" if trans else f"- {phrase}")
-        await update.message.reply_text(
-            f"```text\n{chr(10).join(lines)}\n```", parse_mode="Markdown"
-        )
-    context.user_data["quiz_entry"] = entry
-    context.user_data["quiz_edit_entry"] = entry
-    context.user_data["edit_source"] = "quiz"
-    context.user_data["edit_stage"] = "pick_field"
-    context.user_data["edit_return_state"] = DB_SEARCH_VIEW
-
-    from .clarify_fields import _is_prep_entry, _is_verb_entry
-
-    await update.message.reply_text(
-        t(_user_interface_lang(user_id), "clarify_choose_action"),
-        reply_markup=_clarify_fields_markup(
-            "quiz",
-            user_id,
-            in_search=True,
-            is_prep=_is_prep_entry(entry),
-            is_verb=_is_verb_entry(entry),
-            show_variants=show_variants,
-        ),
-    )
-    return ADD_EDIT
-
-
-async def _open_saved_db_search_variant(update, context):
-    """Resolve a button label to its saved id, then fetch only that exact id."""
-    state = context.user_data.get(_EXACT_VARIANTS_KEY) or {}
-    label_to_id = state.get("label_to_id")
-    saved_ids = state.get("word_ids")
-    if not isinstance(label_to_id, dict) or not isinstance(saved_ids, list):
-        return await _show_saved_db_search_variants(
-            update, context, "db_search_variant_unavailable"
-        )
-    selected_label = update.message.text.strip()
-    word_id = label_to_id.get(selected_label)
-    if word_id not in saved_ids:
-        return await _show_saved_db_search_variants(
-            update, context, "db_search_variant_unavailable"
-        )
-    entry = get_word_by_id(get_db_path(), word_id)
-    if (
-        not entry
-        or entry.get("id") != word_id
-        or _type_label(entry.get("type", "")) != "praeposition"
-        or _format_semantic_variant_label(entry) != selected_label
-    ):
-        return await _show_saved_db_search_variants(
-            update, context, "db_search_variant_unavailable"
-        )
-    return await _send_db_search_card(
-        update, context, entry, state.get("query", ""), show_variants=True
-    )
+def _is_legacy_db_search_control(text):
+    """Recognize the retired keyboard grammar without treating all brackets as UI."""
+    if text in {t(lang, "db_search_back_to_variants") for lang in ("en", "ru", "uk")}:
+        return True
+    match = re.fullmatch(r".+ \[([^\[\]]*)\]", text)
+    if not match:
+        return False
+    cases = {_case_label(case).replace("+D/A (Wechsel)", "+D/A") for case in CASE_TYPES}
+    suffixes = {"", *PREPOSITION_TYPES, *cases}
+    suffixes.update(f"{kind}, {case}" for kind in PREPOSITION_TYPES for case in cases)
+    return match.group(1) in suffixes
 
 
 def _format_match_line(entry, dict_lang):
@@ -540,11 +355,12 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     user_id = update.effective_user.id
     action = _action_key_from_text(text, user_id)
+    if _is_legacy_db_search_control(text):
+        await update.message.reply_text(t(_user_interface_lang(user_id), "search_stale"))
+        return None
     if context.user_data.get(_EXACT_VARIANTS_KEY):
-        if action == "back":
-            _clear_db_search_variants(context)
-            return await _send_db_search_prompt(update, user_id, None)
-        return await _open_saved_db_search_variant(update, context)
+        _clear_db_search_variants(context)
+        return await _send_db_search_prompt(update, user_id, t(_user_interface_lang(user_id), "search_stale"))
     in_words_lists = bool(context.user_data.get("db_search_words_lists_menu"))
     if (context.user_data.get("db_search_topic_pick") or context.user_data.get("db_search_type_pick")) and action == "back":
         context.user_data.pop("db_search_topic_pick", None)
@@ -651,29 +467,13 @@ async def db_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop("db_search_topic_pick", None)
     context.user_data.pop("db_search_type_pick", None)
     context.user_data.pop("db_search_words_lists_menu", None)
-    exact = _select_db_search_exact(text)
-    if _is_semantic_preposition_set(exact):
-        variant_state, collision = _build_semantic_variant_state(exact, text)
-        if collision:
-            _clear_db_search_variants(context)
-            logger.warning(
-                "db_search semantic variant label collision label=%r word_ids=%r",
-                collision["label"],
-                collision["word_ids"],
-            )
-            await update.message.reply_text(
-                t(_user_interface_lang(user_id), "db_search_variant_collision"),
-                reply_markup=_db_search_markup(user_id),
-            )
-            return DB_SEARCH
-        context.user_data[_EXACT_VARIANTS_KEY] = variant_state
-        return await _show_saved_db_search_variants(update, context)
-
     _clear_db_search_variants(context)
-    entry = exact[0] if exact else search_word(get_db_path(), text)
-    if not entry:
+    from ..common.search_view import new_snapshot, send_page
+    result = search_entries(get_db_path(), text)
+    new_snapshot(context, user_id, update.effective_chat.id, text, result)
+    if result["kind"] == "empty":
         return await _send_db_search_prompt(update, user_id, t(_user_interface_lang(user_id), "not_found"))
-    return await _send_db_search_card(update, context, entry, text)
+    return await send_page(update.message, context)
 
 
 async def db_search_view(update: Update, context: ContextTypes.DEFAULT_TYPE):

@@ -11,9 +11,12 @@ _clarify_fields_markup). The FSM state stays ADD_EDIT
 (internal, shared with the add-flow).
 """
 
+from types import SimpleNamespace
+
 from telegram import MessageEntity, ReplyKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
+from ..common.search_view import ORIGIN_KEY, SEARCH_KEY, return_to_search, split_card, utf16_length
 from ..common.study_lock import study_lock
 
 from ..app_config import (
@@ -535,33 +538,75 @@ async def _handle_conjugation_input(update, context, entry_key, entry, stage, ac
     return await _show_conjugation_menu(update, context, entry_key, updated, notice)
 
 
+def _initialize_clarify_entry(context, entry, return_state, search_origin=None):
+    """Set an explicit edit target; callers decide whether a study point exists."""
+    context.user_data["edit_source"] = "quiz"
+    context.user_data["quiz_edit_entry"] = entry
+    context.user_data["edit_stage"] = "pick_field"
+    context.user_data["edit_return_state"] = return_state
+    for key in ("edit_field", "prep_cascade", "add_int_mode", "add_int_preview", "clarify_from_report"):
+        context.user_data.pop(key, None)
+    if search_origin is None:
+        context.user_data.pop(ORIGIN_KEY, None)
+    else:
+        context.user_data[ORIGIN_KEY] = dict(search_origin)
+
+
+async def _render_clarify_entry(message, context, user_id, entry, title="Word card:"):
+    """Use the actual transport, independently from the actor or target resolver."""
+    body = _format_word_card(entry, title, user_id=user_id)
+    if context.user_data.get(ORIGIN_KEY):
+        for chunk in split_card(body, entry["id"]):
+            await _reply_text_with_retry(message, chunk,
+                entities=[MessageEntity(type="pre", offset=0, length=utf16_length(chunk))])
+    else:
+        await _reply_text_with_retry(message, f"```text\n{body}\n```", parse_mode="Markdown")
+    await _reply_text_with_retry(
+        message, t(_user_interface_lang(user_id), "clarify_choose_action"),
+        reply_markup=_clarify_screen(context, user_id))
+    return ADD_EDIT
+
+
 async def _start_clarify_fields(update: Update, context: ContextTypes.DEFAULT_TYPE, return_state, prefer_current=False):
-    """Handle start quiz edit."""
+    """Compatible message entry using the established visible study target."""
     close_return_point(context)
     capture_return_point(context, return_state)
     entry, title = _get_clarify_target(context, prefer_current=prefer_current)
     if not entry:
         close_return_point(context)
         await update.message.reply_text(
-            t(_user_interface_lang(update.effective_user.id), "clarify_answer_first")
-        )
+            t(_user_interface_lang(update.effective_user.id), "clarify_answer_first"))
         return return_state
-    context.user_data["edit_source"] = "quiz"
-    context.user_data["quiz_edit_entry"] = entry
-    context.user_data["edit_stage"] = "pick_field"
-    context.user_data["edit_return_state"] = return_state
-    context.user_data.pop("clarify_from_report", None)  # this card has a quiz/tests origin
-    await _reply_text_with_retry(
-        update.message,
-        f"```text\n{_format_word_card(entry, title, user_id=update.effective_user.id)}\n```",
-        parse_mode="Markdown",
-    )
-    await _reply_text_with_retry(
-        update.message,
-        t(_user_interface_lang(update.effective_user.id), "clarify_choose_action"),
-        reply_markup=_clarify_screen(context, update.effective_user.id),
-    )
-    return ADD_EDIT
+    _initialize_clarify_entry(context, entry, return_state)
+    return await _render_clarify_entry(update.message, context, update.effective_user.id, entry, title)
+
+
+async def open_search_entry(update, context, entry_id, origin):
+    """Open a verified search ID through CallbackQuery.message, never visible A."""
+    from ..search import read_search_entry
+    from ..handlers.access import access_allowed
+    state = context.user_data.get(SEARCH_KEY) or {}
+    uid = update.callback_query.from_user.id
+    if (not access_allowed(uid) or origin.get("user_id") != uid
+            or origin.get("chat_id") != update.effective_chat.id
+            or origin.get("query_id") != state.get("query_id")
+            or origin.get("revision") != state.get("revision")
+            or origin.get("word_id") != entry_id):
+        return None
+    entry = read_search_entry(get_db_path(), entry_id)
+    if not entry:
+        await update.callback_query.message.reply_text(
+            t(_user_interface_lang(uid), "search_card_unavailable").format(id=entry_id))
+        return None
+    _initialize_clarify_entry(context, entry, DB_SEARCH_VIEW, search_origin=origin)
+    try:
+        return await _render_clarify_entry(update.callback_query.message, context, uid, entry)
+    except Exception:
+        # The explicit target is already established. Keep ADD_EDIT so a failed
+        # presentation cannot leave a live edit target in the search state.
+        from ..common.search_view import logger
+        logger.warning("Search clarify presentation interrupted", exc_info=True)
+        return ADD_EDIT
 
 
 async def open_clarify_from_report(update: Update, context: ContextTypes.DEFAULT_TYPE, entry):
@@ -573,6 +618,7 @@ async def open_clarify_from_report(update: Update, context: ContextTypes.DEFAULT
     _resume_after_clarify has no quiz_entry -> _back_to_tests). Messages are sent
     via the callback's chat (a callback has no update.message).
     """
+    context.user_data.pop(ORIGIN_KEY, None)
     close_return_point(context)
     context.user_data["edit_source"] = "quiz"
     context.user_data["quiz_edit_entry"] = entry
@@ -605,6 +651,11 @@ async def _exit_clarify(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def _resume_after_clarify(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text, state_override=None):
     """Render the caller's established frame without advancing its session."""
     state = state_override if state_override is not None else context.user_data.get("edit_return_state")
+    if state == DB_SEARCH_VIEW and context.user_data.get(ORIGIN_KEY):
+        entry = context.user_data.get("quiz_edit_entry")
+        if prefix_text:
+            await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
+        return await _render_clarify_entry(update.message, context, update.effective_user.id, entry)
     if state == DB_SEARCH_VIEW:
         entry = context.user_data.get("quiz_edit_entry") or context.user_data.get("quiz_entry")
         if not entry:
@@ -655,17 +706,43 @@ async def _clarify_fields_input_locked(update: Update, context: ContextTypes.DEF
     """Handle input when clarifying/editing the fields of a word card."""
     from ..handlers.db_search import (
         _clear_db_search_variants,
+        _is_legacy_db_search_control,
         _send_db_search_prompt,
-        _show_saved_db_search_variants,
     )
     from ..handlers.synonyms import _open_synonyms_menu
     from ..handlers.add_words import _show_ai_preview, _stop_queue
     from ..handlers.learning import _send_entry_to_learning
 
     source = context.user_data.get("edit_source", "add")
+    text = update.message.text.strip()
+    if (source == "quiz" and context.user_data.get("edit_return_state") == DB_SEARCH_VIEW
+            and _is_legacy_db_search_control(text)):
+        await update.message.reply_text(t(_user_interface_lang(update.effective_user.id), "search_stale"))
+        return ADD_EDIT
+    origin = context.user_data.get(ORIGIN_KEY)
+    if source != "quiz" or context.user_data.get("edit_return_state") != DB_SEARCH_VIEW:
+        context.user_data.pop(ORIGIN_KEY, None)
+        origin = None
+    if origin:
+        from ..handlers.access import access_allowed
+        from ..search import read_search_entry
+        uid = update.effective_user.id
+        state = context.user_data.get(SEARCH_KEY) or {}
+        valid = (origin["user_id"] == uid and origin["chat_id"] == update.effective_chat.id
+                 and origin["query_id"] == state.get("query_id")
+                 and origin["revision"] == state.get("revision") and access_allowed(uid))
+        current = read_search_entry(get_db_path(), origin["word_id"]) if valid else None
+        if current is None:
+            return await return_to_search(update, context, t(_user_interface_lang(uid), "search_stale"))
+        context.user_data["quiz_edit_entry"] = current
+        if (context.user_data.get("edit_stage") == "enter_value"
+                and context.user_data.get("edit_field") not in _allowed_clarify_fields(
+                    "quiz", uid, is_prep=_is_prep_entry(current))):
+            context.user_data["edit_stage"] = "pick_field"
+            context.user_data.pop("edit_field", None)
+            return await _render_clarify_entry(update.message, context, uid, current)
     if source == "add" and not add_words_enabled():
         return await reject_disabled_add(update, context)
-    text = update.message.text.strip()
     if _action_key_from_text(text, update.effective_user.id) == "stop":
         if source == "quiz":
             context.user_data["edit_stage"] = "pick_field"
@@ -693,16 +770,6 @@ async def _clarify_fields_input_locked(update: Update, context: ContextTypes.DEF
             update, context, entry_key, entry, stage, conjugation_action
         )
 
-    if (
-        stage == "pick_field"
-        and context.user_data.get("edit_return_state") == DB_SEARCH_VIEW
-        and text == t(_user_interface_lang(update.effective_user.id), "db_search_back_to_variants")
-    ):
-        context.user_data.pop("quiz_entry", None)
-        context.user_data.pop("quiz_edit_entry", None)
-        context.user_data.pop("edit_field", None)
-        return await _show_saved_db_search_variants(update, context)
-
     if stage == "report_comment":
         # P6.2: user typed their error/fix report; back/stop cancels back to the card.
         lang = _user_interface_lang(update.effective_user.id)
@@ -724,6 +791,8 @@ async def _clarify_fields_input_locked(update: Update, context: ContextTypes.DEF
         )
         context.user_data["edit_stage"] = "pick_field"
         if return_state == DB_SEARCH_VIEW:
+            if context.user_data.get(ORIGIN_KEY):
+                return await return_to_search(update, context, t(lang, "report_saved"))
             _clear_db_search_variants(context)
             return await _send_db_search_prompt(update, update.effective_user.id, t(lang, "report_saved"))
         return await _resume_after_clarify(update, context, t(lang, "report_saved"))
@@ -751,6 +820,8 @@ async def _clarify_fields_input_locked(update: Update, context: ContextTypes.DEF
         context.user_data.pop("edit_field", None)
         prefix = "✅ Deleted." if removed else "❌ Word not found."
         if state == DB_SEARCH_VIEW:
+            if context.user_data.get(ORIGIN_KEY):
+                return await return_to_search(update, context, prefix)
             context.user_data.pop("quiz_entry", None)
             context.user_data.pop("quiz_edit_entry", None)
             _clear_db_search_variants(context)
@@ -839,6 +910,8 @@ async def _clarify_fields_input_locked(update: Update, context: ContextTypes.DEF
             # value-entry returns to the card.
             if stage == "pick_field":
                 if context.user_data.get("edit_return_state") == DB_SEARCH_VIEW:
+                    if context.user_data.get(ORIGIN_KEY):
+                        return await return_to_search(update, context)
                     context.user_data.pop("quiz_edit_entry", None)
                     _clear_db_search_variants(context)
                     return await _send_db_search_prompt(update, update.effective_user.id, None)
@@ -904,8 +977,12 @@ async def _clarify_fields_input_locked(update: Update, context: ContextTypes.DEF
                 )
                 return ADD_EDIT
             if _action_key_from_text(text, uid) == "send_learn":
-                added = _send_entry_to_learning(update, context, entry_key="quiz_edit_entry")
-                send_receipt = context.user_data.get("learning_send_receipt", {})
+                # A search action must not reuse a leftover Learning return-point.
+                send_context = (SimpleNamespace(user_data={"quiz_edit_entry": entry})
+                                if context.user_data.get(ORIGIN_KEY) else context)
+                added = _send_entry_to_learning(update, send_context, entry_key="quiz_edit_entry")
+                send_receipt = send_context.user_data.get("learning_send_receipt", {})
+                context.user_data["learning_send_receipt"] = send_receipt
                 if send_receipt.get("replayed"):
                     return None
                 if send_receipt.get("recovered_undo"):
@@ -914,6 +991,8 @@ async def _clarify_fields_input_locked(update: Update, context: ContextTypes.DEF
                 lang = _user_interface_lang(uid)
                 prefix = t(lang, "added_to_learning") if added else t(lang, "nothing_to_send")
                 if state == DB_SEARCH_VIEW:
+                    if context.user_data.get(ORIGIN_KEY):
+                        return await return_to_search(update, context, prefix)
                     _clear_db_search_variants(context)
                     return await _send_db_search_prompt(update, uid, prefix)
                 return await _resume_after_clarify(update, context, prefix)

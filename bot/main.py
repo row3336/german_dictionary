@@ -99,6 +99,7 @@ from .storage import (
 )
 from .common.db_safety import prepare_storage_safely
 from .common.lang import _user_interface_lang
+from .common.search_view import with_search_callbacks, stale_callback as search_stale_callback
 from .common.log_safety import SecretRedactingFormatter, run_polling_safely
 from .common.outbound import configure_outbound_logger
 from .common.navigation import _back_to_tests
@@ -502,6 +503,7 @@ def main():
     _configure_owner_digest(app)
     conv = ConversationHandler(
         entry_points=[
+            CallbackQueryHandler(search_stale_callback, pattern=r"^ds:"),
             CommandHandler("start", start),
             CommandHandler("undo", undo_steps),
             CallbackQueryHandler(notification_settings_callback, pattern=r"^notify:(quiz|new_words)$"),
@@ -519,7 +521,7 @@ def main():
             # LAST so /start and the start button match first.
             MessageHandler(filters.TEXT & ~filters.COMMAND, rescue_handler),
         ],
-        states=_with_inbox_open({
+        states=with_search_callbacks(_with_inbox_open({
             MENU: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, menu_choice),
                 MessageHandler(filters.Document.ALL, vf_review_document),  # spec #2: apply an edited VF review file
@@ -587,7 +589,7 @@ def main():
             SYN_REMOVE_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, synonyms_remove_input)],
             SYN_AUTO_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, synonyms_auto_confirm)],
             SYN_CLEAR_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, synonyms_clear_confirm)],
-        }),
+        })),
         fallbacks=[CommandHandler("start", start), CommandHandler("undo", undo_steps),
                    CallbackQueryHandler(notification_settings_callback, pattern=r"^notify:(quiz|new_words)$")],
     )

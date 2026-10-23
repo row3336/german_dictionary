@@ -79,10 +79,12 @@ class ClarifyConjugationTest(unittest.TestCase):
 
         self.modal = add_word(self.db, {
             "id": "modal", "type": "verb", "german": "können", "infinitive": "können",
+            "reflexive_case": "none",
             "partizip2": "gekonnt", "russian": "мочь", "topic": "1",
         })
         self.regular = add_word(self.db, {
             "id": "regular", "type": "verb", "german": "gehen", "infinitive": "gehen",
+            "reflexive_case": "none",
             "partizip2": "gegangen", "russian": "идти", "topic": "1",
         })
         set_word_conjugation(self.db, "modal", PRAESENS, PRAETERITUM)
@@ -156,19 +158,38 @@ class ClarifyConjugationTest(unittest.TestCase):
         self.assertNotIn(label, noun_buttons)
 
     def test_db_search_entry_keyboard_has_owner_submenu(self):
-        from bot.handlers.db_search import _send_db_search_card
+        from bot.handlers.db_search import db_search_input
+        from bot.common.search_view import search_callback
 
-        update = _Update(OWNER)
+        update = _Update(OWNER, "können")
         ctx = _Ctx()
-        partial = {
-            key: self.modal[key]
-            for key in ("id", "type", "german", "infinitive", "russian")
-        }
-        state = asyncio.run(_send_db_search_card(update, ctx, partial, "können"))
+        self.assertEqual(asyncio.run(db_search_input(update, ctx)), DB_SEARCH_VIEW)
+        text, kwargs = next((text, kwargs) for text, kwargs in update.message.calls
+                            if getattr(kwargs.get("reply_markup"), "inline_keyboard", None))
+        self.assertIn("Präsens:", text)
+        self.assertIn("Präteritum:", text)
+        self.assertNotIn("quiz_edit_entry", ctx.user_data)
+        card = _Msg(text)
+        card.message_id = 1
+        actor = update.effective_user
+        token = kwargs["reply_markup"].inline_keyboard[0][0].callback_data
+
+        class Query:
+            from_user = actor
+            message = card
+            data = token
+
+            async def answer(self, *args, **kwargs):
+                pass
+
+        update.message = None
+        update.callback_query = Query()
+        state = asyncio.run(search_callback(update, ctx))
         self.assertEqual(state, ADD_EDIT)
-        self.assertIn("Präsens:", update.message.calls[0][0])
-        self.assertEqual(ctx.user_data["quiz_entry"]["conjugation_praesens"], PRAESENS)
-        buttons = _flat(update.message.calls[-1][1]["reply_markup"])
+        self.assertIn("Präsens:", card.calls[0][0])
+        self.assertEqual(ctx.user_data["quiz_edit_entry"]["conjugation_praesens"], PRAESENS)
+        self.assertEqual(ctx.user_data["quiz_edit_entry"]["conjugation_praeteritum"], PRAETERITUM)
+        buttons = _flat(card.calls[-1][1]["reply_markup"])
         self.assertIn(t("en", "clarify_conjugation"), buttons)
 
     def test_owner_card_places_media_conjugation_and_add_int_in_one_row(self):
@@ -287,7 +308,7 @@ class ClarifyConjugationTest(unittest.TestCase):
     def test_stale_praeteritum_entry_is_revalidated_without_silent_clear(self):
         _, ctx = self._open(self.modal)
         self._action(ctx, "clarify_conjugation_edit_praeteritum")
-        update_word_fields(self.db, "modal", {"infinitive": "gehen"})
+        update_word_fields(self.db, "modal", {"german": "arbeiten", "infinitive": "arbeiten"})
         before = self._conjugation("modal")
 
         update = self._send(OWNER, PRAETERITUM_NEW, ctx)
@@ -313,9 +334,23 @@ class ClarifyConjugationTest(unittest.TestCase):
         self.assertEqual(stored["partizip2"], "gemocht")
         self.assertEqual(self._conjugation("modal"), (PRAESENS, PRAETERITUM))
 
-    def test_generic_update_does_not_gain_conjugation_bypass(self):
+    def test_generic_update_validates_conjugation_atomically(self):
+        from bot.common.verb_construction import InvalidForms
+
         update_word_fields(self.db, "modal", {"conjugation_praesens": PRAESENS_NEW})
-        self.assertEqual(self._conjugation("modal")[0], PRAESENS)
+        self.assertEqual(self._conjugation("modal"), (PRAESENS_NEW, PRAETERITUM))
+        before = get_word_by_id(self.db, "modal")
+        with self.assertRaises(InvalidForms):
+            update_word_fields(self.db, "modal", {
+                "russian": "must not leak", "conjugation_praesens": "ich malformed",
+            })
+        self.assertEqual(get_word_by_id(self.db, "modal"), before)
+        with self.assertRaises(InvalidForms):
+            update_word_fields(self.db, "modal", {
+                "german": "sich mögen", "infinitive": "sich mögen", "reflexive_case": "dativ",
+                "conjugation_praesens": PRAESENS_NEW.replace("ich mag", "ich mag mich"),
+            })
+        self.assertEqual(get_word_by_id(self.db, "modal"), before)
 
 
 if __name__ == "__main__":

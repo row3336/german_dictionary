@@ -1,4 +1,4 @@
-"""Spec #9 — exact semantic prepositions are selected by saved word id."""
+"""Spec #9 semantics retained by K14 direct cards and explicit ID actions."""
 
 import asyncio
 import os
@@ -10,15 +10,17 @@ from _telegram_stub import install
 
 install()
 
-from bot.app_config import ADD_EDIT, DB_SEARCH  # noqa: E402
+from bot.app_config import ADD_EDIT, DB_SEARCH, DB_SEARCH_VIEW  # noqa: E402
 from bot.handlers import clarify_fields as C  # noqa: E402
 from bot.handlers import db_search as D  # noqa: E402
+from bot.common import search_view as V
 from bot.i18n import TEXTS, t  # noqa: E402
 from bot.storage import (  # noqa: E402
     add_word,
     init_db,
     register_or_update_user,
     set_user_interface_lang,
+    set_user_status,
 )
 
 
@@ -27,22 +29,38 @@ GUEST = 111
 
 
 class _Msg:
-    def __init__(self, text=""):
+    counter = 0
+
+    def __init__(self, text="", calls=None, markup=None):
+        type(self).counter += 1
+        self.message_id = type(self).counter
         self.text = text
-        self.calls = []
+        self.calls = [] if calls is None else calls
+        self.reply_markup = markup
 
     async def reply_text(self, text, **kwargs):
-        self.calls.append((text, kwargs))
-        return type("Sent", (), {"message_id": len(self.calls)})()
+        sent = _Msg(text, self.calls, kwargs.get("reply_markup"))
+        self.calls.append((text, kwargs, sent))
+        return sent
 
 
 class _Update:
-    def __init__(self, text="", uid=GUEST):
-        self.message = _Msg(text)
-        self.effective_user = type(
-            "User", (), {"id": uid, "username": "guest", "first_name": "Guest"}
-        )()
+    def __init__(self, text="", uid=GUEST, card=None):
+        self.message = None if card else _Msg(text)
+        self.effective_user = type("User", (), {"id": uid, "username": "guest", "first_name": "Guest"})()
         self.effective_chat = type("Chat", (), {"id": uid})()
+        self.effective_message = card or self.message
+        self.callback_query = None
+        if card:
+            actor = self.effective_user
+            class Query:
+                from_user = actor
+                message = card
+                data = card.reply_markup.inline_keyboard[0][0].callback_data
+                answers = []
+                async def answer(self, *args, **kwargs):
+                    self.answers.append((args, kwargs))
+            self.callback_query = Query()
 
 
 class _Ctx:
@@ -83,6 +101,7 @@ class SemanticExactSelectionTest(unittest.TestCase):
         self.addCleanup(self._restore_env)
         register_or_update_user(self.db, GUEST, "guest", "Guest")
         set_user_interface_lang(self.db, GUEST, "ru")
+        set_user_status(self.db, GUEST, "approved")
 
     def _restore_env(self):
         for key, value in self.old_env.items():
@@ -92,8 +111,8 @@ class SemanticExactSelectionTest(unittest.TestCase):
                 os.environ[key] = value
 
     def _seed_vor(self):
-        local = add_word(self.db, _prep("vor", "local", "wechsel", "перед"))
-        temporal = add_word(self.db, _prep("vor", "temporal", "dativ", "до"))
+        local = add_word(self.db, {"id": "p-local", **_prep("vor", "local", "wechsel", "перед")})
+        temporal = add_word(self.db, {"id": "p-temporal", **_prep("vor", "temporal", "dativ", "до")})
         return local, temporal
 
     def _show_variants(self, context=None):
@@ -102,145 +121,107 @@ class SemanticExactSelectionTest(unittest.TestCase):
         state = _run(D.db_search_input(update, context))
         return state, update, context
 
-    def test_two_exact_cards_show_keyboard_then_each_saved_id_and_return_without_query(self):
+    def _cards(self, update):
+        return [sent for _, kwargs, sent in update.effective_message.calls
+                if getattr(kwargs.get("reply_markup"), "inline_keyboard", None)]
+
+    def test_two_exact_cards_show_immediately_each_saved_id_and_return_without_query(self):
         local, temporal = self._seed_vor()
         state, update, context = self._show_variants()
+        self.assertEqual(state, DB_SEARCH_VIEW)
+        cards = self._cards(update)
+        self.assertEqual(len(cards), 2)
+        self.assertTrue(all("Word card:" in card.text for card in cards))
+        self.assertNotIn("db_search_exact_variants", context.user_data)
+        self.assertNotIn("quiz_edit_entry", context.user_data)
+        for card, expected in zip(cards, (local, temporal)):
+            with patch.object(D, "search_entries", side_effect=AssertionError("callback repeated text lookup")):
+                self.assertEqual(_run(V.search_callback(_Update(card=card), context)), ADD_EDIT)
+            self.assertEqual(context.user_data["quiz_edit_entry"]["id"], expected["id"])
+            self.assertIn(expected["case_type"], card.text)
+            back = _Update(t("ru", "back"))
+            with patch.object(D, "search_entries", side_effect=AssertionError("return repeated lookup")):
+                self.assertEqual(_run(C.clarify_fields_input(back, context)), DB_SEARCH_VIEW)
+            self.assertNotIn("quiz_edit_entry", context.user_data)
+            self.assertFalse(any("Word card:" in text for text, _, _ in back.message.calls))
 
-        self.assertEqual(state, DB_SEARCH)
-        self.assertFalse(any("Word card:" in text for text, _ in update.message.calls))
-        prompt, kwargs = update.message.calls[-1]
-        self.assertEqual(prompt, t("ru", "db_search_choose_variant"))
-        labels = _flat(kwargs["reply_markup"])
-        self.assertIn("vor [local, +D/A]", labels)
-        self.assertIn("vor [temporal, +Dativ]", labels)
-
-        for label, expected_id in (
-            ("vor [local, +D/A]", local["id"]),
-            ("vor [temporal, +Dativ]", temporal["id"]),
-        ):
-            fresh_state, _, fresh_context = self._show_variants()
-            self.assertEqual(fresh_state, DB_SEARCH)
-            chosen = _Update(label)
-            with patch.object(
-                D, "_select_db_search_exact", side_effect=AssertionError("selection repeated exact search")
-            ), patch.object(D, "search_word", side_effect=AssertionError("selection repeated LIKE search")):
-                self.assertEqual(_run(D.db_search_input(chosen, fresh_context)), ADD_EDIT)
-            self.assertEqual(fresh_context.user_data["quiz_edit_entry"]["id"], expected_id)
-            card_markup = chosen.message.calls[-1][1]["reply_markup"]
-            self.assertIn(t("ru", "db_search_back_to_variants"), _flat(card_markup))
-
-        chosen = _Update("vor [local, +D/A]")
-        self.assertEqual(_run(D.db_search_input(chosen, context)), ADD_EDIT)
-        back = _Update(t("ru", "db_search_back_to_variants"))
-        with patch.object(D, "list_all_words", side_effect=AssertionError("return queried DB")), patch.object(
-            D, "search_word", side_effect=AssertionError("return repeated search")
-        ), patch.object(D, "get_word_by_id", side_effect=AssertionError("return queried id")):
-            self.assertEqual(_run(C.clarify_fields_input(back, context)), DB_SEARCH)
-        self.assertEqual(back.message.calls[-1][0], t("ru", "db_search_choose_variant"))
-        self.assertIn("vor [local, +D/A]", _flat(back.message.calls[-1][1]["reply_markup"]))
-
-    def test_single_exact_keeps_direct_card_flow(self):
+    def test_single_exact_keeps_direct_card_and_explicit_clarify_flow(self):
         only = add_word(self.db, _prep("aus", "local", "dativ", "из"))
-        context = _Ctx()
-        update = _Update("aus")
-
-        self.assertEqual(_run(D.db_search_input(update, context)), ADD_EDIT)
+        context, update = _Ctx(), _Update("aus")
+        self.assertEqual(_run(D.db_search_input(update, context)), DB_SEARCH_VIEW)
+        self.assertNotIn("quiz_edit_entry", context.user_data)
+        self.assertEqual(_run(V.search_callback(_Update(card=self._cards(update)[0]), context)), ADD_EDIT)
         self.assertEqual(context.user_data["quiz_edit_entry"]["id"], only["id"])
-        self.assertTrue(any("Word card:" in text for text, _ in update.message.calls))
         self.assertNotIn("db_search_exact_variants", context.user_data)
 
-    def test_invalid_label_and_stale_id_do_not_fall_through_to_search(self):
+    def test_invalid_legacy_label_and_deleted_id_never_fall_through_to_search(self):
         self._seed_vor()
-        _, _, context = self._show_variants()
+        _, update, context = self._show_variants()
+        card = self._cards(update)[0]
+        with patch.object(D, "search_entries", side_effect=AssertionError("legacy menu queried DB")):
+            context.user_data["db_search_exact_variants"] = {
+                "label_to_id": {"vor [local, +D/A]": "arbitrary"}, "word_ids": ["arbitrary"]}
+            legacy = _Update("vor [local, +D/A]")
+            self.assertIsNone(_run(D.db_search_input(legacy, context)))
+            self.assertEqual(context.user_data["db_search_exact_variants"]["word_ids"], ["arbitrary"])
+            self.assertIn(t("ru", "search_stale"), legacy.message.calls[-1][0])
+        with patch.object(V, "read_search_entry", return_value=None):
+            self.assertIsNone(_run(V.search_callback(_Update(card=card), context)))
+        self.assertNotIn("quiz_edit_entry", context.user_data)
+        invalid = _Update(card=card)
+        invalid.callback_query.data = "ds:unknown-token"
+        self.assertIsNone(_run(V.search_callback(invalid, context)))
+        self.assertNotIn("quiz_edit_entry", context.user_data)
 
-        invalid = _Update("not a saved label")
-        with patch.object(D, "_select_db_search_exact", side_effect=AssertionError("new exact search")), patch.object(
-            D, "search_word", side_effect=AssertionError("LIKE search")
-        ), patch.object(D, "get_word_by_id", side_effect=AssertionError("invalid label resolved")):
-            self.assertEqual(_run(D.db_search_input(invalid, context)), DB_SEARCH)
-        self.assertEqual(invalid.message.calls[-1][0], t("ru", "db_search_variant_unavailable"))
-        self.assertFalse(any("Word card:" in text for text, _ in invalid.message.calls))
-
-        changed = _Update("vor [local, +D/A]")
-        saved_id = context.user_data["db_search_exact_variants"]["label_to_id"][changed.message.text]
-        with patch.object(D, "get_word_by_id", return_value={
-            "id": saved_id,
-            "type": "nomen",
-            "german": "fremd",
-        }):
-            self.assertEqual(_run(D.db_search_input(changed, context)), DB_SEARCH)
-        self.assertEqual(changed.message.calls[-1][0], t("ru", "db_search_variant_unavailable"))
-        self.assertFalse(any("Word card:" in text for text, _ in changed.message.calls))
-
-        context.user_data["db_search_exact_variants"]["label_to_id"]["vor [local, +D/A]"] = "missing-id"
-        stale = _Update("vor [local, +D/A]")
-        self.assertEqual(_run(D.db_search_input(stale, context)), DB_SEARCH)
-        self.assertEqual(stale.message.calls[-1][0], t("ru", "db_search_variant_unavailable"))
-        self.assertFalse(any("Word card:" in text for text, _ in stale.message.calls))
-
-    def test_duplicate_labels_fail_safely_and_log_ids(self):
-        duplicate_rows = [
-            {"id": "p1", **_prep("vor", "local", "dativ", "перед")},
-            {"id": "p2", **_prep("vor", "local", "dativ", "возле")},
-        ]
-        context = _Ctx()
-        update = _Update("vor")
-
-        with patch.object(D, "_select_db_search_exact", return_value=duplicate_rows), self.assertLogs(
-            D.logger.name, level="WARNING"
-        ) as logs:
-            self.assertEqual(_run(D.db_search_input(update, context)), DB_SEARCH)
-        self.assertEqual(update.message.calls[-1][0], t("ru", "db_search_variant_collision"))
-        self.assertIn("p1", "\n".join(logs.output))
-        self.assertIn("p2", "\n".join(logs.output))
+    def test_duplicate_semantic_labels_remain_independent_ids_without_collision_picker(self):
+        duplicate_rows = {
+            "p1": {"id": "p1", **_prep("vor", "local", "dativ", "перед")},
+            "p2": {"id": "p2", **_prep("vor", "local", "dativ", "возле")},
+        }
+        context, update = _Ctx(), _Update("vor")
+        result = {"kind": "exact", "ordered_ids": ["p1", "p2"], "has_more_similar": False}
+        with patch.object(D, "search_entries", return_value=result), patch.object(
+                V, "read_search_entry", side_effect=lambda db, wid: duplicate_rows[wid]):
+            self.assertEqual(_run(D.db_search_input(update, context)), DB_SEARCH_VIEW)
+        cards = self._cards(update)
+        self.assertEqual(len(cards), 2)
+        self.assertIn("id: p1", cards[0].text)
+        self.assertIn("id: p2", cards[1].text)
+        tokens = [card.reply_markup.inline_keyboard[0][0].callback_data for card in cards]
+        self.assertEqual(len(set(tokens)), 2)
         self.assertNotIn("db_search_exact_variants", context.user_data)
-        self.assertFalse(any("Word card:" in text for text, _ in update.message.calls))
 
-    def test_phrase_side_matches_and_like_fallback_stay_direct(self):
+    def test_phrase_substring_only_appears_when_no_exact_and_all_similar_are_cards(self):
         add_word(self.db, {"type": "nomen", "article": "die", "german": "Tafel", "russian": "доска", "topic": "1"})
         add_word(self.db, {"type": "phrase", "german": "die Tafel Schokolade", "russian": "плитка шоколада", "topic": "1"})
-
         exact = _Update("Tafel")
-        self.assertEqual(_run(D.db_search_input(exact, _Ctx())), ADD_EDIT)
-        self.assertTrue(any("Phrase matches:" in text for text, _ in exact.message.calls))
+        self.assertEqual(_run(D.db_search_input(exact, _Ctx())), DB_SEARCH_VIEW)
+        self.assertEqual(len(self._cards(exact)), 1)
+        self.assertFalse(any("Phrase matches:" in text for text, _, _ in exact.message.calls))
+        similar = _Update("afel")
+        self.assertEqual(_run(D.db_search_input(similar, _Ctx())), DB_SEARCH_VIEW)
+        self.assertEqual(len(self._cards(similar)), 2)
+        self.assertTrue(all("Word card:" in card.text for card in self._cards(similar)))
 
-        like = _Update("afel")
-        self.assertEqual(_run(D.db_search_input(like, _Ctx())), ADD_EDIT)
-        self.assertTrue(any("Word card:" in text for text, _ in like.message.calls))
-
-    def test_variant_copy_is_localized_for_all_interface_languages(self):
-        keys = (
-            "db_search_choose_variant",
-            "db_search_back_to_variants",
-            "db_search_variant_unavailable",
-            "db_search_variant_collision",
-        )
+    def test_search_page_and_action_copy_localized_for_all_interface_languages(self):
+        keys = ("search_exact", "search_page", "search_more", "search_stale", "search_similar_limit")
         for key in keys:
             for lang in ("en", "ru", "uk"):
                 self.assertIn(key, TEXTS[lang])
                 self.assertTrue(TEXTS[lang][key].strip())
             self.assertNotEqual(TEXTS["en"][key], TEXTS["ru"][key])
             self.assertNotEqual(TEXTS["en"][key], TEXTS["uk"][key])
-
         self._seed_vor()
         for lang in ("en", "ru", "uk"):
             set_user_interface_lang(self.db, GUEST, lang)
             state, update, context = self._show_variants()
-            self.assertEqual(state, DB_SEARCH)
-            self.assertEqual(update.message.calls[-1][0], t(lang, "db_search_choose_variant"))
-            chosen = _Update("vor [local, +D/A]")
-            self.assertEqual(_run(D.db_search_input(chosen, context)), ADD_EDIT)
-            self.assertIn(
-                t(lang, "db_search_back_to_variants"),
-                _flat(chosen.message.calls[-1][1]["reply_markup"]),
-            )
-
-        self.assertEqual(
-            D._format_semantic_variant_label(
-                {"german": "VOR", "preposition_type": "LOCAL", "case_type": "WECHSEL"}
-            ),
-            "vor [local, +D/A]",
-        )
+            self.assertEqual(state, DB_SEARCH_VIEW)
+            self.assertIn(t(lang, "search_exact"), update.message.calls[0][0])
+            card = self._cards(update)[0]
+            self.assertEqual(card.reply_markup.inline_keyboard[0][0].text, t(lang, "clarify_fields"))
+            self.assertEqual(_run(V.search_callback(_Update(card=card), context)), ADD_EDIT)
+            labels = _flat(update.message.calls[-1][1]["reply_markup"])
+            self.assertNotIn(t(lang, "db_search_back_to_variants"), labels)
 
 
 if __name__ == "__main__":

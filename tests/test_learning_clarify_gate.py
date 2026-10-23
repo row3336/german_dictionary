@@ -68,6 +68,7 @@ class LearningClarifyGateTest(unittest.TestCase):
         })
         self.hidden = add_word(self.db, {
             "type": "verb", "german": "gehen", "infinitive": "gehen",
+            "reflexive_case": "none",
             "russian": "идти", "topic": "1",
         })
 

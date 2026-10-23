@@ -52,6 +52,7 @@ class Spec7Test(unittest.TestCase):
         self.addCleanup(self._restore)
         self.wid = add_word(self.db, {
             "type": "verb", "german": "gehen", "infinitive": "gehen",
+            "reflexive_case": "none",
             "russian": "идти", "ukrainian": "йти", "english": "to go",
         })["id"]
         register_or_update_user(self.db, G_RU, "gru", "G")

@@ -3638,121 +3638,17 @@ def _strip_leading_article(token):
     return normalized
 
 
+def search_entries(db_path, token):
+    """Return the read-only, ordered multi-card search snapshot."""
+    from .search import search_entries as lookup
+    return lookup(db_path, token)
+
+
 def search_word(db_path, token):
-    """Handle search word."""
-    candidate = _normalize_text(token)
-    if not candidate:
-        return None
-    stripped = _strip_leading_article(candidate)
-    init_db(db_path)
-    with _connect(db_path) as conn:
-        row = conn.execute(
-            """
-            SELECT id, reflexive_case, conjugation_praesens, conjugation_praeteritum, is_separable, type, article, german, plural, infinitive, prateritum, partizip2, russian
-            , ukrainian, english, image, example, topic, preposition_type, case_type
-            FROM words
-            WHERE id = ?
-               OR lower(trim(german)) IN (?, ?)
-               OR lower(trim(infinitive)) IN (?, ?)
-               OR lower(trim(plural)) IN (?, ?)
-               OR lower(trim(prateritum)) IN (?, ?)
-               OR lower(trim(partizip2)) IN (?, ?)
-               OR lower(trim(russian)) IN (?, ?)
-               OR lower(trim(ukrainian)) IN (?, ?)
-               OR lower(trim(english)) IN (?, ?)
-            LIMIT 1
-            """,
-            (
-                _safe_text(token),
-                candidate,
-                stripped,
-                candidate,
-                stripped,
-                candidate,
-                stripped,
-                candidate,
-                stripped,
-                candidate,
-                stripped,
-                candidate,
-                stripped,
-                candidate,
-                stripped,
-                candidate,
-                stripped,
-            ),
-        ).fetchone()
-        if row:
-            return _row_to_entry(row)
-
-        like = _sqlite_like_pattern(candidate)
-        like_stripped = _sqlite_like_pattern(stripped)
-        rows = conn.execute(
-            """
-            SELECT id, reflexive_case, conjugation_praesens, conjugation_praeteritum, is_separable, type, article, german, plural, infinitive, prateritum, partizip2, russian
-            , ukrainian, english, image, example, topic, preposition_type, case_type
-            FROM words
-            WHERE lower(german) LIKE ? ESCAPE '\\'
-               OR lower(german) LIKE ? ESCAPE '\\'
-               OR lower(infinitive) LIKE ? ESCAPE '\\'
-               OR lower(infinitive) LIKE ? ESCAPE '\\'
-               OR lower(plural) LIKE ? ESCAPE '\\'
-               OR lower(plural) LIKE ? ESCAPE '\\'
-               OR lower(prateritum) LIKE ? ESCAPE '\\'
-               OR lower(prateritum) LIKE ? ESCAPE '\\'
-               OR lower(partizip2) LIKE ? ESCAPE '\\'
-               OR lower(partizip2) LIKE ? ESCAPE '\\'
-               OR lower(russian) LIKE ? ESCAPE '\\'
-               OR lower(russian) LIKE ? ESCAPE '\\'
-               OR lower(ukrainian) LIKE ? ESCAPE '\\'
-               OR lower(ukrainian) LIKE ? ESCAPE '\\'
-               OR lower(english) LIKE ? ESCAPE '\\'
-               OR lower(english) LIKE ? ESCAPE '\\'
-            LIMIT 20
-            """,
-            (
-                like,
-                like_stripped,
-                like,
-                like_stripped,
-                like,
-                like_stripped,
-                like,
-                like_stripped,
-                like,
-                like_stripped,
-                like,
-                like_stripped,
-                like,
-                like_stripped,
-                like,
-                like_stripped,
-            ),
-        ).fetchall()
-    if not rows:
-        return None
-
-    def _matches(entry):
-        forms = {
-            _normalize_text(entry.get("german", "")),
-            _normalize_text(entry.get("infinitive", "")),
-            _normalize_text(entry.get("plural", "")),
-            _normalize_text(entry.get("prateritum", "")),
-            _normalize_text(entry.get("partizip2", "")),
-        }
-        if candidate in forms or stripped in forms:
-            return True
-        for field in ("russian", "ukrainian", "english"):
-            variants = _form_variants(entry.get(field, ""))
-            if candidate in variants or stripped in variants:
-                return True
-        return False
-
-    for row in rows:
-        entry = _row_to_entry(row)
-        if _matches(entry):
-            return entry
-    return _row_to_entry(rows[0])
+    """Compatibility wrapper for callers that still expect one dictionary entry."""
+    from .search import read_search_entry
+    result = search_entries(db_path, token)
+    return read_search_entry(db_path, result["ordered_ids"][0]) if result["ordered_ids"] else None
 
 
 def has_translation_collision(db_path, translation, dict_lang):
