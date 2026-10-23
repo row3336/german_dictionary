@@ -415,6 +415,10 @@ def _format_match_line(entry, dict_lang):
         supr = _low_word(entry.get("superlativ", ""))
         parts = [entry_type, "-", german, komp, supr, translation]
         return " ".join(p for p in parts if p)
+    if entry_type == "phrase":
+        german = str(entry.get("german", "") or "").strip()
+        parts = [entry_type, "-", german, translation]
+        return " ".join(p for p in parts if p)
     german = _low_word(entry.get("german", ""))
     parts = [entry_type, "-", german, translation]
     return " ".join(p for p in parts if p)

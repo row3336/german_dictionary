@@ -25,7 +25,7 @@ from bot.storage import add_synonym_link, add_word, init_db, map_synonym_group_i
 
 def _verb(wid, infinitive, russian):
     return {"id": wid, "type": "verb", "infinitive": infinitive, "german": infinitive,
-            "russian": russian, "topic": "1"}
+            "russian": russian, "topic": "1", "reflexive_case": "none"}
 
 
 class DbSearchMatchesTest(unittest.TestCase):

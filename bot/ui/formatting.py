@@ -378,6 +378,8 @@ def _format_feedback_ru_de(entry, ok, lang="en"):
     elif word_type == "verb":
         base = _low_word(entry.get("infinitive", ""))
         answer = f"{article} {base}".strip() if article else base
+    elif word_type == "phrase":
+        answer = str(entry.get("german", "") or "").strip()
     else:
         base = _low_word(entry.get("german", ""))
         answer = f"{article} {base}".strip() if article else base
@@ -451,6 +453,9 @@ def _format_learning_preview_prompt(entry, dict_lang):
         forms = ", ".join(x for x in [komp, supr] if x)
         if forms:
             lines.append(f"_  {_md_escape(forms)}_")
+    elif word_type == "phrase":
+        german = str(entry.get("german", "") or "").strip()
+        lines.append(f"*{_md_escape(german)}*")
     else:
         german = _low_word(entry.get("german", ""))
         lines.append(f"*{_md_escape(german)}*")
