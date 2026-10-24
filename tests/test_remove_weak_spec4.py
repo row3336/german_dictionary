@@ -18,6 +18,7 @@ from bot.common.db_safety import (
     set_user_version,
 )
 from bot.storage import add_word, init_db, restore_user_word_state
+from tests.test_db_safety import _create_additive_fixture
 
 
 def _has_removed_weak_surface(source):
@@ -260,7 +261,7 @@ class RemoveWeakMigrationV17Test(unittest.TestCase):
         before = database_fingerprint(self.db)
         report = dry_run_migration(self.db)
 
-        self.assertEqual(SCHEMA_VERSION, 18)
+        self.assertEqual(SCHEMA_VERSION, 20)
         self.assertTrue(report["ok"])
         self.assertEqual(before, database_fingerprint(self.db))
         step = report["steps"]["remove_weak_v17"]
@@ -286,23 +287,31 @@ class RemoveWeakMigrationV17Test(unittest.TestCase):
         old_indexes = _schema(self.db)[2]
         report = apply_destructive_migrations_safely(self.db, self.backups)
 
-        self.assertEqual(get_user_version(self.db), 18)
+        self.assertEqual(get_user_version(self.db), SCHEMA_VERSION)
         self.assertEqual(report["from_version"], 16)
-        self.assertEqual(report["to_version"], 18)
+        self.assertEqual(report["to_version"], SCHEMA_VERSION)
         self.assertTrue(Path(report["backup"]).name.startswith("snapshot-premigrate-v16-"))
         tables, columns, indexes = _schema(self.db)
         self.assertNotIn("form_stats", tables)
         self.assertEqual(
             columns["quiz_events"],
-            ["id", "user_id", "word_id", "mode", "is_correct", "prev_is_correct", "created_at"],
+            ["id", "user_id", "word_id", "mode", "is_correct", "prev_is_correct", "created_at", "study_generation"],
         )
-        self.assertEqual(indexes, old_indexes)
+        self.assertEqual(set(indexes), set(old_indexes) | {"quiz_events_generation"})
+        self.assertEqual(
+            {name: sql for name, sql in indexes.items() if name != "quiz_events_generation"},
+            old_indexes,
+        )
+        self.assertEqual(
+            [row[2] for row in self._rows("PRAGMA index_info(quiz_events_generation)")],
+            ["user_id", "word_id", "study_generation", "mode", "created_at"],
+        )
         self.assertEqual(
             self._rows(
-                "SELECT id, user_id, word_id, mode, is_correct, prev_is_correct, created_at "
+                "SELECT id, user_id, word_id, mode, is_correct, prev_is_correct, created_at, study_generation "
                 "FROM quiz_events ORDER BY id"
             ),
-            [(41, 7, "ordinary", "ru_de", 1, 0, "2026-08-03 10:11:12")],
+            [(41, 7, "ordinary", "ru_de", 1, 0, "2026-08-03 10:11:12", 0)],
         )
         self.assertEqual(
             self._rows(
@@ -359,7 +368,7 @@ class MigrationSequenceTest(unittest.TestCase):
     def test_v15_runs_v16_then_v17_in_exact_order(self):
         directory = tempfile.mkdtemp(prefix="retained-weak-")
         db = os.path.join(directory, "words.db")
-        init_db(db)
+        _create_additive_fixture(db)
         set_user_version(db, 15)
         observed = []
         original_v16 = db_safety._migrate_phrase_modes_v16

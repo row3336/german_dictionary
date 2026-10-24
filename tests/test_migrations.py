@@ -16,6 +16,7 @@ from bot.common.db_safety import (
     set_user_version,
 )
 from bot.storage import get_topic_description, init_db, list_topics_with_desc
+from tests.test_db_safety import _create_additive_fixture
 
 
 def _schema(db_path):
@@ -255,8 +256,8 @@ class V1ToV2MigrationTest(unittest.TestCase):
     def test_v1_to_v2_adds_user_settings(self):
         d = tempfile.mkdtemp()
         db = os.path.join(d, "words.db")
-        init_db(db)
-        # simulate a real v1 DB: user_settings absent, version marker at 1
+        _create_additive_fixture(db)
+        # Isolate the v1 feature boundary: user_settings absent, version marker at 1
         conn = sqlite3.connect(db)
         conn.execute("DROP TABLE user_settings")
         conn.commit()
@@ -278,8 +279,8 @@ class V1ToV2MigrationTest(unittest.TestCase):
     def test_v2_to_v3_adds_user_word_media(self):
         d = tempfile.mkdtemp()
         db = os.path.join(d, "words.db")
-        init_db(db)
-        # simulate a real v2 DB: user_word_media absent, version marker at 2
+        _create_additive_fixture(db)
+        # Isolate the v2 feature boundary: user_word_media absent, version marker at 2
         conn = sqlite3.connect(db)
         conn.execute("DROP TABLE user_word_media")
         conn.commit()
@@ -304,8 +305,8 @@ class V1ToV2MigrationTest(unittest.TestCase):
     def test_v3_to_v4_adds_error_reports_and_feedback(self):
         d = tempfile.mkdtemp()
         db = os.path.join(d, "words.db")
-        init_db(db)
-        # simulate a real v3 DB: P6 tables absent, version marker at 3
+        _create_additive_fixture(db)
+        # Isolate the v3 feature boundary: P6 tables absent, version marker at 3
         conn = sqlite3.connect(db)
         conn.execute("DROP TABLE error_reports")
         conn.execute("DROP TABLE feedback")
@@ -341,14 +342,14 @@ class TopicsRegistryMigrationTest(unittest.TestCase):
 
     def _seed_v5(self, d):
         db = os.path.join(d, "words.db")
-        init_db(db)
+        _create_additive_fixture(db)
         conn = sqlite3.connect(db)
         # distinct topics '01', '7', 'verb'; '7' twice to prove DISTINCT collapses it
         conn.executescript(
             """
             INSERT INTO words (id, type, topic) VALUES ('w1', 'nomen', '01');
-            INSERT INTO words (id, type, topic) VALUES ('w2', 'verb', '7');
-            INSERT INTO words (id, type, topic) VALUES ('w3', 'verb', '7');
+            INSERT INTO words (id, type, infinitive, topic) VALUES ('w2', 'verb', 'gehen', '7');
+            INSERT INTO words (id, type, infinitive, topic) VALUES ('w3', 'verb', 'lernen', '7');
             INSERT INTO words (id, type, topic) VALUES ('w4', 'nomen', 'verb');
             """
         )
@@ -438,7 +439,7 @@ class PrepositionColumnsMigrationTest(unittest.TestCase):
 
     def _seed_v6(self, d):
         db = os.path.join(d, "words.db")
-        init_db(db)  # full current schema, then peel the two v7 columns back off
+        _create_additive_fixture(db)  # additive feature baseline, then peel the two v7 columns back off
         conn = sqlite3.connect(db)
         conn.executescript(
             """
@@ -508,7 +509,7 @@ class ConjugationColumnsMigrationTest(unittest.TestCase):
 
     def _seed_v7(self, d):
         db = os.path.join(d, "words.db")
-        init_db(db)  # full current schema, then peel the two v8 columns/table back off
+        _create_additive_fixture(db)  # additive feature baseline, then peel the two v8 columns/table back off
         conn = sqlite3.connect(db)
         conn.executescript(
             """
@@ -591,7 +592,7 @@ class UserWordMediaTranslationMigrationTest(unittest.TestCase):
 
     def _seed_v8(self, d):
         db = os.path.join(d, "words.db")
-        init_db(db)  # full current schema, then peel the three v9 columns back off
+        _create_additive_fixture(db)  # additive feature baseline, then peel the three v9 columns back off
         conn = sqlite3.connect(db)
         conn.executescript(
             """
@@ -656,7 +657,7 @@ class CefrLevelColumnMigrationTest(unittest.TestCase):
 
     def _seed_v11(self, d):
         db = os.path.join(d, "words.db")
-        init_db(db)  # full current schema, then peel the v12 column back off
+        _create_additive_fixture(db)  # additive feature baseline, then peel the v12 column back off
         conn = sqlite3.connect(db)
         conn.executescript(
             """
@@ -720,7 +721,7 @@ class TopicLevelMigrationTest(unittest.TestCase):
 
     def _seed_v13(self, d):
         db = os.path.join(d, "words.db")
-        init_db(db)  # full current schema, then peel the v14 column back off
+        _create_additive_fixture(db)  # additive feature baseline, then peel the v14 column back off
         conn = sqlite3.connect(db)
         conn.executescript(
             """
@@ -786,7 +787,7 @@ class SeparableStatusMigrationTest(unittest.TestCase):
 
     def _seed_v14(self, directory):
         db = os.path.join(directory, "words.db")
-        init_db(db)
+        _create_additive_fixture(db)
         conn = sqlite3.connect(db)
         try:
             columns = {row[1] for row in conn.execute("PRAGMA table_info(words)")}

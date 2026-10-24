@@ -2,6 +2,7 @@
 
 import copy
 import json
+import os
 import sqlite3
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
@@ -18,7 +19,9 @@ from bot.common.verb_construction import (DuplicateIdentity, InvalidClassificati
 from bot.conjugation import repository as conjugation
 from bot.study import answers, generations, repair, repository as repo, schema_v19
 
-STAND = Path("/Users/wf/py/_agent_work/888_german_dictionary/k12_impl_20261023")
+STAND = Path(os.environ.get(
+    "GD_TEST_STAND", "/Users/wf/py/_agent_work/888_german_dictionary/k12_impl_20261023"
+))
 
 
 def block(case="akkusativ"):
@@ -91,6 +94,7 @@ def import_fixture(conn, fields_list):
 
 def old_schema(db, version=18):
     with repo.transaction(db) as conn:
+        conn.execute("DROP TABLE IF EXISTS learning_requests")
         for name in ("words_verb_identity", "words_verb_lookup", "quiz_events_generation"):
             conn.execute(f"DROP INDEX {name}")
         for name in ("words_reflexive_type_insert", "words_reflexive_type_update"):
@@ -155,13 +159,19 @@ class ReflexiveDB19Test(unittest.TestCase):
     def test_DB01_public_dry_run_and_safe_apply_keep_online_backup(self):
         db = self.db
         old_schema(db)
+        with repo.transaction(db) as conn:
+            assert not conn.execute("SELECT 1 FROM sqlite_master WHERE name='learning_requests'").fetchone()
         fingerprint = db_safety.database_fingerprint(db)
         with patch.object(tempfile, "tempdir", str(db.parent)):
             dry = db_safety.dry_run_migration(db)
-            assert dry["ok"] and dry["to_version"] == 19
+            assert dry["ok"] and dry["to_version"] == 20
             assert db_safety.database_fingerprint(db) == fingerprint
             result = db_safety.apply_migrations_safely(db, db.parent / "backups")
         assert result["healthcheck"]["ok"]
+        assert result["from_version"] == 18 and result["to_version"] == 20
+        assert db_safety.get_user_version(db) == 20
+        with repo.transaction(db) as conn:
+            assert conn.execute("SELECT COUNT(*) FROM learning_requests").fetchone()[0] == 0
         assert result["backup"] and db_safety.database_fingerprint(result["backup"]) == fingerprint
         assert not db_safety.apply_migrations_safely(db, db.parent / "backups")["migrated"]
 

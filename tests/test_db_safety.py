@@ -3,11 +3,13 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from contextlib import closing
 
 from bot.common.db_safety import (
     SCHEMA_VERSION,
     apply_migrations_safely,
     backup_database,
+    database_fingerprint,
     dry_run_migration,
     get_user_version,
     log_db_event,
@@ -15,6 +17,52 @@ from bot.common.db_safety import (
     set_user_version,
 )
 from bot.storage import _connect, init_db
+
+
+def _create_v0_db(db_path):
+    # Build a pre-versioning schema, rather than relabelling a fresh current DB.
+    with closing(sqlite3.connect(db_path)) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE words (
+                id TEXT PRIMARY KEY,
+                type TEXT NOT NULL,
+                article TEXT NOT NULL DEFAULT '',
+                german TEXT NOT NULL DEFAULT '',
+                plural TEXT NOT NULL DEFAULT '',
+                infinitive TEXT NOT NULL DEFAULT '',
+                prateritum TEXT NOT NULL DEFAULT '',
+                partizip2 TEXT NOT NULL DEFAULT '',
+                russian TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE users (
+                user_id INTEGER PRIMARY KEY,
+                username TEXT NOT NULL DEFAULT '',
+                first_name TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            """
+        )
+
+
+def _create_additive_fixture(db_path):
+    # Retain the additive feature baseline, without future v18+ schema objects.
+    # Callers peel their target feature and set its historical source marker.
+    _create_v0_db(db_path)
+    init_db(db_path, _additive_only=True)
+    with closing(sqlite3.connect(db_path)) as conn:
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        assert tables.isdisjoint({
+            "study_actions", "study_deliveries", "conjugation_admissions",
+            "conjugation_blocks", "conjugation_passes", "conjugation_answers",
+            "study_word_generations", "study_reset_operations", "learning_requests",
+        })
+        assert "study_generation" not in {row[1] for row in conn.execute("PRAGMA table_info(quiz_events)")}
+        assert "reflexive_case" not in {row[1] for row in conn.execute("PRAGMA table_info(words)")}
+        assert get_user_version(db_path) == 0
 
 
 def _add_words(db_path, n):
@@ -91,9 +139,11 @@ class ApplyMigrationsSafelyTest(unittest.TestCase):
     def test_existing_v0_backs_up_then_migrates(self):
         d = tempfile.mkdtemp()
         db = os.path.join(d, "words.db")
-        init_db(db)              # creates schema, leaves user_version = 0
+        _create_v0_db(db)
         _add_words(db, 12)
         self.assertEqual(get_user_version(db), 0)
+        self.assertFalse(_table_exists(db, "user_settings"))
+        before = database_fingerprint(db)
 
         report = apply_migrations_safely(db, os.path.join(d, "backups"))
         self.assertTrue(report["migrated"])
@@ -101,7 +151,10 @@ class ApplyMigrationsSafelyTest(unittest.TestCase):
         # pre-migration snapshot was taken and exists
         self.assertIsNotNone(report["backup"])
         self.assertTrue(Path(report["backup"]).exists())
+        self.assertEqual(database_fingerprint(report["backup"]), before)
         # version bumped, healthcheck passed, data preserved
+        self.assertEqual(report["from_version"], 0)
+        self.assertEqual(report["to_version"], SCHEMA_VERSION)
         self.assertEqual(get_user_version(db), SCHEMA_VERSION)
         self.assertTrue(report["healthcheck"]["ok"])
         self.assertEqual(report["counts_before"]["words"], report["counts_after"]["words"])
@@ -136,18 +189,25 @@ class DryRunTest(unittest.TestCase):
     def test_dry_run_reports_ok_without_touching_live(self):
         d = tempfile.mkdtemp()
         db = os.path.join(d, "words.db")
-        init_db(db)            # live at v0
+        _create_v0_db(db)
         _add_words(db, 9)
+        self.assertEqual(get_user_version(db), 0)
+        self.assertFalse(_table_exists(db, "user_settings"))
+        before = database_fingerprint(db)
 
         report = dry_run_migration(db)
         self.assertTrue(report["dry_run"])
         self.assertTrue(report["ok"])
         self.assertTrue(report["migrated"])           # the copy would migrate v0 -> vN
+        self.assertEqual(report["from_version"], 0)
+        self.assertEqual(report["to_version"], SCHEMA_VERSION)
         self.assertEqual(report["source_counts"]["words"], 9)
         self.assertEqual(report["counts_after"]["words"], 9)
 
         # live DB is untouched: version unchanged, data intact, no backups written next to it
         self.assertEqual(get_user_version(db), 0)
+        self.assertEqual(database_fingerprint(db), before)
+        self.assertFalse(_table_exists(db, "user_settings"))
         self.assertEqual(run_healthcheck(db)["counts"]["words"], 9)
         self.assertFalse(os.path.exists(os.path.join(d, "backups")))
 
@@ -156,7 +216,7 @@ class DryRunTest(unittest.TestCase):
         # dry-run rehearses creating error_reports/feedback on the COPY only.
         d = tempfile.mkdtemp()
         db = os.path.join(d, "words.db")
-        init_db(db)
+        _create_additive_fixture(db)
         _add_words(db, 5)
         conn = sqlite3.connect(db)
         conn.execute("DROP TABLE error_reports")

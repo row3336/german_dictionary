@@ -384,15 +384,20 @@ class ReflexiveQuizzesTest(unittest.TestCase):
         for wid in ('akk','dat'):
             self.grade(self.selected(wid),key=wid)
         context=SimpleNamespace(user_data={})
-        with patch.object(session,'_mode_l1_de',return_value='ru_de'), patch.object(session,'_mode_de_l1',return_value='de_ru'), patch.object(session,'_mode_pl_sg',return_value='pl_sg'), patch.object(session.random,'shuffle',side_effect=lambda values:None):
+        real_select_due = session.select_due
+
+        def select_on_fixture_day(*args, **kwargs):
+            return real_select_due(*args, **{**kwargs, 'today': DAY})
+
+        with patch.object(session,'_mode_l1_de',return_value='ru_de'), patch.object(session,'_mode_de_l1',return_value='de_ru'), patch.object(session,'_mode_pl_sg',return_value='pl_sg'), patch.object(session.random,'shuffle',side_effect=lambda values:None), patch.object(session,'select_due',side_effect=select_on_fixture_day):
             first=session._pick_due_entry(context,1,'ru_de')
-            # Today's correct events normally exclude both; use tomorrow for the
-            # authoritative selector without changing the selection mechanism.
+            # The selector uses the same fixed day as the graded fixture events.
+            # Backdate history below before exercising the real selector again.
             self.assertIsNone(first)
         with repo.transaction(self.db) as conn:
             conn.execute("UPDATE quiz_events SET created_at='2026-01-01'")
             conn.execute("UPDATE progress SET due='2026-01-01'")
-        with patch.object(session,'_mode_l1_de',return_value='ru_de'), patch.object(session,'_mode_de_l1',return_value='de_ru'), patch.object(session,'_mode_pl_sg',return_value='pl_sg'), patch.object(session.random,'shuffle',side_effect=lambda values:None):
+        with patch.object(session,'_mode_l1_de',return_value='ru_de'), patch.object(session,'_mode_de_l1',return_value='de_ru'), patch.object(session,'_mode_pl_sg',return_value='pl_sg'), patch.object(session.random,'shuffle',side_effect=lambda values:None), patch.object(session,'select_due',side_effect=select_on_fixture_day):
             first=session._pick_due_entry(context,1,'ru_de')
             other='dat' if first['id']=='akk' else 'akk'
             self.fake_reset(other)
