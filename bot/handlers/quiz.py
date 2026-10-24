@@ -16,6 +16,7 @@ from ..written import service as written_service, state as written_state
 from ..study.answers import StaleStudyAction
 from ..study.generations import StaleGeneration
 from ..common.verb_construction import validate_quiz_entry, InvalidClassification, InvalidForms
+from ..common.phrase_answers import phrase_answer_matches
 from ..oral import handlers as oral_handlers
 from ..oral.domain import MODES as ORAL_MODES
 
@@ -446,6 +447,13 @@ def _check_ru_de_strict(entry, answer_text):
             "partizip2": p2_ok,
             "prateritum": pr_ok,
         }
+
+    if entry_type == "phrase":
+        return any(
+            phrase_answer_matches(cand.get("german", ""), answer_text)
+            for cand in synonyms
+            if (cand.get("type") or "").strip().lower() == "phrase"
+        ), {}
 
     # single-field answer (adjective/adverb/…). An adjective may be answered with
     # the base form alone, or base+komparativ, or base+komparativ+superlativ — in
