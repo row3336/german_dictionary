@@ -155,6 +155,100 @@ class MigrationFromOldSchemaTest(unittest.TestCase):
         self.assertTrue(run_healthcheck(db)["ok"])
 
 
+class CurrentSchemaTopicSeedTest(unittest.TestCase):
+    def test_current_schema_reseeds_trimmed_topics_and_preserves_other_state(self):
+        directory = tempfile.mkdtemp(prefix="retained-topic-seed-")
+        db = os.path.join(directory, "words.db")
+        init_db(db)
+        conn = sqlite3.connect(db)
+        try:
+            conn.executemany(
+                "INSERT INTO words (id, type, german, topic) VALUES (?, 'nomen', ?, ?)",
+                [("w1", "Haus", " 05 "), ("w2", "Buch", "05"),
+                 ("w3", "Wort", "   "), ("w4", "Tag", "curated")],
+            )
+            conn.executemany(
+                "INSERT INTO topics (name, description, level) VALUES (?, ?, ?)",
+                [("curated", "Keep description", "B2"), ("unused", "Keep unused", "A1")],
+            )
+            conn.execute(
+                "INSERT INTO progress (user_id, word_id, mode, interval, repetitions, ease, due) "
+                "VALUES (7, 'w1', 'ru_de', 9, 4, 2.7, '2026-11-01')"
+            )
+            conn.commit()
+            schema_before = conn.execute("SELECT type, name, sql FROM sqlite_master ORDER BY type, name").fetchall()
+            tables = [row[0] for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name!='topics'"
+            )]
+            other_before = {table: conn.execute(f'SELECT * FROM "{table}" ORDER BY rowid').fetchall() for table in tables}
+        finally:
+            conn.close()
+
+        init_db(db)
+        conn = sqlite3.connect(db)
+        try:
+            self.assertEqual(conn.execute("SELECT name, description, level FROM topics ORDER BY name").fetchall(),
+                             [("05", "", ""), ("curated", "Keep description", "B2"), ("unused", "Keep unused", "A1")])
+            self.assertEqual(conn.execute("SELECT type, name, sql FROM sqlite_master ORDER BY type, name").fetchall(), schema_before)
+            self.assertEqual({table: conn.execute(f'SELECT * FROM "{table}" ORDER BY rowid').fetchall() for table in tables}, other_before)
+        finally:
+            conn.close()
+        after = database_fingerprint(db)
+        init_db(db)
+        self.assertEqual(database_fingerprint(db), after)
+        self.assertEqual(get_user_version(db), SCHEMA_VERSION)
+
+    def test_current_schema_language_read_succeeds_while_another_writer_is_held(self):
+        from bot.storage import get_user_languages
+        directory = tempfile.mkdtemp(prefix="retained-topic-reader-")
+        db = os.path.join(directory, "words.db")
+        init_db(db)
+        conn = sqlite3.connect(db)
+        try:
+            conn.execute("INSERT INTO words (id, type, german, topic) VALUES ('w1', 'nomen', 'Haus', '05')")
+            conn.execute("INSERT INTO users (user_id, interface_lang, dict_lang) VALUES (7, 'en', 'ru')")
+            conn.commit()
+        finally:
+            conn.close()
+        init_db(db)
+        before = database_fingerprint(db)
+        writer = sqlite3.connect(db, timeout=0)
+        try:
+            writer.execute("BEGIN IMMEDIATE")
+            writer.execute("UPDATE users SET interface_lang='uk' WHERE user_id=7")
+            self.assertEqual(get_user_languages(db, 7), ("en", "ru"))
+            self.assertTrue(writer.in_transaction)
+            self.assertEqual(writer.execute("SELECT interface_lang FROM users WHERE user_id=7").fetchone()[0], "uk")
+        finally:
+            writer.rollback()
+            writer.close()
+        self.assertEqual(database_fingerprint(db), before)
+
+    def test_incomplete_schema20_is_rejected_before_topic_seed(self):
+        # Exercise both the explicit schema20 field guard and required-field set.
+        for column in ("learning_lifecycle", "word_generation"):
+            with self.subTest(column=column):
+                directory = tempfile.mkdtemp(prefix="retained-topic-guard-")
+                db = os.path.join(directory, "words.db")
+                init_db(db)
+                conn = sqlite3.connect(db)
+                try:
+                    conn.execute("INSERT INTO words (id, type, german, topic) VALUES ('w1', 'nomen', 'Haus', 'unseeded')")
+                    conn.execute(f"ALTER TABLE learning_requests DROP COLUMN {column}")
+                    conn.commit()
+                finally:
+                    conn.close()
+                before = database_fingerprint(db)
+                with self.assertRaisesRegex(RuntimeError, r"incomplete schema20: learning_requests\." + column):
+                    init_db(db)
+                self.assertEqual(database_fingerprint(db), before)
+                conn = sqlite3.connect(db)
+                try:
+                    self.assertEqual(conn.execute("SELECT COUNT(*) FROM topics WHERE name='unseeded'").fetchone()[0], 0)
+                finally:
+                    conn.close()
+
+
 class V1ToV2MigrationTest(unittest.TestCase):
     """P2.1 — adding user_settings is a safe additive v1 -> v2 migration."""
 

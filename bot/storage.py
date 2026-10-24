@@ -203,6 +203,7 @@ def init_db(db_path, *, _additive_only=False):
             columns = {r[1] for r in conn.execute('PRAGMA table_info(learning_requests)')}
             if required - columns:
                 raise RuntimeError('incomplete schema20: learning_requests.' + sorted(required - columns)[0])
+            _seed_topics(conn)
             return
         if not fresh and version < 20 and not _additive_only:
             from .common.db_safety import DestructiveMigrationRequired
@@ -441,6 +442,22 @@ def init_db(db_path, *, _additive_only=False):
                 conn.execute("PRAGMA user_version=20")
 
 
+def _seed_topics(conn):
+    # Read wrappers can run beside another writer when the registry is complete.
+    missing = conn.execute(
+        """SELECT 1 FROM words w WHERE trim(coalesce(w.topic, '')) != ''
+        AND NOT EXISTS (SELECT 1 FROM topics t WHERE t.name=trim(w.topic)) LIMIT 1"""
+    ).fetchone()
+    if missing is None:
+        return
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO topics (name)
+        SELECT DISTINCT trim(topic) FROM words WHERE trim(coalesce(topic, '')) != ''
+        """
+    )
+
+
 def _ensure_schema(conn):
     """Handle ensure schema."""
     conn.execute(
@@ -527,12 +544,7 @@ def _ensure_schema(conn):
     conn.execute(
         "CREATE TABLE IF NOT EXISTS topics (name TEXT PRIMARY KEY, description TEXT NOT NULL DEFAULT '')"
     )
-    conn.execute(
-        """
-        INSERT OR IGNORE INTO topics (name)
-        SELECT DISTINCT trim(topic) FROM words WHERE trim(coalesce(topic, '')) != ''
-        """
-    )
+    _seed_topics(conn)
     # v13 -> v14: per-topic "book level" (A1..C2), independent of words.cefr_level.
     # Additive, DEFAULT '' so every existing topic (unassigned) and an older/rolled-back
     # build stay valid. Column-only on purpose: assigning A1 to current topics is a
