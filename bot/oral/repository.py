@@ -3,12 +3,12 @@
 import random
 
 from ..app_config import is_owner
-from ..study.generations import selected_entry
+from ..study.generations import selected_entry, preserve_selected_entry
 from ..storage import _cefr_filter_sql, _topic_filter_sql, _row_to_entry
 from ..common.word_filter import resolve_quiz_filter, effective_filter_fingerprint
 
 
-def word(conn, user_id, word_id, dict_lang):
+def word(conn, user_id, word_id, dict_lang, *, selected=None):
     row = conn.execute('SELECT * FROM words WHERE id=?', (word_id,)).fetchone()
     if row is None:
         return None
@@ -22,7 +22,8 @@ def word(conn, user_id, word_id, dict_lang):
         if not is_owner(user_id):
             column = {'ru': 'russian', 'uk': 'ukrainian', 'en': 'english'}[dict_lang]
             entry['my_translation'] = media[column] or ''
-    return selected_entry(conn, user_id, entry)
+    return (preserve_selected_entry(entry, selected) if selected is not None
+            else selected_entry(conn, user_id, entry))
 
 
 def due(conn, user_id, mode, options, today, excluded=()):

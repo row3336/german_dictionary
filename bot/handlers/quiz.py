@@ -166,6 +166,7 @@ def _check_receipt(context, receipt):
 
 
 def _accept_written_answer(update, context, entry, mode, ok, is_retry, state, idk=False):
+    validate_quiz_entry(entry)
     uid = update.effective_user.id
     if is_retry:
         receipt = written_service.control(get_db_path(), update, context, mode, state, 'written_retry')
@@ -333,6 +334,11 @@ def _partizip2_variants(entry):
 
 def _verb_answer_candidates(entry):
     """Build complete short/full answers without splitting multi-word forms."""
+    from ..common.perfekt import answer_tuples
+    linked = answer_tuples(entry)
+    if linked is not None:
+        return ({_normalize_multi_field_answer(f"{lemma} {perf}") for lemma, _, perf in linked},
+                {_normalize_multi_field_answer(f"{lemma} {pr} {perf}") for lemma, pr, perf in linked})
     infinitives = _stored_form_variants(entry.get("infinitive", ""))
     prateritums = _stored_form_variants(entry.get("prateritum", ""))
     partizip2s = _partizip2_variants(entry)
@@ -373,14 +379,23 @@ def _plural_matches(answer, stored):
 def _synonym_entries(entry):
     """Handle synonym entries."""
     wid = entry.get("id")
-    if not wid:
-        return [entry]
-    group = get_synonym_group(get_db_path(), wid)
+    if "answer_aliases" in entry:
+        group = entry["answer_aliases"]
+    elif "study_generation" in entry:
+        # Old frozen questions retain their selected contract after a backfill.
+        group = []
+    elif wid:
+        group = get_synonym_group(get_db_path(), wid)
+    else:
+        group = []
     if not group:
         return [entry]
     from ..common.verb_construction import synonym_compatible
     return [entry, *(candidate for candidate in group if candidate.get("id") != wid
-                     and synonym_compatible(entry, candidate))]
+                     and synonym_compatible(entry, candidate)
+                     and (entry.get("perfekt_variants_json") is None
+                          or (candidate.get("type") == "verb"
+                              and candidate.get("perfekt_variants_json") is not None)))]
 
 
 def _check_ru_de_strict(entry, answer_text):
@@ -425,6 +440,9 @@ def _check_ru_de_strict(entry, answer_text):
         if not answer:
             return False, {"partizip2": False, "prateritum": False}
         for cand in synonyms:
+            if (cand.get("type") or "").strip().lower() == "verb":
+                validate_quiz_entry(cand)
+        for cand in synonyms:
             if (cand.get("type") or "").strip().lower() != "verb":
                 continue
             short, full = _verb_answer_candidates(cand)
@@ -433,8 +451,12 @@ def _check_ru_de_strict(entry, answer_text):
             if answer in short:
                 return True, {"partizip2": True, "prateritum": False}
 
-        partizip2s = _partizip2_variants(entry)
-        prateritums = _stored_form_variants(entry.get("prateritum", ""))
+        from ..common.perfekt import answer_tuples
+        linked = answer_tuples(entry)
+        partizip2s = ({_normalize_multi_field_answer(perf) for _, _, perf in linked}
+                     if linked is not None else _partizip2_variants(entry))
+        prateritums = ({_normalize_multi_field_answer(pr) for _, pr, _ in linked}
+                      if linked is not None else _stored_form_variants(entry.get("prateritum", "")))
         p2_ok = any(answer == value or answer.endswith(f" {value}") for value in partizip2s)
         pr_ok = any(
             answer == value
@@ -1018,6 +1040,9 @@ async def _render_existing_written(update, context, point, prefix_text):
     if frame['phase'] == 'question':
         entry = get_word_by_id(get_db_path(), frame['question_id'])
         if entry:
+            from ..study.generations import preserve_selected_entry
+            selected = frame.get('selected_entry') or context.user_data.get('quiz_entry')
+            entry = preserve_selected_entry(entry, selected)
             entry['study_generation'] = frame.get('study_generation', 0)
             context.user_data['quiz_entry'] = resolve_bot_word_media(get_db_path(), update.effective_user.id, entry)
         else:

@@ -8,7 +8,7 @@ from ..common.bot_media import resolve_bot_word_media
 from ..common.lang import _user_dict_lang
 from ..common.translation_view import translation_card_lines
 from ..common.conjugation import format_conjugation_block
-from ..common.verb_construction import display_infinitive, construction_label, reflexive_hint
+from ..common.verb_construction import display_infinitive, construction_label, reflexive_hint, validate_quiz_entry
 from ..i18n import t
 from ..storage import get_word_study_status
 from ..text_utils import cap_plural as _cap_plural
@@ -22,6 +22,12 @@ from ..text_utils import normalize_russian_singular as _normalize_russian_singul
 
 def _expected_partizip2(entry):
     """Handle expected partizip2."""
+    from ..common.perfekt import display_forms
+    if entry.get("perfekt_variants_json") is not None:
+        validate_quiz_entry(entry)
+    linked = display_forms(entry)
+    if linked is not None:
+        return ", ".join(dict.fromkeys(perf for _, perf in linked))
     part = _normalize_answer(entry.get("partizip2", ""))
     aux = _normalize_answer(
         entry.get("perfect_aux")
@@ -34,6 +40,35 @@ def _expected_partizip2(entry):
             return part
         return f"{aux} {part}".strip()
     return part
+
+
+def _linked_verb_lines(entry, *, examples_already_shown=()):
+    """Render each reference with its own examples; never join scalar lists."""
+    from ..common.perfekt import read_variants
+    if entry.get("perfekt_variants_json") is None:
+        return None
+    validate_quiz_entry(entry)
+    variants = read_variants(entry)
+    if variants is None:
+        return None
+    lines = []
+    shown = set(examples_already_shown)
+    for variant in variants:
+        lines.append(variant["prateritum"] + ", " + variant["perfekt_fragment"])
+        lines.extend(example["text_de"] for example in variant["examples"]
+                     if example["text_de"] not in shown)
+    return lines
+
+
+def _append_verb_forms(lines, entry, *, examples_already_shown=()):
+    linked = _linked_verb_lines(entry, examples_already_shown=examples_already_shown)
+    if linked is not None:
+        lines.extend("_  " + _md_escape(value) + "_" for value in linked)
+    else:
+        for value in (_low_word(entry.get("prateritum", "")), _expected_partizip2(entry)):
+            if value:
+                lines.append("_  " + _md_escape(value) + "_")
+    return lines
 
 
 def _entry_translation(entry, dict_lang):
@@ -218,6 +253,12 @@ def _format_word_card(entry, title="Word card:", user_id=None):
         f"image: {_md_escape(entry.get('image', '')) or '-'}",
         f"example: {_md_escape(entry.get('example', '')) or '-'}",
     ]
+    if entry.get("type") == "verb":
+        linked = _linked_verb_lines(entry,
+            examples_already_shown=_example_lines(entry.get("example", "")))
+        if linked is not None:
+            lines.append("Perfekt:")
+            lines.extend(_md_escape(value) for value in linked)
     # spec #1: prepositions carry two extra owner-curated fields — show them so the
     # owner can see/verify them on the card (they drive the quiz hints + dedup).
     if _low_word(entry.get("type", "")) == "praeposition":
@@ -291,12 +332,8 @@ def _format_de_ru_question(entry):
     elif word_type == "verb":
         infinitive = _low_word(display_infinitive(entry))
         lines.append(_md_escape(infinitive + reflexive_hint(entry)))
-        pr = _low_word(entry.get("prateritum", ""))
-        if pr:
-            lines.append(f"_  {_md_escape(pr)}_")
-        p2 = _expected_partizip2(entry)
-        if p2:
-            lines.append(f"_  {_md_escape(p2)}_")
+        _append_verb_forms(lines, entry,
+            examples_already_shown=_example_lines(entry.get("example", ""))[:1])
     elif word_type == "adjektiv":
         german = _low_word(entry.get("german", ""))
         lines.append(_md_escape(german))
@@ -395,20 +432,16 @@ def _format_feedback_ru_de(entry, ok, lang="en"):
             lines.append("")
             lines.append(f"_pl. die {_md_escape(plural)}_")
     elif word_type == "verb":
-        pr = _low_word(entry.get("prateritum", ""))
-        p2 = str(entry.get("partizip2", "") or "").strip().lower()
-        aux = str(
-            entry.get("perfect_aux")
-            or entry.get("hilfsverb")
-            or entry.get("aux")
-            or ""
-        ).strip().lower()
-        if p2 and aux in {"hat", "ist"} and not p2.startswith("hat ") and not p2.startswith("ist "):
-            p2 = f"{aux} {p2}"
-        forms = ", ".join([x for x in [pr, p2] if x])
-        if forms:
+        linked = _linked_verb_lines(entry)
+        if linked is not None:
             lines.append("")
-            lines.append(f"_{_md_escape(forms)}_")
+            _append_verb_forms(lines, entry)
+        else:
+            forms = ", ".join(value for value in
+                (_low_word(entry.get("prateritum", "")), _expected_partizip2(entry)) if value)
+            if forms:
+                lines.append("")
+                lines.append(f"_{_md_escape(forms)}_")
     elif word_type == "adjektiv":
         komp = _low_word(entry.get("komparativ", ""))
         supr = _low_word(entry.get("superlativ", ""))
@@ -443,11 +476,14 @@ def _format_learning_preview_prompt(entry, dict_lang):
     elif word_type == "verb":
         infinitive = _low_word(display_infinitive(entry))
         lines.append(f"*{_md_escape(infinitive)}*")
-        pr = _low_word(entry.get("prateritum", ""))
-        p2 = _expected_partizip2(entry)
-        forms = ", ".join(x for x in [pr, p2] if x)
-        if forms:
-            lines.append(f"_{_md_escape(forms)}_")
+        if _linked_verb_lines(entry) is not None:
+            _append_verb_forms(lines, entry,
+                examples_already_shown=_example_lines(entry.get("example", ""))[:1])
+        else:
+            forms = ", ".join(value for value in
+                (_low_word(entry.get("prateritum", "")), _expected_partizip2(entry)) if value)
+            if forms:
+                lines.append(f"_{_md_escape(forms)}_")
     elif word_type == "adjektiv":
         german = _low_word(entry.get("german", ""))
         lines.append(f"*{_md_escape(german)}*")

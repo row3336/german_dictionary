@@ -8,6 +8,7 @@ import asyncio
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from _telegram_stub import install
 
@@ -68,9 +69,14 @@ class PlSgInputErrTest(unittest.TestCase):
         Q._send_pl_sg_prompt = _spy
         ctx = _Ctx({"quiz_entry": ENTRY})
         upd = _FakeUpdate()
-        state = asyncio.run(Q._repeat_current_pl_sg(upd, ctx, "✅ fixed"))
+        original = dict(ENTRY)
+        with patch.object(Q, "_pick_due_entry", side_effect=AssertionError("repeat picked a new word")):
+            state = asyncio.run(Q._repeat_current_pl_sg(upd, ctx, "✅ fixed"))
         self.assertEqual(state, QUIZ_PL_SG)
-        self.assertIs(ctx.user_data["quiz_entry"], ENTRY)  # same word, not re-picked
+        current = ctx.user_data["quiz_entry"]
+        self.assertEqual(current["id"], original["id"])
+        self.assertEqual({key: current[key] for key in original}, original)
+        self.assertEqual(ENTRY, original)  # freezing must not mutate the source entry
         self.assertEqual(picked, [])  # did not pop a new word off the queue
         self.assertTrue(upd.message.replies)  # re-showed the question
 

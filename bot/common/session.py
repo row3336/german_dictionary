@@ -270,7 +270,8 @@ def _pick_due_entry_conn(context, user_id, mode, word_type, conn):
                 continue
             reserved.add(entry.get("id"))
             last_ids[mode] = entry.get("id")
-            return entry
+            from ..study.generations import selected_entry
+            return selected_entry(conn, user_id, entry)
         return None
 
     due = _fetch_due()
@@ -281,7 +282,8 @@ def _pick_due_entry_conn(context, user_id, mode, word_type, conn):
         pool = due
     entry = random.choice(pool)
     last_ids[mode] = entry.get("id")
-    return entry
+    from ..study.generations import selected_entry
+    return selected_entry(conn, user_id, entry)
 
 
 # --- session-retry glue ---

@@ -1,6 +1,9 @@
 """Word-level study barriers. All operations use the caller's transaction."""
 
 
+from copy import deepcopy
+
+
 class StaleGeneration(ValueError):
     pass
 
@@ -37,8 +40,20 @@ def selected_entry(conn, user_id, entry, participant_ids=()):
     """Capture only at reservation; callers must not re-capture an existing frame."""
     if entry is None:
         return None
-    result = dict(entry)
-    expected = capture_generations(conn, user_id, [entry['id'], *participant_ids])
+    from ..storage import _row_to_entry
+    from ..common.verb_construction import synonym_compatible
+    result = deepcopy(entry)
+    result['answer_aliases'] = []
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='word_synonyms'").fetchone():
+        rows = conn.execute("""SELECT w.* FROM words w JOIN word_synonyms s ON s.word_id=w.id
+            WHERE s.group_id=(SELECT group_id FROM word_synonyms WHERE word_id=?)
+            AND w.id!=? ORDER BY w.id""", (entry['id'], entry['id'])).fetchall()
+        for row in rows:
+            candidate = _row_to_entry(row)
+            if synonym_compatible(entry, candidate):
+                result['answer_aliases'].append(candidate)
+    expected = capture_generations(conn, user_id,
+        [entry['id'], *participant_ids, *(alias['id'] for alias in result['answer_aliases'])])
     result['study_generation'] = expected[entry['id']]
     result['study_generations'] = expected
     from ..learning_requests import capture_lifecycles
@@ -62,4 +77,29 @@ def frame_generations(*entries):
             if wid in result and result[wid] != expected:
                 raise StaleGeneration('conflicting selected generations: ' + str(wid))
             result[wid] = expected
+    return result
+
+
+FROZEN_ANSWER_FIELDS = (
+    'type', 'german', 'article', 'plural', 'infinitive', 'reflexive_case',
+    'prateritum', 'partizip2', 'komparativ', 'superlativ', 'perfect_aux', 'hilfsverb', 'aux',
+    'conjugation_praesens', 'conjugation_praeteritum', 'perfekt_variants_json',
+)
+
+
+def preserve_selected_entry(fresh, selected):
+    """Refresh display data while retaining the exact selected answer contract."""
+    if fresh is None:
+        return None
+    if not selected:
+        return deepcopy(fresh)
+    # The words DTO refreshes dictionary fields, not the selected study state.
+    result = deepcopy({**selected, **fresh})
+    for key in FROZEN_ANSWER_FIELDS if selected.get('type') == 'verb' else ():
+        # An old snapshot missing annotation is legacy, even after backfill.
+        result[key] = deepcopy(selected.get(key))
+    result['answer_aliases'] = deepcopy(selected.get('answer_aliases', []))
+    for key in ('study_generation', 'study_generations', 'learning_lifecycle', 'learning_lifecycles'):
+        if key in selected:
+            result[key] = deepcopy(selected[key])
     return result

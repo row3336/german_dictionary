@@ -36,6 +36,8 @@ def original(db_path, update, context, mode, state, entry, answer_kind, divisor)
         frame['action_key'], transport_id(update), revision,
         flow_id=frame['flow_id'], interval_divisor=divisor,
         expected_generation=frame.get('study_generation', 0),
+        expected_generations=selected_generations(frame),
+        expected_lifecycles=_selected_lifecycles(frame),
         live_revision=lambda: (context.user_data.get(FRAME) or {}).get('revision'))
 
 
@@ -48,6 +50,7 @@ def correction(db_path, update, context, mode, divisor):
         db_path, update.effective_user.id, parent['action_key'], 'written-fix:'+parent['action_key'],
         transport_id(update), frame['revision'], flow_id=frame['flow_id'],
         interval_divisor=divisor, expected_generations=selected_generations(frame),
+        expected_lifecycles=_selected_lifecycles(frame),
         live_revision=lambda: (context.user_data.get(FRAME) or {}).get('revision'))
 
 
@@ -57,4 +60,10 @@ def control(db_path, update, context, mode, state, kind, destination=None):
         db_path, update.effective_user.id, transport_id(update), frame['flow_id'], kind,
         lambda conn: {'flow_id': frame['flow_id'], 'revision': frame['revision'],
                       'return_state': state if destination is None else destination, 'mode': mode},
-        expected_generations=selected_generations(frame))
+        expected_generations=selected_generations(frame),
+        expected_lifecycles=_selected_lifecycles(frame))
+
+
+def _selected_lifecycles(frame):
+    from ..learning_requests import frame_lifecycles
+    return frame_lifecycles(frame.get('selected_entry'), (frame.get('next_view') or {}).get('entry'))

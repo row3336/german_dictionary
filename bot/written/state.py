@@ -37,7 +37,13 @@ def establish_view(context, mode, return_state, entry):
     frame['revision'] += 1
     frame['phase'] = 'question' if entry else 'completed'
     frame['question_id'] = entry.get('id') if entry else None
+    from copy import deepcopy
+    entry = deepcopy(entry)
+    if entry:
+        entry.setdefault('study_generation', 0)
+        entry.setdefault('answer_aliases', [])
     frame['study_generation'] = entry.get('study_generation', 0) if entry else None
+    frame['selected_entry'] = deepcopy(entry)
     frame['action_key'] = uuid4().hex if entry else None
     if entry:
         context.user_data['quiz_entry'] = entry
@@ -61,4 +67,4 @@ def selected_generations(frame):
     from ..study.generations import frame_generations
     current = ({'id': frame['question_id'], 'study_generation': frame.get('study_generation', 0)}
                if frame.get('question_id') else None)
-    return frame_generations(current, (frame.get('next_view') or {}).get('entry'))
+    return frame_generations(frame.get('selected_entry') or current, (frame.get('next_view') or {}).get('entry'))

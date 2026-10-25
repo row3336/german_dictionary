@@ -112,6 +112,7 @@ def apply_original_answer(db_path, user_id, word_id, mode, answer_kind, action_k
             mode = target.get("mode", mode)
         _validate_target(conn, user_id, word_id, expected_revision, live_revision)
         assert_generations(conn, user_id, expected_generations or {})
+        assert_lifecycles(conn, user_id, expected_lifecycles or {})
         assert_generation(conn, user_id, word_id, expected_generation)
         if answer_kind not in {"correct", "wrong", "idk"}:
             raise ValueError("unsupported answer kind")
@@ -157,6 +158,7 @@ def correct_last_answer(db_path, user_id, parent_action_key, action_key,
         if parent["flow_id"] != flow_id or parent["answer_kind"] == "correct":
             raise StaleStudyAction("answer cannot be corrected")
         assert_generations(conn, user_id, expected_generations or {})
+        assert_lifecycles(conn, user_id, expected_lifecycles or {})
         repo.assert_snapshot_generations(conn, parent["before"])
         word_id, mode, event_id = parent["word_id"], parent["mode"], parent["event_id"]
         _validate_target(conn, user_id, word_id, expected_revision, live_revision)

@@ -291,10 +291,8 @@ def _set_entry_field_value(entry, field, value):
 
 
 def _preserve_selection(fresh, selected):
-    if fresh is None:
-        return None
-    return {**fresh, **{key: selected[key] for key in ('study_generation', 'study_generations', 'learning_lifecycle', 'learning_lifecycles')
-                       if key in (selected or {})}}
+    from ..study.generations import preserve_selected_entry
+    return preserve_selected_entry(fresh, selected)
 
 
 def _visible_selection(context, word_id):

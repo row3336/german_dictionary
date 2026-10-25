@@ -175,6 +175,12 @@ def validate_quiz_entry(entry):
     if unverified_reflexive(entry):
         raise InvalidClassification('unverified legacy reflexive construction')
     normalize_entry({**entry, 'german': display_infinitive(entry)}, allow_legacy=True)
+    # Import lazily: the linked reference validator uses construction validation.
+    from .perfekt import read_variants, PerfektValidationError
+    try:
+        read_variants(entry)
+    except PerfektValidationError as exc:
+        raise InvalidForms(str(exc)) from exc
 
 
 def unverified_reflexive(entry):

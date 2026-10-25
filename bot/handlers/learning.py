@@ -40,7 +40,7 @@ from .. import learning_store, learning_requests
 from ..learning_requests import EnqueueResult, frame_lifecycles
 from ..study import answers, deliveries, repository
 from ..study.generations import frame_generations, assert_generations, StaleGeneration
-from ..common.verb_construction import display_infinitive, construction_label, reflexive_hint, InvalidClassification, InvalidForms
+from ..common.verb_construction import display_infinitive, construction_label, reflexive_hint, InvalidClassification, InvalidForms, validate_quiz_entry
 from ..handlers.quiz import _check_ru_de_strict, _set_reaction
 from ..i18n import t
 from ..storage import (
@@ -409,6 +409,9 @@ def _establish_learning_frame(context, user_id, prefix_text=None, force_entry=No
         else:
             entry = _pick_learning_due_entry(context, user_id)
     if entry:
+        entry = deepcopy(entry)
+        entry.setdefault('study_generation', 0)
+        entry.setdefault('answer_aliases', [])
         frame["current"] = {"entry": entry, "action_key": uuid.uuid4().hex}
         frame["phase"] = phase
         context.user_data["quiz_entry"] = entry
@@ -453,8 +456,8 @@ async def _render_learning_frame(update, context, prefix_text=None):
         fresh = get_word_by_id(get_db_path(), entry["id"])
         if not fresh:
             return await _learning_deleted(update, context, None, entry["id"], prefix)
-        # Keep dictionary content current without storing personal media in the slot.
-        slot["entry"] = {**entry, **fresh}
+        from ..study.generations import preserve_selected_entry
+        slot["entry"] = preserve_selected_entry(fresh, entry)
         entry = resolve_bot_word_media(get_db_path(), uid, slot["entry"])
         context.user_data["quiz_entry"] = entry
     phase = frame["phase"]
@@ -702,6 +705,7 @@ async def _learning_quiz_locked(update, context):
             reply_markup=ReplyKeyboardMarkup([[t(lang, "learning_next"), t(lang, "learning_skip")],
                                               [t(lang, "back")]], resize_keyboard=True))
         return LEARNING_QUIZ
+    validate_quiz_entry(entry)
     ok = False if text == I_DONT_KNOW_TEXT else _check_ru_de_strict(entry, text)[0]
     kind = "idk" if text == I_DONT_KNOW_TEXT else "correct" if ok else "wrong"
     def grade(conn, snapshot, answer, now):
