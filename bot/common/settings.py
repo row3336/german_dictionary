@@ -158,10 +158,10 @@ def _topic_filter_for_query(user_id):
     return resolve_quiz_filter(user_id).topics
 
 
-def _topic_filter_label(user_id, conn=None):
+def _topic_filter_label(user_id, conn=None, lang="ru"):
     """The same effective snapshot that drives quiz selection and counts."""
     from .word_filter import filter_label_from_state, read_filter_state
-    return filter_label_from_state(read_filter_state(user_id, conn=conn))
+    return filter_label_from_state(read_filter_state(user_id, conn=conn), lang)
 
 
 def _topic_filter_banner(user_id, conn=None):
@@ -169,6 +169,7 @@ def _topic_filter_banner(user_id, conn=None):
     from ..i18n import t
     from .lang import _user_interface_lang
 
-    label = _topic_filter_label(user_id, conn=conn)
-    heading = t(_user_interface_lang(user_id), "topic_filter_banner")
+    lang = _user_interface_lang(user_id)
+    label = _topic_filter_label(user_id, conn=conn, lang=lang)
+    heading = t(lang, "topic_filter_banner")
     return f"{heading}\n\n🟥 *{_md_escape(label)}* 🟥"

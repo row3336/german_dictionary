@@ -220,7 +220,7 @@ class BookLevelsTests(unittest.TestCase):
                 self.assertEqual(self.state()["config"]["selected_levels"], ["A2"])
                 self.assertEqual(wf.resolve_quiz_filter(7).topics, ["11", "13"])
                 self.assertEqual(wf.count_words_for_filter(7), 2)
-                self.assertEqual(settings._topic_filter_label(7), "A2: 11+13")
+                self.assertEqual(settings._topic_filter_label(7), "A2: все темы")
                 self.assertIn("A2", UI.filter_summary(7))
                 self.assertEqual(self.stored(), before)
         storage.set_user_levels(self.db, 7, ["C1"])
@@ -289,7 +289,7 @@ class BookLevelsTests(unittest.TestCase):
                     self.assertEqual(self.state()["config"]["selected_levels"], ["A2"])
                     self.assertEqual(wf.resolve_quiz_filter(7).topics, ["11", "13"])
                     self.assertEqual(wf.count_words_for_filter(7), 2)
-                    self.assertEqual(settings._topic_filter_label(7), "A2: 11+13")
+                    self.assertEqual(settings._topic_filter_label(7), "A2: все темы")
                     selected = self.stored()
                     themes = next(b for b in buttons(chosen.edits[-1][1])
                                   if b.text == t(lang, "wf_btn_edit_topics"))
@@ -387,7 +387,7 @@ class BookLevelsTests(unittest.TestCase):
         self.assertEqual({row["topic"] for row in picked}, {"01", "11"})
         self.assertEqual(wf.count_words_for_filter(7), len(picked))
         label = settings._topic_filter_label(7)
-        self.assertEqual(label, "A1: 01; A2: 11")
+        self.assertEqual(label, "A1: 01\nA2: 11")
         self.assertIn("01", settings._topic_filter_banner(7))
         self.assertIn("A1", UI.filter_summary(7))
         self.assertIsNone(qf.cefr_levels)
@@ -527,7 +527,7 @@ class BookLevelsTests(unittest.TestCase):
             self.assertEqual(wf.read_filter_state(7, conn), initial)
             self.assertEqual(wf.resolve_quiz_filter(7, conn).topics, ["01", "03"])
             self.assertEqual(wf.count_words_for_filter(7, conn), 2)
-            self.assertEqual(wf.filter_label_from_state(wf.read_filter_state(7, conn)), "A1: 01+03")
+            self.assertEqual(wf.filter_label_from_state(wf.read_filter_state(7, conn)), "A1: все темы")
         self.assertEqual(wf.resolve_quiz_filter(7).topics, ["01", "03", "11", "13"])
 
     def test_B08_failure_between_mode_and_branch_rolls_back_even_if_caller_catches(self):
@@ -587,8 +587,8 @@ class BookLevelsTests(unittest.TestCase):
                 count = wf.count_words_for_filter(7, conn=conn)
             self.assertEqual(qf, wf.filter_from_state(state))
             self.assertEqual(count, 2)
-            self.assertEqual(settings._topic_filter_label(7, conn=conn), "A1: 01+03")
-            self.assertEqual(wf.filter_label_from_state(state), "A1: 01+03")
+            self.assertEqual(settings._topic_filter_label(7, conn=conn), "A1: все темы")
+            self.assertEqual(wf.filter_label_from_state(state), "A1: все темы")
             self.assertTrue(conn.in_transaction)
 
 

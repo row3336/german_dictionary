@@ -118,7 +118,7 @@ async def _send_algo_settings_menu(update: Update, user_id):
     msg = "\n".join(
         [
             f"{t(lang, 'algo_settings')}:",
-            f"{t(lang, 'topic_filter')} = {_topic_filter_label(user_id)}",
+            f"{t(lang, 'topic_filter')} = {_topic_filter_label(user_id, lang=lang)}",
             f"{t(lang, 'algo_topics_label')} = {topics_line}",
         ]
     )

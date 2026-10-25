@@ -9,6 +9,7 @@ from ..app_config import CEFR_LEVELS, TOPIC_FILTER_KEY, get_db_path
 from ..storage import _connect, set_user_setting
 from .settings import _parse_topic_filter
 from .topics import sorted_topics
+from .topic_display import format_topic_selection
 
 FILTER_MODE_KEY = "filter_mode"
 ACTIVE_BOOK_LEVEL_KEY = "active_book_level"
@@ -144,13 +145,16 @@ def effective_filter_fingerprint(qf):
     return json.dumps([qf.mode, axis(qf.topics), axis(qf.cefr_levels)], ensure_ascii=False, separators=(",", ":"))
 
 
-def filter_label_from_state(state):
+def filter_label_from_state(state, lang="ru"):
     """Effective selection for banners; deleted topics never render as 'all'."""
     qf = filter_from_state(state)
     if qf.mode == MODE_CEFR:
         return "CEFR: " + ("all" if qf.cefr_levels is None else "+".join(qf.cefr_levels) or "∅")
-    return "; ".join(lv + ": " + ("+".join(selected_topics(state, lv)) or "∅")
-                     for lv in state["config"]["selected_levels"]) or "∅"
+    descriptions = {r["name"]: r["description"] for r in state.get("registry", [])}
+    return "\n".join(lv + ": " + format_topic_selection(
+        lv, selected_topics(state, lv), state["by_level"].get(lv, []), descriptions,
+        dynamic_all=state["config"]["topics_by_level"].get(lv) == "all", lang=lang)
+        for lv in state["config"]["selected_levels"]) or "∅"
 
 
 def count_words_for_filter(user_id, conn=None):

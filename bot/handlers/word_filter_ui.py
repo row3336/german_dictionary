@@ -8,6 +8,7 @@ from telegram.ext import ContextTypes
 from ..app_config import CEFR_LEVELS, TOPIC_FILTER_EDIT
 from ..common.lang import _user_interface_lang
 from ..common import word_filter as wf
+from ..common.topic_display import topic_labels
 from ..i18n import t
 
 logger = logging.getLogger(__name__)
@@ -50,8 +51,8 @@ def _summary(state, lang):
         value = "all" if qf.cefr_levels is None else "+".join(qf.cefr_levels) or "∅"
         return t(lang, "wf_summary_cefr").format(value=value)
     selected = state["config"]["selected_levels"]
-    parts = [f"{lv}: " + ("+".join(wf.selected_topics(state, lv)) or "∅") for lv in selected]
-    return t(lang, "wf_summary_topics").format(level="+".join(selected) or "∅", value="; ".join(parts) or "∅")
+    return t(lang, "wf_summary_topics").format(
+        level="+".join(selected) or "∅", value=wf.filter_label_from_state(state, lang))
 
 
 def _needs_refresh(state):
@@ -126,8 +127,9 @@ def render_topics(user_id, level=None, state=None):
     reverse = {name: token for token, name in tokens.items()}
     active = set(wf.selected_topics(state, level)) if state["mode"] == wf.MODE_TOPICS else set()
     descriptions = {r["name"]: r["description"] for r in state["registry"]}
-    body = "\n".join(f"[{'✅' if n in active else '  '}] [{n}] {(descriptions[n] or '').strip() or '—'}" for n in names) or "∅"
-    rows = [[_btn(n, callback_data("t", state["revision"], level, reverse[n]), n in active)
+    labels = topic_labels(level, names, descriptions)
+    body = "\n".join(f"[{'✅' if n in active else '  '}] [{labels[n]}] {(descriptions[n] or '').strip() or '—'}" for n in names) or "∅"
+    rows = [[_btn(labels[n], callback_data("t", state["revision"], level, reverse[n]), n in active)
              for n in names[i:i + _TOPICS_PER_ROW]] for i in range(0, len(names), _TOPICS_PER_ROW)]
     if state["mode"] == wf.MODE_TOPICS and browse:
         all_selected = all(config["topics_by_level"][lv] == "all" for lv in config["selected_levels"])
