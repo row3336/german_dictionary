@@ -225,8 +225,8 @@ class CurrentSchemaTopicSeedTest(unittest.TestCase):
             writer.close()
         self.assertEqual(database_fingerprint(db), before)
 
-    def test_incomplete_schema20_is_rejected_before_topic_seed(self):
-        # Exercise both the explicit schema20 field guard and required-field set.
+    def test_incomplete_schema21_is_rejected_before_topic_seed(self):
+        # Exercise both the explicit schema21 field guard and required-field set.
         for column in ("learning_lifecycle", "word_generation"):
             with self.subTest(column=column):
                 directory = tempfile.mkdtemp(prefix="retained-topic-guard-")
@@ -240,7 +240,7 @@ class CurrentSchemaTopicSeedTest(unittest.TestCase):
                 finally:
                     conn.close()
                 before = database_fingerprint(db)
-                with self.assertRaisesRegex(RuntimeError, r"incomplete schema20: learning_requests\." + column):
+                with self.assertRaisesRegex(RuntimeError, r"incomplete schema21: learning_requests\." + column):
                     init_db(db)
                 self.assertEqual(database_fingerprint(db), before)
                 conn = sqlite3.connect(db)

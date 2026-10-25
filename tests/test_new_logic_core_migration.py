@@ -22,6 +22,8 @@ class Migration18Test(unittest.TestCase):
         init_db(db)
         old_schema(db, version)
         with repo.transaction(db) as conn:
+            self.assertNotIn("perfekt_variants_json", {r[1] for r in conn.execute("PRAGMA table_info(words)")})
+        with repo.transaction(db) as conn:
             conn.execute("INSERT INTO users(user_id,status) VALUES (1,'approved')")
             conn.executemany("INSERT INTO words(id,type,german,infinitive) VALUES (?,'verb',?,?)",
                              [("a", "haben", "haben"), ("b", "sein", "sein"), ("c", "werden", "werden")])
@@ -51,7 +53,7 @@ class Migration18Test(unittest.TestCase):
             result = {}
             for table in tables:
                 columns = [r[1] for r in conn.execute(f"PRAGMA table_info({table})")
-                           if r[1] not in {"reflexive_case", "study_generation"}]
+                           if r[1] not in {"reflexive_case", "study_generation", "perfekt_variants_json"}]
                 result[table] = [tuple(row) for row in conn.execute(f"SELECT {','.join(columns)} FROM {table} ORDER BY rowid")]
             return result
 
@@ -61,10 +63,12 @@ class Migration18Test(unittest.TestCase):
         learning_before = self.contents(db, ["learning_items"])["learning_items"]
         report = db_safety._apply_migration_dispatcher(db)
         self.assertEqual(report["from_version"], 17)
-        self.assertEqual(report["to_version"], 20)
-        self.assertEqual(set(report["steps"]), {"study_v18", "reflexive_v19", "learning_requests_v20"})
+        self.assertEqual(report["to_version"], 21)
+        self.assertEqual(set(report["steps"]), {"study_v18", "reflexive_v19", "learning_requests_v20", "perfekt_v21"})
         self.assertEqual(self.contents(db, before), before)
         with repo.transaction(db) as conn:
+            self.assertEqual([r[0] for r in conn.execute("SELECT perfekt_variants_json FROM words ORDER BY id")],
+                             [None, None, None])
             rows = [dict(r) for r in conn.execute("SELECT * FROM learning_items ORDER BY word_id")]
             self.assertEqual([r["first_due_pending"] for r in rows], [1, 0, 0])
             self.assertEqual([r["recovery_remaining"] for r in rows], [0, 0, 0])
@@ -92,7 +96,7 @@ class Migration18Test(unittest.TestCase):
                 self.assertEqual(seen, [17])
                 self.assertEqual(list(report["steps"]),
                                  (["phrase_modes_v16"] if source == 15 else []) +
-                                 (["remove_weak_v17"] if source <= 16 else []) + ["study_v18", "reflexive_v19", "learning_requests_v20"])
+                                 (["remove_weak_v17"] if source <= 16 else []) + ["study_v18", "reflexive_v19", "learning_requests_v20", "perfekt_v21"])
                 self.assertTrue(report["healthcheck"]["ok"])
 
     def test_v18_failure_rolls_back_schema_marker_and_old_data(self):
@@ -129,7 +133,7 @@ class Migration18Test(unittest.TestCase):
         with self.assertRaises(db_safety.DestructiveMigrationRequired):
             db_safety.prepare_storage_safely(db, str(Path(db).parent / "backups"))
         with repo.transaction(db) as conn:
-            conn.execute("PRAGMA user_version=21")
+            conn.execute("PRAGMA user_version=22")
         with self.assertRaisesRegex(RuntimeError, "newer"):
             db_safety._apply_migration_dispatcher(db)
         with self.assertRaisesRegex(RuntimeError, "newer"):

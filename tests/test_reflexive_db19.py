@@ -95,6 +95,7 @@ def import_fixture(conn, fields_list):
 def old_schema(db, version=18):
     with repo.transaction(db) as conn:
         conn.execute("DROP TABLE IF EXISTS learning_requests")
+        conn.execute("ALTER TABLE words DROP COLUMN perfekt_variants_json")
         for name in ("words_verb_identity", "words_verb_lookup", "quiz_events_generation"):
             conn.execute(f"DROP INDEX {name}")
         for name in ("words_reflexive_type_insert", "words_reflexive_type_update"):
@@ -121,11 +122,11 @@ class ReflexiveDB19Test(unittest.TestCase):
         for source in (0, 14, 15, 16, 17, 18):
             old_schema(db, source)
             report = db_safety._apply_migration_dispatcher(db)
-            assert report["to_version"] == 20
+            assert report["to_version"] == 21
             assert report["healthcheck"]["ok"]
             assert not db_safety._apply_migration_dispatcher(db)["migrated"]
             with repo.transaction(db) as conn:
-                conn.execute("PRAGMA user_version=21")
+                conn.execute("PRAGMA user_version=22")
             with self.assertRaisesRegex(RuntimeError, "newer"):
                 storage.init_db(db)
             with self.assertRaisesRegex(RuntimeError, "newer"):
@@ -164,12 +165,12 @@ class ReflexiveDB19Test(unittest.TestCase):
         fingerprint = db_safety.database_fingerprint(db)
         with patch.object(tempfile, "tempdir", str(db.parent)):
             dry = db_safety.dry_run_migration(db)
-            assert dry["ok"] and dry["to_version"] == 20
+            assert dry["ok"] and dry["to_version"] == 21
             assert db_safety.database_fingerprint(db) == fingerprint
             result = db_safety.apply_migrations_safely(db, db.parent / "backups")
         assert result["healthcheck"]["ok"]
-        assert result["from_version"] == 18 and result["to_version"] == 20
-        assert db_safety.get_user_version(db) == 20
+        assert result["from_version"] == 18 and result["to_version"] == 21
+        assert db_safety.get_user_version(db) == 21
         with repo.transaction(db) as conn:
             assert conn.execute("SELECT COUNT(*) FROM learning_requests").fetchone()[0] == 0
         assert result["backup"] and db_safety.database_fingerprint(result["backup"]) == fingerprint

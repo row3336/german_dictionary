@@ -48,7 +48,7 @@ from pathlib import Path
 # 17 = remove weak-form modes, schema, settings, progress, and history. This is a
 #      destructive schema/data migration and is never run by ordinary startup.
 ADDITIVE_SCHEMA_VERSION = 15
-SCHEMA_VERSION = 20
+SCHEMA_VERSION = 21
 
 
 class DestructiveMigrationRequired(RuntimeError):
@@ -240,6 +240,9 @@ def run_healthcheck(db_path):
                            'consumed_at', 'word_generation', 'learning_lifecycle'):
                 if column not in {r[1] for r in conn.execute('PRAGMA table_info(learning_requests)')}:
                     missing.append('learning_requests.' + column)
+        if version >= 21:
+            if "perfekt_variants_json" not in {r[1] for r in conn.execute("PRAGMA table_info(words)")}:
+                missing.append("words.perfekt_variants_json")
         if version >= 18:
             columns = {r[1] for r in conn.execute("PRAGMA table_info(learning_items)")}
             missing.extend("learning_items." + c for c in
@@ -649,9 +652,9 @@ def _apply_migration_dispatcher(db_path, today=None, expected_fingerprint=None):
                 "source DB changed after destructive migration dry-run; run a new dry-run"
             )
         current = int(conn.execute("PRAGMA user_version").fetchone()[0])
-        if current not in {ADDITIVE_SCHEMA_VERSION, 16, 17, 18, 19}:
+        if current not in {ADDITIVE_SCHEMA_VERSION, 16, 17, 18, 19, 20}:
             raise RuntimeError(
-                f"migration dispatcher requires v{ADDITIVE_SCHEMA_VERSION}, v16, v17, v18, or v19, "
+                f"migration dispatcher requires v{ADDITIVE_SCHEMA_VERSION}, v16, v17, v18, v19, or v20, "
                 f"got v{current}"
             )
         if current == ADDITIVE_SCHEMA_VERSION:
@@ -676,6 +679,11 @@ def _apply_migration_dispatcher(db_path, today=None, expected_fingerprint=None):
             from ..study.schema_v20 import migrate as migrate_v20
             steps["learning_requests_v20"] = migrate_v20(conn)
             conn.execute("PRAGMA user_version = 20")
+            current = 20
+        if current == 20:
+            from ..study.schema_v21 import migrate as migrate_v21
+            steps["perfekt_v21"] = migrate_v21(conn)
+            conn.execute("PRAGMA user_version = 21")
         counts_in_transaction = _table_counts(conn)
         _validate_destructive_counts(before, counts_in_transaction, steps)
         integrity = conn.execute("PRAGMA integrity_check").fetchone()[0]

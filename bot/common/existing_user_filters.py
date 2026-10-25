@@ -127,8 +127,10 @@ def _receipt(conn):
 
 
 def _schema(conn):
-    if conn.execute("PRAGMA user_version").fetchone()[0] != SCHEMA_VERSION:
-        raise ExistingUserFilterError("existing-user filter release requires schema 20")
+    # The release envelope/receipt stays v20 so previously prepared approvals
+    # remain valid after the unrelated additive Perfekt column migration.
+    if conn.execute("PRAGMA user_version").fetchone()[0] not in (20, 21):
+        raise ExistingUserFilterError("existing-user filter release requires schema 20 or 21")
 
 
 def _a1_ready(conn):

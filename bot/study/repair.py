@@ -2,9 +2,11 @@
 
 import hashlib
 import json
+from contextlib import contextmanager
 
 from ..common.db_safety import _connection_fingerprint
 from ..common.verb_construction import assert_identity, identity, normalize_entry
+from ..common.perfekt import validate_entry
 from .generations import advance_generation, assert_generation
 from .repository import transaction, utc_iso
 
@@ -97,7 +99,7 @@ def preflight(conn, manifest):
         fields = target.get("replacement")
         if not isinstance(fields, dict) or not fields or set(fields) - (set(old) - {"id", "created_at", "updated_at"}):
             raise ValueError("invalid replacement fields")
-        candidate = normalize_entry({**old, **fields})
+        candidate = validate_entry(normalize_entry({**old, **fields}))
         if target.get("new_identity") != list(identity(candidate)):
             raise ValueError("new identity mismatch")
         assert_identity(conn, candidate, exclude_id=wid)
@@ -130,7 +132,22 @@ def preflight(conn, manifest):
     return {"replayed": False, "plans": plans}
 
 
-def apply_reset(db_path, manifest, *, integration_verified=False):
+@contextmanager
+def _caller_transaction(conn, name):
+    if not conn.in_transaction:
+        raise ValueError("repair requires caller transaction")
+    conn.execute("SAVEPOINT " + name)
+    try:
+        yield
+    except BaseException:
+        conn.execute("ROLLBACK TO " + name)
+        conn.execute("RELEASE " + name)
+        raise
+    else:
+        conn.execute("RELEASE " + name)
+
+
+def apply_reset_conn(conn, manifest, *, integration_verified=False):
     """Apply only after explicit integration QA and approved linguistic manifest.
 
     Callers must supply the independently verified gate; the default remains
@@ -138,7 +155,7 @@ def apply_reset(db_path, manifest, *, integration_verified=False):
     """
     if integration_verified is not True or manifest.get("approvals") != {"owner": True, "linguistic": True}:
         raise PermissionError("reset requires integration QA and approved manifest")
-    with transaction(db_path) as conn:
+    with _caller_transaction(conn, "approved_repair_reset"):
         checked = preflight(conn, manifest)
         if checked["replayed"]:
             return {**checked["result"], "replayed": True}
@@ -171,13 +188,19 @@ def apply_reset(db_path, manifest, *, integration_verified=False):
         return result
 
 
-def confirm_legacy(db_path, manifest):
+def apply_reset(db_path, manifest, *, integration_verified=False):
+    """Backward-compatible path wrapper; the connection seam owns no commit."""
+    with transaction(db_path) as conn:
+        return apply_reset_conn(conn, manifest, integration_verified=integration_verified)
+
+
+def confirm_legacy_conn(conn, manifest):
     """Confirm unchanged ordinary construction by verified manifest, without reset."""
     if (manifest.get("schema") != "gd-verb-confirmation/v1" or
             manifest.get("approvals") != {"owner": True, "linguistic": True} or
             not manifest.get("operation_id") or manifest.get("digest") != manifest_digest(manifest)):
         raise ValueError("verified legacy confirmation manifest required")
-    with transaction(db_path) as conn:
+    with _caller_transaction(conn, "approved_legacy_confirmation"):
         prior = _prior(conn, manifest)
         if prior is not None:
             return {**prior, "replayed": True}
@@ -198,7 +221,7 @@ def confirm_legacy(db_path, manifest):
             old = dict(row)
             if old["type"] != "verb" or old["reflexive_case"] is not None:
                 raise ValueError("confirmation requires legacy verb")
-            candidate = normalize_entry({**old, "reflexive_case": "none"})
+            candidate = validate_entry(normalize_entry({**old, "reflexive_case": "none"}))
             if any(candidate.get(key) != old.get(key) for key in ("german", "infinitive", "conjugation_praesens", "conjugation_praeteritum")):
                 raise ValueError("metadata confirmation cannot repair construction or forms")
             assert_identity(conn, candidate, exclude_id=wid)
@@ -208,3 +231,9 @@ def confirm_legacy(db_path, manifest):
         conn.execute("INSERT INTO study_reset_operations(id,manifest_sha256,applied_at,result_json) VALUES (?,?,?,?)",
                      (manifest["operation_id"], manifest["digest"], utc_iso(), json.dumps(result)))
         return result
+
+
+def confirm_legacy(db_path, manifest):
+    """Backward-compatible path wrapper for explicit per-ID confirmation."""
+    with transaction(db_path) as conn:
+        return confirm_legacy_conn(conn, manifest)

@@ -105,13 +105,13 @@ class LearningQueueTests(unittest.TestCase):
                 db_safety._apply_migration_dispatcher(self.db)
         self.assertEqual(db_safety.database_fingerprint(self.db), fingerprint)
         report = db_safety._apply_migration_dispatcher(self.db)
-        self.assertEqual(report['to_version'], 20)
+        self.assertEqual(report['to_version'], 21)
         self.assertEqual(self.rows('learning_requests'), [])
         for name in before:
             if name != 'learning_requests': self.assertEqual(self.rows(name), before[name])
         self.assertFalse(db_safety._apply_migration_dispatcher(self.db)['migrated'])
         self.assertTrue(db_safety.run_healthcheck(self.db)['ok'])
-        with repo.transaction(self.db) as conn: conn.execute('PRAGMA user_version=21')
+        with repo.transaction(self.db) as conn: conn.execute('PRAGMA user_version=22')
         with self.assertRaises(RuntimeError): storage.init_db(self.db)
         with self.assertRaises(RuntimeError): db_safety._apply_migration_dispatcher(self.db)
 
@@ -123,15 +123,15 @@ class LearningQueueTests(unittest.TestCase):
         db_safety.backup_database(self.db, backup)
         before = db_safety.database_fingerprint(self.db)
         rehearsal = db_safety._apply_migration_dispatcher(str(backup))
-        self.assertEqual(set(rehearsal['steps']), {'study_v18','reflexive_v19','learning_requests_v20'})
+        self.assertEqual(set(rehearsal['steps']), {'study_v18','reflexive_v19','learning_requests_v20','perfekt_v21'})
         self.assertEqual(db_safety.database_fingerprint(self.db), before)
-        self.assertEqual(db_safety.get_user_version(backup), 20)
+        self.assertEqual(db_safety.get_user_version(backup), 21)
         self.assertEqual(db_safety.get_user_version(self.db), 17)
 
     def test_l01_health_and_startup_require_complete_twenty(self):
         with repo.transaction(self.db) as conn: conn.execute('DROP TABLE learning_requests')
         self.assertFalse(db_safety.run_healthcheck(self.db)['ok'])
-        with self.assertRaisesRegex(RuntimeError, 'incomplete schema20'): storage.init_db(self.db)
+        with self.assertRaisesRegex(RuntimeError, 'incomplete schema21'): storage.init_db(self.db)
 
     def test_l02_enqueue_statuses_fifo_users_generation_and_deletion(self):
         for uid in (1,2): self.assertEqual(self.enqueue('a',uid), requests.EnqueueResult.QUEUED)
