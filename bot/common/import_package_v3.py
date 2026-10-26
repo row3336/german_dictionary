@@ -27,6 +27,9 @@ EXPECTED = dict(cards=1760, inserts=1758, repairs=2, pons_new_cards=1410,
 COMPARISON_ALTERNATE_CARDS = 74
 CITATION_SUPERLATIVE_CARDS = 73
 CITATION_ONLY_EXCEPTIONS = {"verschieden", "innere"}
+# Pin the selected answer set as well as the frozen source: an older bound
+# package used the same source digest but still included article forms.
+DEGREE_PAIRS_SHA256 = "af6bf4fd2d13e144e8aa1afcc2a5914726c6c16b3ba42df59bd7377bfde4e665"
 EXCEPTION_COUNTS = dict(documented_absent_plural=112,
                         explicit_comparison_restriction=79,
                         explicit_selected_paradigm_or_P2_override=7,
@@ -334,6 +337,8 @@ def preflight(conn,bound):
             or bound.get("source_digest")!=SOURCE_DIGEST or bound.get("expected_counts")!=EXPECTED
             or bound.get("digest")!=digest({k:v for k,v in bound.items() if k!="digest"})):
         raise ValueError("invalid bound PONS package")
+    if digest(bound.get("binding", {}).get("degree_pairs")) != DEGREE_PAIRS_SHA256:
+        raise ValueError("outdated adjective degree selection")
     _check_rehearsal_target(conn,bound["approvals"])
     prior = _prior(conn,bound)
     if prior is not None:

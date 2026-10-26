@@ -76,6 +76,7 @@ class ImportPackageV3Tests(unittest.TestCase):
         source = json.loads(path.read_text())
         pairs = importer._degree_pair_plans(source)
         self.assertEqual(len(pairs), 103)
+        self.assertEqual(importer.digest(pairs), importer.DEGREE_PAIRS_SHA256)
         self.assertEqual(len({p["word_id"] for p in pairs}), 97)
         expected = {
             "88176cfb-94ac-51c4-ad7f-c74e1366aaa6": {
@@ -107,6 +108,21 @@ class ImportPackageV3Tests(unittest.TestCase):
             elif pair["superlative"].startswith(("der ", "die ", "das ")):
                 article_only.add(card["fields"]["german"])
         self.assertEqual(article_only, {"verschieden", "innere"})
+
+    def test_preflight_rejects_previous_bound_before_database_access(self):
+        old_pairs = [{"word_id": "old", "comparative": "höher",
+                      "superlative": "der höchste"}]
+        bound = {"schema": importer.BOUND_SCHEMA, "phase": "bound",
+                 "source_digest": importer.SOURCE_DIGEST,
+                 "expected_counts": importer.EXPECTED, "binding": {"degree_pairs": old_pairs}}
+        bound["digest"] = importer.digest(bound)
+        with patch.object(importer.v2, "_schema"), \
+             patch.object(importer, "_check_rehearsal_target") as target, \
+             patch.object(importer, "_prior") as prior:
+            with self.assertRaisesRegex(ValueError, "outdated adjective degree selection"):
+                importer.preflight(sqlite3.connect(":memory:"), bound)
+        target.assert_not_called()
+        prior.assert_not_called()
 
     def test_adjective_pair_table_contract_rejects_incompatible_existing_table(self):
         conn = sqlite3.connect(":memory:")
