@@ -36,9 +36,9 @@ def answer(entry, mode):
 
 def markup(frame, lang):
     if frame['phase'] == 'initial_hidden':
-        rows = [[t(lang, 'oral_next'), t(lang, 'stop')]]
+        rows = [[t(lang, 'stop'), t(lang, 'oral_next')]]
     elif frame['phase'] == 'grading':
-        rows = [[t(lang, 'oral_correct'), t(lang, 'oral_wrong')],
+        rows = [[t(lang, 'oral_wrong'), t(lang, 'oral_correct')],
                 [t(lang, 'clarify_fields'), t(lang, 'stop')]]
     else:
         rows = [[t(lang, 'back')]]
