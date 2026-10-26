@@ -15,7 +15,7 @@ from tests._telegram_stub import install
 install()
 
 from bot import storage
-from bot.app_config import CEFR_LEVELS, TOPIC_FILTER_KEY
+from bot.app_config import BOOK_LEVELS, CEFR_LEVELS, TOPIC_FILTER_KEY
 from bot.common import word_filter as wf, settings, session
 from bot.handlers import word_filter_ui as UI
 from bot.i18n import t
@@ -88,6 +88,29 @@ class BookLevelsTests(unittest.TestCase):
 
     def save_config(self, value):
         storage.set_user_setting(self.db, 7, wf.BOOK_FILTER_KEY, json.dumps(value))
+
+    def test_pons_book_branch_keeps_word_cefr_independent(self):
+        storage.add_word(self.db, {"german": "Ponswort", "type": "nomen",
+            "article": "das", "russian": "слово", "topic": "PONS", "cefr_level": "B1"})
+        storage.set_topic_level(self.db, "PONS", "PONS")
+        self.assertEqual(BOOK_LEVELS[-1], "PONS")
+        self.assertEqual(storage.list_book_levels(self.db), ["A1", "A2", "PONS"])
+        self.assertEqual(storage.list_topics_for_level(self.db, "PONS"), ["PONS"])
+        self.assertEqual(storage.count_words_for_book_level(self.db, "PONS"), 1)
+        self.assertIn("PONS", self.state()["available_levels"])
+        self.assertIn("PONS", [b.text for b in buttons(UI.render_booklevels(7)[1])])
+
+        self.command("level", "PONS")
+        self.assertEqual(wf.resolve_quiz_filter(7).topics, ["01", "03", "PONS"])
+        self.assertEqual(self.state()["config"]["selected_levels"], ["A1", "PONS"])
+        self.command("level", "A1")
+        self.assertEqual(wf.resolve_quiz_filter(7).topics, ["PONS"])
+        self.assertEqual(wf.count_words_for_filter(7), 1)
+        self.assertEqual(self.state()["cefr_levels"], list(CEFR_LEVELS))
+        self.command("cefr", "B1")
+        self.assertEqual(wf.resolve_quiz_filter(7).cefr_levels, ["B1"])
+        with self.assertRaises(wf.FilterCommandError):
+            self.command("cefr", "PONS")
 
     def test_B01_both_level_orders_and_per_level_retention(self):
         for uid, first, second in ((7, "A1", "A2"), (8, "A2", "A1")):

@@ -5,7 +5,7 @@ import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
-from ..app_config import CEFR_LEVELS, TOPIC_FILTER_EDIT
+from ..app_config import BOOK_LEVELS, CEFR_LEVELS, TOPIC_FILTER_EDIT
 from ..common.lang import _user_interface_lang
 from ..common import word_filter as wf
 from ..common.topic_display import topic_labels
@@ -95,7 +95,7 @@ def render_booklevels(user_id, state=None):
     # A saved level that disappeared remains removable, while a valid selected
     # level keeps the minimum-one invariant. Opening the screen never repairs it.
     removable = selected - set(available) if selected.intersection(available) else set()
-    levels = [lv for lv in CEFR_LEVELS if lv in available or lv in removable]
+    levels = [lv for lv in BOOK_LEVELS if lv in available or lv in removable]
     counts = {lv: sum(r["word_count"] for r in state["registry"] if r["level"] == lv) for lv in levels}
     body = "\n".join(f"[{'✅' if lv in selected else '  '}] {lv} (words: {counts[lv]})" for lv in levels) or t(lang, "wf_booklevel_empty")
     rows = [[_btn(lv + (" ∅" if lv in removable else ""), callback_data("l", state["revision"], lv), lv in selected)

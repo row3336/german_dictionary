@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-from .app_config import CASE_TYPES, CEFR_LEVELS, PREPOSITION_TYPES, get_owner_id, is_owner
+from .app_config import BOOK_LEVELS, CASE_TYPES, CEFR_LEVELS, PREPOSITION_TYPES, get_owner_id, is_owner
 from .common.conjugation import parse_conjugation, takes_praeteritum
 from .text_utils import ABSENT_PLURAL_MARKERS, cap_word, split_plural_forms
 from .study import srs as study_srs
@@ -969,18 +969,18 @@ def get_topic_level(db_path, name):
 
 
 def set_topic_level(db_path, name, level):
-    """Assign a topic's book-level. `level` must be a valid CEFR level (else ValueError).
+    """Assign a topic's book-level (A1..C2 or PONS).
 
     Creates the topic row if absent (no description). Used by the add-flow (new topic)
     and the owner level-management UI.
     """
     init_db(db_path)
     name = str(name).strip()
-    level = _safe_cefr_level(level)
+    level = _safe_book_level(level)
     if not name:
         raise ValueError("Empty topic name.")
     if not level:
-        raise ValueError("Invalid CEFR level.")
+        raise ValueError("Invalid book level.")
     with _connect(db_path) as conn:
         conn.execute("INSERT OR IGNORE INTO topics (name) VALUES (?)", (name,))
         conn.execute("UPDATE topics SET level = ? WHERE name = ?", (level, name))
@@ -997,7 +997,7 @@ def list_topics_with_level(db_path):
 def list_topics_for_level(db_path, level):
     """Topic names assigned to the given book-level (unsorted; UI orders them)."""
     init_db(db_path)
-    level = _safe_cefr_level(level)
+    level = _safe_book_level(level)
     if not level:
         return []
     with _connect(db_path) as conn:
@@ -1008,7 +1008,7 @@ def list_topics_for_level(db_path, level):
 
 
 def list_book_levels(db_path):
-    """Book-levels that actually have >=1 word, in CEFR order (dynamic S2 list).
+    """Book-levels that actually have >=1 word, in book-menu order.
 
     A level shows only if some topic of that level holds at least one word — empty
     levels never clutter the "book topics" menu.
@@ -1024,13 +1024,13 @@ def list_book_levels(db_path):
             """
         ).fetchall()
     present = {row["level"] for row in rows}
-    return [lvl for lvl in CEFR_LEVELS if lvl in present]
+    return [lvl for lvl in BOOK_LEVELS if lvl in present]
 
 
 def count_words_for_book_level(db_path, level):
     """Number of words whose topic is assigned to the given book-level."""
     init_db(db_path)
-    level = _safe_cefr_level(level)
+    level = _safe_book_level(level)
     if not level:
         return 0
     with _connect(db_path) as conn:
@@ -2187,6 +2187,12 @@ def _safe_cefr_level(value):
     """
     level = _safe_text(value).strip().upper()
     return level if level in CEFR_LEVELS else ""
+
+
+def _safe_book_level(value):
+    """Normalize the book branch without admitting PONS as a word CEFR level."""
+    level = _safe_text(value).strip().upper()
+    return level if level in BOOK_LEVELS else ""
 
 
 # toggle_user_level (defined earlier) validates a level through this name: a valid CEFR

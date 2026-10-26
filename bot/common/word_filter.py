@@ -5,7 +5,7 @@ from copy import deepcopy
 import hashlib
 import json
 
-from ..app_config import CEFR_LEVELS, TOPIC_FILTER_KEY, get_db_path
+from ..app_config import BOOK_LEVELS, CEFR_LEVELS, TOPIC_FILTER_KEY, get_db_path
 from ..storage import _connect, set_user_setting
 from .settings import _parse_topic_filter
 from .topics import sorted_topics
@@ -36,13 +36,13 @@ def validate_book_config(value):
     if not isinstance(value, dict) or set(value) != keys or type(value["version"]) is not int or value["version"] != 2:
         raise FilterCommandError("invalid")
     selected, choices = value["selected_levels"], value["topics_by_level"]
-    if (not isinstance(selected, list) or any(lv not in CEFR_LEVELS for lv in selected)
-            or not isinstance(choices, dict) or any(lv not in CEFR_LEVELS for lv in choices)
-            or value["browsing_level"] not in CEFR_LEVELS
+    if (not isinstance(selected, list) or any(lv not in BOOK_LEVELS for lv in selected)
+            or not isinstance(choices, dict) or any(lv not in BOOK_LEVELS for lv in choices)
+            or value["browsing_level"] not in BOOK_LEVELS
             or type(value["revision"]) is not int or value["revision"] < 0):
         raise FilterCommandError("invalid")
     result = deepcopy(value)
-    result["selected_levels"] = [lv for lv in CEFR_LEVELS if lv in selected]
+    result["selected_levels"] = [lv for lv in BOOK_LEVELS if lv in selected]
     normalized = {}
     for lv, topics in choices.items():
         if topics == "all":
@@ -71,15 +71,15 @@ def _read_state(conn, user_id):
     registry = [dict(row) for row in conn.execute(
         """SELECT t.name,t.description,t.level,COUNT(w.id) AS word_count
            FROM topics t LEFT JOIN words w ON w.topic=t.name GROUP BY t.name""").fetchall()]
-    by_level = {lv: sorted_topics(r["name"] for r in registry if r["level"] == lv) for lv in CEFR_LEVELS}
-    available = [lv for lv in CEFR_LEVELS if any(r["level"] == lv and r["word_count"] for r in registry)]
+    by_level = {lv: sorted_topics(r["name"] for r in registry if r["level"] == lv) for lv in BOOK_LEVELS}
+    available = [lv for lv in BOOK_LEVELS if any(r["level"] == lv and r["word_count"] for r in registry)]
     raw = settings.get(BOOK_FILTER_KEY)
     valid, legacy = True, raw is None
     if legacy:
         # Legacy scalar readers historically accepted whitespace/case variants.
         # Keep that compatibility here; the versioned JSON validator stays strict.
         level = str(settings.get(ACTIVE_BOOK_LEVEL_KEY, DEFAULT_BOOK_LEVEL) or "").strip().upper()
-        level = level if level in CEFR_LEVELS else DEFAULT_BOOK_LEVEL
+        level = level if level in BOOK_LEVELS else DEFAULT_BOOK_LEVEL
         raw_topics = settings.get(TOPIC_FILTER_KEY, "")
         # Only an absent/legacy all value means all. Stale explicit names stay empty.
         selected_topics = _parse_topic_filter(raw_topics)
@@ -176,8 +176,8 @@ def get_active_book_level(user_id):
 
 
 def set_active_book_level(user_id, level):
-    if level not in CEFR_LEVELS:
-        raise ValueError("Invalid CEFR level.")
+    if level not in BOOK_LEVELS:
+        raise ValueError("Invalid book level.")
     set_user_setting(get_db_path(), user_id, ACTIVE_BOOK_LEVEL_KEY, level)
 
 
@@ -247,7 +247,7 @@ def reduce_filter(state, operation, level=None, token=None):
             if not any(lv in available for lv in selected):
                 raise FilterCommandError("need_one")
         else:
-            selected = [lv for lv in CEFR_LEVELS if lv in selected or lv == level]
+            selected = [lv for lv in BOOK_LEVELS if lv in selected or lv == level]
         config["selected_levels"] = selected
         config["topics_by_level"].setdefault(level, "all")
         config["browsing_level"] = level if level in selected else next((lv for lv in selected if lv in available), DEFAULT_BOOK_LEVEL)

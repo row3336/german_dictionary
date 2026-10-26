@@ -160,6 +160,7 @@ PREPOSITION_TYPES = ("local", "temporal", "modal", "kausal", "final")
 # 'wechsel' = two-way (Wechselpräposition): Dativ on Wo?, Akkusativ on Wohin?.
 CASE_TYPES = ("dativ", "akkusativ", "genitiv", "wechsel")
 CEFR_LEVELS = ("A1", "A2", "B1", "B2", "C1", "C2")
+BOOK_LEVELS = (*CEFR_LEVELS, "PONS")
 
 
 def get_db_path():
