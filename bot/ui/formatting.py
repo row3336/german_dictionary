@@ -42,8 +42,8 @@ def _expected_partizip2(entry):
     return part
 
 
-def _linked_verb_lines(entry, *, examples_already_shown=()):
-    """Render each reference with its own examples; never join scalar lists."""
+def _linked_verb_parts(entry, *, examples_already_shown=()):
+    """Keep each linked form separate from the examples belonging to it."""
     from ..common.perfekt import read_variants
     if entry.get("perfekt_variants_json") is None:
         return None
@@ -51,19 +51,29 @@ def _linked_verb_lines(entry, *, examples_already_shown=()):
     variants = read_variants(entry)
     if variants is None:
         return None
-    lines = []
+    parts = []
     shown = set(examples_already_shown)
     for variant in variants:
-        lines.append(variant["prateritum"] + ", " + variant["perfekt_fragment"])
-        lines.extend(example["text_de"] for example in variant["examples"]
-                     if example["text_de"] not in shown)
-    return lines
+        form = variant["prateritum"] + ", " + variant["perfekt_fragment"]
+        examples = [example["text_de"] for example in variant["examples"]
+                    if example["text_de"] not in shown]
+        parts.append((form, examples))
+    return parts
+
+
+def _linked_verb_lines(entry, *, examples_already_shown=()):
+    """Render each reference with its own examples; never join scalar lists."""
+    parts = _linked_verb_parts(entry, examples_already_shown=examples_already_shown)
+    return ([value for form, examples in parts for value in (form, *examples)]
+            if parts is not None else None)
 
 
 def _append_verb_forms(lines, entry, *, examples_already_shown=()):
-    linked = _linked_verb_lines(entry, examples_already_shown=examples_already_shown)
-    if linked is not None:
-        lines.extend("_  " + _md_escape(value) + "_" for value in linked)
+    parts = _linked_verb_parts(entry, examples_already_shown=examples_already_shown)
+    if parts is not None:
+        for form, examples in parts:
+            lines.append("_  " + _md_escape(form) + "_")
+            lines.extend(_md_escape(example) for example in examples)
     else:
         for value in (_low_word(entry.get("prateritum", "")), _expected_partizip2(entry)):
             if value:

@@ -173,6 +173,18 @@ class PerfektQuizzes(unittest.TestCase):
             self.assertIn(specific_a,text);self.assertIn(specific_b,text)
         for lang in ['ru','uk','en']:
             self.assertNotIn(first,F._format_ru_question(e,lang))
+    def test_oral_linked_examples_are_plain_but_forms_stay_italic(self):
+        linked = 'Die Firma hat zwei neue Mitarbeiter eingestellt.'
+        original = 'Im Zimmer stelle ich das Radio ein.'
+        v = variant('einstellen', 'stellte ein', 'eingestellt')
+        v['examples'] = [{'text_de': linked}]
+        e = entry('einstellen', variants=[v])
+        e['example'] = original
+        question = V.question(e, 'de_ru')
+        self.assertIn('_  stellte ein, hat eingestellt_', question)
+        self.assertIn('\n' + linked + '\n', question)
+        self.assertNotIn('_  ' + linked + '_', question)
+        self.assertIn('\n\n' + original, question)
     def test_personal_first_hint_and_exact_case_boundary(self):
         original='Meine Großmutter stammt aus Polen.'
         personal='MEINE Großmutter stammt aus Polen.'
