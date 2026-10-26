@@ -26,6 +26,7 @@ EXPECTED = dict(cards=1760, inserts=1758, repairs=2, pons_new_cards=1410,
                 raw_book_occurrences=2523, book_groups=2453)
 COMPARISON_ALTERNATE_CARDS = 74
 CITATION_SUPERLATIVE_CARDS = 73
+CITATION_ONLY_EXCEPTIONS = {"verschieden", "innere"}
 EXCEPTION_COUNTS = dict(documented_absent_plural=112,
                         explicit_comparison_restriction=79,
                         explicit_selected_paradigm_or_P2_override=7,
@@ -37,7 +38,6 @@ EMPTY_PROJECTION_COLUMNS = {"plural", "komparativ", "superlativ"}
 EXPLICIT_DEGREE_PAIRS = {
     "88176cfb-94ac-51c4-ad7f-c74e1366aaa6": (
         ("blasser", "am blassesten"),
-        ("blasser", "der blasseste"),
         ("blässer", "am blässesten"),
     ),
     "b0b2b407-56d3-5d03-8fb4-c81db8dc53d5": (
@@ -228,7 +228,7 @@ def _insert_plans(conn, source, base_bound):
 
 
 def _degree_pair_plans(source):
-    """Keep source-approved complete answers, never invent crossed variants."""
+    """Keep answer forms, omitting article-inflected citation alternatives."""
     plans = []
     seen_overrides = set()
     for card in source["cards"][350:]:
@@ -237,7 +237,18 @@ def _degree_pair_plans(source):
         word_id = card["id"]
         forms = card["comparison"]
         comparatives = forms["comparative_forms"]
-        superlatives = forms["superlative_forms"]
+        source_superlatives = forms["superlative_forms"]
+        if (not any(form.startswith("am ") for form in source_superlatives)
+                and any(form.startswith(("der ", "die ", "das "))
+                        for form in source_superlatives)
+                and card["fields"]["german"] not in CITATION_ONLY_EXCEPTIONS):
+            raise ValueError("unreviewed citation-only superlative")
+        # The article-inflected citation belongs to a noun phrase, not to this
+        # standalone word-card answer. Keep source data untouched for audit.
+        superlatives = ([form for form in source_superlatives
+                         if not form.startswith(("der ", "die ", "das "))]
+                        if any(form.startswith("am ") for form in source_superlatives)
+                        else source_superlatives)
         if word_id in EXPLICIT_DEGREE_PAIRS:
             pairs = EXPLICIT_DEGREE_PAIRS[word_id]
             seen_overrides.add(word_id)
@@ -258,6 +269,8 @@ def _degree_pair_plans(source):
                      for a, b in pairs)
     if seen_overrides != set(EXPLICIT_DEGREE_PAIRS):
         raise ValueError("degree-pair exception missing from frozen package")
+    if (len(plans) != 103 or len({plan["word_id"] for plan in plans}) != 97):
+        raise ValueError("unexpected standalone adjective degree selection")
     return plans
 
 
@@ -344,7 +357,7 @@ def preflight(conn,bound):
                for item in bound["binding"]["inserts"]):
             raise ValueError("PONS adjective degree pairs appeared")
     return dict(replayed=False,counts=EXPECTED.copy(),
-                comparison_answer_policy="source_approved_complete_pairs",
+                comparison_answer_policy="standalone_am_or_citation_only_exception",
                 adjective_degree_pairs=len(bound["binding"]["degree_pairs"]))
 
 
@@ -461,10 +474,12 @@ def apply(conn,bound,*,approved_digest,integration_verified=False):
                      counts=EXPECTED.copy(),base_receipt_sha256=base["receipt"]["receipt_sha256"],
                      report=dict(pons_insert_mismatches=0,example_patch_mismatches=0,
                                  global_translation_missing=missing,gramm_plural_preserved=True,
-                                 comparison_answer_policy="source_approved_complete_pairs",
+                                 comparison_answer_policy="standalone_am_or_citation_only_exception",
                                  adjective_degree_pairs=len(expected_pairs),
-                                 adjective_alternative_cards_covered=COMPARISON_ALTERNATE_CARDS,
-                                 citation_superlative_cards_covered=CITATION_SUPERLATIVE_CARDS))
+                                 adjective_alternative_cards_covered=5,
+                                 citation_superlative_source_cards=CITATION_SUPERLATIVE_CARDS,
+                                 citation_only_exception_cards=2,
+                                 inflected_citation_alternatives_omitted=72))
         receipt["receipt_sha256"]=repair.digest(receipt)
         conn.execute("INSERT INTO study_reset_operations(id,manifest_sha256,applied_at,result_json) VALUES(?,?,CURRENT_TIMESTAMP,?)",
                      (bound["operation_id"],bound["digest"],json.dumps(receipt,ensure_ascii=False,sort_keys=True)))

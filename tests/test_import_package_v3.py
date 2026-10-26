@@ -75,11 +75,11 @@ class ImportPackageV3Tests(unittest.TestCase):
             self.skipTest("frozen PONS package is outside the repository")
         source = json.loads(path.read_text())
         pairs = importer._degree_pair_plans(source)
-        self.assertEqual(len(pairs), 175)
+        self.assertEqual(len(pairs), 103)
         self.assertEqual(len({p["word_id"] for p in pairs}), 97)
         expected = {
             "88176cfb-94ac-51c4-ad7f-c74e1366aaa6": {
-                ("blasser", "am blassesten"), ("blasser", "der blasseste"),
+                ("blasser", "am blassesten"),
                 ("blässer", "am blässesten"),
             },
             "b0b2b407-56d3-5d03-8fb4-c81db8dc53d5": {
@@ -91,6 +91,22 @@ class ImportPackageV3Tests(unittest.TestCase):
             actual = {(p["comparative"], p["superlative"])
                       for p in pairs if p["word_id"] == word_id}
             self.assertEqual(actual, allowed)
+        hoch = next(card for card in source["cards"]
+                    if card["fields"].get("german") == "hoch"
+                    and card["fields"]["type"] == "adjektiv")
+        self.assertEqual([(p["comparative"], p["superlative"])
+                          for p in pairs if p["word_id"] == hoch["id"]],
+                         [("höher", "am höchsten")])
+        by_id = {card["id"]:card for card in source["cards"]}
+        article_only = set()
+        for pair in pairs:
+            card = by_id[pair["word_id"]]
+            source_forms = card["comparison"]["superlative_forms"]
+            if any(form.startswith("am ") for form in source_forms):
+                self.assertFalse(pair["superlative"].startswith(("der ", "die ", "das ")))
+            elif pair["superlative"].startswith(("der ", "die ", "das ")):
+                article_only.add(card["fields"]["german"])
+        self.assertEqual(article_only, {"verschieden", "innere"})
 
     def test_adjective_pair_table_contract_rejects_incompatible_existing_table(self):
         conn = sqlite3.connect(":memory:")
