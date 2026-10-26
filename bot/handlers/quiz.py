@@ -494,9 +494,23 @@ def _check_ru_de_strict(entry, answer_text):
         if ctype == "verb":
             expected_values.add(_normalize_answer(cand.get("infinitive", "")))
             continue
-        forms = [cand.get("german", "")]
         if ctype == "adjektiv":
-            forms += [cand.get("komparativ", ""), cand.get("superlativ", "")]
+            base = cand.get("german", "")
+            expected_values.add(_collapse(base))
+            pairs = cand.get("adjective_degree_pairs") or [{
+                "comparative": cand.get("komparativ", ""),
+                "superlative": cand.get("superlativ", ""),
+            }]
+            for pair in pairs:
+                comparative = str(pair.get("comparative") or "").strip()
+                superlative = str(pair.get("superlative") or "").strip()
+                if comparative:
+                    expected_values.add(_collapse(f"{base} {comparative}"))
+                if superlative:
+                    prefix = f"{base} {comparative}" if comparative else base
+                    expected_values.add(_collapse(f"{prefix} {superlative}"))
+            continue
+        forms = [cand.get("german", "")]
         forms = [f for f in forms if str(f).strip()]
         for n in range(1, len(forms) + 1):
             expected_values.add(_collapse(" ".join(forms[:n])))

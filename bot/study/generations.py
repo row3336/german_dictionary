@@ -41,8 +41,10 @@ def selected_entry(conn, user_id, entry, participant_ids=()):
     if entry is None:
         return None
     from ..storage import _row_to_entry
+    from ..common.adjective_forms import attach_degree_pairs
     from ..common.verb_construction import synonym_compatible
     result = deepcopy(entry)
+    attach_degree_pairs(conn, result)
     result['answer_aliases'] = []
     if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='word_synonyms'").fetchone():
         rows = conn.execute("""SELECT w.* FROM words w JOIN word_synonyms s ON s.word_id=w.id
@@ -51,6 +53,7 @@ def selected_entry(conn, user_id, entry, participant_ids=()):
         for row in rows:
             candidate = _row_to_entry(row)
             if synonym_compatible(entry, candidate):
+                attach_degree_pairs(conn, candidate)
                 result['answer_aliases'].append(candidate)
     expected = capture_generations(conn, user_id,
         [entry['id'], *participant_ids, *(alias['id'] for alias in result['answer_aliases'])])
@@ -85,6 +88,9 @@ FROZEN_ANSWER_FIELDS = (
     'prateritum', 'partizip2', 'komparativ', 'superlativ', 'perfect_aux', 'hilfsverb', 'aux',
     'conjugation_praesens', 'conjugation_praeteritum', 'perfekt_variants_json',
 )
+FROZEN_ADJECTIVE_FIELDS = (
+    'german', 'komparativ', 'superlativ', 'adjective_degree_pairs',
+)
 
 
 def preserve_selected_entry(fresh, selected):
@@ -95,7 +101,9 @@ def preserve_selected_entry(fresh, selected):
         return deepcopy(fresh)
     # The words DTO refreshes dictionary fields, not the selected study state.
     result = deepcopy({**selected, **fresh})
-    for key in FROZEN_ANSWER_FIELDS if selected.get('type') == 'verb' else ():
+    frozen_fields = (FROZEN_ANSWER_FIELDS if selected.get('type') == 'verb' else
+                     FROZEN_ADJECTIVE_FIELDS if selected.get('type') == 'adjektiv' else ())
+    for key in frozen_fields:
         # An old snapshot missing annotation is legacy, even after backfill.
         result[key] = deepcopy(selected.get(key))
     result['answer_aliases'] = deepcopy(selected.get('answer_aliases', []))
