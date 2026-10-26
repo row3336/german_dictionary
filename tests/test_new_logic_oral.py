@@ -723,6 +723,7 @@ class OralMainIntegrationTests(unittest.TestCase):
                         stack.enter_context(patch('bot.study.transport_guard.read_delivery',
                             side_effect=lambda _db, uid, tid: inspect_delivery(h.conn, uid, tid)))
                         stack.enter_context(patch.object(lang, 'get_setting', side_effect=lambda _db, key, default='': 'ru' if key == main.OWNER_DICT_LANG_KEY else 'en'))
+                        stack.enter_context(patch.object(lang, 'get_user_languages', return_value=(None, None)))
                         stack.enter_context(patch.object(menu, '_topic_filter_banner', return_value='Synthetic filter'))
                         actions = {'DE': 'quiz_de_l1', 'L1': 'quiz_l1_de', 'Words': 'quiz_words', 'Phrases': 'quiz_phrases', 'Tests': 'tests'}
                         stack.enter_context(patch.object(menu, '_action_key_from_text', side_effect=lambda text, uid: actions.get(text, 'back' if text == t('en', 'back') else '')))
