@@ -7,6 +7,7 @@ NULL is an explicitly unknown legacy auxiliary and is never read as 'hat'.
 """
 
 import re
+import unicodedata
 from dataclasses import dataclass
 
 from ..text_utils import normalize_answer
@@ -125,8 +126,10 @@ def validate_entry(entry, *, allow_legacy_key=False):
 
 
 def normalize_text(text):
-    """Commas, periods and whitespace are interchangeable answer separators."""
-    return normalize_answer(re.sub(r"[,.\s]+", " ", str(text or "")))
+    """Normalize separators identically without changing token order."""
+    text = "".join(" " if unicodedata.category(c).startswith("P") else c
+                   for c in str(text or ""))
+    return normalize_answer(" ".join(text.split()))
 
 
 def finite_forms(aux):

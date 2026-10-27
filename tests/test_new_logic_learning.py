@@ -63,7 +63,7 @@ class LearningTests(unittest.TestCase):
                         patch.object(handler, "_action_key_from_text", side_effect=lambda text, uid:
                             text if text in {"learning_start", "learning_next", "learning_skip", "input_err",
                                              "back", "clarify_fields", "learning_reset"} else None),
-                        patch.object(handler, "_check_ru_de_strict", side_effect=lambda entry, text: (text == "good", None))]
+                        patch.object(handler, "_check_ru_de_strict", side_effect=lambda entry, text, rules=None: (text == "good", None))]
         for item in self.patches:
             item.start()
             self.addCleanup(item.stop)
@@ -519,7 +519,7 @@ class LearningTests(unittest.TestCase):
         self.assertEqual(live["revision"], frame["revision"])
         self.assertEqual(self.ctx.user_data["learning_recent_ids"], recent)
         self.assertEqual(self.rows("transaction_log"), baseline)
-        with patch.object(handler, "_check_ru_de_strict", side_effect=lambda entry,text: (entry["german"] == text, None)):
+        with patch.object(handler, "_check_ru_de_strict", side_effect=lambda entry,text,rules=None: (entry["german"] == text, None)):
             asyncio.run(handler.learning_quiz(self.update("omega"), self.ctx))
         self.assertEqual(self.rows("quiz_events")[-1]["is_correct"], 1)
         self.assertEqual(self.rows("learning_items")[0]["recovery_remaining"], 2)

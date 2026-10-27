@@ -20,6 +20,8 @@ from ..common.phrase_answers import phrase_answer_matches
 from ..oral import handlers as oral_handlers
 from ..oral.domain import MODES as ORAL_MODES
 
+from ..common import match_policy
+
 from telegram import ReplyKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
@@ -379,6 +381,7 @@ def _check_ru_de_strict(entry, answer_text, rules=None):
     from ..common import hilfsverb
     rules = rules or hilfsverb.DEFAULT_RULES
     validate_quiz_entry(entry)
+    match_policy.validate_required(entry, rules)
     entry_type = (entry.get("type") or "").strip().lower()
     parts = _split_answer_parts(answer_text)
     synonyms = _synonym_entries(entry, rules)
@@ -414,7 +417,7 @@ def _check_ru_de_strict(entry, answer_text, rules=None):
         return False, checks
 
     if entry_type == "verb":
-        answer = _normalize_multi_field_answer(answer_text)
+        answer = hilfsverb.normalize_text(answer_text)
         if not answer:
             return False, {"partizip2": False, "prateritum": False}
         for cand in synonyms:
@@ -721,10 +724,12 @@ async def quiz_ru_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not entry:
         return await _send_ru_de_prompt(update, context, None)
     is_retry = bool(context.user_data.get("quiz_is_retry"))
+    rules = match_policy.rules(context.user_data.get(written_state.FRAME))
+    match_policy.validate_required(entry, rules)
     if text == I_DONT_KNOW_TEXT:
         ok = False
     else:
-        ok, _ = _check_ru_de_strict(entry, text)
+        ok, _ = _check_ru_de_strict(entry, text, rules)
     if not _accept_written_answer(update, context, entry, mode, ok, is_retry, QUIZ_RU_DE,
                                   idk=text == I_DONT_KNOW_TEXT):
         return await _render_current_written(update, context, QUIZ_RU_DE)

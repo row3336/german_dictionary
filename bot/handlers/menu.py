@@ -3,6 +3,8 @@ the Ru>De quiz sub-menu. These are the dispatch hubs that hand off into the
 feature handlers (add_words / settings / db_search / quiz / learning).
 """
 
+from ..common import match_policy
+
 from telegram import ReplyKeyboardMarkup, Update
 from telegram.ext import ContextTypes, ConversationHandler
 
@@ -12,6 +14,8 @@ from ..app_config import (
     OWNER_DICT_LANG_KEY,
     OWNER_INTERFACE_LANG_KEY,
     QUIZ_RU_DE_MENU,
+    QUIZ_RU_DE,
+    QUIZ_DE_RU,
     SETTINGS_MENU,
     TESTS_MENU,
     TOPIC_FILTER_EDIT,
@@ -38,7 +42,7 @@ from ..common.settings import _topic_filter_banner, _topic_filter_value
 from ..common.txlog import reset_undo_progress
 from ..common.study_lock import study_lock, invalidate_study_frames
 from ..study.answers import close_study_flow
-from ..written.state import transport_id
+from ..written.state import transport_id, ensure_frame
 from ..handlers.access import access_allowed, show_rejected_screen
 from ..handlers.db_search import _send_db_search_prompt
 from ..handlers.learning import _send_learning_menu
@@ -311,6 +315,8 @@ async def quiz_ru_de_menu_choice(update: Update, context: ContextTypes.DEFAULT_T
         context.user_data.pop("quiz_entry", None)
         context.user_data.pop("quiz_last_answered_entry", None)
         _reset_session(context, mode)
+        state = QUIZ_DE_RU if str(base_mode).startswith("de_") else QUIZ_RU_DE
+        ensure_frame(context, mode, state)[match_policy.FRAME_KEY] = match_policy.capture(get_db_path(), user_id)
         if str(base_mode).startswith("de_"):
             return await _send_de_ru_prompt(update, context, None)
         return await _send_ru_de_prompt(update, context, None)

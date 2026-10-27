@@ -10,6 +10,8 @@ import re
 import subprocess
 import sys
 
+from ..common import match_policy
+
 from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
 from telegram.ext import ContextTypes, ConversationHandler
 
@@ -136,8 +138,12 @@ async def _send_fsrs_settings_menu(update: Update, user_id):
         ("ses_rtr_gap", _session_retry_gap(get_db_path(), user_id), "ses_rtr_gap_desc"),
         ("ses_rtr_it", _session_retry_iterations(get_db_path(), user_id), "ses_rtr_it_desc"),
     ]
+    status = "ON" if match_policy.enabled(get_db_path(), user_id) else "OFF"
+    text = _settings_submenu_text(lang, "fsrs_sett_desc", rows)
+    header, details = text.split("\n\n", 1)
+    text = f"{header}\n\n• [{status}] - {t(lang, 'hilfsverb_match_status')}\n{details}"
     await update.message.reply_text(
-        _settings_submenu_text(lang, "fsrs_sett_desc", rows),
+        text,
         reply_markup=ReplyKeyboardMarkup(_fsrs_settings_menu_keys(user_id), resize_keyboard=True),
     )
     return FSRS_SETTINGS_MENU
@@ -372,6 +378,7 @@ async def algo_settings_menu_choice(update: Update, context: ContextTypes.DEFAUL
             get_db_path(),
             user_id,
             keys=[
+                match_policy.KEY,
                 SESSION_RETRY_GAP_KEY,
                 SESSION_RETRY_IT_KEY,
                 LEARNING_DAILY_QTY_KEY,
@@ -400,6 +407,12 @@ async def fsrs_settings_menu_choice(update: Update, context: ContextTypes.DEFAUL
 
     if action == "back":
         return await _send_algo_settings_menu(update, user_id)
+
+    if action == "hilfsverb_match":
+        value = not match_policy.enabled(get_db_path(), user_id)
+        set_user_setting(get_db_path(), user_id, match_policy.KEY, "1" if value else "0")
+        await update.message.reply_text(t(lang, "hilfsverb_match_changed").format(value="ON" if value else "OFF"))
+        return await _send_fsrs_settings_menu(update, user_id)
 
     if text == t(lang, "ses_rtr_gap"):
         context.user_data["algo_setting_edit"] = SESSION_RETRY_GAP_KEY

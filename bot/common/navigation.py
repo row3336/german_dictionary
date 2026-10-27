@@ -58,6 +58,7 @@ def _action_key_from_text(text, user_id):
         ("conjugation", "conjugation"),
         ("conjugation_dice", "conjugation_dice"),
         ("fsrs_sett", "fsrs_sett"),
+        ("hilfsverb_match", "hilfsverb_match"),
         ("learning_sett", "learning_sett"),
         ("learning_sett_btn", "learning_sett"),
         ("learning_daily_qty", "learning_daily_qty"),

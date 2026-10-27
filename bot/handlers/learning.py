@@ -11,6 +11,8 @@ import uuid
 from copy import deepcopy
 from datetime import datetime, timezone
 
+from ..common import match_policy
+
 from telegram import ReplyKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
@@ -554,6 +556,7 @@ async def _learning_menu_locked(update: Update, context: ContextTypes.DEFAULT_TY
                 ON CONFLICT(key) DO UPDATE SET value=excluded.value""", (key, "0" if enabled else "1"))
             result["enabled"] = not enabled
         if action == "learning_start":
+            result[match_policy.FRAME_KEY] = match_policy.capture_conn(conn, uid)
             learning_store.recover_ready_previews(conn, uid, datetime.now(timezone.utc))
             empty_history = type("LearningStartContext", (), {"user_data": {}})()
             result["next_view"] = _next_learning_view(conn, empty_history, uid)
@@ -580,7 +583,8 @@ async def _learning_menu_locked(update: Update, context: ContextTypes.DEFAULT_TY
     context.user_data.pop("learning_recent_ids", None)
     context.user_data.pop("quiz_last_answered_entry", None)
     frame = _new_frame()
-    frame["flow_id"] = flow
+    frame["flow_id"] = result["flow_id"]
+    frame[match_policy.FRAME_KEY] = result.get(match_policy.FRAME_KEY, {})
     context.user_data[FRAME] = frame
     if not result["next_view"]["entry"]:
         context.user_data.pop(FRAME, None)
@@ -706,7 +710,9 @@ async def _learning_quiz_locked(update, context):
                                               [t(lang, "back")]], resize_keyboard=True))
         return LEARNING_QUIZ
     validate_quiz_entry(entry)
-    ok = False if text == I_DONT_KNOW_TEXT else _check_ru_de_strict(entry, text)[0]
+    rules = match_policy.rules(frame)
+    match_policy.validate_required(entry, rules)
+    ok = False if text == I_DONT_KNOW_TEXT else _check_ru_de_strict(entry, text, rules)[0]
     kind = "idk" if text == I_DONT_KNOW_TEXT else "correct" if ok else "wrong"
     def grade(conn, snapshot, answer, now):
         result = learning_store.apply_answer(conn, snapshot, answer, now)
