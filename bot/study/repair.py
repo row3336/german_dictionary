@@ -6,7 +6,7 @@ from contextlib import contextmanager
 
 from ..common.db_safety import _connection_fingerprint
 from ..common.verb_construction import assert_identity, identity, normalize_entry
-from ..common.perfekt import validate_entry
+from ..common.hilfsverb import validate_entry
 from .generations import advance_generation, assert_generation
 from .repository import transaction, utc_iso
 

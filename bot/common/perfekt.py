@@ -1,4 +1,9 @@
-"""Pure linked Perfekt references and a caller-transaction metadata writer."""
+"""Retired schema21 linked Perfekt JSON (perfekt_variants_json): legacy only.
+
+Used by the schema22 migration to convert stored values to the scalar
+words.hilfsverb, and by retired schema21 package tooling. Runtime DTOs, views,
+writers and checkers use common.hilfsverb instead.
+"""
 
 import json
 
@@ -36,7 +41,7 @@ def _unique_object(pairs):
 
 
 def normalize_payload(payload, entry):
-    """Validate full old+patch data; preserve exact audit metadata and examples."""
+    """Validate linked forms; accept historical example metadata while migrating it away."""
     if isinstance(payload, str):
         try:
             payload = json.loads(payload, object_pairs_hook=_unique_object)
@@ -107,13 +112,14 @@ def normalize_payload(payload, entry):
                              ("full_answer", lemma + " " + variant["prateritum"] + " " + expected)):
             if field in variant and variant[field] != value:
                 raise PerfektValidationError(field + " disagrees with linked forms")
-        examples = variant.get("examples")
-        if not isinstance(examples, list) or not examples:
-            raise PerfektValidationError("variant requires examples")
-        for example in examples:
-            if not isinstance(example, dict):
-                raise PerfektValidationError("invalid variant example")
-            _text(example.get("text_de"), "example.text_de")
+        if "examples" in variant:
+            examples = variant["examples"]
+            if not isinstance(examples, list) or not examples:
+                raise PerfektValidationError("invalid variant examples")
+            for example in examples:
+                if not isinstance(example, dict):
+                    raise PerfektValidationError("invalid variant example")
+                _text(example.get("text_de"), "example.text_de")
         if not any(variant.get(k) for k in ("source_urls", "source_pointers", "evidence_pointer", "evidence")):
             raise PerfektValidationError("variant requires evidence")
         for field in ("source_urls", "source_pointers"):
@@ -150,9 +156,42 @@ def answer_tuples(entry):
         (v["lemma_for_answer"], v["prateritum"], v["perfekt_fragment"]) for v in variants))
 
 
-def display_forms(entry):
-    tuples = answer_tuples(entry)
-    return None if tuples is None else tuple(dict.fromkeys((pr, perf) for _, pr, perf in tuples))
+def legacy_hilfsverb(entry):
+    """Convert one validated schema21 value to hat/ist/wechsel, never guessing.
+
+    Reciprocal plural haben/sind is the same auxiliary (hat/ist). Two
+    auxiliaries become wechsel only with one shared Partizip II; otherwise the
+    card needs separate usage cards and the value is unsupported. The scalar
+    columns must already pair exactly like the linked variants.
+    """
+    from . import hilfsverb
+    variants = read_variants(entry)
+    if variants is None:
+        raise PerfektValidationError("missing legacy Perfekt value")
+    auxiliaries = {v["auxiliary"] for v in variants}
+    if auxiliaries == {"haben"}:
+        value = "hat"
+    elif auxiliaries == {"sein"}:
+        value = "ist"
+    elif len({v["partizip2"] for v in variants}) == 1:
+        value = "wechsel"
+    else:
+        raise PerfektValidationError("different Partizip II with different auxiliaries need separate cards")
+    candidate = {**entry, FIELD: None, hilfsverb.FIELD: value}
+    try:
+        pairs = set(hilfsverb.form_pairs(candidate, strict=True))
+        hilfsverb.validate_entry(candidate)
+    except ValueError as exc:
+        raise PerfektValidationError(str(exc)) from exc
+    if pairs != {(v["prateritum"], v["partizip2"]) for v in variants}:
+        raise PerfektValidationError("scalar forms would combine unlinked Präteritum/Partizip II")
+    # One scalar auxiliary applies to every pair: wechsel needs each (Präteritum,
+    # Partizip II) linked with both hat and ist, not just one auxiliary each.
+    finite = {"haben": "hat", "sein": "ist"}
+    expected = {(pr, p2, f) for pr, p2 in pairs for f in hilfsverb.finite_forms(value)}
+    if expected != {(v["prateritum"], v["partizip2"], finite[v["auxiliary"]]) for v in variants}:
+        raise PerfektValidationError("auxiliary is not linked with every Präteritum/Partizip II pair")
+    return value
 
 
 def validate_entry(entry):

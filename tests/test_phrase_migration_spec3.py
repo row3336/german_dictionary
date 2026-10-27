@@ -129,7 +129,7 @@ class PhraseMigrationV16Test(unittest.TestCase):
         report = apply_destructive_migrations_safely(
             self.db, self.backups, today=self.migration_day
         )
-        self.assertEqual(SCHEMA_VERSION, 21)
+        self.assertEqual(SCHEMA_VERSION, 22)
         self.assertEqual(get_user_version(self.db), SCHEMA_VERSION)
         self.assertTrue(report["dry_run"]["ok"])
         snapshot = Path(report["backup"])

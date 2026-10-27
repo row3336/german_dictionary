@@ -35,6 +35,7 @@ from ..text_utils import type_label as _type_label
 from ..ui.formatting import (
     _entry_translation,
     _expected_partizip2,
+    _linked_verb_parts,
     _case_label,
     _format_topic_learning_line,
 )
@@ -164,9 +165,13 @@ def _format_db_search_card(entry, dict_lang):
             lines.append(f"{_md_escape(infinitive)} - {_md_escape(translation)}")
         else:
             lines.append(_md_escape(infinitive))
-        pr = _low_word(entry.get("prateritum", ""))
-        p2 = _expected_partizip2(entry)
-        forms = ", ".join([x for x in [pr, p2] if x])
+        linked = _linked_verb_parts(entry)
+        if linked is not None:
+            forms = "; ".join(linked)
+        else:
+            pr = _low_word(entry.get("prateritum", ""))
+            p2 = _expected_partizip2(entry)
+            forms = ", ".join([x for x in [pr, p2] if x])
         if forms:
             lines.append("")
             lines.append(f"_{_md_escape(forms)}_")

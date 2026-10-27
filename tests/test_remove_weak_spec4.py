@@ -261,7 +261,7 @@ class RemoveWeakMigrationV17Test(unittest.TestCase):
         before = database_fingerprint(self.db)
         report = dry_run_migration(self.db)
 
-        self.assertEqual(SCHEMA_VERSION, 21)
+        self.assertEqual(SCHEMA_VERSION, 22)
         self.assertTrue(report["ok"])
         self.assertEqual(before, database_fingerprint(self.db))
         step = report["steps"]["remove_weak_v17"]

@@ -320,40 +320,10 @@ def _stored_form_variants(value):
     }
 
 
-def _partizip2_variants(entry):
-    """Expand stored Partizip II alternatives while preserving an auxiliary."""
-    variants = set()
-    for part in _stored_form_variants(entry.get("partizip2", "")):
-        candidate = dict(entry)
-        candidate["partizip2"] = part
-        expected = _expected_partizip2(candidate)
-        if expected:
-            variants.add(expected)
-    return variants
-
-
-def _verb_answer_candidates(entry):
-    """Build complete short/full answers without splitting multi-word forms."""
-    from ..common.perfekt import answer_tuples
-    linked = answer_tuples(entry)
-    if linked is not None:
-        return ({_normalize_multi_field_answer(f"{lemma} {perf}") for lemma, _, perf in linked},
-                {_normalize_multi_field_answer(f"{lemma} {pr} {perf}") for lemma, pr, perf in linked})
-    infinitives = _stored_form_variants(entry.get("infinitive", ""))
-    prateritums = _stored_form_variants(entry.get("prateritum", ""))
-    partizip2s = _partizip2_variants(entry)
-    short = {
-        _normalize_multi_field_answer(f"{infinitive} {partizip2}")
-        for infinitive in infinitives
-        for partizip2 in partizip2s
-    }
-    full = {
-        _normalize_multi_field_answer(f"{infinitive} {prateritum} {partizip2}")
-        for infinitive in infinitives
-        for prateritum in prateritums
-        for partizip2 in partizip2s
-    }
-    return short, full
+def _verb_answer_candidates(entry, rules=None):
+    """Complete short/full answers from coherent Präteritum/Partizip II pairs."""
+    from ..common import hilfsverb
+    return hilfsverb.answer_candidates(entry, rules or hilfsverb.DEFAULT_RULES)
 
 
 def _normalize_plural_value(value):
@@ -376,7 +346,7 @@ def _plural_matches(answer, stored):
     return _normalize_plural_value(answer) in _plural_form_set(stored)
 
 
-def _synonym_entries(entry):
+def _synonym_entries(entry, rules=None):
     """Handle synonym entries."""
     wid = entry.get("id")
     if "answer_aliases" in entry:
@@ -390,20 +360,28 @@ def _synonym_entries(entry):
         group = []
     if not group:
         return [entry]
+    from ..common import hilfsverb
     from ..common.verb_construction import synonym_compatible
+    rules = rules or hilfsverb.DEFAULT_RULES
+    # A synonym never satisfies a form requirement the target card demands.
     return [entry, *(candidate for candidate in group if candidate.get("id") != wid
                      and synonym_compatible(entry, candidate)
-                     and (entry.get("perfekt_variants_json") is None
-                          or (candidate.get("type") == "verb"
-                              and candidate.get("perfekt_variants_json") is not None)))]
+                     and (entry.get("type") != "verb"
+                          or hilfsverb.alias_allowed(entry, candidate, rules)))]
 
 
-def _check_ru_de_strict(entry, answer_text):
-    """Handle check ru de strict."""
+def _check_ru_de_strict(entry, answer_text, rules=None):
+    """Handle check ru de strict.
+
+    `rules` are the written-answer requirements fixed at session launch; None
+    keeps both OFF (Präteritum and hilfsverb optional, but checked if given).
+    """
+    from ..common import hilfsverb
+    rules = rules or hilfsverb.DEFAULT_RULES
     validate_quiz_entry(entry)
     entry_type = (entry.get("type") or "").strip().lower()
     parts = _split_answer_parts(answer_text)
-    synonyms = _synonym_entries(entry)
+    synonyms = _synonym_entries(entry, rules)
 
     if entry_type == "nomen":
         if len(parts) < 2:
@@ -445,18 +423,13 @@ def _check_ru_de_strict(entry, answer_text):
         for cand in synonyms:
             if (cand.get("type") or "").strip().lower() != "verb":
                 continue
-            short, full = _verb_answer_candidates(cand)
+            short, full = _verb_answer_candidates(cand, rules)
             if answer in full:
                 return True, {"partizip2": True, "prateritum": True}
             if answer in short:
                 return True, {"partizip2": True, "prateritum": False}
 
-        from ..common.perfekt import answer_tuples
-        linked = answer_tuples(entry)
-        partizip2s = ({_normalize_multi_field_answer(perf) for _, _, perf in linked}
-                     if linked is not None else _partizip2_variants(entry))
-        prateritums = ({_normalize_multi_field_answer(pr) for _, pr, _ in linked}
-                      if linked is not None else _stored_form_variants(entry.get("prateritum", "")))
+        prateritums, partizip2s = hilfsverb.answer_parts(entry, rules)
         p2_ok = any(answer == value or answer.endswith(f" {value}") for value in partizip2s)
         pr_ok = any(
             answer == value

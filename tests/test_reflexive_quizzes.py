@@ -135,9 +135,14 @@ class ReflexiveQuizzesTest(unittest.TestCase):
             self.assertTrue(checks['partizip2'])
         for answer in ('waschen gewaschen', 'mich waschen gewaschen', 'sich sich waschen gewaschen'):
             self.assertFalse(quiz._check_ru_de_strict(current, answer)[0], answer)
-        aux = {**current, 'perfect_aux':'hat'}
-        self.assertTrue(quiz._check_ru_de_strict(aux, 'sich waschen hat gewaschen')[0])
-        self.assertFalse(quiz._check_ru_de_strict(aux, 'sich waschen gewaschen')[0])
+        # Scalar hilfsverb (27.10): the Perfekt fragment keeps sich; with
+        # Hilfsverb_match OFF the auxiliary is optional but checked when given.
+        aux = {**current, 'hilfsverb':'hat'}
+        self.assertTrue(quiz._check_ru_de_strict(aux, 'sich waschen hat sich gewaschen')[0])
+        self.assertTrue(quiz._check_ru_de_strict(aux, 'sich waschen gewaschen')[0])
+        for answer in ('sich waschen hat gewaschen', 'sich waschen ist sich gewaschen',
+                       'sich waschen hat mich gewaschen'):
+            self.assertFalse(quiz._check_ru_de_strict(aux, answer)[0], answer)
         ordinary = entry(case='none', id=None)
         self.assertFalse(quiz._check_ru_de_strict(ordinary, 'sich waschen gewaschen')[0])
 

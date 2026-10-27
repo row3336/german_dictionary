@@ -21,59 +21,33 @@ from ..text_utils import normalize_russian_singular as _normalize_russian_singul
 
 
 def _expected_partizip2(entry):
-    """Handle expected partizip2."""
-    from ..common.perfekt import display_forms
-    if entry.get("perfekt_variants_json") is not None:
-        validate_quiz_entry(entry)
-    linked = display_forms(entry)
-    if linked is not None:
-        return ", ".join(dict.fromkeys(perf for _, perf in linked))
-    part = _normalize_answer(entry.get("partizip2", ""))
-    aux = _normalize_answer(
-        entry.get("perfect_aux")
-        or entry.get("hilfsverb")
-        or entry.get("aux")
-        or ""
-    )
-    if aux in {"hat", "ist"}:
-        if part.startswith("hat ") or part.startswith("ist "):
-            return part
-        return f"{aux} {part}".strip()
-    return part
+    """Partizip II alternatives; a known hilfsverb is shown with each one."""
+    from ..common import hilfsverb
+    if hilfsverb.value(entry) is None:
+        return _normalize_answer(entry.get("partizip2", ""))
+    validate_quiz_entry(entry)
+    return ", ".join(dict.fromkeys(_normalize_answer(hilfsverb.display_partizip2(entry, p2))
+                                   for _, p2 in hilfsverb.form_pairs(entry)))
 
 
-def _linked_verb_parts(entry, *, examples_already_shown=()):
-    """Keep each linked form separate from the examples belonging to it."""
-    from ..common.perfekt import read_variants
-    if entry.get("perfekt_variants_json") is None:
+def _linked_verb_parts(entry):
+    """Coherent 'Präteritum, hat Partizip II' lines; None for unknown hilfsverb."""
+    from ..common import hilfsverb
+    if hilfsverb.value(entry) is None:
         return None
     validate_quiz_entry(entry)
-    variants = read_variants(entry)
-    if variants is None:
-        return None
-    parts = []
-    shown = set(examples_already_shown)
-    for variant in variants:
-        form = variant["prateritum"] + ", " + variant["perfekt_fragment"]
-        examples = [example["text_de"] for example in variant["examples"]
-                    if example["text_de"] not in shown]
-        parts.append((form, examples))
-    return parts
+    return tuple(_low_word(text) for text in hilfsverb.display_pairs(entry))
 
 
-def _linked_verb_lines(entry, *, examples_already_shown=()):
-    """Render each reference with its own examples; never join scalar lists."""
-    parts = _linked_verb_parts(entry, examples_already_shown=examples_already_shown)
-    return ([value for form, examples in parts for value in (form, *examples)]
-            if parts is not None else None)
+def _linked_verb_lines(entry):
+    return _linked_verb_parts(entry)
 
 
-def _append_verb_forms(lines, entry, *, examples_already_shown=()):
-    parts = _linked_verb_parts(entry, examples_already_shown=examples_already_shown)
+def _append_verb_forms(lines, entry):
+    parts = _linked_verb_parts(entry)
     if parts is not None:
-        for form, examples in parts:
+        for form in parts:
             lines.append("_  " + _md_escape(form) + "_")
-            lines.extend(_md_escape(example) for example in examples)
     else:
         for value in (_low_word(entry.get("prateritum", "")), _expected_partizip2(entry)):
             if value:
@@ -242,6 +216,11 @@ def _format_word_card(entry, title="Word card:", user_id=None):
         f"plural: {entry.get('plural', '') or '-'}",
         f"prateritum: {entry.get('prateritum', '') or '-'}",
         f"partizip2: {entry.get('partizip2', '') or '-'}",
+    ]
+    if entry.get("type") == "verb":
+        # Plain stored scalar: forms are already listed once above.
+        lines.append(f"hilfsverb: {entry.get('hilfsverb') or '-'}")
+    lines += [
         f"komparativ: {entry.get('komparativ', '') or '-'}",
         f"superlativ: {entry.get('superlativ', '') or '-'}",
     ]
@@ -263,12 +242,6 @@ def _format_word_card(entry, title="Word card:", user_id=None):
         f"image: {_md_escape(entry.get('image', '')) or '-'}",
         f"example: {_md_escape(entry.get('example', '')) or '-'}",
     ]
-    if entry.get("type") == "verb":
-        linked = _linked_verb_lines(entry,
-            examples_already_shown=_example_lines(entry.get("example", "")))
-        if linked is not None:
-            lines.append("Perfekt:")
-            lines.extend(_md_escape(value) for value in linked)
     # spec #1: prepositions carry two extra owner-curated fields — show them so the
     # owner can see/verify them on the card (they drive the quiz hints + dedup).
     if _low_word(entry.get("type", "")) == "praeposition":
@@ -342,8 +315,7 @@ def _format_de_ru_question(entry):
     elif word_type == "verb":
         infinitive = _low_word(display_infinitive(entry))
         lines.append(_md_escape(infinitive + reflexive_hint(entry)))
-        _append_verb_forms(lines, entry,
-            examples_already_shown=_example_lines(entry.get("example", ""))[:1])
+        _append_verb_forms(lines, entry)
     elif word_type == "adjektiv":
         german = _low_word(entry.get("german", ""))
         lines.append(_md_escape(german))
@@ -445,7 +417,7 @@ def _format_feedback_ru_de(entry, ok, lang="en"):
         linked = _linked_verb_lines(entry)
         if linked is not None:
             lines.append("")
-            _append_verb_forms(lines, entry)
+            lines.extend(f"_{_md_escape(form)}_" for form in linked)
         else:
             forms = ", ".join(value for value in
                 (_low_word(entry.get("prateritum", "")), _expected_partizip2(entry)) if value)
@@ -486,9 +458,9 @@ def _format_learning_preview_prompt(entry, dict_lang):
     elif word_type == "verb":
         infinitive = _low_word(display_infinitive(entry))
         lines.append(f"*{_md_escape(infinitive)}*")
-        if _linked_verb_lines(entry) is not None:
-            _append_verb_forms(lines, entry,
-                examples_already_shown=_example_lines(entry.get("example", ""))[:1])
+        linked = _linked_verb_lines(entry)
+        if linked is not None:
+            lines.extend(f"_{_md_escape(form)}_" for form in linked)
         else:
             forms = ", ".join(value for value in
                 (_low_word(entry.get("prateritum", "")), _expected_partizip2(entry)) if value)

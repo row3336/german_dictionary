@@ -1,4 +1,4 @@
-"""Synthetic schema21 and linked-reference storage acceptance."""
+"""Legacy schema21 envelope validation plus schema22 scalar hilfsverb storage."""
 import copy
 import json
 import os
@@ -8,11 +8,11 @@ from pathlib import Path
 import unittest
 from unittest import mock
 from bot import storage
-from bot.common import db_safety, perfekt
+from bot.common import db_safety, hilfsverb, perfekt
 from bot.common import existing_user_filters as filters
 from bot.search import read_search_entry
 from bot.oral.repository import word as oral_word
-from bot.study import repository, schema_v21, repair, generations
+from bot.study import repository, schema_v21, schema_v22, repair, generations
 STAND = Path(os.environ.get('GD_TEST_STAND', '/Users/wf/py/_agent_work/888_german_dictionary/data18_7_20261025/foundation'))
 
 def variant(lemma='treffen', pr='traf', p2='getroffen', aux='haben', case='none', plural=False):
@@ -23,16 +23,25 @@ def entry(*variants, case='none', wid='one'):
     variants = variants or (variant(),)
     return dict(id=wid, type='verb', infinitive=variants[0]['lemma_for_answer'], german=variants[0]['lemma_for_answer'], reflexive_case=case, russian='перевод', **perfekt.scalar_projection(variants), perfekt_variants_json={'version': 1, 'status': 'verified', 'variants': list(variants)})
 
+def word(lemma='treffen', pr='traf', p2='getroffen', wid='one', case='none', **extra):
+    """Schema22 card: scalar forms plus words.hilfsverb."""
+    return {**dict(id=wid, type='verb', infinitive=lemma, german=lemma, reflexive_case=case, russian='перевод',
+                   prateritum=pr, partizip2=p2, hilfsverb='hat'), **extra}
+
+def drop_hilfsverb(conn):
+    """Recreate the pre-schema22 words shape."""
+    for action in ('insert', 'update'):
+        conn.execute('DROP TRIGGER IF EXISTS words_hilfsverb_type_' + action)
+    conn.execute('ALTER TABLE words DROP COLUMN hilfsverb')
+
 def new_db():
     STAND.mkdir(parents=True, exist_ok=True)
     path = STAND / ('perfekt-' + uuid.uuid4().hex + '.sqlite')
     storage.init_db(path)
     return path
 
-class PerfektStorageTest(unittest.TestCase):
-
-    def setUp(self):
-        self.db = new_db()
+class LegacyEnvelopeTest(unittest.TestCase):
+    """Retired schema21 JSON envelope: the isolated legacy API still validates strictly."""
 
     def test_linked_tuples_no_cartesian_and_canonical_exact_metadata(self):
         e = entry(variant('hängen', 'hängte', 'gehängt'), variant('hängen', 'hing', 'gehangen'))
@@ -40,7 +49,15 @@ class PerfektStorageTest(unittest.TestCase):
         assert perfekt.serialize_payload(json.loads(raw), e) == raw
         assert json.loads(raw)['variants'][0]['examples'] == e[perfekt.FIELD]['variants'][0]['examples']
         assert perfekt.answer_tuples({**e, perfekt.FIELD: raw}) == (('hängen', 'hängte', 'hat gehängt'), ('hängen', 'hing', 'hat gehangen'))
-        assert perfekt.display_forms(e) == (('hängte', 'hat gehängt'), ('hing', 'hat gehangen'))
+
+    def test_verified_forms_do_not_require_variant_examples(self):
+        v = variant()
+        del v['examples']
+        e = entry(v)
+        raw = perfekt.serialize_payload(e[perfekt.FIELD], e)
+        assert 'examples' not in json.loads(raw)['variants'][0]
+        assert perfekt.answer_tuples({**e, perfekt.FIELD: raw}) == (
+            ('treffen', 'traf', 'hat getroffen'),)
 
     def test_corrupt_annotated_is_diagnostic_case_0(self):
         value = ''
@@ -171,22 +188,6 @@ class PerfektStorageTest(unittest.TestCase):
         e = entry(v, case=case)
         assert perfekt.answer_tuples(e) == ((v['lemma_for_answer'], v['prateritum'], v['perfekt_fragment']),)
 
-    def test_add_and_all_named_reader_paths_keep_canonical_annotation(self):
-        db = self.db
-        added = storage.add_word(db, entry())
-        raw = added[perfekt.FIELD]
-        assert isinstance(raw, str)
-        assert storage.load_words(db)[0][perfekt.FIELD] == raw
-        assert storage.list_all_words(db)[0][perfekt.FIELD] == raw
-        assert storage.list_words_by_topic(db, '1')[0][perfekt.FIELD] == raw
-        assert storage.get_word_by_id(db, 'one')[perfekt.FIELD] == raw
-        assert storage.find_existing_word(db, 'treffen')[perfekt.FIELD] == raw
-        assert storage.find_word_by_value(db, 'treffen')[perfekt.FIELD] == raw
-        assert read_search_entry(db, 'one')[perfekt.FIELD] == raw
-        with repository.transaction(db) as conn:
-            assert oral_word(conn, 1, 'one', 'ru')[perfekt.FIELD] == raw
-            assert storage.learning_pick_new_words(db, 1, 1)[0][perfekt.FIELD] == raw
-
     def test_verified_payload_rejects_unknown_classification(self):
         for classification in (None, 'missing'):
             candidate = entry()
@@ -202,8 +203,59 @@ class PerfektStorageTest(unittest.TestCase):
                 candidate[perfekt.FIELD] = None
                 self.assertIsNone(perfekt.read_variants(candidate))
 
-    def test_metadata_guard_rejects_annotation_until_classification_confirmed(self):
-        storage.add_word(self.db, {**entry(), perfekt.FIELD: None})
+
+class ScalarStorageTest(unittest.TestCase):
+    """Schema22 scalar words.hilfsverb through real storage/migration paths."""
+
+    def setUp(self):
+        self.db = new_db()
+
+    def test_add_and_all_named_reader_paths_keep_scalar_hilfsverb(self):
+        db = self.db
+        added = storage.add_word(db, word())
+        assert added['hilfsverb'] == 'hat' and 'perfekt_variants_json' not in added
+        assert storage.load_words(db)[0]['hilfsverb'] == 'hat'
+        assert storage.list_all_words(db)[0]['hilfsverb'] == 'hat'
+        assert storage.list_words_by_topic(db, '1')[0]['hilfsverb'] == 'hat'
+        assert storage.get_word_by_id(db, 'one')['hilfsverb'] == 'hat'
+        assert storage.find_existing_word(db, 'treffen')['hilfsverb'] == 'hat'
+        assert storage.find_word_by_value(db, 'treffen')['hilfsverb'] == 'hat'
+        assert read_search_entry(db, 'one')['hilfsverb'] == 'hat'
+        with repository.transaction(db) as conn:
+            assert oral_word(conn, 1, 'one', 'ru')['hilfsverb'] == 'hat'
+            assert storage.learning_pick_new_words(db, 1, 1)[0]['hilfsverb'] == 'hat'
+
+    def test_writer_strict_about_type_and_scalar_and_unknown_stays_null(self):
+        for bad in (word(type='noun', article='das', german='Haus', infinitive=''), word(hilfsverb='haben'),
+                    word(hilfsverb='hat/ist'), word(hilfsverb=''), word(hilfsverb='wechsel', prateritum='a, b', partizip2='x, y'),
+                    word(hilfsverb='hat', reflexive_case=None)):
+            with self.subTest(bad=bad), self.assertRaises((hilfsverb.HilfsverbValidationError, ValueError, sqlite3.IntegrityError)):
+                storage.add_word(self.db, bad)
+        added = storage.add_word(self.db, word(hilfsverb=None))
+        assert added['hilfsverb'] is None  # never inferred as 'hat'
+        assert storage.get_word_by_id(self.db, 'one')['hilfsverb'] is None
+
+    def test_german_is_not_rewritten_for_auxiliary_updates(self):
+        storage.add_word(self.db, word(hilfsverb=None))
+        before = storage.get_word_by_id(self.db, 'one')
+        storage.update_word_fields(self.db, 'one', {'hilfsverb': 'wechsel'})
+        after = storage.get_word_by_id(self.db, 'one')
+        assert after['hilfsverb'] == 'wechsel'
+        assert {k: v for k, v in after.items() if k != 'hilfsverb'} == {k: v for k, v in before.items() if k != 'hilfsverb'}
+
+    def test_stale_and_bad_updates_are_atomic(self):
+        db = self.db
+        storage.add_word(db, word())
+        before = db_safety.database_fingerprint(db)
+        for patch in ({'perfekt_variants_json': None}, {'russian': 'x', 'perfekt_variants_json': '{}'},
+                      {'hilfsverb': None}, {'hilfsverb': 'haben'}, {'hilfsverb': 'wechsel', 'prateritum': 'a, b', 'partizip2': 'x, y'},
+                      {'russian': 'новый', 'hilfsverb': 'HAT'}):
+            with self.subTest(patch=patch), self.assertRaises((hilfsverb.HilfsverbValidationError, ValueError, sqlite3.IntegrityError)):
+                storage.update_word_fields(db, 'one', patch)
+            assert db_safety.database_fingerprint(db) == before
+
+    def test_guarded_patch_requires_confirmed_classification(self):
+        storage.add_word(self.db, word(hilfsverb=None))
         with repository.transaction(self.db) as conn:
             conn.execute("UPDATE words SET reflexive_case=NULL WHERE id='one'")
             repository.set_progress(conn, 1, 'one', 'ru_de', dict(interval=9, repetitions=3, ease=2.5, due='2026-11-01'))
@@ -212,24 +264,24 @@ class PerfektStorageTest(unittest.TestCase):
             before_generations = [tuple(r) for r in conn.execute('SELECT * FROM study_word_generations')]
             old = dict(conn.execute("SELECT * FROM words WHERE id='one'").fetchone())
             before = db_safety._connection_fingerprint(conn)
-            with self.assertRaisesRegex(perfekt.PerfektValidationError, 'verified reflexive_case'):
-                perfekt.apply_metadata_patch(conn, 'one', {perfekt.FIELD: entry()[perfekt.FIELD]}, expected_old=old)
+            with self.assertRaisesRegex(hilfsverb.HilfsverbValidationError, 'verified reflexive_case'):
+                hilfsverb.apply_patch(conn, 'one', {'hilfsverb': 'hat'}, expected_old=old)
             self.assertEqual(db_safety._connection_fingerprint(conn), before)
             self.assertTrue(conn.in_transaction)
-            self.assertTrue(perfekt.apply_metadata_patch(conn, 'one', {'russian': 'уточнённый перевод'}, expected_old=old))
+            self.assertTrue(hilfsverb.apply_patch(conn, 'one', {'example': 'Ein Beispiel.'}, expected_old=old))
             current = dict(conn.execute("SELECT * FROM words WHERE id='one'").fetchone())
             self.assertIsNone(current['reflexive_case'])
-            self.assertIsNone(current[perfekt.FIELD])
+            self.assertIsNone(current['hilfsverb'])
             self.assertEqual([tuple(r) for r in conn.execute('SELECT * FROM progress')], before_progress)
             self.assertEqual([tuple(r) for r in conn.execute('SELECT * FROM study_word_generations')], before_generations)
-            with self.assertRaisesRegex(perfekt.PerfektValidationError, 'expected-old'):
-                perfekt.apply_metadata_patch(conn, 'one', {'russian': 'уточнённый перевод'}, expected_old=old)
-            self.assertFalse(perfekt.apply_metadata_patch(conn, 'one', {'russian': current['russian']}, expected_old=current))
-            with self.assertRaises(perfekt.PerfektValidationError):
-                perfekt.apply_metadata_patch(conn, 'one', {'reflexive_case': 'none'}, expected_old=current)
+            with self.assertRaisesRegex(hilfsverb.HilfsverbValidationError, 'expected-old'):
+                hilfsverb.apply_patch(conn, 'one', {'example': 'Ein Beispiel.'}, expected_old=old)
+            self.assertFalse(hilfsverb.apply_patch(conn, 'one', {'example': current['example']}, expected_old=current))
+            with self.assertRaises(hilfsverb.HilfsverbValidationError):
+                hilfsverb.apply_patch(conn, 'one', {'reflexive_case': 'none'}, expected_old=current)
 
-    def test_explicit_confirmation_then_annotation_preserves_progress_generation(self):
-        storage.add_word(self.db, {**entry(), perfekt.FIELD: None})
+    def test_explicit_confirmation_then_hilfsverb_preserves_progress_generation(self):
+        storage.add_word(self.db, word(hilfsverb=None))
         with repository.transaction(self.db) as conn:
             conn.execute("UPDATE words SET reflexive_case=NULL WHERE id='one'")
             repository.set_progress(conn, 1, 'one', 'ru_de', dict(interval=9, repetitions=3, ease=2.5, due='2026-11-01'))
@@ -237,60 +289,92 @@ class PerfektStorageTest(unittest.TestCase):
             before_progress = [tuple(r) for r in conn.execute('SELECT * FROM progress')]
             before_generations = [tuple(r) for r in conn.execute('SELECT * FROM study_word_generations')]
             old = dict(conn.execute("SELECT * FROM words WHERE id='one'").fetchone())
-            manifest = dict(schema='gd-verb-confirmation/v1', operation_id='explicit-confirm-before-annotation',
+            manifest = dict(schema='gd-verb-confirmation/v1', operation_id='explicit-confirm-before-hilfsverb',
                 approvals={'owner': True, 'linguistic': True}, baseline_fingerprint=db_safety._connection_fingerprint(conn),
                 entries=[dict(word_id='one', expected_before_sha256=repair.digest(old))])
             manifest['digest'] = repair.manifest_digest(manifest)
             self.assertEqual(repair.confirm_legacy_conn(conn, manifest)['confirmed'], ['one'])
             confirmed = dict(conn.execute("SELECT * FROM words WHERE id='one'").fetchone())
             self.assertEqual(confirmed['reflexive_case'], 'none')
-            self.assertTrue(perfekt.apply_metadata_patch(conn, 'one', {perfekt.FIELD: entry()[perfekt.FIELD]}, expected_old=confirmed))
+            self.assertTrue(hilfsverb.apply_patch(conn, 'one', {'hilfsverb': 'hat'}, expected_old=confirmed))
             annotated = dict(conn.execute("SELECT * FROM words WHERE id='one'").fetchone())
-            self.assertEqual(perfekt.answer_tuples(annotated), (('treffen', 'traf', 'hat getroffen'),))
+            self.assertEqual(hilfsverb.answer_candidates(annotated)[0], {'treffen hat getroffen', 'treffen getroffen'})
+            self.assertEqual({k: v for k, v in annotated.items() if k not in ('hilfsverb', 'updated_at')},
+                             {k: v for k, v in confirmed.items() if k not in ('hilfsverb', 'updated_at')})
             self.assertEqual([tuple(r) for r in conn.execute('SELECT * FROM progress')], before_progress)
             self.assertEqual([tuple(r) for r in conn.execute('SELECT * FROM study_word_generations')], before_generations)
             self.assertTrue(repair.confirm_legacy_conn(conn, manifest)['replayed'])
-            self.assertFalse(perfekt.apply_metadata_patch(conn, 'one', {perfekt.FIELD: annotated[perfekt.FIELD]}, expected_old=annotated))
+            self.assertFalse(hilfsverb.apply_patch(conn, 'one', {'hilfsverb': 'hat'}, expected_old=annotated))
 
-    def test_stale_scalar_and_annotation_drop_refused_atomically(self):
-        db = self.db
-        storage.add_word(db, entry())
-        before = db_safety.database_fingerprint(db)
-        for patch in ({'partizip2': 'geworfen'}, {'prateritum': 'warf'}, {perfekt.FIELD: None}):
-            with self.assertRaises(perfekt.PerfektValidationError):
-                storage.update_word_fields(db, 'one', patch)
-            assert db_safety.database_fingerprint(db) == before
+    def test_guarded_patch_validates_complete_candidate(self):
+        storage.add_word(self.db, word())
+        with repository.transaction(self.db) as conn:
+            old = dict(conn.execute("SELECT * FROM words WHERE id='one'").fetchone())
+            before = db_safety._connection_fingerprint(conn)
+            for patch in ({'hilfsverb': 'haben'}, {'hilfsverb': None}, {'is_separable': 3}, {'reflexive_case': 'dativ'},
+                          {'german': 'x'}, {'perfekt_variants_json': None}, {'partizip2': 'a, b', 'prateritum': 'x, y, z'},
+                          {'hilfsverb': 'wechsel', 'prateritum': 'a, b', 'partizip2': 'x, y'}):
+                with self.subTest(patch=patch), self.assertRaises(hilfsverb.HilfsverbValidationError):
+                    hilfsverb.apply_patch(conn, 'one', patch, expected_old={**old, **{k: old.get(k) for k in patch}})
+                self.assertEqual(db_safety._connection_fingerprint(conn), before)
 
-    def test_schema20_migration_is_nullable_and_preserves_existing_rows(self):
+    def test_schema20_migration_adds_nullable_scalar_and_preserves_rows(self):
         db = self.db
-        storage.add_word(db, {**entry(), perfekt.FIELD: None})
+        storage.add_word(db, word(hilfsverb=None))
         with repository.transaction(db) as conn:
-            conn.execute('ALTER TABLE words DROP COLUMN perfekt_variants_json')
+            drop_hilfsverb(conn)
             conn.execute('PRAGMA user_version=20')
             before = dict(conn.execute('SELECT * FROM words').fetchone())
         with self.assertRaises(db_safety.DestructiveMigrationRequired):
             storage.init_db(db)
         report = db_safety._apply_migration_dispatcher(db)
-        assert report['to_version'] == 21 and report['healthcheck']['ok']
-        with repository.transaction(db) as conn:
+        assert report['to_version'] == 22 and report['healthcheck']['ok']
+        with repository.transaction(self.db) as conn:
             after = dict(conn.execute('SELECT * FROM words').fetchone())
-            assert after.pop(perfekt.FIELD) is None and after == before
+            assert after.pop('hilfsverb') is None and 'perfekt_variants_json' not in after and after == before
         assert not db_safety._apply_migration_dispatcher(db)['migrated']
 
-    def test_schema21_completeness_is_checked_before_any_write(self):
+    def test_schema22_completeness_is_checked_before_any_write(self):
         db = self.db
         with repository.transaction(db) as conn:
-            conn.execute('ALTER TABLE words DROP COLUMN perfekt_variants_json')
+            drop_hilfsverb(conn)
         before = db_safety.database_fingerprint(db)
-        with self.assertRaisesRegex(RuntimeError, 'incomplete schema21: words.perfekt_variants_json'):
+        with self.assertRaisesRegex(RuntimeError, 'incomplete schema22: words.hilfsverb'):
             storage.init_db(db)
         assert not db_safety.run_healthcheck(db)['ok']
         assert db_safety.database_fingerprint(db) == before
 
-    def test_schema21_failure_rolls_back_schema_and_version(self):
+    def test_retired_column_at_schema22_is_incomplete(self):
+        with repository.transaction(self.db) as conn:
+            conn.execute('ALTER TABLE words ADD COLUMN perfekt_variants_json TEXT')
+        before = db_safety.database_fingerprint(self.db)
+        with self.assertRaisesRegex(RuntimeError, 'incomplete schema22: retired'):
+            storage.init_db(self.db)
+        assert not db_safety.run_healthcheck(self.db)['ok']
+        assert db_safety.database_fingerprint(self.db) == before
+
+    def test_schema22_failure_rolls_back_schema_and_version(self):
+        db = self.db
+        storage.add_word(db, word(hilfsverb=None))
+        with repository.transaction(db) as conn:
+            drop_hilfsverb(conn)
+            conn.execute('ALTER TABLE words ADD COLUMN perfekt_variants_json TEXT DEFAULT NULL')
+            conn.execute('PRAGMA user_version=21')
+        before = db_safety.database_fingerprint(db)
+        original = schema_v22.migrate
+
+        def fail(conn):
+            original(conn)
+            raise RuntimeError('injected22')
+        self.enterContext(mock.patch.object(schema_v22, 'migrate', fail))
+        with self.assertRaisesRegex(RuntimeError, 'injected22'):
+            db_safety._apply_migration_dispatcher(db)
+        assert db_safety.database_fingerprint(db) == before
+
+    def test_schema21_step_failure_rolls_back_schema_and_version(self):
         db = self.db
         with repository.transaction(db) as conn:
-            conn.execute('ALTER TABLE words DROP COLUMN perfekt_variants_json')
+            drop_hilfsverb(conn)
             conn.execute('PRAGMA user_version=20')
         before = db_safety.database_fingerprint(db)
         original = schema_v21.migrate
@@ -303,20 +387,8 @@ class PerfektStorageTest(unittest.TestCase):
             db_safety._apply_migration_dispatcher(db)
         assert db_safety.database_fingerprint(db) == before
 
-    def test_metadata_writer_validates_complete_unannotated_candidate(self):
-        storage.add_word(self.db, {**entry(), perfekt.FIELD: None})
-        with repository.transaction(self.db) as conn:
-            old = dict(conn.execute("SELECT * FROM words WHERE id='one'").fetchone())
-            before = db_safety._connection_fingerprint(conn)
-            for patch in ({"conjugation_praesens": "ich treffe"}, {"is_separable": 3},
-                          {"cefr_level": "C3"}, {"preposition_type": "invalid"}):
-                with self.subTest(patch=patch):
-                    with self.assertRaises(perfekt.PerfektValidationError):
-                        perfekt.apply_metadata_patch(conn, 'one', patch, expected_old=old)
-                    self.assertEqual(db_safety._connection_fingerprint(conn), before)
-
     def test_confirmation_conn_savepoint_rolls_back_after_dictionary_writes(self):
-        storage.add_word(self.db, {**entry(), perfekt.FIELD: None})
+        storage.add_word(self.db, word(hilfsverb=None))
         with repository.transaction(self.db) as conn:
             conn.execute("UPDATE words SET reflexive_case=NULL WHERE id='one'")
             conn.execute("CREATE TRIGGER reject_confirmation BEFORE INSERT ON study_reset_operations BEGIN SELECT RAISE(ABORT,'injected receipt'); END")
@@ -339,7 +411,7 @@ class PerfektStorageTest(unittest.TestCase):
             self.assertEqual(conn.execute("SELECT value FROM app_settings WHERE key='outer-marker'").fetchone()[0], 'keep')
 
     def test_reset_conn_keeps_approval_gate_and_savepoint_after_progress_changes(self):
-        storage.add_word(self.db, entry())
+        storage.add_word(self.db, word())
         with repository.transaction(self.db) as conn:
             repository.set_progress(conn, 1, 'one', 'ru_de', dict(interval=9,repetitions=3,ease=2.5,due='2026-11-01'))
             conn.execute("CREATE TRIGGER reject_reset BEFORE INSERT ON study_reset_operations BEGIN SELECT RAISE(ABORT,'injected reset'); END")
@@ -363,35 +435,48 @@ class PerfektStorageTest(unittest.TestCase):
             self.assertFalse(repair.apply_reset_conn(conn, manifest, integration_verified=True)['replayed'])
             self.assertEqual(generations.generation_for(conn,1,'one'), 1)
             self.assertTrue(repair.apply_reset_conn(conn, manifest, integration_verified=True)['replayed'])
+            self.assertEqual(conn.execute("SELECT hilfsverb FROM words WHERE id='one'").fetchone()[0], 'hat')
 
-
-    def test_synonym_and_due_named_readers_keep_annotation(self):
-        first = storage.add_word(self.db, entry())
-        second = storage.add_word(self.db, entry(variant('finden','fand','gefunden'),wid='two'))
+    def test_synonym_and_due_named_readers_keep_hilfsverb(self):
+        storage.add_word(self.db, word())
+        storage.add_word(self.db, word('finden', 'fand', 'gefunden', wid='two', hilfsverb='wechsel'))
         candidates = storage.list_synonym_candidates_by_ru(self.db, 'one')
-        self.assertEqual(candidates[0][perfekt.FIELD], second[perfekt.FIELD])
-        storage.add_synonym_link(self.db, 'one', 'two')
-        group = {e['id']:e for e in storage.get_synonym_group(self.db, 'one')}
-        self.assertEqual(group['one'][perfekt.FIELD], first[perfekt.FIELD])
-        self.assertEqual(group['two'][perfekt.FIELD], second[perfekt.FIELD])
+        self.assertEqual(candidates[0]['hilfsverb'], 'wechsel')
+        self.assertTrue(storage.add_synonym_link(self.db, 'one', 'two')[0])
+        group = {e['id']: e for e in storage.get_synonym_group(self.db, 'one')}
+        self.assertEqual((group['one']['hilfsverb'], group['two']['hilfsverb']), ('hat', 'wechsel'))
         with repository.transaction(self.db) as conn:
             repository.append_event(conn,1,'one','ru_de',False)
             repository.set_progress(conn,1,'one','ru_de',dict(interval=1,repetitions=2,ease=2.5,due='2000-01-01'))
-        due = storage.select_due(self.db,1,'ru_de')
-        self.assertEqual(due[0][perfekt.FIELD], first[perfekt.FIELD])
+        self.assertEqual(storage.select_due(self.db,1,'ru_de')[0]['hilfsverb'], 'hat')
 
-    def test_frozen_legacy_and_annotated_entries_roundtrip_without_requery(self):
-        storage.add_word(self.db, {**entry(),perfekt.FIELD:None})
+    def test_synonym_links_for_normal_and_reflexive_constructions(self):
+        storage.add_word(self.db, word('treffen', 'traf', 'getroffen', wid='n1'))
+        storage.add_word(self.db, word('finden', 'fand', 'gefunden', wid='n2', hilfsverb=None))
+        storage.add_word(self.db, word('sich waschen', 'wusch sich', 'gewaschen', wid='a1', case='akkusativ'))
+        storage.add_word(self.db, word('sich duschen', 'duschte sich', 'geduscht', wid='a2', case='akkusativ'))
+        storage.add_word(self.db, word('sich vorstellen', 'stellte sich vor', 'vorgestellt', wid='d1', case='dativ'))
+        assert storage.add_synonym_link(self.db, 'n1', 'n2')[0]   # normal + unknown auxiliary
+        assert storage.add_synonym_link(self.db, 'a1', 'a2')[0]   # AKK + AKK
+        assert not storage.add_synonym_link(self.db, 'a1', 'd1')[0]  # AKK + DAT
+        assert not storage.add_synonym_link(self.db, 'n1', 'a1')[0]  # normal + reflexive
+
+    def test_frozen_entries_roundtrip_without_requery_and_ignore_retired_key(self):
+        storage.add_word(self.db, word(hilfsverb=None))
         with repository.transaction(self.db) as conn:
-            old = dict(conn.execute("SELECT * FROM words WHERE id='one'").fetchone())
-            frozen_legacy = generations.selected_entry(conn,1,storage._row_to_entry(conn.execute("SELECT * FROM words WHERE id='one'").fetchone()))
-            frozen_legacy = json.loads(json.dumps(frozen_legacy))
-            perfekt.apply_metadata_patch(conn,'one',{perfekt.FIELD:entry()[perfekt.FIELD]},expected_old=old)
-            frozen_new = generations.selected_entry(conn,1,storage._row_to_entry(conn.execute("SELECT * FROM words WHERE id='one'").fetchone()))
-            frozen_new = json.loads(json.dumps(frozen_new))
-        self.assertIsNone(perfekt.answer_tuples(frozen_legacy))
-        self.assertEqual(perfekt.answer_tuples(frozen_new),(('treffen','traf','hat getroffen'),))
-        self.assertIsNone(perfekt.answer_tuples({k:v for k,v in frozen_legacy.items() if k!=perfekt.FIELD}))
+            frozen_legacy = json.loads(json.dumps(generations.selected_entry(
+                conn, 1, storage._row_to_entry(conn.execute("SELECT * FROM words WHERE id='one'").fetchone()))))
+            conn.execute("UPDATE words SET hilfsverb='hat' WHERE id='one'")
+            frozen_new = json.loads(json.dumps(generations.selected_entry(
+                conn, 1, storage._row_to_entry(conn.execute("SELECT * FROM words WHERE id='one'").fetchone()))))
+        self.assertIsNone(frozen_legacy['hilfsverb'])
+        self.assertEqual(hilfsverb.answer_candidates(frozen_legacy)[0], {'treffen getroffen'})
+        self.assertEqual(hilfsverb.answer_candidates(frozen_new)[0], {'treffen hat getroffen', 'treffen getroffen'})
+        old_frame = {**frozen_new, 'perfekt_variants_json': '{"ignored": true}'}
+        self.assertEqual(hilfsverb.validate_entry(old_frame, allow_legacy_key=True)['hilfsverb'], 'hat')
+        with self.assertRaises(hilfsverb.HilfsverbValidationError):
+            hilfsverb.validate_entry(old_frame)
+
 
 if __name__ == '__main__':
     unittest.main()

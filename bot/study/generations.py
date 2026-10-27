@@ -85,8 +85,8 @@ def frame_generations(*entries):
 
 FROZEN_ANSWER_FIELDS = (
     'type', 'german', 'article', 'plural', 'infinitive', 'reflexive_case',
-    'prateritum', 'partizip2', 'komparativ', 'superlativ', 'perfect_aux', 'hilfsverb', 'aux',
-    'conjugation_praesens', 'conjugation_praeteritum', 'perfekt_variants_json',
+    'prateritum', 'partizip2', 'komparativ', 'superlativ', 'hilfsverb',
+    'conjugation_praesens', 'conjugation_praeteritum',
 )
 FROZEN_ADJECTIVE_FIELDS = (
     'german', 'komparativ', 'superlativ', 'adjective_degree_pairs',
@@ -106,6 +106,8 @@ def preserve_selected_entry(fresh, selected):
     for key in frozen_fields:
         # An old snapshot missing annotation is legacy, even after backfill.
         result[key] = deepcopy(selected.get(key))
+    # Retired schema21 JSON never travels into a refreshed runtime entry.
+    result.pop('perfekt_variants_json', None)
     result['answer_aliases'] = deepcopy(selected.get('answer_aliases', []))
     for key in ('study_generation', 'study_generations', 'learning_lifecycle', 'learning_lifecycles'):
         if key in selected:

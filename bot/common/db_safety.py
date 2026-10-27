@@ -47,8 +47,10 @@ from pathlib import Path
 #      is never run by ordinary bot startup.
 # 17 = remove weak-form modes, schema, settings, progress, and history. This is a
 #      destructive schema/data migration and is never run by ordinary startup.
+# 18-21 = study core, reflexive identity, learning requests, linked Perfekt JSON.
+# 22 = scalar words.hilfsverb (hat/ist/wechsel); converts and drops schema21 JSON.
 ADDITIVE_SCHEMA_VERSION = 15
-SCHEMA_VERSION = 21
+SCHEMA_VERSION = 22
 
 
 class DestructiveMigrationRequired(RuntimeError):
@@ -240,9 +242,14 @@ def run_healthcheck(db_path):
                            'consumed_at', 'word_generation', 'learning_lifecycle'):
                 if column not in {r[1] for r in conn.execute('PRAGMA table_info(learning_requests)')}:
                     missing.append('learning_requests.' + column)
-        if version >= 21:
-            if "perfekt_variants_json" not in {r[1] for r in conn.execute("PRAGMA table_info(words)")}:
-                missing.append("words.perfekt_variants_json")
+        word_columns = {r[1] for r in conn.execute("PRAGMA table_info(words)")}
+        if version == 21 and "perfekt_variants_json" not in word_columns:
+            missing.append("words.perfekt_variants_json")
+        if version >= 22:
+            if "hilfsverb" not in word_columns:
+                missing.append("words.hilfsverb")
+            if "perfekt_variants_json" in word_columns:
+                missing.append("retired words.perfekt_variants_json still present")
         if version >= 18:
             columns = {r[1] for r in conn.execute("PRAGMA table_info(learning_items)")}
             missing.extend("learning_items." + c for c in
@@ -652,9 +659,9 @@ def _apply_migration_dispatcher(db_path, today=None, expected_fingerprint=None):
                 "source DB changed after destructive migration dry-run; run a new dry-run"
             )
         current = int(conn.execute("PRAGMA user_version").fetchone()[0])
-        if current not in {ADDITIVE_SCHEMA_VERSION, 16, 17, 18, 19, 20}:
+        if current not in {ADDITIVE_SCHEMA_VERSION, 16, 17, 18, 19, 20, 21}:
             raise RuntimeError(
-                f"migration dispatcher requires v{ADDITIVE_SCHEMA_VERSION}, v16, v17, v18, v19, or v20, "
+                f"migration dispatcher requires v{ADDITIVE_SCHEMA_VERSION}, v16, v17, v18, v19, v20, or v21, "
                 f"got v{current}"
             )
         if current == ADDITIVE_SCHEMA_VERSION:
@@ -684,6 +691,11 @@ def _apply_migration_dispatcher(db_path, today=None, expected_fingerprint=None):
             from ..study.schema_v21 import migrate as migrate_v21
             steps["perfekt_v21"] = migrate_v21(conn)
             conn.execute("PRAGMA user_version = 21")
+            current = 21
+        if current == 21:
+            from ..study.schema_v22 import migrate as migrate_v22
+            steps["hilfsverb_v22"] = migrate_v22(conn)
+            conn.execute("PRAGMA user_version = 22")
         counts_in_transaction = _table_counts(conn)
         _validate_destructive_counts(before, counts_in_transaction, steps)
         integrity = conn.execute("PRAGMA integrity_check").fetchone()[0]
@@ -805,7 +817,12 @@ def dry_run_migration(db_path, today=None):
     try:
         copy = Path(tmpdir) / "words.db"
         backup_database(src, copy)  # consistent copy of live data (preserves user_version)
-        report = _apply_migration_dispatcher(str(copy), today=today)
+        from ..study.schema_v22 import UnsupportedLegacyPerfekt
+        try:
+            report = _apply_migration_dispatcher(str(copy), today=today)
+        except UnsupportedLegacyPerfekt as exc:
+            # Documented refusal: never default unsupported annotations.
+            return {"ok": False, "dry_run": True, "error": str(exc), "unsupported": exc.cases}
         report["dry_run"] = True
         report["source_counts"] = table_counts(db_path)
         report["ok"] = bool(report["healthcheck"]["ok"])

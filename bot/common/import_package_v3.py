@@ -1,4 +1,8 @@
-"""Atomic consumer for the frozen data18 + PONS preparation envelope."""
+"""Retired consumer for the frozen data18 + PONS schema21 envelope.
+
+bind/preflight/apply refuse through the retired v2 schema gate; the approved
+clean bundle is consumed by common.import_clean_bundle instead.
+"""
 
 from contextlib import contextmanager
 from copy import deepcopy

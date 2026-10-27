@@ -187,27 +187,30 @@ def init_db(db_path, *, _additive_only=False):
     """Handle init db."""
     with _connect(db_path) as conn:
         version = int(conn.execute("PRAGMA user_version").fetchone()[0])
-        if version > 21:
-            raise RuntimeError(f"database schema v{version} is newer than supported v21")
+        if version > 22:
+            raise RuntimeError(f"database schema v{version} is newer than supported v22")
         fresh = not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='words'").fetchone()
-        if not fresh and version == 21:
-            for table, column in (("words", "reflexive_case"), ("words", "perfekt_variants_json"), ("quiz_events", "study_generation"),
+        if not fresh and version == 22:
+            word_columns = {r[1] for r in conn.execute("PRAGMA table_info(words)")}
+            if "perfekt_variants_json" in word_columns:
+                raise RuntimeError("incomplete schema22: retired words.perfekt_variants_json")
+            for table, column in (("words", "reflexive_case"), ("words", "hilfsverb"), ("quiz_events", "study_generation"),
                                   ("conjugation_passes", "prompt_snapshot_json"),
                                   ("conjugation_admissions", "study_generation"),
                                   ("study_word_generations", "generation"), ("study_reset_operations", "manifest_sha256"),
                                   ("learning_requests", "learning_lifecycle"), ("learning_requests", "request_id")):
                 if column not in {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}:
-                    raise RuntimeError("incomplete schema21: " + table + "." + column)
+                    raise RuntimeError("incomplete schema22: " + table + "." + column)
             required = {'user_id', 'word_id', 'status', 'request_id', 'queued_at',
                         'consumed_at', 'word_generation', 'learning_lifecycle'}
             columns = {r[1] for r in conn.execute('PRAGMA table_info(learning_requests)')}
             if required - columns:
-                raise RuntimeError('incomplete schema21: learning_requests.' + sorted(required - columns)[0])
+                raise RuntimeError('incomplete schema22: learning_requests.' + sorted(required - columns)[0])
             _seed_topics(conn)
             return
-        if not fresh and version < 21 and not _additive_only:
+        if not fresh and version < 22 and not _additive_only:
             from .common.db_safety import DestructiveMigrationRequired
-            raise DestructiveMigrationRequired("schema21 requires explicit migration")
+            raise DestructiveMigrationRequired("schema22 requires explicit migration")
         conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS words (
@@ -431,17 +434,17 @@ def init_db(db_path, *, _additive_only=False):
             """
         )
         _ensure_schema(conn)
-        if fresh or version == 21:
+        if fresh:
             from .study.schema_v18 import ensure_schema
             ensure_schema(conn)
             from .study.schema_v19 import ensure_schema as ensure_v19
             ensure_v19(conn)
             from .study.schema_v20 import ensure_schema as ensure_v20
             ensure_v20(conn)
-            from .study.schema_v21 import ensure_schema as ensure_v21
-            ensure_v21(conn)
-            if fresh:
-                conn.execute("PRAGMA user_version=21")
+            # Fresh databases never get the retired schema21 JSON column.
+            from .study.schema_v22 import ensure_schema as ensure_v22
+            ensure_v22(conn)
+            conn.execute("PRAGMA user_version=22")
 
 
 def _seed_topics(conn):
@@ -737,7 +740,7 @@ def _row_to_entry(row):
         "id": row["id"],
         "type": row["type"],
         "reflexive_case": row["reflexive_case"] if "reflexive_case" in row.keys() else None,
-        "perfekt_variants_json": row["perfekt_variants_json"] if "perfekt_variants_json" in row.keys() else None,
+        "hilfsverb": row["hilfsverb"] if "hilfsverb" in row.keys() else None,
         "article": row["article"] or "",
         "german": row["german"] or "",
         "plural": row["plural"] or "",
@@ -800,7 +803,7 @@ def load_words(db_path):
     with _connect(db_path) as conn:
         rows = conn.execute(
             """
-            SELECT id, perfekt_variants_json, reflexive_case, conjugation_praesens, conjugation_praeteritum, is_separable, type, article, german, plural, infinitive, prateritum, partizip2, komparativ, superlativ,
+            SELECT id, hilfsverb, reflexive_case, conjugation_praesens, conjugation_praeteritum, is_separable, type, article, german, plural, infinitive, prateritum, partizip2, komparativ, superlativ,
             russian, ukrainian, english, topic
             FROM words
             ORDER BY created_at ASC
@@ -839,7 +842,7 @@ def next_conjugation_word(db_path, user_id, mode, min_repetitions=CONJUGATION_MI
     with _connect(db_path) as conn:
         row = conn.execute(
             """
-            SELECT w.id, w.perfekt_variants_json, w.reflexive_case, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum,
+            SELECT w.id, w.hilfsverb, w.reflexive_case, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum,
                    w.partizip2, w.komparativ, w.superlativ, w.russian, w.ukrainian, w.english,
                    w.image, w.example, w.topic, w.preposition_type, w.case_type,
                    w.conjugation_praesens, w.conjugation_praeteritum, w.is_separable,
@@ -2108,7 +2111,7 @@ def find_existing_word(db_path, raw_word):
     with _connect(db_path) as conn:
         row = conn.execute(
             """
-            SELECT id, perfekt_variants_json, reflexive_case, conjugation_praesens, conjugation_praeteritum, is_separable, type, article, german, plural, infinitive, prateritum, partizip2, russian,
+            SELECT id, hilfsverb, reflexive_case, conjugation_praesens, conjugation_praeteritum, is_separable, type, article, german, plural, infinitive, prateritum, partizip2, russian,
             ukrainian, english, topic, preposition_type, case_type
             FROM words
             WHERE lower(trim(german)) = ?
@@ -2126,7 +2129,7 @@ def find_existing_word(db_path, raw_word):
         # Fallback for composite verb forms like "hat gesehen" and multi-value fields.
         rows = conn.execute(
             """
-            SELECT id, perfekt_variants_json, reflexive_case, conjugation_praesens, conjugation_praeteritum, is_separable, type, article, german, plural, infinitive, prateritum, partizip2, russian,
+            SELECT id, hilfsverb, reflexive_case, conjugation_praesens, conjugation_praeteritum, is_separable, type, article, german, plural, infinitive, prateritum, partizip2, russian,
             ukrainian, english, topic
             FROM words
             """
@@ -2267,7 +2270,7 @@ def add_word(db_path, entry):
     for field in ("conjugation_praesens", "conjugation_praeteritum"):
         raw = entry.get(field, "")
         entry[field] = parse_conjugation(raw) if str(raw or "").strip() else ""
-    from .common.perfekt import validate_entry
+    from .common.hilfsverb import validate_entry
     entry = validate_entry(entry)
     init_db(db_path)
     if entry.get("id") in (None, "", "unique"):
@@ -2281,7 +2284,7 @@ def add_word(db_path, entry):
             INSERT INTO words (
                 id, type, article, german, plural, infinitive, prateritum, partizip2, komparativ, superlativ,
                 russian, ukrainian, english, image, example, topic, preposition_type, case_type, cefr_level,
-                is_separable, conjugation_praesens, conjugation_praeteritum, reflexive_case, perfekt_variants_json, updated_at
+                is_separable, conjugation_praesens, conjugation_praeteritum, reflexive_case, hilfsverb, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             """,
             (
@@ -2308,7 +2311,7 @@ def add_word(db_path, entry):
                 entry["conjugation_praesens"],
                 entry["conjugation_praeteritum"],
                 entry["reflexive_case"],
-                entry.get("perfekt_variants_json"),
+                entry.get("hilfsverb"),
             ),
         )
         conn.execute("INSERT OR IGNORE INTO topics(name) VALUES (?)", (_safe_text(entry.get("topic", "1")) or "1",))
@@ -2415,7 +2418,7 @@ def select_due(
     query = f"""
         SELECT
             COALESCE((SELECT generation FROM study_word_generations sg WHERE sg.user_id=? AND sg.word_id=w.id),0) AS selected_generation,
-            w.id, w.perfekt_variants_json, w.reflexive_case, w.conjugation_praesens, w.conjugation_praeteritum, w.is_separable, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ, w.russian,
+            w.id, w.hilfsverb, w.reflexive_case, w.conjugation_praesens, w.conjugation_praeteritum, w.is_separable, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ, w.russian,
             w.ukrainian, w.english, w.image, w.example, w.topic, w.preposition_type, w.case_type, ldone.done_at AS learning_done_at,
             CASE WHEN EXISTS (
                 SELECT 1
@@ -3070,7 +3073,7 @@ def list_words_for_translations_backfill(db_path, limit=0):
     """Handle list words for translations backfill."""
     init_db(db_path)
     query = """
-        SELECT id, perfekt_variants_json, reflexive_case, conjugation_praesens, conjugation_praeteritum, is_separable, type, article, german, plural, infinitive, prateritum, partizip2, russian, ukrainian, english, topic
+        SELECT id, hilfsverb, reflexive_case, conjugation_praesens, conjugation_praeteritum, is_separable, type, article, german, plural, infinitive, prateritum, partizip2, russian, ukrainian, english, topic
         FROM words
         WHERE trim(coalesce(ukrainian, '')) = '' OR trim(coalesce(english, '')) = ''
         ORDER BY created_at ASC
@@ -3114,6 +3117,10 @@ def update_word_fields(db_path, word_id, fields):
         if not row:
             return
         old = dict(row)
+        from .common.hilfsverb import LEGACY_FIELD, HilfsverbValidationError
+        if LEGACY_FIELD in dict(fields or {}):
+            # Stale callers must fail whole, not apply only their remaining fields.
+            raise HilfsverbValidationError("retired perfekt_variants_json")
         allowed = set(old) - {"id", "created_at", "updated_at"}
         patch = {k: v for k, v in dict(fields or {}).items() if k in allowed}
         # Keep legacy preposition edits tolerant while validating verb metadata
@@ -3146,9 +3153,9 @@ def update_word_fields(db_path, word_id, fields):
             candidate["is_separable"] = _safe_is_separable(patch["is_separable"])
         if "cefr_level" in patch:
             candidate["cefr_level"] = _safe_cefr_level(patch["cefr_level"])
-        from .common.perfekt import FIELD, PerfektValidationError, validate_entry
+        from .common.hilfsverb import FIELD, HilfsverbValidationError, validate_entry
         if old.get(FIELD) is not None and candidate.get(FIELD) is None:
-            raise PerfektValidationError("cannot discard annotated Perfekt")
+            raise HilfsverbValidationError("cannot discard known hilfsverb")
         candidate = validate_entry(candidate)
         keys = set(patch)
         if structural.intersection(patch):
@@ -3250,7 +3257,7 @@ def get_synonym_group(db_path, word_id):
         group_id = int(row["group_id"])
         rows = conn.execute(
             """
-            SELECT w.id, w.perfekt_variants_json, w.reflexive_case, w.conjugation_praesens, w.conjugation_praeteritum, w.is_separable, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ, w.russian
+            SELECT w.id, w.hilfsverb, w.reflexive_case, w.conjugation_praesens, w.conjugation_praeteritum, w.is_separable, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ, w.russian
             , w.ukrainian, w.english, w.topic, w.preposition_type, w.case_type
             FROM word_synonyms s
             JOIN words w ON w.id = s.word_id
@@ -3340,7 +3347,7 @@ def list_synonym_candidates_by_ru(db_path, anchor_word_id):
     with _connect(db_path) as conn:
         rows = conn.execute(
             """
-            SELECT id, perfekt_variants_json, reflexive_case, conjugation_praesens, conjugation_praeteritum, is_separable, type, article, german, plural, infinitive, prateritum, partizip2, russian
+            SELECT id, hilfsverb, reflexive_case, conjugation_praesens, conjugation_praeteritum, is_separable, type, article, german, plural, infinitive, prateritum, partizip2, russian
             , ukrainian, english, image, example, topic, preposition_type, case_type
             FROM words
             WHERE lower(trim(type)) = ?
@@ -3364,7 +3371,7 @@ def get_word_by_id(db_path, word_id):
     with _connect(db_path) as conn:
         row = conn.execute(
             """
-            SELECT id, perfekt_variants_json, reflexive_case, type, article, german, plural, infinitive, prateritum, partizip2,
+            SELECT id, hilfsverb, reflexive_case, type, article, german, plural, infinitive, prateritum, partizip2,
               komparativ, superlativ, russian, ukrainian, english, image, example,
               topic, preposition_type, case_type,
               conjugation_praesens, conjugation_praeteritum, cefr_level, is_separable
@@ -3385,7 +3392,7 @@ def list_all_words(db_path):
     with _connect(db_path) as conn:
         rows = conn.execute(
             """
-            SELECT id, perfekt_variants_json, reflexive_case, conjugation_praesens, conjugation_praeteritum, type, article, german, plural, infinitive, prateritum, partizip2, russian
+            SELECT id, hilfsverb, reflexive_case, conjugation_praesens, conjugation_praeteritum, type, article, german, plural, infinitive, prateritum, partizip2, russian
             , ukrainian, english, image, example, topic, preposition_type, case_type,
               is_separable
             FROM words
@@ -3401,7 +3408,7 @@ def list_words_by_topic(db_path, topic):
     with _connect(db_path) as conn:
         rows = conn.execute(
             """
-            SELECT id, perfekt_variants_json, reflexive_case, conjugation_praesens, conjugation_praeteritum, is_separable, type, article, german, plural, infinitive, prateritum, partizip2, russian
+            SELECT id, hilfsverb, reflexive_case, conjugation_praesens, conjugation_praeteritum, is_separable, type, article, german, plural, infinitive, prateritum, partizip2, russian
             , ukrainian, english, image, example, topic, preposition_type, case_type
             FROM words
             WHERE topic = ?
@@ -3419,7 +3426,7 @@ def list_learning_active_words(db_path, user_id):
         rows = conn.execute(
             """
             SELECT
-                w.id, w.perfekt_variants_json, w.reflexive_case, w.conjugation_praesens, w.conjugation_praeteritum, w.is_separable, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.russian
+                w.id, w.hilfsverb, w.reflexive_case, w.conjugation_praesens, w.conjugation_praeteritum, w.is_separable, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.russian
                 , w.ukrainian, w.english, w.topic, w.preposition_type, w.case_type
             FROM learning_items li
             JOIN words w ON w.id = li.word_id
@@ -3508,7 +3515,7 @@ def find_word_by_value(db_path, token):
     with _connect(db_path) as conn:
         row = conn.execute(
             """
-            SELECT id, perfekt_variants_json, reflexive_case, conjugation_praesens, conjugation_praeteritum, is_separable, type, article, german, plural, infinitive, prateritum, partizip2, russian
+            SELECT id, hilfsverb, reflexive_case, conjugation_praesens, conjugation_praeteritum, is_separable, type, article, german, plural, infinitive, prateritum, partizip2, russian
             , ukrainian, english, image, example, topic, preposition_type, case_type
             FROM words
             WHERE id = ?
@@ -3627,7 +3634,7 @@ def list_pending_word_flags(db_path, limit=0):
             f.user_id AS flag_user_id,
             f.comment AS flag_comment,
             f.created_at AS flag_created_at,
-            w.id, w.perfekt_variants_json, w.reflexive_case, w.conjugation_praesens, w.conjugation_praeteritum, w.is_separable, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ, w.russian
+            w.id, w.hilfsverb, w.reflexive_case, w.conjugation_praesens, w.conjugation_praeteritum, w.is_separable, w.type, w.article, w.german, w.plural, w.infinitive, w.prateritum, w.partizip2, w.komparativ, w.superlativ, w.russian
             , w.ukrainian, w.english, w.topic, w.preposition_type, w.case_type
         FROM word_flags f
         JOIN words w ON w.id = f.word_id
@@ -3876,7 +3883,7 @@ def list_words_for_vf_recheck(db_path, only_unchecked=False):
     with _connect(db_path) as conn:
         rows = conn.execute(
             """
-            SELECT id, perfekt_variants_json, reflexive_case, conjugation_praesens, conjugation_praeteritum, is_separable, type, article, german, infinitive, vf_checked_at
+            SELECT id, hilfsverb, reflexive_case, conjugation_praesens, conjugation_praeteritum, is_separable, type, article, german, infinitive, vf_checked_at
             FROM words
             ORDER BY created_at ASC
             """

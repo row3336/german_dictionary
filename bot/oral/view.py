@@ -3,6 +3,7 @@
 from telegram import ReplyKeyboardMarkup
 
 from ..i18n import t
+from ..common import hilfsverb
 from ..common.verb_construction import display_infinitive, construction_label, reflexive_hint
 from ..ui.formatting import (
     _entry_translation, _example_lines, _format_de_ru_question, _format_ru_question,
@@ -15,9 +16,7 @@ def question(entry, mode):
     if mode.removeprefix('phrase_').startswith('de_'):
         return _format_de_ru_question(entry)
     text = _format_ru_question(entry, dictionary_language(mode))
-    # Linked examples contain the very Perfekt reference being recalled.
-    example = ([] if entry.get('type') == 'verb' and entry.get('perfekt_variants_json') is not None
-               else _example_lines(entry.get('example', ''))[:1])
+    example = _example_lines(entry.get('example', ''))[:1]
     if example:
         text += '\n\n' + _md_escape(example[0])
     return text
@@ -29,7 +28,7 @@ def answer(entry, mode):
     value = (display_infinitive(entry) + reflexive_hint(entry)
              if entry.get('type') == 'verb' else str(entry.get('german') or '').strip())
     lines = ['>>>    *' + _md_escape(value) + '*']
-    if entry.get('type') == 'verb' and entry.get('perfekt_variants_json') is not None:
+    if entry.get('type') == 'verb' and hilfsverb.value(entry) is not None:
         _append_verb_forms(lines, entry)
     return '\n'.join(lines)
 

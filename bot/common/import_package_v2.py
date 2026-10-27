@@ -1,4 +1,9 @@
-"""Versioned conn-owned dictionary import. No implicit migration or DB path."""
+"""Retired schema21 linked-Perfekt dictionary import (historical audit only).
+
+Its packages write perfekt_variants_json, which schema22 converted to the
+scalar words.hilfsverb and dropped. Every DB entry point refuses; the approved
+clean bundle is consumed by common.import_clean_bundle instead.
+"""
 from contextlib import contextmanager
 from copy import deepcopy
 import json
@@ -15,7 +20,11 @@ RECEIPT_SCHEMA = "gd-dictionary-import-receipt/v2"
 REPAIR_IDS = {"fb358512-a98a-5f0e-a667-644aa6c5bf5e", "f749184e-2226-5175-b761-04a4d99a19ef"}
 SCALAR_CORRECTIONS = {"backen", "geboren werden", "hängen", "senden"}
 
+RETIRED = "retired schema21 linked-Perfekt importer; use common.import_clean_bundle"
+
+
 def _schema(conn):
+    raise ValueError(RETIRED)
     if conn.row_factory is not sqlite3.Row:
         raise ValueError("import requires sqlite3.Row connection")
     if conn.execute("PRAGMA user_version").fetchone()[0] != 21:

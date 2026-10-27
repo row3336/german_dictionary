@@ -39,7 +39,7 @@ class ExistingUserFiltersTest(unittest.TestCase):
         self.conn = sqlite3.connect(self.db)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys=ON")
-        self.conn.execute("PRAGMA user_version=21")
+        self.conn.execute("PRAGMA user_version=22")
         self.addCleanup(self.conn.close)
         for uid in range(101, 109):
             storage.register_or_update_user(str(self.db), uid, "synthetic", "Fixture")
@@ -148,11 +148,11 @@ class ExistingUserFiltersTest(unittest.TestCase):
         self.assertTrue(all(not e["present"] and e["value"] is None
                             for e in self.manifest["targets"][3]["before"].values()))
 
-    def test_schema20_approval_applies_on21_and_old_receipt_replays(self):
+    def test_schema20_approval_applies_on22_and_old_receipt_replays(self):
         self.conn.execute("PRAGMA user_version=20")
         manifest20 = ef.prepare(self.conn)
         self.assertEqual(manifest20, self.manifest)
-        self.conn.execute("PRAGMA user_version=21")
+        self.conn.execute("PRAGMA user_version=22")
         self.assertEqual(self.apply(manifest20)["state"], "applied")
         receipt = json.loads(self.conn.execute("SELECT value FROM app_settings WHERE key=?", (ef.RECEIPT_KEY,)).fetchone()[0])
         self.assertEqual(receipt["schema_version"], 20)
@@ -299,7 +299,7 @@ class ExistingUserFiltersTest(unittest.TestCase):
         self.assertEqual(_connection_fingerprint(self.conn), baseline)
 
     def test_schema_versions_and_empty_a1_and_empty_cohort_refuse_without_writes(self):
-        for version in (0, 19, 22):
+        for version in (0, 19, 23):
             self.conn.execute(f"PRAGMA user_version={version}")
             baseline = _connection_fingerprint(self.conn)
             with self.assertRaises(ef.ExistingUserFilterError):

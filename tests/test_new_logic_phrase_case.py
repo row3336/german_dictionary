@@ -88,7 +88,7 @@ class PhraseCaseTest(unittest.TestCase):
             ({"type": "nomen", "german": "HAUS", "article": "das", "plural": "HÄUSER"},
              "*🟢 das Haus 🟢*\n_pl. die Häuser_", "🟢 das Haus 🟢", "nomen - das Haus Häuser Перевод"),
             ({"type": "verb", "german": "GEHEN", "infinitive": "GEHEN", "prateritum": "GING",
-              "partizip2": "GEGANGEN", "perfect_aux": "ist"},
+              "partizip2": "GEGANGEN", "reflexive_case": "none", "hilfsverb": "ist"},
              "*gehen*\n_ging, ist gegangen_", "gehen", "verb - gehen ging gegangen Перевод"),
             ({"type": "adjektiv", "german": "GUT", "komparativ": "BESSER", "superlativ": "AM BESTEN"},
              "*gut*\n_  besser, am besten_", "gut", "adjektiv - gut besser am besten Перевод"),
