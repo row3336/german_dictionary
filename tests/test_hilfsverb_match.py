@@ -41,7 +41,7 @@ class HilfsverbMatchTests(unittest.TestCase):
         self.flag(True)
         for frame in (None, {}, {P.FRAME_KEY: {}}, {P.FRAME_KEY: {'hilfsverb': 'true'}}):
             self.assertFalse(P.rules(frame).hilfsverb)
-        self.assertFalse(P.rules({P.FRAME_KEY: {'hilfsverb': True, 'prateritum': True}}).prateritum)
+        self.assertTrue(P.rules({P.FRAME_KEY: {'hilfsverb': True, 'prateritum': True}}).prateritum)
 
     def test_punctuation_case_newlines_keep_order_and_wrong_tokens(self):
         e = fixture.entry()
@@ -83,7 +83,7 @@ class HilfsverbMatchTests(unittest.TestCase):
             self.assertEqual(len(texts[0].splitlines()), 2)
             self.assertLess(texts[-1].index(t(lang, 'hilfsverb_match_status')), texts[-1].index(t(lang, 'ses_rtr_gap')))
             self.assertIn('• [ON] - ' + t(lang, 'hilfsverb_match_status'), texts[-1])
-            self.assertEqual(K._fsrs_settings_menu_keys(1)[-1], ['Hilfsverb_match', t(lang, 'back')])
+            self.assertEqual(K._fsrs_settings_menu_keys(1)[-1], ['Prateritum_match', 'Hilfsverb_match', t(lang, 'back')])
             self.assertFalse(P.enabled(self.db, 2))
             asyncio.run(S.fsrs_settings_menu_choice(self.update('Hilfsverb_match'), self.ctx))
             self.assertFalse(P.enabled(self.db, 1))

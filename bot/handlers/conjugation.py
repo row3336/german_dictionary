@@ -6,6 +6,8 @@ import uuid
 from ..common.verb_construction import display_infinitive, construction_label, reflexive_hint
 from ..study.generations import frame_generations
 
+from ..common import match_policy
+
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, Update
 from telegram.error import TelegramError
 from telegram.ext import ContextTypes
@@ -199,7 +201,7 @@ async def start_conjugation(update: Update, context: ContextTypes.DEFAULT_TYPE):
         uid = update.effective_user.id
         old = context.user_data.get(FRAME)
         flow = old["flow_id"] if old and old.get("kind") == "preparation" else uuid.uuid4().hex
-        result = _service().preparation(uid, _mode_l1_de(uid), _transport_id(update), flow)
+        result = _service().preparation(uid, _mode_l1_de(uid), _transport_id(update), flow, new_session=True)
         if _recovered_undo(context, result):
             return await _back_to_tests(update, context)
         if result.get("replayed"):
@@ -208,6 +210,7 @@ async def start_conjugation(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return CONJUGATION_MENU
         context.user_data[FRAME] = _new_frame(_mode_l1_de(uid), "preparation")
         context.user_data[FRAME]["flow_id"] = flow
+        context.user_data[FRAME][match_policy.FRAME_KEY] = result.get(match_policy.FRAME_KEY, {})
         context.user_data[_SESSION_COUNT] = 0
         context.user_data.pop(_CURRENT_ID, None)
         context.user_data.pop(_CARD_ENTRIES, None)
@@ -283,7 +286,7 @@ async def conjugation_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if text == t(lang, "conjugation_next"):
             viewed = context.user_data.get(_CURRENT_ID)
             result = _service().preparation(uid, frame["pair"], _transport_id(update), frame["flow_id"], viewed_id=viewed,
-                expected_generation=(frame.get("entry") or {}).get("study_generation", 0))
+                expected_generation=(frame.get("entry") or {}).get("study_generation", 0), rules=match_policy.rules(frame))
             if not result.get("replayed") and not result.get("stale") and viewed:
                 context.user_data[_SESSION_COUNT] = context.user_data.get(_SESSION_COUNT, 0) + 1
             return await _render_preparation(update, context, result)
@@ -347,7 +350,7 @@ async def conjugation_card_callback(update: Update, context: ContextTypes.DEFAUL
             result = _service().transition(
                 uid, frame["pair"], target["word_id"], target["tense"], target["revision"],
                 target["cycle"], target["operation"], _transport_id(update), frame["flow_id"],
-                expected_generation=target.get("study_generation", 0))
+                expected_generation=target.get("study_generation", 0), rules=match_policy.rules(frame))
             if _recovered_undo(context, result):
                 return await _back_to_tests(proxy_update, context)
             if result.get("stale"):
@@ -359,6 +362,7 @@ async def conjugation_card_callback(update: Update, context: ContextTypes.DEFAUL
             _remember_callback_commit(context, transport)
             if frame["kind"] == "test":
                 context.user_data[FRAME] = _new_frame(frame["pair"], "preparation")
+                context.user_data[FRAME][match_policy.FRAME_KEY] = frame.get(match_policy.FRAME_KEY, {})
                 return await _render_preparation(proxy_update, context, result, primer=True)
             return await _render_preparation(proxy_update, context, result)
         if len(data) != 2 or data[1] not in ("hide", "show") or frame.get("kind") != "preparation":

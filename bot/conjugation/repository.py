@@ -5,6 +5,8 @@ import random
 import uuid
 
 from ..common.conjugation import PRONOUNS
+from ..common.hilfsverb import DEFAULT_RULES
+from ..common.match_policy import snapshot
 from .domain import eligible_word, forms_for, StaleAction
 from ..study.generations import generation_for
 
@@ -17,7 +19,7 @@ def block_key(block):
     return (block['user_id'], block['pair'], block['word_id'], block['tense'])
 
 
-def sync_blocks(conn, user_id, pair):
+def sync_blocks(conn, user_id, pair, rules=DEFAULT_RULES):
     """Materialize only admitted, confirmed eligible tables; never reset old state."""
     entries = conn.execute(
         """SELECT w.* FROM words w JOIN conjugation_admissions a ON a.word_id=w.id
@@ -28,7 +30,7 @@ def sync_blocks(conn, user_id, pair):
     for row in entries:
         entry = dict(row)
         for tense in ('praesens', 'praeteritum'):
-            if forms_for(entry, tense):
+            if forms_for(entry, tense, rules):
                 conn.execute(
                     """INSERT INTO conjugation_blocks(user_id,pair,word_id,tense)
                        VALUES (?,?,?,?) ON CONFLICT DO NOTHING""",
@@ -40,19 +42,19 @@ def word(conn, word_id):
     return asdict(conn.execute('SELECT * FROM words WHERE id=?', (word_id,)).fetchone())
 
 
-def block(conn, user_id, pair, word_id, tense, *, valid=True):
+def block(conn, user_id, pair, word_id, tense, *, valid=True, rules=DEFAULT_RULES):
     row = asdict(conn.execute(
         """SELECT * FROM conjugation_blocks
            WHERE user_id=? AND pair=? AND word_id=? AND tense=?""",
         (user_id, pair, word_id, tense),
     ).fetchone())
     entry = word(conn, word_id)
-    if row and (not valid or (current_admission(conn, user_id, pair, word_id) and eligible_word(entry) and forms_for(entry, tense))):
+    if row and (not valid or (current_admission(conn, user_id, pair, word_id) and eligible_word(entry) and forms_for(entry, tense, rules))):
         return row
     return None
 
 
-def blocks(conn, user_id, pair):
+def blocks(conn, user_id, pair, rules=DEFAULT_RULES):
     result = []
     for row in conn.execute(
         'SELECT * FROM conjugation_blocks WHERE user_id=? AND pair=? ORDER BY due,word_id,tense',
@@ -60,16 +62,16 @@ def blocks(conn, user_id, pair):
     ).fetchall():
         item = dict(row)
         entry = word(conn, item['word_id'])
-        if current_admission(conn, user_id, pair, item['word_id']) and eligible_word(entry) and forms_for(entry, item['tense']):
+        if current_admission(conn, user_id, pair, item['word_id']) and eligible_word(entry) and forms_for(entry, item['tense'], rules):
             item['study_generation'] = generation_for(conn, user_id, item['word_id'])
             item['entry'] = entry
             result.append(item)
     return result
 
 
-def preparation(conn, user_id, pair):
+def preparation(conn, user_id, pair, rules=DEFAULT_RULES):
     """Use the existing view weights, restricted to unprepared time blocks."""
-    items = blocks(conn, user_id, pair)
+    items = blocks(conn, user_id, pair, rules)
     by_word = {}
     for item in items:
         if item['phase'] == 'preparation':
@@ -88,7 +90,7 @@ def preparation(conn, user_id, pair):
             pending = by_word[row['id']]
             entry = dict(pending[0]['entry'])
             for tense in ('praesens', 'praeteritum'):
-                if any(x['tense'] == tense and x['phase'] == 'test' for x in items if x['word_id'] == entry['id']):
+                if not any(x['tense'] == tense and x['phase'] == 'preparation' for x in pending):
                     entry['conjugation_' + tense] = ''
             entry['study_generation'] = generation_for(conn, user_id, entry['id'])
             return {'entry': entry, 'blocks': [x for x in items if x['word_id'] == entry['id']]}
@@ -120,7 +122,7 @@ def srs(block):
     return {key: block[key] for key in ('interval', 'repetitions', 'ease', 'due')}
 
 
-def select_pass(conn, user_id, pair, today, now_iso):
+def select_pass(conn, user_id, pair, today, now_iso, rules=DEFAULT_RULES):
     """Resume first; future next-pass due does not block unfinished training."""
     for row in conn.execute(
         """SELECT * FROM conjugation_passes WHERE user_id=? AND pair=? AND status='active'
@@ -128,9 +130,9 @@ def select_pass(conn, user_id, pair, today, now_iso):
     ).fetchall():
         active = dict(row)
         current = block(conn, user_id, pair, active['word_id'], active['tense'], valid=False)
-        if current and pass_generation_valid(conn, active) and current_admission(conn, user_id, pair, active['word_id']) and eligible_word(word(conn, active['word_id'])) and current['phase'] == 'test' and current['cycle'] == active['cycle']:
+        if current and pass_generation_valid(conn, active) and current_admission(conn, user_id, pair, active['word_id']) and eligible_word(word(conn, active['word_id'])) and forms_for(word(conn, active['word_id']), active['tense'], rules) and current['phase'] == 'test' and current['cycle'] == active['cycle']:
             return active
-    candidates = [b for b in blocks(conn, user_id, pair) if b['phase'] == 'test' and b['due'] <= today.isoformat()]
+    candidates = [b for b in blocks(conn, user_id, pair, rules) if b['phase'] == 'test' and b['due'] <= today.isoformat()]
     if not candidates:
         return None
     current = candidates[0]
@@ -142,9 +144,9 @@ def select_pass(conn, user_id, pair, today, now_iso):
            pronoun_order_json,expected_forms_json,baseline_srs_json,started_at,prompt_snapshot_json)
            VALUES (?,?,?,?,?,?,'active',?,?,?,?,?)""",
         (pid, user_id, pair, current['word_id'], current['tense'], current['cycle'],
-         json.dumps(order), json.dumps(forms_for(current['entry'], current['tense'])),
+         json.dumps(order), json.dumps(forms_for(current['entry'], current['tense'], rules)),
          json.dumps(srs(current)), now_iso, json.dumps({"v": 1, "word": current["entry"].get("infinitive") or current["entry"].get("german", ""),
-             "reflexive_case": current["entry"].get("reflexive_case"), "study_generation": generation_for(conn, user_id, current["word_id"]), "legacy": False})),
+             "reflexive_case": current["entry"].get("reflexive_case"), "study_generation": generation_for(conn, user_id, current["word_id"]), "legacy": False, "match_policy": snapshot(rules)})),
     )
     return pass_row(conn, user_id, pid)
 
@@ -168,12 +170,12 @@ def question(conn, current):
     }
 
 
-def assert_pass(conn, user_id, pair, pass_id, revision):
+def assert_pass(conn, user_id, pair, pass_id, revision, rules=DEFAULT_RULES):
     current = pass_row(conn, user_id, pass_id)
     if not current or current['pair'] != pair or current['status'] != 'active' or current['revision'] != revision:
         raise StaleAction('stale pass')
     b = block(conn, user_id, pair, current['word_id'], current['tense'], valid=False)
-    if not b or not pass_generation_valid(conn, current) or not current_admission(conn, user_id, pair, current['word_id']) or not eligible_word(word(conn, current['word_id'])) or b['phase'] != 'test' or b['cycle'] != current['cycle']:
+    if not b or not pass_generation_valid(conn, current) or not current_admission(conn, user_id, pair, current['word_id']) or not eligible_word(word(conn, current['word_id'])) or not forms_for(word(conn, current['word_id']), current['tense'], rules) or b['phase'] != 'test' or b['cycle'] != current['cycle']:
         raise StaleAction('ineligible block')
     return current
 

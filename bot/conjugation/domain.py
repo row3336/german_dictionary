@@ -5,6 +5,7 @@ from datetime import date
 
 from ..common.conjugation import PRONOUNS, parse_conjugation, takes_praeteritum
 from ..common.verb_construction import validate_conjugation, form_alternatives, unverified_reflexive
+from ..common.hilfsverb import DEFAULT_RULES
 from ..study.srs import update_fsrs
 from ..text_utils import normalize_answer
 
@@ -17,11 +18,11 @@ class StaleAction(ValueError):
     """An action no longer belongs to an eligible live block or pass."""
 
 
-def forms_for(entry, tense):
+def forms_for(entry, tense, rules=DEFAULT_RULES):
     """Return six complete canonical forms; invalid/missing text is ineligible."""
     if tense not in TENSES or unverified_reflexive(entry):
         return None
-    if tense == 'praeteritum' and not takes_praeteritum(entry.get('infinitive')):
+    if tense == 'praeteritum' and not rules.prateritum and not takes_praeteritum(entry.get('infinitive')):
         return None
     try:
         canonical = validate_conjugation(entry, entry.get('conjugation_' + tense, ''))

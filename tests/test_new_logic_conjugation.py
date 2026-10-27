@@ -26,6 +26,7 @@ class ConjugationTests(unittest.TestCase):
         self.conn.row_factory = sqlite3.Row
         self.conn.execute('PRAGMA foreign_keys=ON')
         self.conn.executescript('''
+            CREATE TABLE user_settings(user_id INTEGER,key TEXT,value TEXT,PRIMARY KEY(user_id,key));
             CREATE TABLE users(user_id INTEGER PRIMARY KEY,status TEXT);
             INSERT INTO users VALUES(7,'approved'),(8,'approved'),(9,'pending');
             CREATE TABLE words(id TEXT PRIMARY KEY,type TEXT,german TEXT,infinitive TEXT,

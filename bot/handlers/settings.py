@@ -139,9 +139,11 @@ async def _send_fsrs_settings_menu(update: Update, user_id):
         ("ses_rtr_it", _session_retry_iterations(get_db_path(), user_id), "ses_rtr_it_desc"),
     ]
     status = "ON" if match_policy.enabled(get_db_path(), user_id) else "OFF"
+    pr_status = "ON" if match_policy.enabled(get_db_path(), user_id, match_policy.PR_KEY) else "OFF"
     text = _settings_submenu_text(lang, "fsrs_sett_desc", rows)
     header, details = text.split("\n\n", 1)
-    text = f"{header}\n\n• [{status}] - {t(lang, 'hilfsverb_match_status')}\n{details}"
+    text = (f"{header}\n\n• [{pr_status}] - {t(lang, 'prateritum_match_status')}\n"
+            f"• [{status}] - {t(lang, 'hilfsverb_match_status')}\n{details}")
     await update.message.reply_text(
         text,
         reply_markup=ReplyKeyboardMarkup(_fsrs_settings_menu_keys(user_id), resize_keyboard=True),
@@ -379,6 +381,7 @@ async def algo_settings_menu_choice(update: Update, context: ContextTypes.DEFAUL
             user_id,
             keys=[
                 match_policy.KEY,
+                match_policy.PR_KEY,
                 SESSION_RETRY_GAP_KEY,
                 SESSION_RETRY_IT_KEY,
                 LEARNING_DAILY_QTY_KEY,
@@ -408,10 +411,10 @@ async def fsrs_settings_menu_choice(update: Update, context: ContextTypes.DEFAUL
     if action == "back":
         return await _send_algo_settings_menu(update, user_id)
 
-    if action == "hilfsverb_match":
-        value = not match_policy.enabled(get_db_path(), user_id)
-        set_user_setting(get_db_path(), user_id, match_policy.KEY, "1" if value else "0")
-        await update.message.reply_text(t(lang, "hilfsverb_match_changed").format(value="ON" if value else "OFF"))
+    if action in (match_policy.KEY, match_policy.PR_KEY):
+        value = not match_policy.enabled(get_db_path(), user_id, action)
+        set_user_setting(get_db_path(), user_id, action, "1" if value else "0")
+        await update.message.reply_text(t(lang, action + "_changed").format(value="ON" if value else "OFF"))
         return await _send_fsrs_settings_menu(update, user_id)
 
     if text == t(lang, "ses_rtr_gap"):

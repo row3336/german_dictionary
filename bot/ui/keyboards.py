@@ -129,7 +129,7 @@ def _fsrs_settings_menu_keys(user_id):
     lang = _user_interface_lang(user_id)
     return [
         [t(lang, "ses_rtr_gap"), t(lang, "ses_rtr_it")],
-        [t(lang, "hilfsverb_match"), t(lang, "back")],
+        [t(lang, "prateritum_match"), t(lang, "hilfsverb_match"), t(lang, "back")],
     ]
 
 

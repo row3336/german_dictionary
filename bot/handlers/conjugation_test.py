@@ -2,6 +2,7 @@
 
 import uuid
 
+from ..common import match_policy
 from ..common.verb_construction import reflexive_hint
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
@@ -92,7 +93,7 @@ async def _render_test_locked(update, context, prefix=None):
             text += '\n\n' + t(lang, 'conjugation_block_error')
         if frame.get('next_due'):
             text += '\n' + t(lang, 'conjugation_next_due').format(due=frame['next_due'])
-        summary = _service().inspect(uid, frame['pair'], touched=frame['touched'])['summary']
+        summary = _service().inspect(uid, frame['pair'], touched=frame['touched'], rules=match_policy.rules(frame))['summary']
         text += '\n' + t(lang, 'conjugation_blocks_summary').format(**summary)
     await _reply_text_with_retry(update.message, text, reply_markup=_return_markup(frame, lang))
     publish_view(context, caller_kind='conjugation', mode=frame['pair'],
@@ -124,6 +125,7 @@ async def _start_test_locked(update, context):
     if _recovered_undo(context, result) or result.get('stale'):
         context.user_data.pop(FRAME, None)
         return await _back_to_main_menu(update, context)
+    frame[match_policy.FRAME_KEY] = result.get(match_policy.FRAME_KEY, {})
     context.user_data[FRAME] = frame
     _adopt(frame, result)
     return await _render_test_locked(update, context, t(_user_interface_lang(uid), 'conjugation_test'))
@@ -158,7 +160,7 @@ async def conjugation_test_input(update, context):
             last = frame.get('last_answer') or {}
             result = _service().correct_last(
                 uid, frame['pair'], last.get('id'), frame['flow_id'], _transport_id(update),
-                current_question=frame.get('question'))
+                current_question=frame.get('question'), rules=match_policy.rules(frame))
             if result.get('replayed'):
                 return await _replay_state(update, context, result)
             if _recovered_undo(context, result):
@@ -174,7 +176,7 @@ async def conjugation_test_input(update, context):
             return await _render_test_locked(update, context)
         result = _service().submit_form(
             uid, frame['pair'], question['pass_id'], question['revision'], question['pronoun'],
-            text, frame['action_key'], _transport_id(update), frame['flow_id'])
+            text, frame['action_key'], _transport_id(update), frame['flow_id'], rules=match_policy.rules(frame))
         if result.get('replayed'):
             return await _replay_state(update, context, result)
         if _recovered_undo(context, result):
@@ -195,7 +197,7 @@ async def _render_existing(update, context, point, prefix_text):
     frame = context.user_data.get(FRAME)
     if not frame or frame.get('kind') != 'test' or frame['flow_id'] != point.flow_id or frame['view_revision'] != point.view_revision:
         return await _back_to_main_menu(update, context)
-    view = _service().inspect(update.effective_user.id, frame['pair'], frame.get('question'), frame['touched'])
+    view = _service().inspect(update.effective_user.id, frame['pair'], frame.get('question'), frame['touched'], rules=match_policy.rules(frame))
     if frame.get('question') and 'question' not in view:
         return await _close_stale(update, context)
     return await _render_test_locked(update, context, prefix_text)
