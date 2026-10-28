@@ -81,7 +81,7 @@ class FeedbackTest(unittest.TestCase):
         flat_owner = [c for row in K._settings_menu_keys(OWNER) for c in row]
         flat_guest = [c for row in K._settings_menu_keys(GUEST) for c in row]
         self.assertIn("feedback", flat_guest)
-        self.assertIn("review/feedback", flat_owner)
+        self.assertIn("Users", flat_owner)
         self.assertNotIn("feedback", flat_owner)
 
     def test_input_stores_no_instant_owner_ping(self):

@@ -102,8 +102,8 @@ class AlgoSettingsMenuTest(unittest.TestCase):
         self.assertIn(t("en", "ses_rtr_it"), flat)
         self.assertIn(t("en", "back"), flat)
 
-    def test_en_submenu_label_is_raw_key(self):
-        self.assertEqual(TEXTS["en"]["algo_settings"], "algo_sett")
+    def test_en_submenu_label_is_human_name(self):
+        self.assertEqual(TEXTS["en"]["algo_settings"], "Algo")
 
     def test_root_topics_label_localized(self):
         # #15: the algo-root "topics = ..." line prefix used to be hardcoded English.

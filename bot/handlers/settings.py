@@ -653,6 +653,8 @@ async def settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
     text = update.message.text.strip()
     user_id = update.effective_user.id
     action = _action_key_from_text(text, user_id)
+    if text == "dump":  # label before the Settings layout rename
+        action = "dump"
 
     if context.user_data.get("vf_waiting") and action != "back":
         wait = context.user_data.get("vf_waiting")
@@ -680,17 +682,18 @@ async def settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
         from ..notifications.handlers import show_notification_settings
         return await show_notification_settings(update, context)
 
-    if text == t(_user_interface_lang(user_id), "language_sett"):
+    if text in {t(_user_interface_lang(user_id), "language_sett"), "language_sett"}:
         return await _send_language_menu(update, user_id)
 
-    if action == "algo_settings":
+    if action == "algo_settings" or text == "algo_sett":
         return await _send_algo_settings_menu(update, user_id)
 
     if text == t(_user_interface_lang(user_id), "feedback_btn"):
         from .feedback import _start_feedback
         return await _start_feedback(update, user_id)
 
-    if is_owner(user_id) and text == t(_user_interface_lang(user_id), "review_menu"):
+    if is_owner(user_id) and text in {t(_user_interface_lang(user_id), "settings_users"),
+                                      t(_user_interface_lang(user_id), "review_menu")}:
         from .review import _send_review_menu
         return await _send_review_menu(update, user_id)
 

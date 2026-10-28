@@ -71,7 +71,7 @@ class LanguageMenuTest(unittest.TestCase):
 
     def test_settings_has_language_entry_not_raw_lang_buttons(self):
         flat = _flat(K._settings_menu_keys(GUEST))
-        self.assertIn("language_sett", flat)                 # en label
+        self.assertIn("Language", flat)                 # en label
         self.assertNotIn("interface language", flat)         # moved into the submenu
         self.assertNotIn("dict language", flat)
 

@@ -29,6 +29,7 @@ from bot.app_config import (  # noqa: E402
 from bot.handlers import menu as M  # noqa: E402
 from bot.handlers import settings as S  # noqa: E402
 from bot.i18n import TEXTS  # noqa: E402
+from bot.ui import keyboards as K  # noqa: E402
 from bot.storage import (  # noqa: E402
     init_db,
     register_or_update_user,
@@ -117,6 +118,39 @@ class SettingsI18nTest(unittest.TestCase):
                 self.assertTrue(TEXTS[lang][key].strip(), f"{key} empty in {lang}")
             self.assertNotEqual(TEXTS["ru"][key], TEXTS["en"][key], key)
             self.assertNotEqual(TEXTS["uk"][key], TEXTS["en"][key], key)
+
+    # ---- #33: Settings layout (3 rows) and dispatch by the visible labels ----
+
+    def test_settings_layout_labels_and_dispatch(self):
+        from bot.app_config import ALGO_SETTINGS_MENU, DUMP_MENU, LANGUAGE_MENU, MENU, NOTIFICATION_SETTINGS_MENU
+        from bot.i18n import t
+        from bot.storage import set_user_status
+        expected = {
+            "en": [["Language", "Algo", "Notifications"], ["Users", "Dump", "parse_VF"], ["back"]],
+            "ru": [["Язык", "Алгоритм", "Уведомления"], ["Пользователи", "Дамп", "parse_VF"], ["Назад"]],
+            "uk": [["Мова", "Алгоритм", "Сповіщення"], ["Користувачі", "Дамп", "parse_VF"], ["Назад"]],
+        }
+        set_user_status(self.db, GUEST, "approved")
+        for lang, rows in expected.items():
+            set_user_interface_lang(self.db, OWNER, lang)
+            set_user_interface_lang(self.db, GUEST, lang)
+            self.assertEqual(K._settings_menu_keys(OWNER), rows)
+            guest = K._settings_menu_keys(GUEST)
+            self.assertEqual((guest[0], guest[2]), (rows[0], rows[2]))
+            self.assertEqual(len(guest), 3)
+            self.assertNotIn(rows[1][1], guest[1])  # owner-only buttons stay hidden
+            self.assertNotIn("parse_VF", guest[1])
+            routes = ((0, 0, LANGUAGE_MENU), (0, 1, ALGO_SETTINGS_MENU), (0, 2, NOTIFICATION_SETTINGS_MENU),
+                      (1, 1, DUMP_MENU), (2, 0, MENU))
+            for row, col, state in routes:
+                with self.subTest(lang=lang, label=rows[row][col]):
+                    self.assertEqual(_run(S.settings_menu_choice(_Update(OWNER, rows[row][col]), _Ctx())), state)
+            for row, col, state in ((0, 0, LANGUAGE_MENU), (0, 1, ALGO_SETTINGS_MENU),
+                                    (0, 2, NOTIFICATION_SETTINGS_MENU), (2, 0, MENU)):
+                self.assertEqual(_run(S.settings_menu_choice(_Update(GUEST, rows[row][col]), _Ctx())), state)
+            # owner-only action typed by a guest is still refused
+            guest_upd = _Update(GUEST, rows[1][1])
+            self.assertEqual(_run(S.settings_menu_choice(guest_upd, _Ctx())), S.SETTINGS_MENU)
 
     # ---- 7c: interface-language prompt ----
 

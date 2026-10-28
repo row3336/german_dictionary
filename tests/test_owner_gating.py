@@ -83,8 +83,8 @@ class OwnerGatingTest(unittest.TestCase):
         # otherwise be reachable only by typing the command.
         self.assertIn("parse_VF", owner)
         self.assertNotIn("parse_VF", guest)
-        self.assertTrue(any("dump" in x for x in owner))
-        self.assertFalse(any("dump" in x for x in guest))
+        self.assertTrue("Dump" in owner)
+        self.assertFalse("Dump" in guest)
         # algo settings are available to a guest
         self.assertTrue(any("algo" in x.lower() or "алгоритм" in x.lower() for x in guest))
 
