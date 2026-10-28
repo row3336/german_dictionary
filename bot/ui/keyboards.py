@@ -123,15 +123,6 @@ def _algo_settings_menu_keys(user_id):
     ]
 
 
-def _fsrs_settings_menu_keys(user_id):
-    """FSRS settings submenu: the two in-session retry params, then back (bug #0)."""
-    lang = _user_interface_lang(user_id)
-    return [
-        [t(lang, "ses_rtr_gap"), t(lang, "ses_rtr_it")],
-        [t(lang, "prateritum_match"), t(lang, "hilfsverb_match"), t(lang, "back")],
-    ]
-
-
 def _learning_settings_menu_keys(user_id):
     """Handle learning settings menu keys."""
     lang = _user_interface_lang(user_id)

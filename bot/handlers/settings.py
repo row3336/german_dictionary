@@ -12,7 +12,8 @@ import sys
 
 from ..common import match_policy
 
-from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
+from telegram.error import BadRequest, TelegramError
 from telegram.ext import ContextTypes, ConversationHandler
 
 from ..app_config import (
@@ -69,7 +70,6 @@ from ..storage import (
 from ..ui.keyboards import (
     _add_keys,
     _algo_settings_menu_keys,
-    _fsrs_settings_menu_keys,
     _language_menu_keys,
     _learning_settings_menu_keys,
     _main_menu_markup,
@@ -131,24 +131,93 @@ async def _send_algo_settings_menu(update: Update, user_id):
     return ALGO_SETTINGS_MENU
 
 
-async def _send_fsrs_settings_menu(update: Update, user_id):
-    """FSRS settings submenu (bug #0): the two in-session retry params."""
+def _fsrs_menu_content(user_id):
+    """FSRS_sett text (status lines replace the bullets) + its inline buttons."""
     lang = _user_interface_lang(user_id)
     rows = [
         ("ses_rtr_gap", _session_retry_gap(get_db_path(), user_id), "ses_rtr_gap_desc"),
         ("ses_rtr_it", _session_retry_iterations(get_db_path(), user_id), "ses_rtr_it_desc"),
     ]
-    status = "ON" if match_policy.enabled(get_db_path(), user_id) else "OFF"
-    pr_status = "ON" if match_policy.enabled(get_db_path(), user_id, match_policy.PR_KEY) else "OFF"
+    def status(key, label):
+        return f"{'🟢 [ON]' if match_policy.enabled(get_db_path(), user_id, key) else '⚪️ [OFF]'} - {t(lang, label)}"
     text = _settings_submenu_text(lang, "fsrs_sett_desc", rows)
     header, details = text.split("\n\n", 1)
-    text = (f"{header}\n\n• [{pr_status}] - {t(lang, 'prateritum_match_status')}\n"
-            f"• [{status}] - {t(lang, 'hilfsverb_match_status')}\n{details}")
-    await update.message.reply_text(
-        text,
-        reply_markup=ReplyKeyboardMarkup(_fsrs_settings_menu_keys(user_id), resize_keyboard=True),
-    )
+    text = (f"{header}\n\n{status(match_policy.PR_KEY, 'prateritum_match_status')}\n"
+            f"{status(match_policy.KEY, 'hilfsverb_match_status')}\n{details}")
+    button = lambda key, data: InlineKeyboardButton(t(lang, key), callback_data=data)
+    markup = InlineKeyboardMarkup([
+        [button("ses_rtr_gap", "fsrs:gap"), button("ses_rtr_it", "fsrs:it")],
+        [button("prateritum_match", "fsrs:pr"), button("hilfsverb_match", "fsrs:hv")],
+        [button("back", "fsrs:back")],
+    ])
+    return text, markup
+
+
+async def _send_fsrs_settings_menu(update: Update, user_id, context=None):
+    """Initial send of FSRS_sett. Its message is remembered; toggles edit it in place
+    and only a callback from this very message is honoured."""
+    text, markup = _fsrs_menu_content(user_id)
+    sent = await update.message.reply_text(text, reply_markup=markup)
+    if context is not None:
+        context.user_data["fsrs_menu"] = {
+            "uid": user_id, "chat": getattr(update.message, "chat_id", None),
+            "msg": getattr(sent, "message_id", None)}
     return FSRS_SETTINGS_MENU
+
+
+async def fsrs_settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Inline buttons of the live FSRS_sett message. Stale/foreign messages and users
+    without access get a bare ack and change nothing."""
+    query = update.callback_query
+    user_id = query.from_user.id
+    message = query.message
+    menu = context.user_data.get("fsrs_menu")
+    try:
+        await query.answer()
+    except TelegramError:
+        pass
+    if (not menu or message is None or menu["uid"] != user_id or menu["msg"] != message.message_id
+            or menu["chat"] != getattr(message, "chat_id", None) or not access_allowed(user_id)):
+        return None
+    action = (query.data or "").split(":", 1)[-1]
+    lang = _user_interface_lang(user_id)
+    if action in ("pr", "hv"):
+        key = match_policy.PR_KEY if action == "pr" else match_policy.KEY
+        old = match_policy.enabled(get_db_path(), user_id, key)
+        set_user_setting(get_db_path(), user_id, key, "0" if old else "1")
+        text, markup = _fsrs_menu_content(user_id)
+        try:
+            await query.edit_message_text(text, reply_markup=markup)
+        except BadRequest as exc:
+            if "not modified" not in str(exc).lower():
+                set_user_setting(get_db_path(), user_id, key, "1" if old else "0")
+        except TelegramError:
+            set_user_setting(get_db_path(), user_id, key, "1" if old else "0")
+        return FSRS_SETTINGS_MENU
+    if action in ("gap", "it"):
+        context.user_data["algo_setting_edit"] = SESSION_RETRY_GAP_KEY if action == "gap" else SESSION_RETRY_IT_KEY
+        context.user_data["algo_edit_return"] = "fsrs"
+        label = t(lang, "ses_rtr_gap" if action == "gap" else "ses_rtr_it")
+        await message.reply_text(t(lang, "clarify_enter_value").format(field=label),
+                                 reply_markup=_settings_edit_back_markup(user_id))
+        return ALGO_SETTINGS_EDIT
+    if action == "back":
+        context.user_data.pop("fsrs_menu", None)
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except TelegramError:
+            pass
+        shim = type("CallbackUpdate", (), {"message": message})()
+        return await _send_algo_settings_menu(shim, user_id)
+    return None
+
+
+async def fsrs_settings_stale_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """fsrs: buttons outside FSRS_SETTINGS_MENU (left screen, edit prompt, restart)."""
+    try:
+        await update.callback_query.answer()
+    except TelegramError:
+        pass
 
 
 async def _send_learning_settings_menu(update: Update, user_id):
@@ -346,7 +415,7 @@ async def algo_settings_menu_choice(update: Update, context: ContextTypes.DEFAUL
         return SETTINGS_MENU
 
     if action == "fsrs_sett":
-        return await _send_fsrs_settings_menu(update, user_id)
+        return await _send_fsrs_settings_menu(update, user_id, context)
     if action == "learning_sett":
         context.user_data["learning_sett_return"] = "algo"
         return await _send_learning_settings_menu(update, user_id)
@@ -402,40 +471,13 @@ async def algo_settings_menu_choice(update: Update, context: ContextTypes.DEFAUL
 
 
 async def fsrs_settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """FSRS settings submenu router (bug #0): edit the two in-session retry params."""
-    text = update.message.text.strip()
+    """FSRS_sett is driven by its inline buttons; only Back from the algo reply
+    keyboard still on screen is read as text, other text is ignored."""
     user_id = update.effective_user.id
-    lang = _user_interface_lang(user_id)
-    action = _action_key_from_text(text, user_id)
-
-    if action == "back":
+    if _action_key_from_text(update.message.text.strip(), user_id) == "back":
+        context.user_data.pop("fsrs_menu", None)
         return await _send_algo_settings_menu(update, user_id)
-
-    if action in (match_policy.KEY, match_policy.PR_KEY):
-        value = not match_policy.enabled(get_db_path(), user_id, action)
-        set_user_setting(get_db_path(), user_id, action, "1" if value else "0")
-        await update.message.reply_text(t(lang, action + "_changed").format(value="ON" if value else "OFF"))
-        return await _send_fsrs_settings_menu(update, user_id)
-
-    if text == t(lang, "ses_rtr_gap"):
-        context.user_data["algo_setting_edit"] = SESSION_RETRY_GAP_KEY
-        context.user_data["algo_edit_return"] = "fsrs"
-        await update.message.reply_text(
-            t(lang, "clarify_enter_value").format(field=t(lang, "ses_rtr_gap")),
-            reply_markup=_settings_edit_back_markup(user_id),
-        )
-        return ALGO_SETTINGS_EDIT
-
-    if text == t(lang, "ses_rtr_it"):
-        context.user_data["algo_setting_edit"] = SESSION_RETRY_IT_KEY
-        context.user_data["algo_edit_return"] = "fsrs"
-        await update.message.reply_text(
-            t(lang, "clarify_enter_value").format(field=t(lang, "ses_rtr_it")),
-            reply_markup=_settings_edit_back_markup(user_id),
-        )
-        return ALGO_SETTINGS_EDIT
-
-    return await _send_fsrs_settings_menu(update, user_id)
+    return FSRS_SETTINGS_MENU
 
 
 async def learning_settings_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -496,7 +538,7 @@ async def algo_settings_edit(update: Update, context: ContextTypes.DEFAULT_TYPE)
         context.user_data.pop("algo_setting_edit", None)
         context.user_data.pop("algo_edit_return", None)
         if return_to == "fsrs":
-            return await _send_fsrs_settings_menu(update, user_id)
+            return await _send_fsrs_settings_menu(update, user_id, context)
         if return_to == "learning":
             return await _send_learning_settings_menu(update, user_id)
         return await _send_algo_settings_menu(update, user_id)
@@ -512,7 +554,7 @@ async def algo_settings_edit(update: Update, context: ContextTypes.DEFAULT_TYPE)
         LEARNING_READY_QUORUM_KEY,
     }:
         if return_to == "fsrs":
-            return await _send_fsrs_settings_menu(update, user_id)
+            return await _send_fsrs_settings_menu(update, user_id, context)
         if return_to == "learning":
             return await _send_learning_settings_menu(update, user_id)
         return await _send_algo_settings_menu(update, user_id)
@@ -542,7 +584,7 @@ async def algo_settings_edit(update: Update, context: ContextTypes.DEFAULT_TYPE)
     context.user_data.pop("algo_setting_edit", None)
     context.user_data.pop("algo_edit_return", None)
     if return_to == "fsrs":
-        return await _send_fsrs_settings_menu(update, user_id)
+        return await _send_fsrs_settings_menu(update, user_id, context)
     if return_to == "learning":
         return await _send_learning_settings_menu(update, user_id)
     return await _send_algo_settings_menu(update, user_id)

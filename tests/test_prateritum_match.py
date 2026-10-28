@@ -92,18 +92,17 @@ class PrateritumPolicyTests(unittest.TestCase):
             storage.set_user_interface_lang(self.db,1,lang)
             for key in (P.PR_KEY,P.KEY):
                 storage.set_user_setting(self.db,1,key,'0')
-            for key,label in ((P.PR_KEY,'Prateritum_match'),(P.KEY,'Hilfsverb_match')):
-                u=self.update(label)
-                self.assertEqual(_action_key_from_text(label,1),key)
-                asyncio.run(S.fsrs_settings_menu_choice(u,self.ctx))
-                texts=[c.args[0] for c in u.message.reply_text.call_args_list]
-                self.assertEqual(len(texts[0].splitlines()),2)
-                self.assertIn(label+' = ON',texts[0])
+            import fsrs_menu_fake as F
+            ctx=F.Ctx(); entry=F.entry_update(t(lang,'fsrs_sett'),1)
+            asyncio.run(S._send_fsrs_settings_menu(entry,1,ctx)); msg=entry.message.sent[0]
+            for data in ('fsrs:pr','fsrs:hv'):
+                F.press(S.fsrs_settings_callback,ctx,1,data,msg)
+            self.assertEqual(msg.sent,[])
             self.assertEqual(P.capture(self.db,1),{'prateritum':True,'hilfsverb':True})
             self.assertEqual(P.capture(self.db,2),{'prateritum':False,'hilfsverb':False})
-            self.assertEqual(K._fsrs_settings_menu_keys(1)[-1],['Prateritum_match','Hilfsverb_match',t(lang,'back')])
-            self.assertLess(texts[-1].index(t(lang,'prateritum_match_status')),texts[-1].index(t(lang,'hilfsverb_match_status')))
-            self.assertLess(texts[-1].index(t(lang,'hilfsverb_match_status')),texts[-1].index(t(lang,'ses_rtr_gap')))
+            self.assertEqual(F.buttons(msg)[2:4],['fsrs:pr','fsrs:hv'])
+            self.assertLess(msg.text.index(t(lang,'prateritum_match_status')),msg.text.index(t(lang,'hilfsverb_match_status')))
+            self.assertLess(msg.text.index(t(lang,'hilfsverb_match_status')),msg.text.index(t(lang,'ses_rtr_gap')))
             for key in (P.PR_KEY,P.KEY): storage.set_user_setting(self.db,999,key,'1')
             self.ctx.user_data[W.FRAME]={P.FRAME_KEY:P.capture(self.db,1)}
             with patch.object(S,'_send_algo_settings_menu',new=AsyncMock()):

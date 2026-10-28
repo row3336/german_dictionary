@@ -24,7 +24,7 @@ from bot.handlers.settings import (  # noqa: E402
     fsrs_settings_menu_choice,
 )
 from bot.i18n import TEXTS, t  # noqa: E402
-from bot.storage import init_db, register_or_update_user, set_user_interface_lang  # noqa: E402
+from bot.storage import init_db, register_or_update_user, set_user_interface_lang, set_user_status  # noqa: E402
 from bot.ui import keyboards as K  # noqa: E402
 
 OWNER, GUEST = 999, 111
@@ -59,6 +59,17 @@ class _Ctx:
         self.user_data = {}
 
 
+def _press_param(ctx, data):
+    """Open FSRS_sett for GUEST (single send) and press one inline button."""
+    import fsrs_menu_fake as F
+    from bot.handlers.settings import _send_fsrs_settings_menu, fsrs_settings_callback
+    entry = F.entry_update(t("en", "fsrs_sett"), GUEST)
+    _run(_send_fsrs_settings_menu(entry, GUEST, ctx))
+    msg = entry.message.sent[0]
+    state, _query = F.press(fsrs_settings_callback, ctx, GUEST, data, msg)
+    return state, msg
+
+
 def _flat(rows):
     return [c for row in rows for c in row]
 
@@ -79,6 +90,7 @@ class AlgoSettingsMenuTest(unittest.TestCase):
         os.environ["OWNER_ID"] = str(OWNER)
         self.addCleanup(self._restore)
         register_or_update_user(self.db, GUEST, "g", "G")
+        set_user_status(self.db, GUEST, "approved")
 
     def _restore(self):
         for k, v in self._old.items():
@@ -97,10 +109,12 @@ class AlgoSettingsMenuTest(unittest.TestCase):
         self.assertNotIn(t("en", "ses_rtr_it"), flat)
 
     def test_fsrs_submenu_has_retry_params(self):
-        flat = _flat(K._fsrs_settings_menu_keys(GUEST))
-        self.assertIn(t("en", "ses_rtr_gap"), flat)
-        self.assertIn(t("en", "ses_rtr_it"), flat)
-        self.assertIn(t("en", "back"), flat)
+        from bot.handlers.settings import _fsrs_menu_content
+        _text, markup = _fsrs_menu_content(GUEST)
+        labels = [b.text for row in markup.inline_keyboard for b in row]
+        self.assertIn(t("en", "ses_rtr_gap"), labels)
+        self.assertIn(t("en", "ses_rtr_it"), labels)
+        self.assertIn(t("en", "back"), labels)
 
     def test_en_submenu_label_is_human_name(self):
         self.assertEqual(TEXTS["en"]["algo_settings"], "Algo")
@@ -146,7 +160,7 @@ class AlgoSettingsMenuTest(unittest.TestCase):
     def test_edit_from_fsrs_returns_to_fsrs(self):
         # press ses_rtr_gap inside the FSRS submenu, then submit a value
         ctx = _Ctx()
-        state = _run(fsrs_settings_menu_choice(_Update(t("en", "ses_rtr_gap"), GUEST), ctx))
+        state = _press_param(ctx, "fsrs:gap")[0]
         self.assertEqual(state, ALGO_SETTINGS_EDIT)
         self.assertEqual(ctx.user_data["algo_edit_return"], "fsrs")
         state = _run(algo_settings_edit(_Update("4", GUEST), ctx))
@@ -155,9 +169,7 @@ class AlgoSettingsMenuTest(unittest.TestCase):
     # --- #19: value-input prompts offer a Back button (exit without a value) ---
     def test_value_prompt_offers_back_button(self):
         from telegram import ReplyKeyboardMarkup
-        upd = _Update(t("en", "ses_rtr_gap"), GUEST)
-        _run(fsrs_settings_menu_choice(upd, _Ctx()))
-        markup = upd.message.markups[-1]
+        markup = _press_param(_Ctx(), "fsrs:gap")[1].sent[-1].markup
         self.assertIsInstance(markup, ReplyKeyboardMarkup)
         self.assertIn(t("en", "back"), [c for row in markup.rows for c in row])
 
@@ -165,7 +177,7 @@ class AlgoSettingsMenuTest(unittest.TestCase):
         # enter the edit, then press Back -> returns to the originating submenu,
         # and no value got persisted (state cleared)
         ctx = _Ctx()
-        _run(fsrs_settings_menu_choice(_Update(t("en", "ses_rtr_gap"), GUEST), ctx))
+        _press_param(ctx, "fsrs:gap")
         state = _run(algo_settings_edit(_Update(t("en", "back"), GUEST), ctx))
         self.assertEqual(state, FSRS_SETTINGS_MENU)
         self.assertNotIn("algo_setting_edit", ctx.user_data)

@@ -147,7 +147,9 @@ from .handlers.settings import (
     algo_settings_confirm,
     algo_settings_edit,
     algo_settings_menu_choice,
+    fsrs_settings_callback,
     fsrs_settings_menu_choice,
+    fsrs_settings_stale_callback,
     language_menu_choice,
     learning_settings_menu_choice,
     select_dict_lang,
@@ -559,7 +561,8 @@ def main():
             BROADCAST_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, broadcast_input)],
             BROADCAST_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, broadcast_confirm)],
             ALGO_SETTINGS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, algo_settings_menu_choice)],
-            FSRS_SETTINGS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, fsrs_settings_menu_choice)],
+            FSRS_SETTINGS_MENU: [CallbackQueryHandler(fsrs_settings_callback, pattern=r"^fsrs:"),
+                                 MessageHandler(filters.TEXT & ~filters.COMMAND, fsrs_settings_menu_choice)],
             LEARNING_SETTINGS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, learning_settings_menu_choice)],
             ALGO_SETTINGS_EDIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, algo_settings_edit)],
             ALGO_SETTINGS_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, algo_settings_confirm)],
@@ -601,6 +604,7 @@ def main():
     app.add_handler(CallbackQueryHandler(access_decision_callback, pattern=r"^access:"))
     # Global handler for the CEFR/book-topics filter drill (spec_topics_levels.md).
     app.add_handler(CallbackQueryHandler(word_filter_callback, pattern=r"^wf:"))
+    app.add_handler(CallbackQueryHandler(fsrs_settings_stale_callback, pattern=r"^fsrs:"))
     # Global handler for the conjugation card's inline "hide forms" toggle (Feature B).
     app.add_handler(CallbackQueryHandler(conjugation_card_callback, pattern=r"^conj:"))
     # Global handler for the "menu" button attached to owner broadcasts (spec #12).

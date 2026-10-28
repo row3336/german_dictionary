@@ -97,6 +97,8 @@ class SettingsI18nTest(unittest.TestCase):
         os.environ["OWNER_ID"] = str(OWNER)
         self.addCleanup(self._restore)
         register_or_update_user(self.db, GUEST, "g", "G")
+        from bot.storage import set_user_status
+        set_user_status(self.db, GUEST, "approved")
         set_user_interface_lang(self.db, GUEST, "ru")
 
     def _restore(self):
@@ -205,10 +207,17 @@ class SettingsI18nTest(unittest.TestCase):
 
     # ---- 7d: per-setting "Enter <param>:" prompt (reuse clarify_enter_value) ----
 
+    def _press_gap(self):
+        import fsrs_menu_fake as F
+        entry = F.entry_update("", GUEST)
+        ctx = F.Ctx()
+        _run(S._send_fsrs_settings_menu(entry, GUEST, ctx))
+        msg = entry.message.sent[0]
+        F.press(S.fsrs_settings_callback, ctx, GUEST, "fsrs:gap", msg)
+        return msg
+
     def test_param_prompt_localized_name_for_ru(self):
-        up = _Update(GUEST, TEXTS["ru"]["ses_rtr_gap"])
-        _run(S.fsrs_settings_menu_choice(up, _Ctx()))
-        last = up.message.calls[-1][0]
+        last = self._press_gap().sent[-1].text
         # ru: localized wrapper + localized param name, no raw English
         self.assertEqual(last, TEXTS["ru"]["clarify_enter_value"].format(field=TEXTS["ru"]["ses_rtr_gap"]))
         self.assertIn("интервал повтора", last)
@@ -216,9 +225,7 @@ class SettingsI18nTest(unittest.TestCase):
 
     def test_param_prompt_keeps_technical_id_for_en(self):
         set_user_interface_lang(self.db, GUEST, "en")
-        up = _Update(GUEST, TEXTS["en"]["ses_rtr_gap"])
-        _run(S.fsrs_settings_menu_choice(up, _Ctx()))
-        last = up.message.calls[-1][0]
+        last = self._press_gap().sent[-1].text
         # en: technical identifier stays
         self.assertIn("ses.rtr_gap", last)
 

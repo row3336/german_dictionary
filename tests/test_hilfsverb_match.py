@@ -71,21 +71,23 @@ class HilfsverbMatchTests(unittest.TestCase):
             Q._check_ru_de_strict(e, 'treffen hat getroffen', MatchRules(hilfsverb=True))
 
     def test_toggle_languages_status_and_bottom_row(self):
+        import fsrs_menu_fake as F
         for lang in ('en', 'ru', 'uk'):
             self.flag(False)
             storage.set_user_interface_lang(self.db, 1, lang)
-            u = self.update('Hilfsverb_match')
-            self.assertEqual(_action_key_from_text(u.message.text, 1), 'hilfsverb_match')
-            asyncio.run(S.fsrs_settings_menu_choice(u, self.ctx))
+            ctx = F.Ctx()
+            entry = F.entry_update(t(lang, 'fsrs_sett'), 1)
+            asyncio.run(S._send_fsrs_settings_menu(entry, 1, ctx))
+            msg = entry.message.sent[0]
+            self.assertIn('⚪️ [OFF] - ' + t(lang, 'hilfsverb_match_status'), msg.text)
+            F.press(S.fsrs_settings_callback, ctx, 1, 'fsrs:hv', msg)
             self.assertTrue(P.enabled(self.db, 1))
-            texts = [c.args[0] for c in u.message.reply_text.call_args_list]
-            self.assertIn('Hilfsverb_match = ON', texts[0])
-            self.assertEqual(len(texts[0].splitlines()), 2)
-            self.assertLess(texts[-1].index(t(lang, 'hilfsverb_match_status')), texts[-1].index(t(lang, 'ses_rtr_gap')))
-            self.assertIn('• [ON] - ' + t(lang, 'hilfsverb_match_status'), texts[-1])
-            self.assertEqual(K._fsrs_settings_menu_keys(1)[-1], ['Prateritum_match', 'Hilfsverb_match', t(lang, 'back')])
+            self.assertEqual(msg.sent, [])
+            self.assertLess(msg.text.index(t(lang, 'hilfsverb_match_status')), msg.text.index(t(lang, 'ses_rtr_gap')))
+            self.assertIn('🟢 [ON] - ' + t(lang, 'hilfsverb_match_status'), msg.text)
+            self.assertEqual(F.buttons(msg)[2:4], ['fsrs:pr', 'fsrs:hv'])
             self.assertFalse(P.enabled(self.db, 2))
-            asyncio.run(S.fsrs_settings_menu_choice(self.update('Hilfsverb_match'), self.ctx))
+            F.press(S.fsrs_settings_callback, ctx, 1, 'fsrs:hv', msg)
             self.assertFalse(P.enabled(self.db, 1))
 
     def test_reset_defaults_only_this_user_next_launch(self):
