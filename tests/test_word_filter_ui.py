@@ -299,6 +299,37 @@ class WordFilterUITest(unittest.TestCase):
         _run(q)
         self.assertEqual(q.edits[-1][0], UI.render_fork(U)[0])
 
+    # --- entry: exactly one message, navigation back preserved ---
+
+    def test_entry_sends_single_inline_message_and_back_survives_reentry(self):
+        from bot.app_config import ALGO_SETTINGS_MENU, QUIZ_RU_DE_MENU, TESTS_MENU, TOPIC_FILTER_EDIT
+        from bot.handlers.settings import topic_filter_edit
+        from telegram import InlineKeyboardMarkup
+
+        class Msg:
+            def __init__(self, text=""):
+                self.text, self.sent = text, []
+
+            async def reply_text(self, text, reply_markup=None, **kw):
+                self.sent.append((text, reply_markup))
+
+        def upd(text=""):
+            return type("Upd", (), {"message": Msg(text), "effective_user": type("U", (), {"id": U})()})()
+
+        ctx = _Ctx()
+        for return_to, state in (("algo", ALGO_SETTINGS_MENU), ("tests_menu", TESTS_MENU),
+                                 ("ru_de_menu", QUIZ_RU_DE_MENU), ("algo", ALGO_SETTINGS_MENU)):
+            enter = upd()
+            self.assertEqual(asyncio.run(UI.send_word_filter_screen(enter, ctx, U, return_to)), TOPIC_FILTER_EDIT)
+            self.assertEqual(len(enter.message.sent), 1)
+            text, kb = enter.message.sent[0]
+            self.assertEqual(text, UI.render_fork(U)[0])
+            self.assertIsInstance(kb, InlineKeyboardMarkup)
+            self.assertEqual(ctx.user_data["topic_return"], return_to)
+            back = upd(UI.t("ru", "back"))
+            self.assertEqual(asyncio.run(topic_filter_edit(back, ctx)), state)
+            self.assertNotIn("topic_return", ctx.user_data)
+
     # --- summary ---
 
     def test_summary_topics_and_cefr(self):

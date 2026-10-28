@@ -2,7 +2,7 @@
 
 import logging
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from ..app_config import BOOK_LEVELS, CEFR_LEVELS, TOPIC_FILTER_EDIT
@@ -144,11 +144,10 @@ def render_topics(user_id, level=None, state=None):
 
 
 async def send_word_filter_screen(update, context, user_id, return_to):
-    lang = _user_interface_lang(user_id)
     context.user_data["topic_return"] = return_to
     context.user_data["wf_active"] = True
-    await update.message.reply_text(t(lang, "wf_fork_title"),
-        reply_markup=ReplyKeyboardMarkup([[t(lang, "back")]], resize_keyboard=True))
+    # One message only: the caller's reply keyboard (tests/ru-de/algo menus) already
+    # carries `back`, which topic_filter_edit resolves via topic_return.
     text, kb = render_fork(user_id)
     await update.message.reply_text(text, reply_markup=kb)
     return TOPIC_FILTER_EDIT
