@@ -185,8 +185,11 @@ def filter_plan(conn, new_keys):
                 validate_book_config(config)
             except (ValueError, TypeError, KeyError) as exc:
                 raise TopicStructureError(f"malformed book filter for user {uid}") from exc
-            if config["revision"] != revision:
-                raise TopicStructureError(f"v2/common filter revision mismatch for user {uid}")
+            # CEFR/mode commands bump only the common revision and keep the v2
+            # document, so a lagging v2 revision is a normal stored state. Only a
+            # v2 revision ahead of the common one is inconsistent.
+            if config["revision"] > revision:
+                raise TopicStructureError(f"v2 filter revision ahead of common revision for user {uid}")
             expanded = expand_v2(config, new_keys)
             if expanded != config or after:
                 expanded["revision"] = revision + 1
