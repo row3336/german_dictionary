@@ -227,3 +227,44 @@ class BookTopicDisplayTest(unittest.TestCase):
         for name in names:
             self.assertIn(f"[{name}] Unicode topic", text)
             self.assertEqual(callbacks[name], ui.callback_data("t", 7, "A2", wf.topic_token(name)))
+
+    def owner_structure(self):
+        for name, description in (("B1_made_in_deutschland", "Made in Deutschland"),
+                                  ("B1_Tartorg", "Tartorg"), ("GSV", "Reflexive verbs")):
+            self.add(name, "B1", description)
+        for n in range(15):
+            self.add(f"PONS_{n:02}", "PONS", f"Kapitel {n}")
+
+    def test_owner_book_levels_pons_chapters_and_reflexive_button(self):
+        self.owner_structure()
+        self.save({"A1": "all", "A2": "all", "B1": "all", "PONS": "all"})
+        state = self.state()
+        self.assertEqual(state["available_levels"], ["A1", "A2", "B1", "PONS"])
+        text, markup = ui.render_topics(1, "PONS", state)
+        buttons = self.topic_buttons(markup)
+        self.assertEqual([b.text for b in buttons], [f"{n:02}" for n in range(15)])
+        self.assertEqual([b.callback_data for b in buttons], [
+            ui.callback_data("t", 7, "PONS", wf.topic_token(f"PONS_{n:02}")) for n in range(15)])
+        self.assertIn("[00] Kapitel 0", text)
+        self.assertIn("[14] Kapitel 14", text)
+        self.assertNotIn("PONS_0", text)
+        text, markup = ui.render_topics(1, "B1", state)
+        self.assertEqual([b.text for b in self.topic_buttons(markup)],
+                         ["B1_made_in_deutschland", "B1_Tartorg", "reflexive"])
+        self.assertIn("[reflexive] Reflexive verbs", text)
+        self.assertNotIn("[GSV]", text)
+        self.assertEqual([b.text for b in self.topic_buttons(ui.render_topics(1, "A2", state)[1])],
+                         ["1", "2", "3", "4"])
+
+    def test_pons_summary_keeps_two_digit_ranges(self):
+        self.owner_structure()
+        pons = [f"PONS_{n:02}" for n in range(15)]
+        self.save({"PONS": pons})
+        self.assertEqual(wf.filter_label_from_state(self.state()), "PONS: 00–14")
+        self.save({"PONS": ["PONS_00", "PONS_01", "PONS_05", "PONS_09", "PONS_10", "PONS_14"],
+                   "B1": ["GSV"]})
+        self.assertEqual(wf.filter_label_from_state(self.state()), "B1: reflexive\nPONS: 00–01, 05, 09–10, 14")
+        self.save({"PONS": "all"})
+        self.assertEqual(wf.filter_label_from_state(self.state()), "PONS: все темы")
+        self.assertEqual(topic_labels("A1", ["0", "03", "PONS_03"], {}),
+                         {"0": "0", "03": "03", "PONS_03": "PONS_03"})
