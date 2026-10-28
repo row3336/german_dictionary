@@ -26,6 +26,19 @@ def valid_time(value):
     return isinstance(value, str) and re.fullmatch(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]", value) is not None
 
 
+def parse_time(value):
+    """User input -> canonical HH:MM, or None. Hours alone (13) or hours + any
+    non-alphanumeric separator + exactly two-digit minutes (9:05, 13 00, 13/-00).
+    Glued digits (1300) and one-digit minutes (9:5) are rejected."""
+    if not isinstance(value, str):
+        return None
+    m = re.fullmatch(r"(\d{1,2})(?:(\D+?)(\d{2}))?", value.strip(), re.ASCII)
+    if m is None or (m.group(2) is not None and any(c.isalnum() for c in m.group(2))):
+        return None
+    result = f"{int(m.group(1)):02d}:{m.group(3) or '00'}"
+    return result if valid_time(result) else None
+
+
 def _get(conn, user_id, key, default=None):
     row = conn.execute("SELECT value FROM user_settings WHERE user_id=? AND key=?", (int(user_id), key)).fetchone()
     return row[0] if row is not None else default

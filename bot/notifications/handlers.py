@@ -8,7 +8,7 @@ from ..common.lang import _user_interface_lang
 from ..handlers.access import access_allowed
 from ..i18n import t
 from ..ui.keyboards import _settings_menu_keys
-from .settings import KINDS, get_preference, set_preference, valid_time
+from .settings import KINDS, get_preference, parse_time, set_preference
 
 
 def _message(update):
@@ -94,8 +94,9 @@ async def notification_time_input(update, context):
     text = update.message.text or ""
     if _matches(text.strip(), "back"):
         return await show_notification_settings(update, context, kind)
-    if not valid_time(text):
+    parsed = parse_time(text)
+    if parsed is None:
         await update.message.reply_text(t(_user_interface_lang(uid), "notification_time_invalid"))
         return NOTIFICATION_SETTINGS_TIME
-    set_preference(get_db_path(), uid, kind, time=text)
+    set_preference(get_db_path(), uid, kind, time=parsed)
     return await show_notification_settings(update, context, kind)

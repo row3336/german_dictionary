@@ -209,7 +209,7 @@ class NotificationTest(unittest.TestCase):
         self.assertTrue(N.get_preference(self.db, USER, "new_words").enabled)
         self.assertFalse(N.get_preference(self.db, OTHER, "new_words").enabled)
         self.assertEqual(asyncio.run(H.notification_menu_input(update(t("en", "notification_change_time")), self.ctx)), NOTIFICATION_SETTINGS_TIME)
-        for invalid in ("24:00", " 16:45", "16:45 ", "9:00"):
+        for invalid in ("24:00", "9:5", "1300"):
             self.assertEqual(asyncio.run(H.notification_time_input(update(invalid), self.ctx)), NOTIFICATION_SETTINGS_TIME)
             self.assertEqual(N.get_preference(self.db, USER, "new_words").time, "14:00")
         asyncio.run(H.notification_time_input(update("16:45"), self.ctx))
@@ -218,6 +218,45 @@ class NotificationTest(unittest.TestCase):
         asyncio.run(H.notification_settings_callback(cb, self.ctx))
         self.assertIn("16:45", cb.message.reply_text.call_args.args[0])
         self.assertEqual(N.get_preference(self.db, OTHER, "new_words").time, "14:00")
+
+    def test_renamed_notify_buttons_in_all_languages_select_the_right_setting(self):
+        expected = {"en": ("FSRS notify", "Learning notify"),
+                    "ru": ("Напоминания FSRS", "Напоминания Learning"),
+                    "uk": ("Нагадування FSRS", "Нагадування Learning")}
+        for lang, (quiz, new_words) in expected.items():
+            set_user_interface_lang(self.db, USER, lang)
+            for kind, label in (("quiz", quiz), ("new_words", new_words)):
+                self.assertEqual(t(lang, f"notification_{kind}"), label)
+                upd = update()
+                asyncio.run(H.show_notification_settings(upd, self.ctx))
+                self.assertEqual(upd.message.reply_text.call_args.kwargs["reply_markup"].rows[0], [quiz, new_words])
+                self.assertEqual(asyncio.run(H.notification_menu_input(update(label), self.ctx)), NOTIFICATION_SETTINGS_MENU)
+                self.assertEqual(self.ctx.user_data["notification_kind"], kind)
+        self.assertEqual(t("en", "tests"), "Quiz")  # ordinary entries keep their names
+
+    def test_time_input_formats_for_both_reminders(self):
+        positive = {"13": "13:00", "13,00": "13:00", "13.00": "13:00", "13:00": "13:00", "13-00": "13:00",
+                    "13/00": "13:00", "13 00": "13:00", "13 : 00": "13:00", "13/ -00": "13:00", "9:05": "09:05",
+                    "9 50": "09:50", "09.05": "09:05", "0": "00:00", "00:00": "00:00", "23:59": "23:59", "7": "07:00"}
+        negative = ("24:00", "13:60", "9:5", "13.5", "1300", "905", "130", "", "abc", "13:00:00", "13:00 14", "13 00 00",
+                    "1 3 00", "13ч00", "13h00", "13:aa", "24", "99", "-1:00", "13:00x", "１３:００")
+        for kind in N.KINDS:
+            self.ctx.user_data["notification_kind"] = kind
+            for raw, canonical in positive.items():
+                with self.subTest(kind=kind, raw=raw):
+                    self.assertEqual(asyncio.run(H.notification_time_input(update(raw), self.ctx)), NOTIFICATION_SETTINGS_MENU)
+                    self.assertEqual(N.get_preference(self.db, USER, kind).time, canonical)
+                    self.assertEqual(N.get_preference(self.db, OTHER, kind).time, "18:00" if kind == "quiz" else "14:00")
+            N.set_preference(self.db, USER, kind, time="05:15")
+            for raw in negative:
+                with self.subTest(kind=kind, raw=raw):
+                    self.assertEqual(asyncio.run(H.notification_time_input(update(raw), self.ctx)), NOTIFICATION_SETTINGS_TIME)
+                    self.assertEqual(N.get_preference(self.db, USER, kind).time, "05:15")
+
+    def test_time_input_back_does_not_change_time(self):
+        self.ctx.user_data["notification_kind"] = "quiz"
+        self.assertEqual(asyncio.run(H.notification_time_input(update(t("en", "back")), self.ctx)), NOTIFICATION_SETTINGS_MENU)
+        self.assertEqual(N.get_preference(self.db, USER, "quiz").time, "18:00")
 
     def test_all_ui_languages_have_permanent_entry_and_berlin_time_and_correct_new_text(self):
         for uid in (OWNER, USER):
