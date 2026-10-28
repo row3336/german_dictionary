@@ -265,7 +265,10 @@ class OwnerStructureTest(unittest.TestCase):
             "already exists": "INSERT INTO topics(name,description,level) VALUES('PONS_03','x','PONS')",
             "live dictionary job": "INSERT INTO vf_add_jobs(user_id,topic,status) VALUES(1,'PONS','running')",
             "malformed book filter": "UPDATE user_settings SET value='{bad' WHERE user_id=3 AND key='book_topic_filter_v2'",
-            "revision mismatch": "UPDATE user_settings SET value='9' WHERE user_id=2 AND key='filter_revision'",
+            # Semantics changed (corrective 31): a common revision AHEAD of the v2
+            # JSON is a normal state after CEFR/mode commands; only a v2 revision
+            # in the FUTURE of the common one is inconsistent (user 2: v2 4 > 3).
+            "ahead of common": "UPDATE user_settings SET value='3' WHERE user_id=2 AND key='filter_revision'",
             "invalid filter revision": "UPDATE user_settings SET value='x' WHERE user_id=7 AND key='filter_revision'",
             "receipt conflicts": f"INSERT INTO app_settings(key,value) VALUES('{bts.RECEIPT_KEY}','{{}}')",
             "requires schema": f"PRAGMA user_version={SCHEMA_VERSION - 1}",
@@ -283,6 +286,111 @@ class OwnerStructureTest(unittest.TestCase):
                     self.conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
         with self.assertRaisesRegex(bts.TopicStructureError, "caller-owned transaction"):
             bts.apply(self.conn, self.manifest)
+
+    def command(self, uid, operation, level=None, token=None):
+        """The real word-filter command path on this synthetic stand."""
+        self.conn.row_factory = sqlite3.Row
+        try:
+            self.conn.execute("BEGIN IMMEDIATE")
+            state = wf.read_filter_state(uid, self.conn)
+            wf.apply_filter_command(uid, state["revision"], operation, level, token, conn=self.conn)
+            self.conn.execute("COMMIT")
+        finally:
+            self.conn.row_factory = None
+
+    def filters(self, uid):
+        rows = self.conn.execute("SELECT key,value FROM user_settings WHERE user_id=? AND key IN "
+                                 "('filter_mode','topic_filter','book_topic_filter_v2','filter_revision')", (uid,))
+        values = dict(rows)
+        values["v2"] = json.loads(values.get("book_topic_filter_v2", "null"))
+        return values
+
+    def lagging_users(self):
+        """Users whose stored v2 revision lags the common one via real commands."""
+        self.conn.executemany("INSERT INTO users(user_id,status) VALUES(?, 'approved')", [(11,), (12,), (13,)])
+        # 11: four books selected (PONS 'all'), then CEFR — the deployed dev shape.
+        self.command(11, "cefr", "A1")
+        for level in ("A1", "A2", "B1", "PONS"):
+            self.command(11, "level", level)
+        self.command(11, "cefr", "B1")
+        # 12: explicit PONS topic (fresh topic tap), then CEFR.
+        self.command(12, "cefr", "A1")
+        self.command(12, "topic", "PONS", wf.topic_token("PONS"))
+        self.command(12, "cefr", "B1")
+        # 13: explicit PONS topic, then the compatibility mode API there and back.
+        self.command(13, "cefr", "A1")
+        self.command(13, "topic", "PONS", wf.topic_token("PONS"))
+        with patch.object(wf, "get_db_path", return_value=str(self.db)):
+            wf.set_filter_mode(13, wf.MODE_CEFR)
+            wf.set_filter_mode(13, wf.MODE_TOPICS)
+
+    def test_cefr_and_mode_commands_leave_a_supported_lagging_v2_revision(self):
+        self.lagging_users()
+        f11, f12, f13 = self.filters(11), self.filters(12), self.filters(13)
+        self.assertEqual((f11["filter_mode"], f11["filter_revision"], f11["v2"]["revision"]), ("cefr", "6", 5))
+        self.assertEqual(f11["v2"]["selected_levels"], ["A1", "A2", "B1", "PONS"])
+        self.assertEqual((f12["filter_mode"], f12["filter_revision"], f12["v2"]["revision"]), ("cefr", "3", 2))
+        self.assertEqual(f12["v2"]["topics_by_level"], {"A1": "all", "PONS": ["PONS"]})
+        self.assertEqual((f13["filter_mode"], f13["filter_revision"], f13["v2"]["revision"]), ("topics", "4", 2))
+        levels = self.conn.execute("SELECT user_id,level FROM user_levels WHERE user_id IN (11,12,13) ORDER BY 1,2").fetchall()
+        raw11 = self.conn.execute("SELECT key,value FROM user_settings WHERE user_id=11 ORDER BY key").fetchall()
+        progress = self.conn.execute("SELECT * FROM progress").fetchall()
+        self.conn.execute("BEGIN")
+        report = bts.plan(self.conn, self.manifest)
+        self.conn.execute("ROLLBACK")
+        touched = {(c["user_id"], c["key"]) for c in report["filters"]}
+        self.assertFalse({k for u, k in touched if u == 11})
+        self.assertEqual({k for u, k in touched if u == 12}, {"book_topic_filter_v2", "filter_revision"})
+        self.assertEqual({k for u, k in touched if u == 13}, {"book_topic_filter_v2", "filter_revision"})
+        self.run_tx(bts.apply, self.manifest)
+        self.assertEqual(self.conn.execute("SELECT key,value FROM user_settings WHERE user_id=11 ORDER BY key").fetchall(), raw11)
+        f12, f13 = self.filters(12), self.filters(13)
+        self.assertEqual((f12["filter_mode"], f12["filter_revision"], f12["v2"]["revision"]), ("cefr", "4", 4))
+        self.assertEqual(f12["v2"]["topics_by_level"], {"A1": "all", "PONS": PONS_KEYS})
+        self.assertEqual((f13["filter_mode"], f13["filter_revision"], f13["v2"]["revision"]), ("topics", "5", 5))
+        self.assertEqual(self.conn.execute("SELECT user_id,level FROM user_levels WHERE user_id IN (11,12,13) ORDER BY 1,2").fetchall(), levels)
+        self.assertEqual(self.conn.execute("SELECT * FROM progress").fetchall(), progress)
+        self.conn.row_factory = sqlite3.Row
+        try:
+            state = wf.read_filter_state(13, self.conn)
+            self.assertTrue(state["valid"])
+            self.assertEqual(wf.selected_topics(state, "PONS"), PONS_KEYS)
+            self.assertEqual(wf.count_words_for_filter(13, self.conn), 1343)
+            self.assertEqual(wf.read_filter_state(11, self.conn)["config"]["topics_by_level"]["PONS"], "all")
+        finally:
+            self.conn.row_factory = None
+        # Real commands keep working on the migrated documents.
+        self.command(12, "level", "PONS")
+        self.assertEqual(self.filters(12)["filter_mode"], "topics")
+        before_replay = self.image()
+        self.assertEqual(self.run_tx(bts.apply, self.manifest)["state"], "already_applied")
+        self.assertEqual(self.image(), before_replay)
+
+    def test_lagging_revision_rollback_restores_choices_monotonically_and_reapplies(self):
+        self.lagging_users()
+        before = {uid: self.filters(uid) for uid in (11, 12, 13)}
+        self.run_tx(bts.apply, self.manifest)
+        after = {uid: self.filters(uid) for uid in (12, 13)}
+        report = self.run_tx(bts.rollback, self.manifest)
+        self.assertIn(12, report["filter_users"])
+        self.assertNotIn(11, report["filter_users"])
+        self.assertEqual(self.filters(11), before[11])
+        for uid in (12, 13):
+            now = self.filters(uid)
+            revision = int(after[uid]["filter_revision"]) + 1
+            self.assertEqual((now["filter_revision"], now["v2"]["revision"]), (str(revision), revision))
+            self.assertEqual(now["v2"]["topics_by_level"], before[uid]["v2"]["topics_by_level"])
+            self.assertEqual(now["filter_mode"], before[uid]["filter_mode"])
+        self.assertEqual(self.run_tx(bts.apply, self.manifest)["state"], "applied")
+
+    def test_future_v2_revision_ahead_of_common_rejected_atomically(self):
+        self.lagging_users()
+        self.conn.execute("UPDATE user_settings SET value='1' WHERE user_id=12 AND key='filter_revision'")
+        self.assert_rejected("ahead of common")
+        self.conn.execute("BEGIN")
+        with self.assertRaisesRegex(bts.TopicStructureError, "ahead of common"):
+            bts.plan(self.conn, self.manifest)
+        self.conn.execute("ROLLBACK")
 
     def test_postflight_failure_rolls_back_every_write(self):
         with patch.object(bts, "_counts", return_value={}):
