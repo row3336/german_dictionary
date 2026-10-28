@@ -43,7 +43,7 @@ class IndependentOralTests(unittest.TestCase):
                                 ids = ('a', 'b', 'c', 'd')
                                 h.add(*ids)
                                 for wid in ids: h.baseline(wid)
-                                h.start(); h.call('oral_next')
+                                h.start()
                                 originals, presentations = {}, {}
                                 for _ in range(4 * (limit + 1) + 3):
                                     frame = h.frame()
@@ -85,7 +85,7 @@ class IndependentOralTests(unittest.TestCase):
     def test_dynamic_limit_increase_and_gap_change_preserve_already_shown_slot(self):
         h = self.harness(); h.add('a', 'b', 'c', 'd', 'e')
         h.options.update(gap=1, limit=1)
-        h.start(); h.call('oral_next'); h.grade(False); h.grade()
+        h.start(); h.grade(False); h.grade()
         hidden = copy.deepcopy(h.frame()['hidden'])
         self.assertEqual(hidden['word_id'], 'a')
         self.assertTrue(hidden['retry'])
@@ -118,9 +118,10 @@ class IndependentOralTests(unittest.TestCase):
                             with patch.object(H, '_user_interface_lang', return_value=ui):
                                 h.start(mode)
                                 markup = h.frame()['view'][1]['reply_markup']['keyboard']
-                                self.assertIn(t(ui, 'oral_next'), str(markup))
-                                self.assertNotIn(t(ui, 'clarify_fields'), str(markup))
-                                h.call(update=h.update(t(ui, 'oral_next')))
+                                self.assertNotIn(t(ui, 'oral_next'), str(markup))
+                                self.assertIn(t(ui, 'clarify_fields'), str(markup))
+                                self.assertIn(t(ui, 'oral_correct'), str(markup))
+                                # The first message already holds the current answer.
                                 text = h.frame()['view'][0]
                                 self.assertIn('Guten Tag' if mode.endswith('_de') else
                                     {'ru': 'собака', 'uk': 'пес', 'en': 'dog'}[lang], text)
@@ -136,10 +137,11 @@ class IndependentOralTests(unittest.TestCase):
     def test_forbidden_controls_and_old_ignored_delivery_never_grade(self):
         h = self.harness(); h.add('a', 'b'); h.start()
         old = []
-        for text in ('idk', 'input_err', 'send_learn', '/undo', 'A', 'oral_correct', 'oral_wrong'):
+        for text in ('idk', 'input_err', 'send_learn', '/undo', 'A', 'oral_next'):
             update = h.update(text); old.append(update); h.call(update=update)
-        self.assertEqual(h.frame()['phase'], 'initial_hidden')
-        h.call('oral_next'); before = copy.deepcopy(h.ctx.user_data)
+        self.assertEqual(h.frame()['phase'], 'grading')
+        self.assertEqual(h.frame()['pending']['word_id'], 'a')
+        before = copy.deepcopy(h.ctx.user_data)
         with patch.object(H, '_options', side_effect=AssertionError('replayed options')):
             for update in old: self.assertIsNone(h.call(update=update))
         for text in ('idk', 'input_err', 'send_learn', 'typed answer', 'oral_next'):
@@ -153,7 +155,7 @@ class IndependentOralTests(unittest.TestCase):
             with self.subTest(table=table):
                 h = self.harness()
                 try:
-                    h.add('a', 'b', 'c'); h.start(); h.call('oral_next')
+                    h.add('a', 'b', 'c'); h.start()
                     before = copy.deepcopy(h.ctx.user_data)
                     ledgers = h.rows('study_deliveries')
                     h.conn.execute('CREATE TRIGGER qa_oral_failure BEFORE INSERT ON '+table+
@@ -173,18 +175,16 @@ class IndependentOralTests(unittest.TestCase):
                 finally: h.doCleanups()
 
     def test_format_failure_at_each_boundary_drains_without_new_selection_or_answer(self):
-        for phase in ('entry', 'reveal', 'original', 'drill', 'stop'):
+        for phase in ('entry', 'original', 'drill', 'stop'):
             with self.subTest(phase=phase):
                 h = self.harness()
                 try:
                     h.add('a', 'b')
                     if phase != 'entry': h.start()
-                    if phase in ('original', 'drill', 'stop'): h.call('oral_next')
                     if phase == 'drill':
                         h.grade(False); h.grade()
                         self.assertTrue(h.frame()['pending']['retry'])
-                    update = h.update('oral_wrong' if phase in ('original', 'drill') else
-                        'oral_next' if phase == 'reveal' else 'stop')
+                    update = h.update('oral_wrong' if phase in ('original', 'drill') else 'stop')
                     with patch.object(view, 'message', side_effect=RuntimeError('QA formatting')):
                         with self.assertRaisesRegex(RuntimeError, 'QA formatting'):
                             h.start(update=update) if phase == 'entry' else h.call(update=update)
@@ -208,7 +208,7 @@ class IndependentOralTests(unittest.TestCase):
                 h = self.harness()
                 try:
                     h.add('a', 'b'); h.baseline(); h.baseline(user=8)
-                    h.start(); h.call('oral_next'); old = h.update('oral_correct' if correct else 'oral_wrong')
+                    h.start(); old = h.update('oral_correct' if correct else 'oral_wrong')
                     h.grade(update=old)
                     self.assertEqual(len(h.rows('transaction_log')), 1)
                     result = answers.undo_steps('synthetic', 7, 1, 9000)
@@ -226,9 +226,10 @@ class IndependentOralTests(unittest.TestCase):
                 finally: h.doCleanups()
 
     def test_failed_clarify_refresh_drains_saved_translation_without_picker_or_grade(self):
-        h = self.harness(); h.add('a', 'b'); h.start(); h.call('oral_next')
+        h = self.harness(); h.add('a', 'b'); h.start()
         point = quiz_resume.capture_return_point(h.ctx, ORAL_QUIZ)
-        self.assertEqual((point.visible_answer_id, point.current_question_id), ('a', 'b'))
+        self.assertEqual((point.visible_answer_id, point.current_question_id), ('a', 'a'))
+        self.assertEqual(h.frame()['hidden']['word_id'], 'b')
         before = domain.copy_frame(h.frame())
         h.conn.execute("UPDATE words SET russian='FRESH_VISIBLE_A' WHERE id='a'"); h.conn.commit()
         with patch.object(h.service, 'refresh', side_effect=sqlite3.OperationalError('QA clarify read')):
@@ -238,20 +239,19 @@ class IndependentOralTests(unittest.TestCase):
         fresh = h.update('oral_correct')
         with patch.object(R, 'pick_original', side_effect=AssertionError('clarify picker')):
             h.call(update=fresh)
-        self.assertIn(r'FRESH\_VISIBLE\_A', fresh.message.sent[-1][0])
+        self.assertIn('FRESH_VISIBLE_A', fresh.message.sent[-1][0])
+        self.assertNotIn('\\', fresh.message.sent[-1][0])
         self.assertEqual(domain.copy_frame(h.frame()), before)
         self.assertFalse(h.frame()['pending_render'])
         self.assertEqual(h.rows('quiz_events'), [])
         self.assertEqual(h.rows('transaction_log'), [])
 
     def test_delete_initial_visible_hidden_and_completed_keeps_valid_remaining_tail(self):
-        for phase, target in (('initial', 'a'), ('grading', 'a'),
-                              ('grading', 'b'), ('completed', 'b')):
+        for phase, target in (('grading', 'a'), ('grading', 'b'), ('completed', 'b')):
             with self.subTest(phase=phase, target=target):
                 h = self.harness()
                 try:
                     h.add('a', 'b'); h.start()
-                    if phase != 'initial': h.call('oral_next')
                     if phase == 'completed': h.grade(); h.grade()
                     old_count = len(h.rows('quiz_events'))
                     quiz_resume.capture_return_point(h.ctx, ORAL_QUIZ)
@@ -262,10 +262,7 @@ class IndependentOralTests(unittest.TestCase):
                         if slot: self.assertNotEqual(slot['word_id'], target)
                     self.assertNotIn(target, h.frame()['retry_queue'])
                     self.assertEqual(len(h.rows('quiz_events')), old_count)
-                    if phase == 'initial':
-                        self.assertEqual(h.frame()['hidden']['word_id'], 'b')
-                        self.assertEqual(h.frame()['phase'], 'initial_hidden')
-                    elif phase == 'grading':
+                    if phase == 'grading':
                         self.assertEqual(h.frame()['pending']['word_id'], 'b' if target == 'a' else 'a')
                         self.assertIsNone(h.frame()['hidden'])
                         h.grade()
@@ -274,7 +271,7 @@ class IndependentOralTests(unittest.TestCase):
                 finally: h.doCleanups()
 
     def test_receipt_frames_are_json_plans_without_live_render_payload(self):
-        h = self.harness(); h.add('a', 'b'); h.start(); h.call('oral_next'); h.grade(False)
+        h = self.harness(); h.add('a', 'b'); h.start(); h.grade(False)
         for row in h.rows('study_deliveries'):
             result = json.loads(row['result_json'])
             frame = result.get('oral_frame') or (result.get('after') or {}).get('oral_frame')
@@ -316,7 +313,7 @@ RETURN_FAILURE_BODY = r"""
 import sqlite3
 for fault in ('sql', 'format', 'send'):
     for same in (False, True):
-        reset(); await enter(); await send(t('en', 'oral_next'))
+        reset(); await enter()
         slots = copy.deepcopy((h.frame()['pending'], h.frame()['hidden']))
         await send(t('en', 'clarify_fields'))
         assert app.user_data[UID]['quiz_edit_entry']['id'] == slots[0]['word_id']
@@ -388,8 +385,7 @@ class IndependentOralMainQA(unittest.TestCase):
                 h.baseline(wid, 'ru_de'); h.baseline(wid, mode, user=8)
                 await enter(direction, kind)
                 assert conv._conversations[key] == main.ORAL_QUIZ
-                assert h.frame()['mode'] == mode and h.frame()['pending'] is None
-                await send(t('en','oral_next'))
+                assert h.frame()['mode'] == mode and h.frame()['phase'] == 'grading'
                 slots = copy.deepcopy((h.frame()['pending'], h.frame()['hidden']))
                 assert slots[0]['word_id'] == wid and slots[1]['word_id'] != wid
                 await send(t('en','clarify_fields')); await send('add_int')
@@ -409,7 +405,7 @@ class IndependentOralMainQA(unittest.TestCase):
                 assert h.srs(wid,mode) == BASE and h.srs(wid,'ru_de') == BASE
                 assert rows('transaction_log') == [] and rows('quiz_events') == []
                 for good in (False, True):
-                    await send('Tests'); await enter(direction,kind); await send(t('en','oral_next'))
+                    await send('Tests'); await enter(direction,kind)
                     grade = await send(t('en','oral_correct' if good else 'oral_wrong'))
                     assert [(r['word_id'],r['mode'],r['is_correct']) for r in rows('quiz_events')] == [(wid,mode,int(good))]
                     assert h.srs(wid,mode) == update_fsrs(BASE,5 if good else 2,DAY,2)
@@ -434,14 +430,13 @@ class IndependentOralMainQA(unittest.TestCase):
             assert [(r['word_id'],r['mode']) for r in rows('quiz_events')] == [('a','ru_de')]
             assert h.srs('a','ru_de') == update_fsrs(BASE,5,DAY,1.65)
             # Zero before and after reveal must not assign either ungraded slot a result.
-            for revealed in (False, True):
+            for _ in range(2):
                 reset(); await enter()
-                if revealed: await send(t('en','oral_next'))
                 await send(t('en','stop'))
                 assert h.frame()['phase'] == 'completed' and h.frame()['correct'] == h.frame()['wrong'] == 0
                 assert rows('quiz_events') == [] and rows('transaction_log') == [] and '—' in bot.sent[-1]
             # One phrase has no hidden tail; four drills must each be graded, but never counted as originals.
-            reset(); await enter('DE','Phrases'); await send(t('en','oral_next'))
+            reset(); await enter('DE','Phrases')
             assert h.frame()['pending']['word_id'] == 'p' and h.frame()['hidden'] is None
             await send(t('en','oral_wrong'))
             scheduled = copy.deepcopy(h.srs('p','phrase_de_ru'))
@@ -460,11 +455,12 @@ class IndependentOralMainQA(unittest.TestCase):
     def test_actual_main_clarify_synonyms_completed_manual_change_and_delete(self):
         self.run_case(r"""
             from bot.handlers import synonyms
-            reset(); await enter(); await send(t('en','oral_next'))
+            reset(); await enter()
             before = copy.deepcopy(h.frame()); await send(t('en','clarify_fields'))
             assert h.ctx.user_data['quiz_edit_entry']['id'] == 'a'
             point = h.ctx.user_data['quiz_return_point']
-            assert point.visible_answer_id == 'a' and point.current_question_id == 'b'
+            assert point.visible_answer_id == 'a' and point.current_question_id == 'a'
+            assert h.frame()['hidden']['word_id'] == 'b'
             with patch.object(synonyms,'get_synonym_group',return_value=[]):
                 await send(clarify.SYNONYMS_TEXT)
                 assert conv._conversations[key] == main.SYN_MENU and h.ctx.user_data['quiz_return_point'] == point
@@ -505,9 +501,9 @@ class IndependentOralMainQA(unittest.TestCase):
                     with patch.object(oral_repo,'pick_original',side_effect=AssertionError('QA initial retry picker')):
                         await process(retry)
                     assert conv._conversations[key] == main.ORAL_QUIZ
-                    assert h.frame()['flow_id'] == flow and h.frame()['hidden'] == reserved and h.frame()['pending'] is None
+                    assert h.frame()['flow_id'] == flow and h.frame()['hidden'] == reserved
+                    assert h.frame()['phase'] == 'grading' and h.frame()['pending'] is not None
                     assert rows('quiz_events') == []
-                    await send(t('en','oral_next'))
                     grade = update(t('en','oral_correct'))
                     with patch.object(FakeBot,'send_message',side_effect=RuntimeError('QA graded send')):
                         await app.process_update(grade)

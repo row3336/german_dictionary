@@ -42,11 +42,13 @@ def _live_frame(context):
 def _publish(context):
     frame = context.user_data[FRAME]
     context.user_data['quiz_mode'] = frame['mode']
-    hidden = frame.get('hidden') or {}
-    visible = frame.get('pending') or frame.get('last_visible') or {}
+    # The shown card is the pending one (question and its own spoiler answer);
+    # the internally reserved hidden slot is never published.
+    current = frame.get('pending') or {}
+    visible = current or frame.get('last_visible') or {}
     publish_view(context, caller_kind='oral', mode=frame['mode'], phase=frame['phase'],
                  flow_id=frame['flow_id'], view_revision=frame['revision'],
-                 current_question_id=hidden.get('word_id'),
+                 current_question_id=current.get('word_id'),
                  visible_answer_id=visible.get('word_id'))
     if visible:
         context.user_data['quiz_last_answered_entry'] = visible['entry']
@@ -88,7 +90,7 @@ async def _render(update, context, *, refresh=False, prefix=None):
             return await _back_to_main_menu(update, context)
         frame['view'] = view.message(shown, _user_interface_lang(update.effective_user.id), prefix)
     text, kwargs = frame['view']
-    await _reply_text_with_retry(update.message, text, **kwargs)
+    await _reply_text_with_retry(update.message, text, **view.send_kwargs(kwargs))
     frame['pending_render'] = False
     return ORAL_QUIZ
 
@@ -211,10 +213,10 @@ async def _oral_quiz_current(update, context):
         _service().bind_control(uid, transport_id(update), frame, 'back')
         invalidate_study_frames(context)
         return await _back_to_tests(update, context)
-    action = {t(lang, 'oral_next'): 'next', t(lang, 'oral_correct'): 'correct',
-              t(lang, 'oral_wrong'): 'wrong', t(lang, 'stop'): 'stop'}.get(text)
-    if (not action or (action == 'next' and frame['phase'] != 'initial_hidden')
-            or (action in ('correct', 'wrong') and frame['phase'] != 'grading')
+    # No 'next' control: the first card is already revealed; old 'next' is ignored.
+    action = {t(lang, 'oral_correct'): 'correct', t(lang, 'oral_wrong'): 'wrong',
+              t(lang, 'stop'): 'stop'}.get(text)
+    if (not action or (action in ('correct', 'wrong') and frame['phase'] != 'grading')
             or frame['phase'] == 'completed'):
         _service().bind_control(uid, transport_id(update), frame, 'ignored')
         return ORAL_QUIZ

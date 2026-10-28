@@ -443,7 +443,7 @@ class LearningQueueTests(unittest.TestCase):
         options={'gap':3,'limit':4,'topics':None,'cefr_levels':None}
         service=OralService(self.db)
         start=service.start(1,'de_ru',661,options,today=NOW.date())['oral_frame']
-        reveal=service.transition(1,start,'next',662,options,today=NOW.date())['oral_frame']
+        reveal=start  # the start plan already performs the former 'next' reveal
         self.assertEqual(reveal['pending']['word_id'],'a')
         self.assertEqual(reveal['pending']['entry']['learning_lifecycle'],1)
         receipt=service.transition(1,reveal,'wrong',663,options,today=NOW.date(),now=NOW)

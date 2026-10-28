@@ -224,7 +224,10 @@ class PerfektQuizzes(unittest.TestCase):
         e = entry('einstellen', 'stellte ein', 'eingestellt', example=original)
         e['perfekt_variants_json'] = OLD_FRAME_JSON
         question = V.question(e, 'de_ru')
-        self.assertIn('_  stellte ein, hat eingestellt_', question)
+        self.assertIn('\n  stellte ein, hat eingestellt', question)
+        text, entities = V.card(e, 'de_ru')
+        start = text.index('stellte ein, hat eingestellt')
+        self.assertIn(('italic', start, len('stellte ein, hat eingestellt')), entities)
         self.assertNotIn('Nur im alten Variantenblock.', question)
         self.assertIn(original, question)
         self.assertIn('\n\n' + original, V.question(e, 'ru_de'))

@@ -63,7 +63,10 @@ class OralService:
             raise ValueError('unsupported oral mode')
         def resolve(conn):
             pick, get = self._selectors(conn, user_id, mode, options, today)
-            return {'oral_frame': domain.start(mode, pick, get, options['gap'])}
+            # The first card is shown with its answer: perform the former 'next'
+            # reveal in the same plan, keeping the A/B reservation order intact.
+            frame = domain.start(mode, pick, get, options['gap'])
+            return {'oral_frame': domain.reveal(frame, pick, get, options['gap'])}
         return answers.record_control_transition(
             self.db_path, user_id, transport, 'oral-entry', 'oral_start', resolve)
 
@@ -88,8 +91,6 @@ class OralService:
                 if item:
                     validate_quiz_entry(item['entry'])
             pick, get = self._selectors(conn, user_id, mode, options, today)
-            if action == 'next':
-                return domain.reveal(source, pick, get, options['gap'])
             if action == 'stop':
                 return domain.stop(source)
             if action == 'delete':

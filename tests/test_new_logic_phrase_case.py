@@ -57,23 +57,27 @@ class PhraseCaseTest(unittest.TestCase):
                 self.assertEqual(db_search._format_match_line(entry, "ru"),
                                  " ".join(x for x in ("phrase", "-", raw, "Перевод") if x))
 
-    def test_c02_oral_both_directions_hide_then_reveal(self):
+    def test_c02_oral_both_directions_question_then_own_spoiler_answer(self):
         entry = phrase("Auf Wiedersehen")
         for mode in ("phrase_ru_de", "phrase_de_ru"):
-            frame = {"phase": "initial_hidden", "mode": mode,
-                     "hidden": {"entry": entry}, "pending": None}
+            frame = {"phase": "grading", "mode": mode, "pending": {"entry": entry},
+                     "hidden": {"entry": phrase("Reserved Hidden B")}}
             before = copy.deepcopy(frame)
-            hidden, options = view.message(frame, "en")
+            text, options = view.message(frame, "en")
             self.assertEqual(frame, before)
-            self.assertEqual(options["parse_mode"], "Markdown")
-            self.assertNotIn(">>>", hidden)
+            self.assertIsNone(options["parse_mode"])
+            self.assertNotIn("Reserved Hidden B", text)
             visible, absent = (("Перевод", "Auf Wiedersehen") if mode == "phrase_ru_de"
                                else ("Auf Wiedersehen", "Перевод"))
-            self.assertIn(visible, hidden)
-            self.assertNotIn(absent, hidden)
-            frame.update(phase="grading", hidden=None, pending={"entry": entry})
-            revealed, _ = view.message(frame, "en")
-            self.assertEqual(revealed, f">>>    *{absent}*")
+            question, answer = text.split(view.QUESTION_MARK)
+            self.assertIn(visible, question)
+            self.assertNotIn(absent, question)
+            spoiler = [e for e in options["entities"] if e[0] == "spoiler"]
+            self.assertEqual(len(spoiler), 1)
+            hidden_part = text[spoiler[0][1]:spoiler[0][1] + spoiler[0][2]]
+            self.assertTrue(hidden_part.startswith(f">>> {absent}"))
+            self.assertTrue(text.endswith(hidden_part))
+            self.assertIn(("bold", spoiler[0][1] + 4, len(absent)), options["entities"])
 
     def test_c02_existing_card_question_and_learning_list(self):
         entry = phrase("Auf Wiedersehen")

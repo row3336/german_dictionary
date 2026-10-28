@@ -293,8 +293,8 @@ class ReflexiveQuizzesTest(unittest.TestCase):
             conn.execute("UPDATE learning_items SET status='completed'")
         service=OralService(self.db)
         options={'gap':1,'limit':1,'topics':None,'cefr_levels':None,'dict_lang':'ru'}
-        first=service.start(1,'de_ru',self.next_transport(),options,DAY)['oral_frame']
-        frame=service.transition(1,first,'next',self.next_transport(),options,DAY,NOW)['oral_frame']
+        # The start plan already performs the former reveal: A shown, B reserved.
+        frame=service.start(1,'de_ru',self.next_transport(),options,DAY)['oral_frame']
         hidden=copy.deepcopy(frame['hidden'])
         self.assertIsNotNone(hidden)
         self.fake_reset(hidden['word_id'])
@@ -789,7 +789,7 @@ class ReflexiveQuizzesTest(unittest.TestCase):
         from test_new_logic_qa_oral import main_oral_script
         script=main_oral_script(r"""
             from bot.oral import repository as oral_repository
-            reset(); await enter('DE','Words'); await send(t('en','oral_next'))
+            reset(); await enter('DE','Words')
             await send(t('en','clarify_fields')); await send('add_int'); await send('3')
             pinned=copy.deepcopy(h.ctx.user_data['add_int_preview'])
             slots=copy.deepcopy((h.frame()['pending'],h.frame()['hidden']))

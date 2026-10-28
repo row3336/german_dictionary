@@ -634,7 +634,6 @@ class OriginalPoolTests(unittest.TestCase):
     def test_B07_oral_rebuilds_unshown_pool_preserving_published_AB_actions_and_budget(self):
         h = self.harness()
         h.start()
-        h.call("oral_next")
         a, b = copy.deepcopy(h.frame()["pending"]), copy.deepcopy(h.frame()["hidden"])
         self.assertEqual((a["word_id"], b["word_id"]), ("a", "b"))
         self.assertTrue(h.frame()["original_pool"])
@@ -665,11 +664,14 @@ class OriginalPoolTests(unittest.TestCase):
         h = self.harness()
         h.options["topics"] = ["not-the-current-filter"]
         h.start()
-        self.assertEqual(h.frame()["hidden"]["word_id"], "a")
+        # B is reserved inside the start plan under the current A1 filter, not
+        # the stale options; the next unreserved slot follows the changed filter.
+        self.assertEqual(h.frame()["pending"]["word_id"], "a")
+        self.assertEqual(h.frame()["hidden"]["word_id"], "b")
         self.command(h, "level", "A2")
         self.command(h, "level", "A1")
-        h.call("oral_next")
-        self.assertEqual(h.frame()["pending"]["word_id"], "a")
+        h.grade()
+        self.assertEqual(h.frame()["pending"]["word_id"], "b")
         self.assertEqual(h.frame()["hidden"]["word_id"], "e")
 
     def test_B07_fsrs_rebuilds_only_unshown_pool_and_excludes_reserved_accepted(self):

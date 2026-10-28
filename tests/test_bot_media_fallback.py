@@ -214,17 +214,16 @@ class TelegramCallerCoverageTest(unittest.TestCase):
         for label, uid, shared, image, example in self.cases():
             with self.subTest(case=label, user=uid):
                 context, update = self.context(), self.update(uid)
+                # The current card carries its question media and its own
+                # spoiler answer in one message.
                 frame = domain.new_frame("de_uk")
-                frame["hidden"] = domain.slot(shared)
+                frame.update(phase="grading", pending=domain.slot(shared))
                 context.user_data[oral.FRAME] = frame
                 asyncio.run(oral._render(update, context, refresh=True))
                 delivered = update.message.reply_text.await_args.args[0]
                 self.assertIn(image, delivered)
                 self.assertIn(example, delivered)
-                frame.update(phase="grading", pending=frame["hidden"], hidden=None, view=None)
-                answer = self.update(uid)
-                asyncio.run(oral._render(answer, context, refresh=True))
-                self.assert_translation(answer.message.reply_text.await_args.args[0], uid)
+                self.assert_translation(delivered, uid)
 
     def test_clarify_card_and_copyable_echo_use_effective_media_for_both_roles(self):
         from bot.app_config import QUIZ_RU_DE
