@@ -11,7 +11,7 @@ class Msg:
 
     async def reply_text(self, text, reply_markup=None, **kw):
         sent = Msg(text, self.chat_id)
-        sent.markup = reply_markup
+        sent.markup, sent.entities, sent.kw = reply_markup, kw.get("entities"), kw
         self.sent.append(sent)
         return sent
 
@@ -28,6 +28,7 @@ class Query:
         if self.fail_edit:
             raise self.fail_edit
         self.message.text, self.message.markup = text, reply_markup
+        self.message.entities, self.message.kw = kw.get("entities"), kw
         self.edits.append(text)
 
     async def edit_message_reply_markup(self, reply_markup=None, **kw):
@@ -45,7 +46,8 @@ def entry_update(text, uid):
 
 def press(handler, ctx, uid, data, message, **kw):
     query = Query(data, uid, message, **kw)
-    state = __import__("asyncio").run(handler(type("Upd", (), {"callback_query": query})(), ctx))
+    upd = type("Upd", (), {"callback_query": query, "effective_user": query.from_user, "update_id": next(_ids)})()
+    state = __import__("asyncio").run(handler(upd, ctx))
     return state, query
 
 

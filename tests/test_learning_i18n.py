@@ -128,28 +128,32 @@ class LearningI18nTest(unittest.TestCase):
 
     # ---- handler-driven (ru guest) ----
 
-    def test_add_words_no_new_localized(self):
-        # empty DB -> nothing to pick -> localized "no new words"
+    def test_add_words_no_new_shows_only_localized_summary(self):
+        # empty DB -> nothing to pick; the answer is the summary itself, no extra text
         update = _Update(GUEST)
         _run(L._learning_add_words(update, _Ctx()))
-        last = update.message.calls[-1][0]
-        self.assertEqual(last, TEXTS["ru"]["learning_no_new"])
-        self.assertNotIn("No new words", last)
+        self.assertEqual(len(update.message.calls), 1)
+        text = update.message.calls[-1][0]
+        self.assertTrue(text.startswith(TEXTS["ru"]["learning"] + ":"))
+        self.assertIn("active = 0", text)
+        self.assertNotIn(TEXTS["ru"]["learning_no_new"], text)
 
-    def test_add_words_added_localized(self):
+    def test_add_words_added_updates_counters_without_confirmation(self):
         self._add_word()
         update = _Update(GUEST)
         _run(L._learning_add_words(update, _Ctx()))
-        last = update.message.calls[-1][0]
-        self.assertIn("Добавлено для изучения:", last)
-        self.assertNotIn("Added for learning", last)
+        self.assertEqual(len(update.message.calls), 1)
+        text = update.message.calls[-1][0]
+        self.assertIn("active = 1", text)
+        self.assertNotIn("Добавлено для изучения", text)
 
-    def test_menu_reset_localized(self):
+    def test_menu_reset_shows_localized_summary_only(self):
         update = _Update(GUEST, TEXTS["ru"]["learning_reset"])
         _run(L.learning_menu_choice(update, _Ctx()))
-        last = update.message.calls[-1][0]
-        self.assertEqual(last, TEXTS["ru"]["learning_session_reset"])
-        self.assertNotIn("Words returned to new", last)
+        self.assertEqual(len(update.message.calls), 1)
+        text = update.message.calls[-1][0]
+        self.assertTrue(text.startswith(TEXTS["ru"]["learning"] + ":"))
+        self.assertNotIn(TEXTS["ru"]["learning_session_reset"], text)
 
     def test_menu_unknown_button_localized(self):
         update = _Update(GUEST, "zzz-not-a-button")

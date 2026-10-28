@@ -125,7 +125,9 @@ from .handlers.synonyms import (
     synonyms_remove_input,
 )
 from .handlers.learning import (
+    learning_menu_callback,
     learning_menu_choice,
+    learning_menu_stale_callback,
     learning_quiz,
 )
 from .handlers.conjugation import conjugation_card_callback, conjugation_input
@@ -542,7 +544,8 @@ def main():
             TESTS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, tests_menu_choice)],
             DB_SEARCH: [MessageHandler(filters.TEXT & ~filters.COMMAND, db_search_input)],
             DB_SEARCH_VIEW: [MessageHandler(filters.TEXT & ~filters.COMMAND, db_search_view)],
-            LEARNING_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, learning_menu_choice)],
+            LEARNING_MENU: [CallbackQueryHandler(learning_menu_callback, pattern=r"^lrn:"),
+                            MessageHandler(filters.TEXT & ~filters.COMMAND, learning_menu_choice)],
             LEARNING_QUIZ: [MessageHandler(filters.TEXT & ~filters.COMMAND, learning_quiz)],
             CONJUGATION_MENU: [
                 CallbackQueryHandler(conjugation_card_callback, pattern=r"^conj:"),
@@ -605,6 +608,7 @@ def main():
     # Global handler for the CEFR/book-topics filter drill (spec_topics_levels.md).
     app.add_handler(CallbackQueryHandler(word_filter_callback, pattern=r"^wf:"))
     app.add_handler(CallbackQueryHandler(fsrs_settings_stale_callback, pattern=r"^fsrs:"))
+    app.add_handler(CallbackQueryHandler(learning_menu_stale_callback, pattern=r"^lrn:"))
     # Global handler for the conjugation card's inline "hide forms" toggle (Feature B).
     app.add_handler(CallbackQueryHandler(conjugation_card_callback, pattern=r"^conj:"))
     # Global handler for the "menu" button attached to owner broadcasts (spec #12).

@@ -43,10 +43,10 @@ def actual_suite():
             raise AssertionError('network forbidden')
 
     class OfflineBot(ExtBot):
-        __slots__=('sent','fail_once')
+        __slots__=('sent','fail_once','edits')
         def __init__(self):
             super().__init__('12345:FAKE',request=OfflineRequest(),get_updates_request=OfflineRequest())
-            object.__setattr__(self,'sent',[]);object.__setattr__(self,'fail_once',False)
+            object.__setattr__(self,'sent',[]);object.__setattr__(self,'fail_once',False);object.__setattr__(self,'edits',[])
         async def initialize(self): self._bot_user=User(55,'Offline',True,username='offline_bot')
         async def shutdown(self): pass
         async def send_message(self,chat_id,text,**kw):
@@ -55,6 +55,8 @@ def actual_suite():
                 raise RuntimeError('definite send failure')
             msg=Message(10000+len(self.sent),NOW,Chat(chat_id,'private'),from_user=self._bot_user,text=text,reply_markup=kw.get('reply_markup'))
             msg.set_bot(self);self.sent.append(msg);return msg
+        async def edit_message_text(self,text,chat_id=None,message_id=None,**kw):
+            self.edits.append((chat_id,message_id,text));return True
         async def set_message_reaction(self,*a,**kw): return True
 
     class Builder:
@@ -154,8 +156,12 @@ def actual_suite():
                 c.execute("UPDATE user_settings SET value='2' WHERE user_id=7 AND key=?",(L.LEARNING_DAILY_QTY_KEY,))
             await self.text('',old)
             self.assertEqual(len(self.rows('learning_items')),1)
+            sends=len(self.bot.sent)
             await self.text(t('en','add_for_learning'))
             self.assertEqual([r['word_id'] for r in self.rows('learning_items')],['a','b'])
+            # The second Add refreshes the one live summary: edited in place, nothing sent.
+            self.assertEqual(len(self.bot.sent),sends)
+            self.assertEqual([(c,m) for c,m,_ in self.bot.edits],[(self.bot.sent[0].chat_id,self.bot.sent[0].message_id)])
             self.assertEqual(self.rows('transaction_log'),[])
 
         def clarify(self,target='a',current='a'):

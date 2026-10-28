@@ -13,7 +13,10 @@ from datetime import datetime, timezone
 
 from ..common import match_policy
 
-from telegram import ReplyKeyboardMarkup, Update
+import logging
+
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity, ReplyKeyboardMarkup, Update
+from telegram.error import BadRequest, TelegramError
 from telegram.ext import ContextTypes
 
 from ..app_config import (
@@ -33,8 +36,10 @@ from ..common.settings import (
     _learning_intervals_text,
     _learning_mix_mode_enabled,
     _learning_ready_quorum,
-    _topic_filter_banner,
+    _topic_filter_label,
 )
+from ..common.topic_display import topic_labels
+from ..handlers.access import access_allowed
 from ..common.word_filter import count_words_for_filter, resolve_quiz_filter
 from ..common.study_lock import study_lock, invalidate_study_frames
 from ..common.quiz_resume import register_renderer, publish_view, RETURN_POINT_KEY, PUBLISHED_VIEW_KEY
@@ -50,6 +55,7 @@ from ..storage import (
     learning_preview_entry,
     learning_status_snapshot,
     list_learning_active_words,
+    list_topics_with_level,
 )
 from ..text_utils import cap_word as _cap_word
 from ..text_utils import low_word as _low_word
@@ -61,6 +67,8 @@ from ..ui.formatting import (
     _format_topic_learning_line,
 )
 from ..ui.keyboards import _learning_menu_keys, _tests_menu_keys
+
+logger = logging.getLogger(__name__)
 
 
 def _format_eta_from_iso(next_due_iso):
@@ -214,7 +222,7 @@ def _delivery_receipt(update, context):
 async def _present_learning_navigation(update, context, pending):
     uid = update.effective_user.id
     if pending["destination"] == LEARNING_MENU:
-        state = await _send_learning_menu(update, uid)
+        state = await _send_learning_menu(update, uid, context)
     else:
         await _reply_text_with_retry(update.message, t(_user_interface_lang(uid), "tests") + ":",
             reply_markup=ReplyKeyboardMarkup(_tests_menu_keys(uid), resize_keyboard=True))
@@ -264,11 +272,11 @@ async def _drain_pending_learning_view(update, context):
     except StaleGeneration:
         answers.reject_stale(get_db_path(), uid, transport, frame["flow_id"])
         invalidate_study_frames(context)
-        return True, await _send_learning_menu(update, uid)
+        return True, await _send_learning_menu(update, uid, context)
     if result.get("replayed"):
         return True, await _handle_replay(update, context, result)
     if _learning_recovery(context, result):
-        return True, await _send_learning_menu(update, uid)
+        return True, await _send_learning_menu(update, uid, context)
     frame["accepted_delivery"] = transport
     return True, await _render_learning_frame(update, context)
 
@@ -304,43 +312,144 @@ def _learning_send_text(user_id, result):
     return t(_user_interface_lang(user_id), 'learning_request_' + str(result))
 
 
-async def _send_learning_menu(update: Update, user_id):
-    """Show the learning menu with a summary of the current session."""
-    stats = learning_status_snapshot(
-        get_db_path(),
-        user_id=user_id,
-        quorum_pct=_learning_ready_quorum(get_db_path(), user_id),
-    )
-    active_entries = list_learning_active_words(get_db_path(), user_id=user_id)
-    active_lines = [_format_topic_learning_line(item) for item in active_entries]
-    active_preview = active_lines[:30]
-    if len(active_lines) > 30:
-        active_preview.append(f"... +{len(active_lines) - 30} more")
-    msg = "\n".join(
-        [
-            f"{t(_user_interface_lang(user_id), 'learning')}:",
-            "",
-            _topic_filter_banner(user_id),
-            "",
-            f"{t(_user_interface_lang(user_id), 'learning_daily_qty')} = {_learning_daily_qty(get_db_path(), user_id)}",
-            f"{t(_user_interface_lang(user_id), 'learning_intervals')} = {_learning_intervals_text(get_db_path(), user_id)}",
-            f"{t(_user_interface_lang(user_id), 'learning_mix_mode')} = {'ON' if _learning_mix_mode_enabled(user_id) else 'OFF'}",
+_LIVE = "learning_menu"  # user_data: the one summary message whose buttons are alive
+_TG_LIMIT = 4096  # characters (Unicode codepoints) after entity parsing
+_CALLBACK_ACTIONS = {"start": "learning_start", "mix": "learning_mix_mode", "add": "learning_add",
+                     "reset": "learning_reset", "sett": "learning_sett", "back": "back"}
+
+
+def _u16(text):
+    """Telegram entity offsets/lengths count UTF-16 code units."""
+    return len(text.encode("utf-16-le")) // 2
+
+
+def _queue_rows(user_id, entries):
+    """`[Book:topic] - [word]`; the label comes from the shared book-topic formatter."""
+    by_level = {}
+    descriptions = {}
+    for name, description, level in list_topics_with_level(get_db_path()):
+        descriptions[name] = description
+        if level:
+            by_level.setdefault(level, []).append(name)
+    shown = {}
+    for level, names in by_level.items():
+        for name, label in topic_labels(level, names, descriptions).items():
+            shown[name] = f"{level}:{label}"
+    return [_format_topic_learning_line({**entry, "topic": shown.get(str(entry.get("topic", "")).strip(),
+                                                                    entry.get("topic", ""))})
+            for entry in entries]
+
+
+def _learning_summary(user_id):
+    """(text, entities, markup) of the Learning summary. Only the active-word queue is a
+    code block; it takes every row that fits the real 4096-character limit and then an
+    exact `... +N more`."""
+    db, lang = get_db_path(), _user_interface_lang(user_id)
+    stats = learning_status_snapshot(db, user_id=user_id, quorum_pct=_learning_ready_quorum(db, user_id))
+    rows = _queue_rows(user_id, list_learning_active_words(db, user_id=user_id))
+    mix = _learning_mix_mode_enabled(user_id)
+    label = _topic_filter_label(user_id, lang=lang)
+    head = [f"{t(lang, 'learning')}:", "", t(lang, "topic_filter_banner"), "", f"🟥 {label} 🟥", "",
+            f"{'🟢 [ON]' if mix else '⚪️ [OFF]'} {t(lang, 'learning_mix_mode')}",
+            f"{t(lang, 'learning_daily_qty')} = {_learning_daily_qty(db, user_id)}",
+            f"{t(lang, 'learning_intervals')} = {_learning_intervals_text(db, user_id)}",
             f"active = {stats.get('active_count', 0)}",
             f"preview_pending = {stats.get('preview_pending', 0)}",
             f"due_now = {stats.get('due_count', 0)} / need {stats.get('ready_needed', 0)}",
             f"completed_in_batch = {stats.get('completed_count', 0)}",
-            f"next_due = {_format_eta_from_iso(stats.get('next_due'))}",
-            "",
-            "active words:",
-            *(active_preview if active_preview else ["-"]),
-        ]
-    )
-    await _reply_text_with_retry(
-        update.message,
-        msg,
-        reply_markup=ReplyKeyboardMarkup(_learning_menu_keys(user_id), resize_keyboard=True),
-    )
+            f"next_due = {_format_eta_from_iso(stats.get('next_due'))}", "", "active words:"]
+    top = "\n".join(head) + "\n"
+    entities = ([MessageEntity("bold", _u16("\n".join(head[:4]) + "\n🟥 "), _u16(label))]
+                if label else [])
+    if not rows:
+        text = top + "-"
+    else:
+        n, used, keep = len(rows), len(top), 0
+        for k in range(n, -1, -1):
+            more = f"... +{n - k} more" if k < n else ""
+            size = used + sum(len(r) for r in rows[:k]) + max(k - 1, 0) + (1 + len(more) if k and more else len(more))
+            if size <= _TG_LIMIT:
+                keep = k
+                break
+        block = rows[:keep] + ([f"... +{n - keep} more"] if keep < n else [])
+        text = top + "\n".join(block)
+        entities.append(MessageEntity("pre", _u16(top), _u16("\n".join(block))))
+    lang_btn = lambda key, data: InlineKeyboardButton(t(lang, key), callback_data=data)
+    markup = InlineKeyboardMarkup([
+        [lang_btn("learning_start", "lrn:start"), lang_btn("learning_mix_mode", "lrn:mix"),
+         lang_btn("add_for_learning", "lrn:add"), lang_btn("learning_reset", "lrn:reset")],
+        [lang_btn("learning_sett_btn", "lrn:sett"), lang_btn("back", "lrn:back")]])
+    return text, entities, markup
+
+
+async def _send_learning_menu(update: Update, user_id, context=None):
+    """Initial send of the Learning summary; it becomes the one live (editable) message."""
+    text, entities, markup = _learning_summary(user_id)
+    sent = await _reply_text_with_retry(update.message, text, entities=entities, parse_mode=None,
+                                        reply_markup=markup)
+    if context is not None:
+        context.user_data[_LIVE] = {"uid": user_id, "chat": getattr(sent, "chat_id", None),
+                                    "msg": getattr(sent, "message_id", None)} if sent else None
     return LEARNING_MENU
+
+
+async def _refresh_learning_summary(update, context):
+    """Show the new state by editing the live summary; never a second summary or a
+    confirmation text. Without a live summary (old text client) send one."""
+    uid = update.effective_user.id
+    query = getattr(update, "callback_query", None)
+    live = context.user_data.get(_LIVE)
+    if query is None and not (live and live.get("msg") and live.get("uid") == uid
+                              and hasattr(getattr(context, "bot", None), "edit_message_text")):
+        return await _send_learning_menu(update, uid, context)
+    text, entities, markup = _learning_summary(uid)
+    try:
+        if query is not None:
+            await query.edit_message_text(text, entities=entities, parse_mode=None, reply_markup=markup)
+        else:
+            await context.bot.edit_message_text(text, chat_id=live["chat"], message_id=live["msg"],
+                                                entities=entities, parse_mode=None, reply_markup=markup)
+    except BadRequest as exc:
+        if "not modified" not in str(exc).lower():
+            logger.warning("Learning summary edit failed", exc_info=True)
+    except TelegramError:
+        logger.warning("Learning summary edit failed", exc_info=True)
+    return LEARNING_MENU
+
+
+class _CallbackUpdate:
+    """Message-shaped view of a callback update (PTB objects stay untouched)."""
+
+    def __init__(self, update):
+        self.callback_query = update.callback_query
+        self.message = update.callback_query.message
+        self.effective_user = update.effective_user
+        self.update_id = getattr(update, "update_id", None)
+
+
+async def learning_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Inline buttons of the live Learning summary; anything else is only acknowledged."""
+    query = update.callback_query
+    uid = query.from_user.id
+    live, message = context.user_data.get(_LIVE), query.message
+    try:
+        await query.answer()
+    except TelegramError:
+        pass
+    action = _CALLBACK_ACTIONS.get((query.data or "").split(":", 1)[-1])
+    if (not action or not live or message is None or live["uid"] != uid or live["msg"] != message.message_id
+            or live["chat"] != getattr(message, "chat_id", None) or not access_allowed(uid)
+            or update.effective_user is None or update.effective_user.id != uid):
+        return None
+    return await learning_menu_choice(_CallbackUpdate(update), context, action)
+
+
+async def learning_menu_stale_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """lrn: buttons outside LEARNING_MENU (left the screen, restart): ack only."""
+    try:
+        await update.callback_query.answer()
+    except TelegramError:
+        pass
 
 
 def _format_learning_preview_line(entry, dict_lang):
@@ -375,20 +484,9 @@ async def _learning_add_words(update: Update, context: ContextTypes.DEFAULT_TYPE
         return {**learning_requests.add_candidates(conn, uid, qty, qf.topics, qf.cefr_levels, mix), 'daily_qty': qty}
 
     result = answers.record_control_transition(db, uid, _transport_id(update), 'learning-menu', 'learning_add', add)
-    if _learning_recovery(context, result):
-        return await _send_learning_menu(update, uid)
-    lang = _user_interface_lang(uid)
-    if 'need' not in result:
-        # Pre20 accepted Add receipts are historical; never select again.
-        text = t(lang, 'learning_added').format(added=result.get('added', 0))
-        await _reply_text_with_retry(update.message, text,
-            reply_markup=ReplyKeyboardMarkup(_learning_menu_keys(uid), resize_keyboard=True))
-        return LEARNING_MENU
-    text = (t(lang, "learning_batch_full").format(active=result["active_count"], daily=result["daily_qty"]) if not result["need"]
-            else t(lang, "learning_added").format(added=result["added"]) if result["added"] else t(lang, "learning_no_new"))
-    await _reply_text_with_retry(update.message, text,
-        reply_markup=ReplyKeyboardMarkup(_learning_menu_keys(uid), resize_keyboard=True))
-    return LEARNING_MENU
+    _learning_recovery(context, result)
+    # Counters and queue are the answer: refresh the live summary, no Added/Start text.
+    return await _refresh_learning_summary(update, context)
 
 
 def _next_learning_view(conn, context, user_id):
@@ -439,7 +537,7 @@ async def _render_learning_frame(update, context, prefix_text=None):
     uid = update.effective_user.id
     frame = context.user_data.get(FRAME)
     if not frame:
-        return await _send_learning_menu(update, uid)
+        return await _send_learning_menu(update, uid, context)
     frame["pending_render"] = True
     prefix = frame.get("prefix_text") if prefix_text is None else prefix_text
     slot = frame.get("current")
@@ -454,7 +552,7 @@ async def _render_learning_frame(update, context, prefix_text=None):
                 stale = True
         if stale:
             invalidate_study_frames(context)
-            return await _send_learning_menu(update, uid)
+            return await _send_learning_menu(update, uid, context)
         fresh = get_word_by_id(get_db_path(), entry["id"])
         if not fresh:
             return await _learning_deleted(update, context, None, entry["id"], prefix)
@@ -500,14 +598,14 @@ async def _learning_existing(update, context, point, prefix_text):
         frame = context.user_data[FRAME]
         frame.update(flow_id=point.flow_id, revision=point.view_revision, phase=point.phase)
     if point.flow_id != frame["flow_id"] or point.view_revision != frame["revision"]:
-        return await _send_learning_menu(update, update.effective_user.id)
+        return await _send_learning_menu(update, update.effective_user.id, context)
     return await _render_learning_frame(update, context, prefix_text)
 
 
 async def _learning_deleted(update, context, point, word_id, prefix_text):
     frame = context.user_data.get(FRAME)
     if not frame:
-        return await _send_learning_menu(update, update.effective_user.id)
+        return await _send_learning_menu(update, update.effective_user.id, context)
     if frame.get("last_visible_id") == word_id:
         frame["last_visible_id"] = None
         frame["last_answer"] = None
@@ -517,7 +615,7 @@ async def _learning_deleted(update, context, point, word_id, prefix_text):
     return await _render_learning_frame(update, context, prefix_text)
 
 
-async def learning_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def learning_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE, action=None):
     async with study_lock(update.effective_user.id):
         receipt = _delivery_receipt(update, context)
         if receipt is not None:
@@ -526,12 +624,12 @@ async def learning_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
         drained, state = await _drain_pending_learning_view(update, context)
         if drained:
             return state
-        return await _learning_menu_locked(update, context)
+        return await _learning_menu_locked(update, context, action)
 
 
-async def _learning_menu_locked(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def _learning_menu_locked(update: Update, context: ContextTypes.DEFAULT_TYPE, action=None):
     uid = update.effective_user.id
-    action = _action_key_from_text(update.message.text.strip(), uid)
+    action = action or _action_key_from_text(update.message.text.strip(), uid)
     if action == "learning_add":
         return await _learning_add_words(update, context)
     accepted = {"back", "learning_sett", "learning_mix_mode", "learning_reset", "learning_start"}
@@ -564,7 +662,7 @@ async def _learning_menu_locked(update: Update, context: ContextTypes.DEFAULT_TY
 
     result = answers.record_control_transition(get_db_path(), uid, _transport_id(update), flow, action, control)
     if _learning_recovery(context, result):
-        return await _send_learning_menu(update, uid)
+        return await _send_learning_menu(update, uid, context)
     if action == "back":
         return await _leave_learning(update, context, result, TESTS_MENU)
     if action == "learning_sett":
@@ -572,14 +670,10 @@ async def _learning_menu_locked(update: Update, context: ContextTypes.DEFAULT_TY
         context.user_data["learning_sett_return"] = "learning_menu"
         return await _send_learning_settings_menu(update, uid)
     if action == "learning_mix_mode":
-        await _reply_text_with_retry(update.message,
-            f"{t(_user_interface_lang(uid), 'learning_mix_mode')} = {'ON' if result['enabled'] else 'OFF'}")
-        return await _send_learning_menu(update, uid)
+        return await _refresh_learning_summary(update, context)
     if action == "learning_reset":
         invalidate_study_frames(context)
-        await _reply_text_with_retry(update.message, t(_user_interface_lang(uid), "learning_session_reset"),
-            reply_markup=ReplyKeyboardMarkup(_learning_menu_keys(uid), resize_keyboard=True))
-        return LEARNING_MENU
+        return await _refresh_learning_summary(update, context)
     context.user_data.pop("learning_recent_ids", None)
     context.user_data.pop("quiz_last_answered_entry", None)
     frame = _new_frame()
@@ -611,12 +705,12 @@ async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
             answers.reject_stale(get_db_path(), update.effective_user.id, _transport_id(update), frame.get('flow_id', 'learning'))
             invalidate_study_frames(context)
             await _reply_text_with_retry(update.message, t(_user_interface_lang(update.effective_user.id), 'quiz_invalid_construction'))
-            return await _send_learning_menu(update, update.effective_user.id)
+            return await _send_learning_menu(update, update.effective_user.id, context)
         except (StaleGeneration, answers.StaleStudyAction):
             frame = context.user_data.get(FRAME) or {}
             answers.reject_stale(get_db_path(), update.effective_user.id, _transport_id(update), frame.get('flow_id', 'learning'))
             invalidate_study_frames(context)
-            return await _send_learning_menu(update, update.effective_user.id)
+            return await _send_learning_menu(update, update.effective_user.id, context)
 
 
 def _learning_recovery(context, receipt):
@@ -638,7 +732,7 @@ async def _learning_quiz_locked(update, context):
             expected_generations=frame_generations((frame.get("current") or {}).get("entry")),
             expected_lifecycles=frame_lifecycles((frame.get("current") or {}).get("entry")))
         if _learning_recovery(context, result):
-            return await _send_learning_menu(update, uid)
+            return await _send_learning_menu(update, uid, context)
         if action == "back":
             return await _leave_learning(update, context, result, LEARNING_MENU)
         return await _start_clarify_fields(update, context, LEARNING_QUIZ, prefer_current=True)
@@ -651,7 +745,7 @@ async def _learning_quiz_locked(update, context):
                 expected_generations=frame_generations((frame.get("current") or {}).get("entry")),
                 expected_lifecycles=frame_lifecycles((frame.get("current") or {}).get("entry")))
             if _learning_recovery(context, result):
-                return await _send_learning_menu(update, uid)
+                return await _send_learning_menu(update, uid, context)
             return await _render_learning_frame(update, context, t(_user_interface_lang(uid), "input_err_nothing"))
         def correct(conn, snapshot, kind, now):
             result = learning_store.apply_answer(conn, snapshot, kind, now)
@@ -665,7 +759,7 @@ async def _learning_quiz_locked(update, context):
             expected_generations=frame_generations((frame.get("current") or {}).get("entry")),
             expected_lifecycles=frame_lifecycles((frame.get("current") or {}).get("entry")))
         if _learning_recovery(context, receipt):
-            return await _send_learning_menu(update, uid)
+            return await _send_learning_menu(update, uid, context)
         if receipt.get("replayed"):
             return await _handle_replay(update, context, receipt)
         frame["last_answer"]["ok"] = True
@@ -695,7 +789,7 @@ async def _learning_quiz_locked(update, context):
             transition=preview, expected_generations=frame_generations(entry),
             expected_lifecycles=frame_lifecycles(entry))
         if _learning_recovery(context, receipt):
-            return await _send_learning_menu(update, uid)
+            return await _send_learning_menu(update, uid, context)
         if receipt.get("replayed"):
             return await _handle_replay(update, context, receipt)
         if kind == "skip" and (frame.get("last_answer") or {}).get("word_id") == entry["id"]:
@@ -725,7 +819,7 @@ async def _learning_quiz_locked(update, context):
         expected_generation=entry.get("study_generation", 0), expected_generations=frame_generations(entry),
         expected_lifecycles=frame_lifecycles(entry))
     if _learning_recovery(context, receipt):
-        return await _send_learning_menu(update, uid)
+        return await _send_learning_menu(update, uid, context)
     if receipt.get("replayed"):
         return await _handle_replay(update, context, receipt)
     frame["last_answer"] = {"word_id": entry["id"], "action_key": slot["action_key"],

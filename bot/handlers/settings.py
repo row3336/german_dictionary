@@ -492,7 +492,7 @@ async def learning_settings_menu_choice(update: Update, context: ContextTypes.DE
         if context.user_data.pop("learning_sett_return", "algo") == "learning_menu":
             from .learning import _send_learning_menu  # local import: anti-cycle
 
-            return await _send_learning_menu(update, user_id)
+            return await _send_learning_menu(update, user_id, context)
         return await _send_algo_settings_menu(update, user_id)
     if text == t(lang, "learning_daily_qty"):
         context.user_data["algo_setting_edit"] = LEARNING_DAILY_QTY_KEY

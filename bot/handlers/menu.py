@@ -271,7 +271,7 @@ async def tests_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         return await start_plural(update, context)
     if action == "learning":
-        return await _send_learning_menu(update, user_id)
+        return await _send_learning_menu(update, user_id, context)
     if action == "conjugation":
         from .conjugation import start_conjugation  # local import: anti-cycle
         return await start_conjugation(update, context)
