@@ -120,8 +120,10 @@ from .handlers.synonyms import (
     synonyms_remove_input,
 )
 from .handlers.learning import (
+    _learning_lock,
     learning_menu_choice,
     learning_quiz,
+    learning_resume_or_rescue,
 )
 from .handlers.conjugation import conjugation_card_callback, conjugation_input
 from .handlers.add_words import (
@@ -175,7 +177,6 @@ from .handlers.access import (
 )
 from .handlers.word_filter_ui import word_filter_callback
 from .handlers.owner_stats import stat_toggle_callback
-from .handlers.rescue import rescue_handler
 from .handlers.menu import (
     _guest_start,
     menu_choice,
@@ -222,7 +223,14 @@ async def _on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def undo_steps(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async with _learning_lock(update.effective_user.id):
+        return await _undo_steps_locked(update, context)
+
+
+async def _undo_steps_locked(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /undo [N] rollback by transaction log."""
+    from . import learning_store
+
     user_id = update.effective_user.id
     # #9: /undo is per-user (transaction_log/restore/delete are all scoped by
     # user_id), so any APPROVED user may undo THEIR OWN steps — not owner-only.
@@ -238,7 +246,21 @@ async def undo_steps(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logs = list_transaction_logs(get_db_path(), user_id=user_id, limit=steps)
     restored = 0
     processed_ids = []
+    skipped_learning = []
+    learning_failed = False
     for item in logs:
+        if item.get("action", "").startswith("learning:") or item.get("action") == "input_err:learning":
+            try:
+                outcome = learning_store.undo_learning_log(get_db_path(), user_id, item["id"])
+            except Exception:
+                logger.exception("undo: Learning restore failed for log id=%s", item.get("id"))
+                learning_failed = True
+                break
+            if outcome["status"] == "restored":
+                restored += 1
+            else:
+                skipped_learning.append(outcome.get("reason", "stale cycle or missing word"))
+            continue
         payload = item.get("payload") or {}
         snapshot = payload.get("snapshot")
         # A failed restore must NOT abort the whole /undo: the entry is still
@@ -252,6 +274,10 @@ async def undo_steps(update: Update, context: ContextTypes.DEFAULT_TYPE):
         processed_ids.append(int(item.get("id")))
     if processed_ids:
         delete_transaction_logs(get_db_path(), user_id=user_id, ids=processed_ids)
+    if learning_failed:
+        await update.message.reply_text("Learning undo failed. Please retry /undo.")
+        return LEARNING_QUIZ if learning_store.get_display(get_db_path(), user_id) else MENU
+    learning_store.close_display(get_db_path(), user_id)
 
     # Consecutive /undo presses accumulate into ONE message edited in place (a live
     # step counter) instead of one reply per press; the main-menu keyboard is shown
@@ -263,6 +289,8 @@ async def undo_steps(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = f"↩️ Undo done: {total} step(s)."
     else:
         text = f"↩️ Undo done: {total} step(s). Nothing more to undo." if total else "Nothing to undo."
+    if skipped_learning:
+        text += " Old Learning step skipped: cycle could not be verified."
 
     msg_id = context.user_data.get(UNDO_MSG_ID_KEY)
     if msg_id and restored:
@@ -451,7 +479,7 @@ def main():
             # and the state it returns actually re-enters the conversation (a
             # standalone handler's return is ignored — that was the bug). Keep it
             # LAST so /start and the start button match first.
-            MessageHandler(filters.TEXT & ~filters.COMMAND, rescue_handler),
+            MessageHandler(filters.TEXT & ~filters.COMMAND, learning_resume_or_rescue),
         ],
         states=_with_inbox_open({
             MENU: [

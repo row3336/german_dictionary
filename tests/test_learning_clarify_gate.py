@@ -17,7 +17,11 @@ install()
 
 from bot.app_config import ADD_EDIT, AI_CLARIFY_FIELD  # noqa: E402
 from bot.handlers import learning as L  # noqa: E402
-from bot.storage import add_word, init_db, register_or_update_user, set_user_status  # noqa: E402
+from bot.learning_store import mark_sent, start_display  # noqa: E402
+from bot.storage import (  # noqa: E402
+    _connect, add_word, init_db, learning_add_word_by_id,
+    learning_get_or_create_batch, register_or_update_user, set_user_status,
+)
 
 OWNER, GUEST = 999, 111
 
@@ -73,7 +77,19 @@ class LearningClarifyGateTest(unittest.TestCase):
             else:
                 os.environ[k] = v
 
+    def _open(self, uid, preview):
+        batch = learning_get_or_create_batch(self.db, uid, 1)
+        learning_add_word_by_id(self.db, uid, self.entry["id"], batch, 0)
+        if not preview:
+            with _connect(self.db) as conn:
+                conn.execute("""UPDATE learning_items SET preview_done=1,
+                    first_due_pending=0,next_due='2000-01-01T00:00:00Z'
+                    WHERE user_id=? AND word_id=?""", (uid, self.entry["id"]))
+        display = start_display(self.db, uid)
+        mark_sent(self.db, uid, display, "confirmed", 1)
+
     def test_guest_opens_clarify_from_learning_normal_mode(self):
+        self._open(GUEST, preview=False)
         ctx = _Ctx({"quiz_entry": self.entry, "learning_preview_mode": False})
         state = _run(L.learning_quiz(_Update(GUEST), ctx))
         self.assertEqual(state, ADD_EDIT)
@@ -82,12 +98,14 @@ class LearningClarifyGateTest(unittest.TestCase):
 
     def test_guest_opens_clarify_from_learning_preview_mode(self):
         # Preview mode used to fall into the "Use next/skip/back." dead end.
+        self._open(GUEST, preview=True)
         ctx = _Ctx({"quiz_entry": self.entry, "learning_preview_mode": True})
         state = _run(L.learning_quiz(_Update(GUEST), ctx))
         self.assertEqual(state, ADD_EDIT)
         self.assertEqual(ctx.user_data.get("edit_source"), "quiz")
 
     def test_owner_still_opens_clarify_from_learning(self):
+        self._open(OWNER, preview=False)
         ctx = _Ctx({"quiz_entry": self.entry, "learning_preview_mode": False})
         state = _run(L.learning_quiz(_Update(OWNER), ctx))
         self.assertEqual(state, ADD_EDIT)

@@ -1,44 +1,54 @@
-"""Sprint 11: learning input_err preserves the already shown next card."""
+"""A wrong Learning answer can be corrected while the next word stays pinned."""
 
 import asyncio
+import os
+import sqlite3
+import tempfile
 import types
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 from _telegram_stub import install
 
 install()
 
 from bot.handlers import learning as L  # noqa: E402
-
+from bot.i18n import t  # noqa: E402
+from bot.learning_store import get_display  # noqa: E402
+from bot.storage import (  # noqa: E402
+    _connect, add_word, init_db, learning_get_or_create_batch,
+    register_or_update_user, set_user_status,
+)
 
 USER_ID = 111
-A = {"id": 1, "learning_step": 2, "german": "Apfel"}
-B = {"id": 2, "learning_step": 0, "german": "Birne"}
-C = {"id": 3, "learning_step": 0, "german": "Citron"}
 
 
-class _Message:
+class _Bot:
+    async def set_message_reaction(self, *args, **kwargs):
+        return None
+
+
+class _Update:
+    next_id = 100
+
     def __init__(self, text):
-        self.text = text
-        self.message_id = 17
+        type(self).next_id += 1
+        self.update_id = type(self).next_id
+        self.message = types.SimpleNamespace(
+            text=text, message_id=self.update_id, reply_text=self.reply_text)
+        self.effective_user = types.SimpleNamespace(id=USER_ID)
+        self.effective_chat = types.SimpleNamespace(id=USER_ID)
         self.calls = []
 
     async def reply_text(self, text, **kwargs):
         self.calls.append((text, kwargs))
-        return types.SimpleNamespace(message_id=1017)
-
-
-class _Update:
-    def __init__(self, text):
-        self.message = _Message(text)
-        self.effective_user = types.SimpleNamespace(id=USER_ID)
-        self.effective_chat = types.SimpleNamespace(id=USER_ID)
+        return types.SimpleNamespace(message_id=self.update_id + 1000)
 
 
 class _Context:
     def __init__(self):
-        self.user_data = {"quiz_entry": A, "learning_preview_mode": False}
+        self.user_data = {}
+        self.bot = _Bot()
 
 
 def _run(coro):
@@ -46,64 +56,76 @@ def _run(coro):
 
 
 class LearningInputErrPreservesNextCardTest(unittest.TestCase):
-    def test_wrong_a_then_input_err_keeps_b_without_reselecting_or_updating_it(self):
-        update = _Update("wrong answer")
+    def setUp(self):
+        handle = tempfile.NamedTemporaryFile(delete=False)
+        self.db = handle.name
+        handle.close()
+        self.addCleanup(lambda: os.unlink(self.db))
+        self.old = {key: os.environ.get(key) for key in ("DB_PATH", "OWNER_ID")}
+        os.environ["DB_PATH"] = self.db
+        os.environ["OWNER_ID"] = "999"
+        self.addCleanup(self.restore_env)
+        init_db(self.db)
+        register_or_update_user(self.db, USER_ID, "guest", "Guest")
+        set_user_status(self.db, USER_ID, "approved")
+        self.words = []
+        for german, russian in (("Apfel", "яблоко"), ("Birne", "груша")):
+            self.words.append(add_word(self.db, {
+                "type": "nomen", "article": "der", "german": german,
+                "plural": "", "russian": russian, "topic": "1",
+            }))
+        batch = learning_get_or_create_batch(self.db, USER_ID, 2)
+        with _connect(self.db) as conn:
+            for index, word in enumerate(self.words):
+                conn.execute("""INSERT INTO learning_items
+                    (user_id,word_id,batch_id,step_index,preview_done,next_due,status,
+                     cycle_token,first_due_pending)
+                    VALUES (?,?,?,3,1,'2000-01-01T00:00:00Z','active',?,0)""",
+                    (USER_ID, word["id"], batch, "cycle-" + str(index)))
+
+    def restore_env(self):
+        for key, value in self.old.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+    def test_wrong_a_then_input_err_keeps_b_without_grading_b(self):
         context = _Context()
+        with patch("bot.learning_store.random.choice", side_effect=lambda items: items[0]):
+            _run(L._send_learning_prompt(_Update(""), context, None))
+            a_id = context.user_data["quiz_entry"]["id"]
+            wrong = _Update("zzz-wrong")
+            _run(L.learning_quiz(wrong, context))
+            pinned = get_display(self.db, USER_ID)
+            b_id = pinned["word_id"]
+            self.assertNotEqual(a_id, b_id)
+            b_action = pinned["action_key"]
+            b_revision = pinned["revision"]
 
-        def action_key(text, _user_id):
-            return "input_err" if text == "input_err" else None
+            corrected = _Update(t("en", "input_err"))
+            _run(L.learning_quiz(corrected, context))
+            after = get_display(self.db, USER_ID)
+            self.assertEqual(after["word_id"], b_id)
+            self.assertEqual(after["action_key"], b_action)
+            self.assertGreater(after["revision"], b_revision)
+            self.assertEqual(context.user_data["quiz_entry"]["id"], b_id)
 
-        with (
-            patch.object(L, "_action_key_from_text", side_effect=action_key),
-            patch.object(L, "_check_ru_de_strict", return_value=(False, None)),
-            patch.object(L, "_user_interface_lang", return_value="en"),
-            patch.object(L, "_user_dict_lang", return_value="russian"),
-            patch.object(L, "get_db_path", return_value="test.db"),
-            patch.object(L, "_learning_schedule_seconds", return_value=[0, 0, 0, 60]),
-            patch.object(L, "_capture_transaction_snapshot", return_value={}),
-            patch.object(L, "_log_transaction"),
-            patch.object(L, "log_quiz_event") as log_event,
-            patch.object(L, "learning_update_result", return_value={"completed": False}) as update_result,
-            patch.object(L, "learning_apply_input_err", return_value={"completed": False}) as apply_correction,
-            patch.object(L, "learning_preview_entry", side_effect=[None, C, C]) as preview_selector,
-            patch.object(L, "_pick_learning_due_entry", return_value=B) as due_selector,
-            patch.object(L, "resolve_bot_word_media", side_effect=lambda _db, _uid, entry: entry),
-            patch.object(L, "_format_feedback_ru_de", return_value="wrong A"),
-            patch.object(L, "_format_ru_question", side_effect=lambda entry, _lang: f"question {entry['id']}"),
-            patch.object(L, "_set_reaction", new_callable=AsyncMock) as set_reaction,
-        ):
-            _run(L.learning_quiz(update, context))
-            self.assertIs(context.user_data["quiz_entry"], B)
-            update_result.assert_called_once()
-            self.assertEqual(update_result.call_args.kwargs["word_id"], A["id"])
-            self.assertEqual(due_selector.call_count, 1)
+            with sqlite3.connect(self.db) as conn:
+                event = conn.execute(
+                    "SELECT word_id,is_correct FROM quiz_events WHERE user_id=?", (USER_ID,)).fetchall()
+                b_step = conn.execute(
+                    "SELECT step_index FROM learning_items WHERE user_id=? AND word_id=?",
+                    (USER_ID, b_id)).fetchone()[0]
+            self.assertEqual(event, [(a_id, 1)])
+            self.assertEqual(b_step, 3)
 
-            update.message.text = "input_err"
-            update.message.calls.clear()
-            _run(L.learning_quiz(update, context))
-
-            self.assertIs(context.user_data["quiz_entry"], B)
-            apply_correction.assert_called_once()
-            self.assertEqual(apply_correction.call_args.kwargs["word_id"], A["id"])
-            self.assertEqual(update_result.call_count, 1)
-            self.assertEqual(due_selector.call_count, 1)
-            self.assertEqual(preview_selector.call_count, 1)
-            self.assertIn("question 2", update.message.calls[-1][0])
-
-            update.message.calls.clear()
-            _run(L.learning_quiz(update, context))
-
-            self.assertIs(context.user_data["quiz_entry"], B)
-            apply_correction.assert_called_once()
-            self.assertEqual(update_result.call_count, 1)
-            self.assertEqual(due_selector.call_count, 1)
-            self.assertEqual(preview_selector.call_count, 1)
-            self.assertIn(L.t("en", "input_err_nothing"), update.message.calls[-1][0])
-            self.assertIn("question 2", update.message.calls[-1][0])
-            self.assertEqual(set_reaction.await_count, 2)
-
-        event_word_ids = [call.kwargs["word_id"] for call in log_event.call_args_list]
-        self.assertEqual(event_word_ids, [A["id"], A["id"]])
+            second = _Update(t("en", "input_err"))
+            _run(L.learning_quiz(second, context))
+            with sqlite3.connect(self.db) as conn:
+                self.assertEqual(conn.execute(
+                    "SELECT COUNT(*) FROM quiz_events WHERE user_id=?", (USER_ID,)).fetchone()[0], 1)
+            self.assertIn(t("en", "input_err_nothing"), second.calls[-1][0])
 
 
 if __name__ == "__main__":

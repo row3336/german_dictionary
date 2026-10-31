@@ -47,8 +47,10 @@ from pathlib import Path
 #      is never run by ordinary bot startup.
 # 17 = remove weak-form modes, schema, settings, progress, and history. This is a
 #      destructive schema/data migration and is never run by ordinary startup.
+# 18 = Learning recovery, first-deadline marker, action/delivery receipts, and
+#      durable display state. Explicit migration preserves existing deadlines.
 ADDITIVE_SCHEMA_VERSION = 15
-SCHEMA_VERSION = 17
+SCHEMA_VERSION = 18
 
 
 class DestructiveMigrationRequired(RuntimeError):
@@ -616,16 +618,23 @@ def _apply_migration_dispatcher(db_path, today=None, expected_fingerprint=None):
                 "source DB changed after destructive migration dry-run; run a new dry-run"
             )
         current = int(conn.execute("PRAGMA user_version").fetchone()[0])
-        if current not in {ADDITIVE_SCHEMA_VERSION, 16}:
+        if current not in {ADDITIVE_SCHEMA_VERSION, 16, 17}:
             raise RuntimeError(
-                f"destructive dispatcher requires exact v{ADDITIVE_SCHEMA_VERSION} or v16, "
+                f"migration dispatcher requires exact v{ADDITIVE_SCHEMA_VERSION}, v16, or v17, "
                 f"got v{current}"
             )
         if current == ADDITIVE_SCHEMA_VERSION:
             steps["phrase_modes_v16"] = _migrate_phrase_modes_v16(conn, today=today)
             conn.execute("PRAGMA user_version = 16")
             current = 16
-        steps["remove_weak_v17"] = _migrate_remove_weak_v17(conn)
+        if current == 16:
+            steps["remove_weak_v17"] = _migrate_remove_weak_v17(conn)
+            conn.execute("PRAGMA user_version = 17")
+            current = 17
+        from ..learning_schema import create_learning_schema_v18
+
+        create_learning_schema_v18(conn)
+        steps["learning_v18"] = {"from": 17, "to": 18}
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         counts_in_transaction = _table_counts(conn)
         _validate_destructive_counts(before, counts_in_transaction, steps)

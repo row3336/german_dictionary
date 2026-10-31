@@ -28,6 +28,7 @@ from bot.storage import (  # noqa: E402
     learning_get_or_create_batch,
     register_or_update_user,
     set_user_interface_lang,
+    set_user_status,
 )
 
 OWNER, GUEST = 999, 111
@@ -57,7 +58,11 @@ class _Msg:
 
 
 class _Update:
+    next_id = 100
+
     def __init__(self, uid, text=""):
+        type(self).next_id += 1
+        self.update_id = type(self).next_id
         self.message = _Msg(text)
         self.effective_user = type("U", (), {"id": uid, "username": "u", "first_name": "U"})()
         self.effective_chat = type("C", (), {"id": uid})()
@@ -84,6 +89,7 @@ class LearningI18nTest(unittest.TestCase):
         os.environ["OWNER_ID"] = str(OWNER)
         self.addCleanup(self._restore)
         register_or_update_user(self.db, GUEST, "g", "G")
+        set_user_status(self.db, GUEST, "approved")
         set_user_interface_lang(self.db, GUEST, "ru")
 
     def _restore(self):
@@ -104,6 +110,9 @@ class LearningI18nTest(unittest.TestCase):
         batch_id = learning_get_or_create_batch(self.db, user_id=GUEST, daily_qty=20)
         learning_add_words(self.db, user_id=GUEST, words=[word], batch_id=batch_id, first_delay_seconds=0)
         return word
+
+    def _open_preview(self, ctx):
+        _run(L._send_learning_prompt(_Update(GUEST), ctx, None))
 
     # ---- i18n table completeness ----
 
@@ -175,6 +184,7 @@ class LearningI18nTest(unittest.TestCase):
     def test_preview_skip_localized(self):
         word = self._add_word_in_preview()
         ctx = _Ctx({"quiz_entry": word, "learning_preview_mode": True})
+        self._open_preview(ctx)
         update = _Update(GUEST, TEXTS["ru"]["learning_skip"])
         _run(L.learning_quiz(update, ctx))
         # skipping the last preview word emits the prefix as its own message, so
@@ -186,6 +196,7 @@ class LearningI18nTest(unittest.TestCase):
     def test_preview_next_localized(self):
         word = self._add_word_in_preview()
         ctx = _Ctx({"quiz_entry": word, "learning_preview_mode": True})
+        self._open_preview(ctx)
         update = _Update(GUEST, TEXTS["ru"]["learning_next"])
         _run(L.learning_quiz(update, ctx))
         last = update.message.calls[-1][0]
@@ -195,6 +206,7 @@ class LearningI18nTest(unittest.TestCase):
     def test_preview_unknown_button_localized(self):
         word = self._add_word_in_preview()
         ctx = _Ctx({"quiz_entry": word, "learning_preview_mode": True})
+        self._open_preview(ctx)
         update = _Update(GUEST, "zzz-not-a-button")
         _run(L.learning_quiz(update, ctx))
         last = update.message.calls[-1][0]

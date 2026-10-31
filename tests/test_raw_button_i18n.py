@@ -28,6 +28,7 @@ from bot.storage import (  # noqa: E402
     learning_mark_preview_next,
     register_or_update_user,
     set_user_interface_lang,
+    set_user_status,
 )
 from bot.ui import keyboards as K  # noqa: E402
 
@@ -41,6 +42,7 @@ def _flat(rows):
 class _Msg:
     def __init__(self, text=""):
         self.text = text
+        self.message_id = 1
         self.calls = []
 
     async def reply_text(self, text, **kw):
@@ -49,7 +51,11 @@ class _Msg:
 
 
 class _Update:
+    next_id = 100
+
     def __init__(self, uid, text=""):
+        type(self).next_id += 1
+        self.update_id = type(self).next_id
         self.message = _Msg(text)
         self.effective_user = type("U", (), {"id": uid, "username": "u", "first_name": "U"})()
         self.effective_chat = type("C", (), {"id": uid})()
@@ -76,6 +82,7 @@ class RawButtonI18nTest(unittest.TestCase):
         os.environ["OWNER_ID"] = str(OWNER)
         self.addCleanup(self._restore)
         register_or_update_user(self.db, GUEST, "g", "G")
+        set_user_status(self.db, GUEST, "approved")
         set_user_interface_lang(self.db, GUEST, "ru")
 
     def _restore(self):
@@ -147,6 +154,7 @@ class RawButtonI18nTest(unittest.TestCase):
         # fall through to answer-scoring like the raw-constant comparison did.
         word = self._add_learning_word_past_preview()
         ctx = _Ctx({"quiz_entry": word, "learning_preview_mode": False})
+        _run(L._send_learning_prompt(_Update(GUEST), ctx, None))
         update = _Update(GUEST, "я ошибся")
         state = _run(L.learning_quiz(update, ctx))
         self.assertEqual(state, LEARNING_QUIZ)

@@ -170,7 +170,7 @@ class RescueRegistrationTest(unittest.TestCase):
         ep_open = src.index("entry_points=[")
         states_open = src.index("states=", ep_open)
         conv_added = src.index("app.add_handler(conv)", states_open)
-        rescue = "MessageHandler(filters.TEXT & ~filters.COMMAND, rescue_handler)"
+        rescue = "MessageHandler(filters.TEXT & ~filters.COMMAND, learning_resume_or_rescue)"
 
         # rescue is inside the entry_points block (before states) ...
         self.assertIn(rescue, src)

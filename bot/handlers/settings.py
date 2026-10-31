@@ -159,7 +159,7 @@ async def _send_learning_settings_menu(update: Update, user_id):
         msg += "\n\n" + "\n".join(
             [
                 f"learning_warmup = {','.join(str(v) for v in LEARNING_WARMUP_INTERVALS)}",
-                "learning.on_wrong = reset_step_0",
+                t(lang, "learning_intervals_desc"),
             ]
         )
     await update.message.reply_text(

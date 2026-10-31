@@ -6,10 +6,13 @@ that pushes a quiz entry into the learning batch (used by quiz / clarify_fields 
 db_search).
 """
 
+import asyncio
+import logging
 import random
 from datetime import datetime, timezone
 
 from telegram import ReplyKeyboardMarkup, Update
+from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
 from ..app_config import (
@@ -32,25 +35,20 @@ from ..common.settings import (
     _topic_filter_banner,
 )
 from ..common.word_filter import count_words_for_filter, resolve_quiz_filter
-from ..common.txlog import _capture_transaction_snapshot, _log_transaction
+from .. import learning_store
 from ..handlers.quiz import _check_ru_de_strict, _set_reaction
 from ..i18n import t
 from ..storage import (
     learning_active_count,
     learning_add_word_by_id,
     learning_add_words,
-    learning_apply_input_err,
     learning_due_entries,
     learning_get_or_create_batch,
-    learning_mark_preview_next,
     learning_pick_new_words,
     learning_preview_entry,
     learning_reset_session,
-    learning_skip_word,
     learning_status_snapshot,
-    learning_update_result,
     list_learning_active_words,
-    log_quiz_event,
 )
 from ..text_utils import cap_word as _cap_word
 from ..text_utils import low_word as _low_word
@@ -62,6 +60,14 @@ from ..ui.formatting import (
     _format_topic_learning_line,
 )
 from ..ui.keyboards import _learning_menu_keys, _tests_menu_keys
+
+
+logger = logging.getLogger(__name__)
+_learning_locks = {}
+
+
+def _learning_lock(user_id):
+    return _learning_locks.setdefault(int(user_id), asyncio.Lock())
 
 
 def _format_eta_from_iso(next_due_iso):
@@ -183,35 +189,6 @@ def _send_entry_to_learning(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     return bool(added)
 
 
-def _apply_input_err_learning(update, context):
-    """Handle apply input error for learning mode."""
-    last_id = context.user_data.get("last_learning_entry_id")
-    last_ok = context.user_data.get("last_learning_ok")
-    last_prev_step = context.user_data.get("last_learning_prev_step")
-    if not last_id or last_ok is None:
-        return False
-    if last_ok:
-        return False
-    snapshot = _capture_transaction_snapshot(update.effective_user.id, last_id, ["learning"])
-    result = learning_apply_input_err(
-        get_db_path(),
-        user_id=update.effective_user.id,
-        word_id=last_id,
-        prev_step_index=last_prev_step,
-        intervals_seconds=_learning_schedule_seconds(get_db_path(), update.effective_user.id),
-    )
-    log_quiz_event(
-        get_db_path(),
-        user_id=update.effective_user.id,
-        word_id=last_id,
-        mode="learning",
-        is_correct=True,
-    )
-    _log_transaction(update.effective_user.id, "input_err:learning", snapshot)
-    context.user_data["last_learning_ok"] = True
-    return bool(result)
-
-
 async def _send_learning_menu(update: Update, user_id):
     """Show the learning menu with a summary of the current session."""
     stats = learning_status_snapshot(
@@ -310,66 +287,97 @@ async def _learning_add_words(update: Update, context: ContextTypes.DEFAULT_TYPE
     return LEARNING_MENU
 
 
-async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text, force_entry=None):
-    """Show the next question/preview in the learning session."""
-    user_id = update.effective_user.id
-    preview_entry = None
-    if force_entry is None:
-        preview_entry = learning_preview_entry(get_db_path(), user_id=user_id)
-    if preview_entry:
-        preview_entry = resolve_bot_word_media(get_db_path(), user_id, preview_entry)
-        context.user_data["quiz_entry"] = preview_entry
-        context.user_data["learning_preview_mode"] = True
-        prompt_text = _format_learning_preview_prompt(preview_entry, _user_dict_lang(user_id))
-        if prefix_text:
-            prompt_text = f"{prefix_text}\n\n{prompt_text}"
-        await _reply_text_with_retry(
-            update.message,
-            prompt_text,
-            reply_markup=ReplyKeyboardMarkup(
-                [[t(_user_interface_lang(user_id), "learning_next"), t(_user_interface_lang(user_id), "learning_skip")], [t(_user_interface_lang(user_id), "clarify_fields"), t(_user_interface_lang(user_id), "back")]],
-                resize_keyboard=True,
-            ),
-            parse_mode="Markdown",
-        )
-        return LEARNING_QUIZ
+async def _deliver_learning_text(message, text, **kwargs):
+    try:
+        return await _reply_text_with_retry(message, text, **kwargs)
+    except BadRequest:
+        if kwargs.get("parse_mode") != "Markdown":
+            raise
+        safe = dict(kwargs)
+        safe.pop("parse_mode", None)
+        return await _reply_text_with_retry(message, text, **safe)
 
-    entry = force_entry
-    if entry is None:
-        entry = _pick_learning_due_entry(context, user_id)
-    if not entry:
-        context.user_data["learning_preview_mode"] = False
-        context.user_data.pop("quiz_entry", None)
-        context.user_data.pop("learning_recent_ids", None)
-        # Send the trailing feedback (Markdown) and the plain service tail as two
-        # separate messages: the tail carries 'next_due', whose underscore would
-        # break parse_mode='Markdown' (unterminated entity). Keep them apart so the
-        # word feedback still renders while the tail stays plain and crash-proof.
-        if prefix_text:
-            await _reply_text_with_retry(update.message, prefix_text, parse_mode="Markdown")
-        await _reply_text_with_retry(
-            update.message,
-            _learning_empty_text(user_id),
-            reply_markup=ReplyKeyboardMarkup([[t(_user_interface_lang(user_id), "back")]], resize_keyboard=True),
-        )
-        return LEARNING_QUIZ
-    entry = resolve_bot_word_media(get_db_path(), user_id, entry)
-    context.user_data["quiz_entry"] = entry
-    context.user_data["learning_preview_mode"] = False
-    _note_learning_shown(context, entry.get("id"))
-    prompt_text = _format_ru_question(entry, _user_dict_lang(user_id))
-    if prefix_text:
-        prompt_text = f"{prefix_text}\n\n{prompt_text}"
-    await _reply_text_with_retry(
-        update.message,
-        prompt_text,
-        reply_markup=ReplyKeyboardMarkup(
-            [[I_DONT_KNOW_TEXT, t(_user_interface_lang(user_id), "input_err")], [t(_user_interface_lang(user_id), "learning_skip"), t(_user_interface_lang(user_id), "clarify_fields"), t(_user_interface_lang(user_id), "back")]],
-            resize_keyboard=True,
-        ),
-        parse_mode="Markdown",
+
+async def _render_learning_display(update, context, display, prefix_override=None):
+    user_id = update.effective_user.id
+    db_path = get_db_path()
+    display = learning_store.refresh_invalid_display(
+        db_path, user_id, context.user_data.get("learning_recent_ids") or []
     )
+    if display is None:
+        return await _send_learning_menu(update, user_id)
+    entry = learning_store.get_display_entry(db_path, user_id, display)
+    feedback = display["feedback_text"]
+    if prefix_override:
+        feedback = f"{prefix_override}\n\n{feedback}" if feedback else prefix_override
+    try:
+        if display["phase"] == "preview" and entry:
+            context.user_data["quiz_entry"] = entry = resolve_bot_word_media(db_path, user_id, entry)
+            context.user_data["learning_preview_mode"] = True
+            prompt = _format_learning_preview_prompt(entry, _user_dict_lang(user_id))
+            text = f"{feedback}\n\n{prompt}" if feedback else prompt
+            result = await _deliver_learning_text(
+                update.message, text,
+                reply_markup=ReplyKeyboardMarkup(
+                    [[t(_user_interface_lang(user_id), "learning_next"),
+                      t(_user_interface_lang(user_id), "learning_skip")],
+                     [t(_user_interface_lang(user_id), "clarify_fields"),
+                      t(_user_interface_lang(user_id), "back")]], resize_keyboard=True),
+                parse_mode="Markdown",
+            )
+        elif display["phase"] == "question" and entry:
+            context.user_data["quiz_entry"] = entry = resolve_bot_word_media(db_path, user_id, entry)
+            context.user_data["learning_preview_mode"] = False
+            prompt = _format_ru_question(entry, _user_dict_lang(user_id))
+            text = f"{feedback}\n\n{prompt}" if feedback else prompt
+            result = await _deliver_learning_text(
+                update.message, text,
+                reply_markup=ReplyKeyboardMarkup(
+                    [[I_DONT_KNOW_TEXT, t(_user_interface_lang(user_id), "input_err")],
+                     [t(_user_interface_lang(user_id), "learning_skip"),
+                      t(_user_interface_lang(user_id), "clarify_fields"),
+                      t(_user_interface_lang(user_id), "back")]], resize_keyboard=True),
+                parse_mode="Markdown",
+            )
+            _note_learning_shown(context, entry["id"])
+        else:
+            context.user_data["learning_preview_mode"] = False
+            context.user_data.pop("quiz_entry", None)
+            context.user_data.pop("learning_recent_ids", None)
+            result = True
+            if feedback:
+                result = await _deliver_learning_text(update.message, feedback, parse_mode="Markdown")
+            tail = await _deliver_learning_text(
+                update.message, _learning_empty_text(user_id),
+                reply_markup=ReplyKeyboardMarkup(
+                    [[t(_user_interface_lang(user_id), "back")]], resize_keyboard=True))
+            if tail is None:
+                result = None
+            elif result is not None:
+                result = tail
+    except BadRequest:
+        logger.exception("Learning display rejected for revision %s", display["revision"])
+        learning_store.mark_sent(db_path, user_id, display, "failed")
+        learning_store.close_display(db_path, user_id)
+        return LEARNING_MENU
+    except Exception:
+        logger.exception("Learning display transport failed for revision %s", display["revision"])
+        return LEARNING_QUIZ
+    message_id = getattr(result, "message_id", None) if result is not None else None
+    state = "confirmed" if message_id is not None else "uncertain"
+    learning_store.mark_sent(db_path, user_id, display, state, message_id)
     return LEARNING_QUIZ
+
+
+async def _send_learning_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix_text, force_entry=None):
+    """Render the durable Learning plan, opening one only on an explicit Start."""
+    user_id = update.effective_user.id
+    display = learning_store.get_display(get_db_path(), user_id)
+    if display is None:
+        context.user_data.pop("last_learning_answer_action", None)
+        display = learning_store.start_display(
+            get_db_path(), user_id, context.user_data.get("learning_recent_ids") or [])
+    return await _render_learning_display(update, context, display, prefix_override=prefix_text)
 
 
 async def learning_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -378,6 +386,7 @@ async def learning_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
     user_id = update.effective_user.id
     action = _action_key_from_text(text, user_id)
     if action == "back":
+        learning_store.close_display(get_db_path(), user_id)
         await _reply_text_with_retry(
             update.message,
             t(_user_interface_lang(user_id), "tests") + ":",
@@ -401,6 +410,7 @@ async def learning_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
         await _reply_text_with_retry(update.message, f"{t(_user_interface_lang(user_id), 'learning_mix_mode')} = {'ON' if not enabled else 'OFF'}")
         return await _send_learning_menu(update, user_id)
     if action == "learning_reset":
+        learning_store.close_display(get_db_path(), user_id)
         learning_reset_session(get_db_path(), user_id=user_id)
         context.user_data.pop("learning_recent_ids", None)
         await _reply_text_with_retry(
@@ -432,94 +442,150 @@ async def learning_menu_choice(update: Update, context: ContextTypes.DEFAULT_TYP
     return LEARNING_MENU
 
 
+def _transport_update_id(update):
+    value = getattr(update, "update_id", None)
+    if value is None:
+        value = getattr(update.message, "message_id", None)
+    if value is None:
+        raise ValueError("Learning action requires a Telegram update id")
+    return int(value)
+
+
 async def learning_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle an answer/action in the learning session (preview and normal mode)."""
+    """One user action against the confirmed, durable Learning display."""
     from ..handlers.clarify_fields import _start_clarify_fields
+    from ..handlers.access import access_allowed
+    from ..handlers.menu import _guest_start
 
-    text = update.message.text.strip()
     user_id = update.effective_user.id
-    action = _action_key_from_text(text, user_id)
-    if action == "back":
-        return await _send_learning_menu(update, user_id)
-    if action == "clarify_fields":
-        return await _start_clarify_fields(update, context, LEARNING_QUIZ, prefer_current=True)
+    async with _learning_lock(user_id):
+        if not access_allowed(user_id):
+            learning_store.close_display(get_db_path(), user_id)
+            return await _guest_start(update, context)
+        text = update.message.text.strip()
+        action = _action_key_from_text(text, user_id)
+        db_path = get_db_path()
+        if action == "back":
+            learning_store.close_display(db_path, user_id)
+            context.user_data.pop("last_learning_answer_action", None)
+            return await _send_learning_menu(update, user_id)
 
-    entry = context.user_data.get("quiz_entry")
-    if not entry:
-        return await _send_learning_prompt(update, context, None)
+        display = learning_store.get_display(db_path, user_id)
+        if display is None:
+            return await _send_learning_menu(update, user_id)
 
-    is_preview = bool(context.user_data.get("learning_preview_mode"))
-    if is_preview:
-        if action == "learning_skip":
-            snapshot = _capture_transaction_snapshot(user_id, entry.get("id"), ["learning"])
-            learning_skip_word(get_db_path(), user_id=user_id, word_id=entry.get("id"))
-            _log_transaction(user_id, "learning:skip", snapshot)
-            return await _send_learning_prompt(update, context, t(_user_interface_lang(user_id), "learning_skipped"))
-        if action == "learning_next":
-            snapshot = _capture_transaction_snapshot(user_id, entry.get("id"), ["learning"])
-            learning_mark_preview_next(
-                get_db_path(),
-                user_id=user_id,
-                word_id=entry.get("id"),
-                first_interval_seconds=_learning_schedule_seconds(get_db_path(), user_id)[0],
-            )
-            _log_transaction(user_id, "learning:preview_next", snapshot)
-            return await _send_learning_prompt(update, context, t(_user_interface_lang(user_id), "learning_saved_next"))
-        await _reply_text_with_retry(
-            update.message,
-            t(_user_interface_lang(user_id), "learning_use_next_skip_back"),
-            reply_markup=ReplyKeyboardMarkup([[t(_user_interface_lang(user_id), "learning_next"), t(_user_interface_lang(user_id), "learning_skip")], [t(_user_interface_lang(user_id), "back")]], resize_keyboard=True),
-        )
-        return LEARNING_QUIZ
+        if display["send_state"] != "confirmed" or display["suspended_for_clarify"]:
+            recovered = learning_store.recover_display(
+                db_path, user_id, _transport_update_id(update),
+                context.user_data.get("learning_recent_ids") or [])
+            if recovered["status"] == "replayed":
+                return LEARNING_QUIZ
+            return await _render_learning_display(update, context, recovered["display"])
 
-    if action == "input_err":
-        next_entry = entry
-        corrected_entry_id = context.user_data.get("last_learning_entry_id")
-        applied = _apply_input_err_learning(update, context)
-        lang = _user_interface_lang(user_id)
-        prefix = t(lang, "input_err_fixed") if applied else t(lang, "input_err_nothing")
-        if applied:
-            # lift the 👎 from the corrected answer message; no new reaction is set
-            await _set_reaction(context, user_id, context.user_data.get("last_learning_answer_message_id"), [])
-        # Preserve a separately selected next card. If the shown card is the one
-        # just corrected, its embedded learning step is stale: re-read the queue
-        # so a future step ends the cycle and a zero-delay warm-up is shown with
-        # its current step instead of allowing an accidental double advance.
-        same_entry = str(next_entry.get("id")) == str(corrected_entry_id)
-        force_entry = None if same_entry else next_entry
-        return await _send_learning_prompt(update, context, prefix, force_entry=force_entry)
+        # Telegram message IDs increase within one private chat. A second tap
+        # queued before this prompt was sent cannot answer the new card.
+        message_id = getattr(update.message, "message_id", None)
+        chat_id = getattr(update.message, "chat_id", None)
+        if (chat_id == user_id and message_id is not None
+                and display["telegram_message_id"] is not None
+                and int(message_id) <= int(display["telegram_message_id"])):
+            recovered = learning_store.recover_display(
+                db_path, user_id, _transport_update_id(update),
+                context.user_data.get("learning_recent_ids") or [])
+            if recovered["status"] == "replayed":
+                return LEARNING_QUIZ
+            return await _render_learning_display(update, context, recovered["display"])
 
-    if action == "learning_skip":
-        snapshot = _capture_transaction_snapshot(user_id, entry.get("id"), ["learning"])
-        learning_skip_word(get_db_path(), user_id=user_id, word_id=entry.get("id"))
-        _log_transaction(user_id, "learning:skip", snapshot)
-        return await _send_learning_prompt(update, context, t(_user_interface_lang(user_id), "learning_skipped"))
+        entry = learning_store.get_display_entry(db_path, user_id, display)
+        if display["word_id"] and entry is None:
+            recovered = learning_store.recover_display(
+                db_path, user_id, _transport_update_id(update),
+                context.user_data.get("learning_recent_ids") or [])
+            if recovered["status"] == "replayed":
+                return LEARNING_QUIZ
+            return await _render_learning_display(update, context, recovered["display"])
 
-    if text == I_DONT_KNOW_TEXT:
-        ok = False
-    else:
-        ok, _ = _check_ru_de_strict(entry, text)
-    context.user_data["last_learning_entry_id"] = entry.get("id")
-    context.user_data["last_learning_ok"] = bool(ok)
-    context.user_data["last_learning_prev_step"] = int(entry.get("learning_step") or 0)
-    await _apply_learning_reaction(update, context, ok)
-    log_quiz_event(
-        get_db_path(),
-        user_id=user_id,
-        word_id=entry.get("id"),
-        mode="learning",
-        is_correct=ok,
-    )
-    snapshot = _capture_transaction_snapshot(user_id, entry.get("id"), ["learning"])
-    result = learning_update_result(
-        get_db_path(),
-        user_id=user_id,
-        word_id=entry.get("id"),
-        ok=ok,
-        intervals_seconds=_learning_schedule_seconds(get_db_path(), user_id),
-    )
-    _log_transaction(user_id, "learning:answer", snapshot)
-    feedback = _format_feedback_ru_de(entry, ok, lang=_user_interface_lang(user_id))
-    if result.get("completed"):
-        feedback = f"{feedback}\n\n{t(_user_interface_lang(user_id), 'learning_done_sent_fsrs')}"
-    return await _send_learning_prompt(update, context, feedback)
+        if display["phase"] in {"waiting", "completed"}:
+            recovered = learning_store.recover_display(
+                db_path, user_id, _transport_update_id(update),
+                context.user_data.get("learning_recent_ids") or [])
+            if recovered["status"] == "replayed":
+                return LEARNING_QUIZ
+            return await _render_learning_display(update, context, recovered["display"])
+
+        if action == "clarify_fields":
+            if entry:
+                context.user_data["quiz_entry"] = resolve_bot_word_media(db_path, user_id, entry)
+                context.user_data["learning_preview_mode"] = display["phase"] == "preview"
+            learning_store.suspend_for_clarify(db_path, user_id)
+            return await _start_clarify_fields(update, context, LEARNING_QUIZ, prefer_current=True)
+
+        if display["phase"] == "preview":
+            if action not in {"learning_next", "learning_skip"}:
+                await _reply_text_with_retry(
+                    update.message, t(_user_interface_lang(user_id), "learning_use_next_skip_back"),
+                    reply_markup=ReplyKeyboardMarkup(
+                        [[t(_user_interface_lang(user_id), "learning_next"),
+                          t(_user_interface_lang(user_id), "learning_skip")],
+                         [t(_user_interface_lang(user_id), "back")]], resize_keyboard=True))
+                return LEARNING_QUIZ
+            kind = "preview_next" if action == "learning_next" else "skip"
+            feedback = t(_user_interface_lang(user_id),
+                         "learning_saved_next" if kind == "preview_next" else "learning_skipped")
+        elif action == "input_err":
+            parent_key = context.user_data.get("last_learning_answer_action")
+            corrected = learning_store.correct_last(
+                db_path, user_id, _transport_update_id(update), parent_key,
+                _learning_schedule_seconds(db_path, user_id),
+                t(_user_interface_lang(user_id), "input_err_fixed"),
+                context.user_data.get("learning_recent_ids") or [])
+            if corrected["status"] == "applied":
+                context.user_data.pop("last_learning_answer_action", None)
+                await _set_reaction(
+                    context, user_id, context.user_data.get("last_learning_answer_message_id"), [])
+                return await _render_learning_display(update, context, corrected["display"])
+            if corrected["status"] == "replayed":
+                return LEARNING_QUIZ
+            return await _render_learning_display(
+                update, context, display,
+                prefix_override=t(_user_interface_lang(user_id), "input_err_nothing"))
+        else:
+            if action == "learning_skip":
+                kind = "skip"
+                feedback = t(_user_interface_lang(user_id), "learning_skipped")
+            else:
+                ok = False if text == I_DONT_KNOW_TEXT else _check_ru_de_strict(entry, text)[0]
+                kind = "correct" if ok else ("idk" if text == I_DONT_KNOW_TEXT else "wrong")
+                ordinary = _format_feedback_ru_de(
+                    entry, ok, lang=_user_interface_lang(user_id))
+                def feedback(rows):
+                    result = rows[entry["id"]]
+                    if result["status"] == "completed":
+                        return f"{ordinary}\n\n{t(_user_interface_lang(user_id), 'learning_done_sent_fsrs')}"
+                    return ordinary
+
+        result = learning_store.apply_action(
+            db_path, user_id, _transport_update_id(update), display["action_key"],
+            kind, _learning_schedule_seconds(db_path, user_id), feedback,
+            context.user_data.get("learning_recent_ids") or [])
+        if result["status"] == "replayed":
+            return LEARNING_QUIZ
+        if result["status"] != "applied":
+            current = learning_store.get_display(db_path, user_id)
+            return await _render_learning_display(update, context, current)
+        if kind in {"correct", "wrong", "idk"}:
+            context.user_data["last_learning_answer_action"] = (
+                display["action_key"] if kind != "correct" else None)
+            await _apply_learning_reaction(update, context, kind == "correct")
+        else:
+            context.user_data.pop("last_learning_answer_action", None)
+        return await _render_learning_display(update, context, result["display"])
+
+
+async def learning_resume_or_rescue(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Resume only a still-open Learning plan before the legacy rescue entry."""
+    if learning_store.get_display(get_db_path(), update.effective_user.id):
+        return await learning_quiz(update, context)
+    from .rescue import rescue_handler
+
+    return await rescue_handler(update, context)

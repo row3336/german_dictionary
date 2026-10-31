@@ -240,7 +240,7 @@ class RemoveWeakMigrationV17Test(unittest.TestCase):
         before = database_fingerprint(self.db)
         report = dry_run_migration(self.db)
 
-        self.assertEqual(SCHEMA_VERSION, 17)
+        self.assertEqual(SCHEMA_VERSION, 18)
         self.assertTrue(report["ok"])
         self.assertEqual(before, database_fingerprint(self.db))
         step = report["steps"]["remove_weak_v17"]
@@ -266,9 +266,9 @@ class RemoveWeakMigrationV17Test(unittest.TestCase):
         old_indexes = _schema(self.db)[2]
         report = apply_destructive_migrations_safely(self.db, self.backups)
 
-        self.assertEqual(get_user_version(self.db), 17)
+        self.assertEqual(get_user_version(self.db), 18)
         self.assertEqual(report["from_version"], 16)
-        self.assertEqual(report["to_version"], 17)
+        self.assertEqual(report["to_version"], 18)
         self.assertTrue(Path(report["backup"]).name.startswith("snapshot-premigrate-v16-"))
         tables, columns, indexes = _schema(self.db)
         self.assertNotIn("form_stats", tables)

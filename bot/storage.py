@@ -191,6 +191,9 @@ def _repair_word_fk_tables(conn):
 def init_db(db_path):
     """Handle init db."""
     with _connect(db_path) as conn:
+        fresh = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='words'"
+        ).fetchone() is None
         conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS words (
@@ -414,6 +417,10 @@ def init_db(db_path):
             """
         )
         _ensure_schema(conn)
+        if fresh:
+            from .learning_schema import create_learning_schema_v18
+
+            create_learning_schema_v18(conn)
 
 
 def _ensure_schema(conn):
@@ -740,6 +747,10 @@ def _row_to_entry(row):
         entry["learning_due"] = row["learning_due"]
     if "learning_batch_id" in row.keys():
         entry["learning_batch_id"] = row["learning_batch_id"] or ""
+    if "learning_recovery_remaining" in row.keys():
+        entry["learning_recovery_remaining"] = int(row["learning_recovery_remaining"] or 0)
+    if "learning_cycle_token" in row.keys():
+        entry["learning_cycle_token"] = row["learning_cycle_token"] or ""
     if "learning_done_at" in row.keys():
         entry["learning_done_at"] = row["learning_done_at"] or ""
     if "has_non_learning_history" in row.keys():
@@ -2840,11 +2851,12 @@ def learning_add_words(db_path, user_id, words, batch_id, first_delay_seconds):
                 continue
             cur = conn.execute(
                 """
-                INSERT INTO learning_items (user_id, word_id, batch_id, step_index, preview_done, next_due, status)
-                VALUES (?, ?, ?, 0, 0, ?, 'active')
+                INSERT INTO learning_items (user_id, word_id, batch_id, step_index, preview_done,
+                                            next_due, status, recovery_remaining, first_due_pending, cycle_token)
+                VALUES (?, ?, ?, 0, 0, ?, 'active', 0, 1, ?)
                 ON CONFLICT(user_id, word_id) DO NOTHING
                 """,
-                (int(user_id), word_id, _safe_text(batch_id), due_iso),
+                (int(user_id), word_id, _safe_text(batch_id), due_iso, uuid.uuid4().hex),
             )
             inserted += int(cur.rowcount > 0)
         conn.execute(
@@ -2870,17 +2882,21 @@ def learning_add_word_by_id(db_path, user_id, word_id, batch_id, first_delay_sec
     with _connect(db_path) as conn:
         conn.execute(
             """
-            INSERT INTO learning_items (user_id, word_id, batch_id, step_index, preview_done, next_due, status)
-            VALUES (?, ?, ?, 0, 0, ?, 'active')
+            INSERT INTO learning_items (user_id, word_id, batch_id, step_index, preview_done,
+                                        next_due, status, recovery_remaining, first_due_pending, cycle_token)
+            VALUES (?, ?, ?, 0, 0, ?, 'active', 0, 1, ?)
             ON CONFLICT(user_id, word_id) DO UPDATE SET
                 batch_id = excluded.batch_id,
                 step_index = 0,
                 preview_done = 0,
                 next_due = excluded.next_due,
                 status = 'active',
+                recovery_remaining = 0,
+                first_due_pending = 1,
+                cycle_token = excluded.cycle_token,
                 updated_at = CURRENT_TIMESTAMP
             """,
-            (int(user_id), _safe_text(word_id), _safe_text(batch_id), due_iso),
+            (int(user_id), _safe_text(word_id), _safe_text(batch_id), due_iso, uuid.uuid4().hex),
         )
         conn.execute(
             "UPDATE learning_batches SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -2900,7 +2916,9 @@ def learning_preview_entry(db_path, user_id):
                 w.russian, w.ukrainian, w.english, w.image, w.example, w.topic, w.preposition_type, w.case_type,
                 li.step_index AS learning_step,
                 li.next_due AS learning_due,
-                li.batch_id AS learning_batch_id
+                li.batch_id AS learning_batch_id,
+                li.recovery_remaining AS learning_recovery_remaining,
+                li.cycle_token AS learning_cycle_token
             FROM learning_items li
             JOIN words w ON w.id = li.word_id
             WHERE li.user_id = ?
@@ -2954,8 +2972,9 @@ def learning_mark_preview_next(db_path, user_id, word_id, first_interval_seconds
             conn.execute(
                 """
                 UPDATE learning_items
-                SET next_due = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE user_id = ? AND batch_id = ? AND status = 'active' AND preview_done = 1
+                SET next_due = ?, first_due_pending = 0, updated_at = CURRENT_TIMESTAMP
+                WHERE user_id = ? AND batch_id = ? AND status = 'active'
+                  AND preview_done = 1 AND first_due_pending = 1
                 """,
                 (first_due_iso, int(user_id), batch_id),
             )
@@ -2976,7 +2995,9 @@ def learning_due_entries(db_path, user_id, exclude_word_id=None):
                 w.russian, w.ukrainian, w.english, w.image, w.example, w.topic, w.preposition_type, w.case_type,
                 li.step_index AS learning_step,
                 li.next_due AS learning_due,
-                li.batch_id AS learning_batch_id
+                li.batch_id AS learning_batch_id,
+                li.recovery_remaining AS learning_recovery_remaining,
+                li.cycle_token AS learning_cycle_token
             FROM learning_items li
             JOIN words w ON w.id = li.word_id
             WHERE li.user_id = ?

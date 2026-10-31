@@ -35,6 +35,7 @@ from bot.storage import (
     learning_add_words,
     learning_get_or_create_batch,
     register_or_update_user,
+    set_user_status,
 )
 
 warnings.filterwarnings("ignore", category=ResourceWarning)
@@ -92,7 +93,11 @@ class _Msg:
 
 
 class _Update:
+    next_id = 100
+
     def __init__(self, uid, message_id=1, text=""):
+        type(self).next_id += 1
+        self.update_id = type(self).next_id
         self.message = _Msg(message_id, text)
         self.effective_user = types.SimpleNamespace(id=uid, username="u", first_name="U")
         self.effective_chat = types.SimpleNamespace(id=uid)
@@ -136,6 +141,7 @@ class _LearningDbTest(unittest.TestCase):
         self.addCleanup(lambda: os.unlink(self.db))
         init_db(self.db)
         register_or_update_user(self.db, GUEST, "g", "G")
+        set_user_status(self.db, GUEST, "approved")
         self._old = {k: os.environ.get(k) for k in ("DB_PATH", "OWNER_ID")}
         os.environ["DB_PATH"] = self.db
         os.environ["OWNER_ID"] = "999"
@@ -237,12 +243,13 @@ class LearningInputErrTest(_LearningDbTest):
         update.message.text = "zzz-wrong"
         update.message.calls.clear()
         _run(learning_quiz(update, ctx))
-        self.assertEqual(self._item()["step"], 0)
-        self.assertEqual(ctx.user_data["last_learning_prev_step"], 3)
+        self.assertEqual(self._item()["step"], 3)
+        self.assertIsNotNone(ctx.user_data["last_learning_answer_action"])
 
         # press input_err -> corrected as if right from step 3 -> step 4 (future)
         # and the cycle ends instead of keeping the stale step-0 card
         update.message.text = t(lang, "input_err")
+        update.update_id += 1
         update.message.calls.clear()
         _run(learning_quiz(update, ctx))
         item = self._item()
@@ -266,6 +273,7 @@ class LearningInputErrTest(_LearningDbTest):
         update.message.text = "zzz-wrong"
         _run(learning_quiz(update, ctx))
         update.message.text = t(lang, "input_err")
+        update.update_id += 1
         update.message.calls.clear()
         _run(learning_quiz(update, ctx))
 
@@ -273,6 +281,7 @@ class LearningInputErrTest(_LearningDbTest):
         self.assertEqual(int(ctx.user_data["quiz_entry"].get("learning_step")), 1)
 
         update.message.text = "der Ingenieur Ingenieure"
+        update.update_id += 1
         _run(learning_quiz(update, ctx))
         self.assertEqual(self._item()["step"], 2)
 
@@ -286,10 +295,12 @@ class LearningInputErrTest(_LearningDbTest):
         update.message.text = "zzz-wrong"
         _run(learning_quiz(update, ctx))
         update.message.text = t(lang, "input_err")
+        update.update_id += 1
         _run(learning_quiz(update, ctx))
         self.assertEqual(self._item()["step"], 4)
         # second press: nothing to fix
         update.message.calls.clear()
+        update.update_id += 1
         _run(learning_quiz(update, ctx))
         self.assertEqual(self._item()["step"], 4)          # unchanged
         joined = "\n".join(c[0] for c in update.message.calls)

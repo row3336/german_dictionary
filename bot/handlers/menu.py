@@ -78,8 +78,11 @@ def _load_info_text(lang="en"):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/start entry: owner gets their onboarding, a guest goes through the approval flow (P3.1)."""
+    from ..learning_store import close_display
+
     user = update.effective_user
     user_id = user.id
+    close_display(get_db_path(), user_id)
     reset_undo_progress(context)  # leaving the undo flow ends its live counter
     if not _is_owner_only(user_id):
         return await _guest_start(update, context)

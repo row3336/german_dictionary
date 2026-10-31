@@ -557,6 +557,9 @@ async def open_clarify_from_report(update: Update, context: ContextTypes.DEFAULT
     _resume_after_clarify has no quiz_entry -> _back_to_tests). Messages are sent
     via the callback's chat (a callback has no update.message).
     """
+    from ..learning_store import close_display
+
+    close_display(get_db_path(), update.effective_user.id)
     context.user_data["edit_source"] = "quiz"
     context.user_data["quiz_edit_entry"] = entry
     context.user_data["edit_stage"] = "pick_field"
@@ -580,6 +583,10 @@ async def _exit_clarify(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Where a clarify card lands on exit. A report-opened card (bug #25) has no
     quiz/tests origin — the owner came from the reports inbox — so it returns to the
     MAIN menu; every other clarify flow returns to the tests menu."""
+    if context.user_data.get("edit_return_state") == LEARNING_QUIZ:
+        from ..learning_store import close_display
+
+        close_display(get_db_path(), update.effective_user.id)
     if context.user_data.pop("clarify_from_report", None):
         return await _back_to_main_menu(update, context)
     return await _back_to_tests(update, context)
