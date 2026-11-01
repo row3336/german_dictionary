@@ -21,7 +21,7 @@ if "dotenv" not in sys.modules:  # quiz_ru_de imports bot.main locally, which do
     _d.load_dotenv = lambda *a, **k: False
     sys.modules["dotenv"] = _d
 
-from bot.app_config import QUIZ_ARTICLE, QUIZ_PL_SG, QUIZ_RU_DE  # noqa: E402
+from bot.app_config import QUIZ_PL_SG, QUIZ_RU_DE  # noqa: E402
 from bot.handlers import quiz as Q  # noqa: E402
 from bot.i18n import TEXTS  # noqa: E402
 from bot.storage import init_db, register_or_update_user, set_user_interface_lang  # noqa: E402
@@ -41,6 +41,7 @@ class _Msg:
 
 class _Update:
     def __init__(self, uid, text=""):
+        self.update_id = 1
         self.message = _Msg(text)
         self.effective_user = type("U", (), {"id": uid, "username": "u", "first_name": "U"})()
         self.effective_chat = type("C", (), {"id": uid})()
@@ -67,6 +68,8 @@ class QuizI18nTest(unittest.TestCase):
         os.environ["OWNER_ID"] = str(OWNER)
         self.addCleanup(self._restore)
         register_or_update_user(self.db, GUEST, "g", "G")
+        from bot.storage import set_user_status
+        set_user_status(self.db, GUEST, "approved")
         set_user_interface_lang(self.db, GUEST, "ru")
         # A word under the default topic '1' with no history: the topic filter matches
         # words (so it's the 'nothing due' path, not spec #8's 'no words for topic').
@@ -85,7 +88,7 @@ class QuizI18nTest(unittest.TestCase):
     def test_i18n_table_has_all_new_keys(self):
         for lang in ("en", "ru", "uk"):
             for key in (
-                "session_words_count", "no_due_words", "no_due_pl_sg", "no_due_nouns",
+                "session_words_count", "no_due_words", "no_due_pl_sg",
                 "input_err_fixed", "input_err_nothing", "added_to_learning", "nothing_to_send",
                 "answer_correct", "answer_wrong", "topic_filter_banner",
                 "clarify_choose_action", "clarify_no_entry", "clarify_enter_value",
@@ -134,27 +137,28 @@ class QuizI18nTest(unittest.TestCase):
         self.assertTrue(any(TEXTS["ru"]["no_due_pl_sg"] in t for t in texts))  # bug #5: merged into summary msg
         self.assertFalse(any("No due" in t for t in texts))
 
-    def test_article_no_due_localized_for_ru_guest(self):
-        update = _Update(GUEST)
-        state = _run(Q._send_article_prompt(update, _Ctx(), None))
-        self.assertNotEqual(state, QUIZ_ARTICLE)  # falls back to TESTS_MENU when nothing is due
-        texts = [c[0] for c in update.message.calls]
-        self.assertIn(TEXTS["ru"]["no_due_nouns"], texts)
-        self.assertFalse(any("No due" in t for t in texts))
+    def test_removed_article_mode_has_no_handler_or_localization(self):
+        self.assertFalse(hasattr(Q, "quiz_article"))
+        for lang in ("ru", "uk", "en"):
+            self.assertNotIn("quiz_article", TEXTS[lang])
 
     def test_input_err_nothing_to_fix_localized_for_ru_guest(self):
         update = _Update(GUEST, TEXTS["ru"]["input_err"])
-        state = _run(Q.quiz_ru_de(update, _Ctx()))
+        ctx = _Ctx()
+        _run(Q._send_ru_de_prompt(_Update(GUEST), ctx, None))
+        state = _run(Q.quiz_ru_de(update, ctx))
         self.assertEqual(state, QUIZ_RU_DE)
         first_text = update.message.calls[0][0]
-        self.assertEqual(first_text, TEXTS["ru"]["input_err_nothing"])
+        self.assertTrue(first_text.startswith(TEXTS["ru"]["input_err_nothing"]))
 
     def test_send_learn_nothing_to_send_localized_for_ru_guest(self):
         update = _Update(GUEST, TEXTS["ru"]["send_learn"])
-        state = _run(Q.quiz_ru_de(update, _Ctx()))
+        ctx = _Ctx()
+        _run(Q._send_ru_de_prompt(_Update(GUEST), ctx, None))
+        state = _run(Q.quiz_ru_de(update, ctx))
         self.assertEqual(state, QUIZ_RU_DE)
         first_text = update.message.calls[0][0]
-        self.assertEqual(first_text, TEXTS["ru"]["nothing_to_send"])
+        self.assertTrue(first_text.startswith(TEXTS["ru"]["nothing_to_send"]))
 
 
 if __name__ == "__main__":

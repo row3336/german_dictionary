@@ -25,7 +25,8 @@ from bot.common.session import (  # noqa: E402
 )
 from bot.handlers import learning as learning_handler  # noqa: E402
 from bot.handlers import quiz as quiz_handler  # noqa: E402
-from bot.storage import init_db, register_or_update_user  # noqa: E402
+from bot.storage import init_db, register_or_update_user, set_user_status
+from _written_fixture import remember_wrong  # noqa: E402
 
 
 OWNER = 999
@@ -81,6 +82,7 @@ class RetryInputErrBudgetTest(unittest.TestCase):
         conn.commit()
         conn.close()
         register_or_update_user(self.db, USER, "u", "U")
+        set_user_status(self.db, USER, "approved")
         self.old_env = {key: os.environ.get(key) for key in ("DB_PATH", "OWNER_ID")}
         os.environ["DB_PATH"] = self.db
         os.environ["OWNER_ID"] = str(OWNER)
@@ -102,7 +104,7 @@ class RetryInputErrBudgetTest(unittest.TestCase):
             "plural": "Hunde",
             "russian": "собака",
         }
-        return _Context({
+        context = _Context({
             "quiz_entry": entry,
             "quiz_is_retry": True,
             "last_answered_entry": entry,
@@ -113,6 +115,7 @@ class RetryInputErrBudgetTest(unittest.TestCase):
             "retry_queue": {RETRY_MODE: [WORD_ID] if pending else []},
             "retry_counts": {RETRY_MODE: {WORD_ID: count}},
         })
+        return remember_wrong(self.db, USER, context, WORD_ID)
 
     def test_correction_removes_pending_but_preserves_and_continues_count(self):
         context = self._retry_context(count=2)

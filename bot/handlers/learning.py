@@ -6,7 +6,6 @@ that pushes a quiz entry into the learning batch (used by quiz / clarify_fields 
 db_search).
 """
 
-import asyncio
 import logging
 import random
 from datetime import datetime, timezone
@@ -24,6 +23,7 @@ from ..app_config import (
 )
 from ..common.bot_media import resolve_bot_word_media
 from ..common.lang import _user_dict_lang, _user_interface_lang
+from ..common.study_lock import study_lock as _learning_lock
 from ..common.navigation import _action_key_from_text, _reply_text_with_retry
 from ..common.settings import (
     _learning_daily_qty,
@@ -63,11 +63,6 @@ from ..ui.keyboards import _learning_menu_keys, _tests_menu_keys
 
 
 logger = logging.getLogger(__name__)
-_learning_locks = {}
-
-
-def _learning_lock(user_id):
-    return _learning_locks.setdefault(int(user_id), asyncio.Lock())
 
 
 def _format_eta_from_iso(next_due_iso):

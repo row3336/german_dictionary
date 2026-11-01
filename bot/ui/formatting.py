@@ -359,11 +359,6 @@ def _format_feedback_pl_sg(entry, ok, lang="en"):
     return "\n".join(lines)
 
 
-def _format_article_question(entry):
-    """Handle format article question."""
-    return f">>     {_md_escape(_cap_word(entry.get('german', '')))} ?"
-
-
 def _format_feedback_ru_de(entry, ok, lang="en"):
     """Handle format feedback ru de."""
     status = _status_text(ok, lang)
@@ -463,19 +458,6 @@ def _format_feedback_de_ru(entry, ok, dict_lang, user_id=None, lang="en"):
     status = _status_text(ok, lang)
     # image/example are shown with the question now (_format_de_ru_question), not here.
     return f"{status} >>>     *{_md_escape(_low_word(_entry_translation(entry, dict_lang)))}*"
-
-
-def _format_feedback_article(entry, ok, dict_lang, lang="en"):
-    """Handle format feedback article."""
-    status = _status_text(ok, lang)
-    plural = _cap_plural(entry.get("plural", ""))
-    headline = f"{status} >>>     {_md_escape(_nomen_with_edge_emoji(entry.get('article', ''), entry.get('german', '')))}"
-    lines = [headline.strip()]
-    if plural:
-        lines.append("")
-        lines.append(f"_pl. die {_md_escape(plural)}_")
-    _append_hint_lines(lines, entry, ok)
-    return "\n".join(lines)
 
 
 def _format_topic_learning_line(entry):

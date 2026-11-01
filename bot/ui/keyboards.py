@@ -140,13 +140,11 @@ def _learning_settings_menu_keys(user_id):
     ]
 
 
-def _quiz_markup(user_id, article=False, allow_idk=True):
+def _quiz_markup(user_id, allow_idk=True):
     """Keyboard under a quiz question (answer options + service buttons)."""
     lang = _user_interface_lang(user_id)
     rows = []
-    if article:
-        rows.append(["der", "die", "das"])
-    elif allow_idk:
+    if allow_idk:
         rows.append([t(lang, "send_learn"), I_DONT_KNOW_TEXT, t(lang, "input_err")])
     # "clarify_fields" (card with personal example/image + report) is open to all (P6.2).
     rows.append([t(lang, "clarify_fields"), t(lang, "stop")])

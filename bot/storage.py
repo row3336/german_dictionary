@@ -17,7 +17,6 @@ MAX_EASE = 3.5
 
 QUIZ_RU_DE = "ru_de"
 QUIZ_DE_RU = "de_ru"
-QUIZ_ARTICLE = "article"
 INTERFACE_LANGS = ("en", "ru", "uk")
 DICT_LANGS = ("ru", "uk", "en")
 

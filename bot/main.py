@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 from logging.handlers import TimedRotatingFileHandler
@@ -66,7 +67,6 @@ from .app_config import (
     MENU,
     OWNER_DICT_LANG_KEY,
     OWNER_INTERFACE_LANG_KEY,
-    QUIZ_ARTICLE,
     QUIZ_DE_RU,
     QUIZ_PL_SG,
     QUIZ_RU_DE,
@@ -190,7 +190,6 @@ from .handlers.clarify_fields import (
     clarify_fields_input,
 )
 from .handlers.quiz import (
-    quiz_article,
     quiz_de_ru,
     quiz_pl_sg,
     quiz_ru_de,
@@ -243,54 +242,80 @@ async def _undo_steps_locked(update: Update, context: ContextTypes.DEFAULT_TYPE)
         except (TypeError, ValueError):
             steps = 1
     steps = max(1, min(20, steps))
-    logs = list_transaction_logs(get_db_path(), user_id=user_id, limit=steps)
-    restored = 0
-    processed_ids = []
-    skipped_learning = []
-    learning_failed = False
-    for item in logs:
-        if item.get("action", "").startswith("learning:") or item.get("action") == "input_err:learning":
-            try:
-                outcome = learning_store.undo_learning_log(get_db_path(), user_id, item["id"])
-            except Exception:
-                logger.exception("undo: Learning restore failed for log id=%s", item.get("id"))
-                learning_failed = True
-                break
-            if outcome["status"] == "restored":
-                restored += 1
-            else:
-                skipped_learning.append(outcome.get("reason", "stale cycle or missing word"))
+    from .written import service as written
+    from .common.navigation import _clear_last_answer
+    from .common.session import _reset_retry_state, _reset_fsrs_cycle_state
+    from .handlers.learning import _transport_update_id
+
+    _clear_last_answer(context)
+    _reset_retry_state(context)
+    _reset_fsrs_cycle_state(context)
+    plan = written.start_undo_plan(get_db_path(), user_id, _transport_update_id(update), steps)
+    plan_id = plan["transport_update_id"]
+    progress = plan["result"]
+    already_done = plan["state"] == "done"
+    from .storage import _connect
+
+    while progress["cursor"] < len(progress["log_ids"]):
+        log_id = progress["log_ids"][progress["cursor"]]
+        # Read only the pinned ID. A resumed command never selects newer logs.
+        with _connect(get_db_path()) as conn:
+            found = conn.execute("SELECT * FROM transaction_log WHERE id=? AND user_id=?",
+                                 (log_id, int(user_id))).fetchone()
+            item = dict(found) if found else None
+        if item is None:
+            progress = written.advance_undo_plan(get_db_path(), user_id, plan_id, log_id, False)
             continue
-        payload = item.get("payload") or {}
-        snapshot = payload.get("snapshot")
-        # A failed restore must NOT abort the whole /undo: the entry is still
-        # marked processed (deleted below) so a single bad snapshot can't jam the
-        # transaction log and brick /undo forever on repeated presses.
+        action = item.get("action", "")
         try:
-            if restore_user_word_state(get_db_path(), snapshot):
-                restored += 1
+            if action.startswith("written:"):
+                outcome = written.undo_written_log(get_db_path(), user_id, log_id, plan_id)
+                progress = written.start_undo_plan(get_db_path(), user_id, plan_id, steps)["result"]
+                continue
+            if action.startswith("learning:") or action == "input_err:learning":
+                outcome = learning_store.undo_learning_log(get_db_path(), user_id, log_id)
+                did_restore = outcome["status"] == "restored"
+            else:
+                try:
+                    payload = json.loads(item["payload"]) if isinstance(item["payload"], str) else item["payload"]
+                except (ValueError, TypeError):
+                    payload = {}
+                try:
+                    did_restore = bool(restore_user_word_state(get_db_path(), (payload or {}).get("snapshot")))
+                except Exception:
+                    logger.exception("undo: failed to restore snapshot for log id=%s", log_id)
+                    did_restore = False
+                delete_transaction_logs(get_db_path(), user_id=user_id, ids=[log_id])
+            reason = outcome.get("reason", "") if action.startswith("learning:") or action == "input_err:learning" else ("" if did_restore else "legacy snapshot unavailable")
+            progress = written.advance_undo_plan(get_db_path(), user_id, plan_id, log_id, did_restore, reason)
         except Exception:
-            logger.exception("undo: failed to restore snapshot for log id=%s", item.get("id"))
-        processed_ids.append(int(item.get("id")))
-    if processed_ids:
-        delete_transaction_logs(get_db_path(), user_id=user_id, ids=processed_ids)
-    if learning_failed:
-        await update.message.reply_text("Learning undo failed. Please retry /undo.")
-        return LEARNING_QUIZ if learning_store.get_display(get_db_path(), user_id) else MENU
+            logger.exception("undo: failed for pinned log id=%s", log_id)
+            is_learning = action.startswith("learning:") or action == "input_err:learning"
+            await update.message.reply_text("Learning undo failed. Please retry /undo." if is_learning
+                                            else "Undo failed. Please retry /undo.")
+            return LEARNING_QUIZ if is_learning and learning_store.get_display(get_db_path(), user_id) else MENU
+    restored = progress["restored"]
+    skipped_learning = progress.get("skipped", [])
     learning_store.close_display(get_db_path(), user_id)
 
     # Consecutive /undo presses accumulate into ONE message edited in place (a live
     # step counter) instead of one reply per press; the main-menu keyboard is shown
     # so the keyboard matches the state we land in (MENU). Any other action resets
     # the counter via reset_undo_progress() (called from start/menu_choice).
-    total = int(context.user_data.get(UNDO_TOTAL_KEY, 0)) + restored
+    previous_total = int(context.user_data.get(UNDO_TOTAL_KEY, 0))
+    total = previous_total if already_done and previous_total else previous_total + restored
     if restored:
         context.user_data[UNDO_TOTAL_KEY] = total
         text = f"↩️ Undo done: {total} step(s)."
     else:
         text = f"↩️ Undo done: {total} step(s). Nothing more to undo." if total else "Nothing to undo."
     if skipped_learning:
-        text += " Old Learning step skipped: cycle could not be verified."
+        text += " Old study step skipped: state could not be verified."
+
+    summary = written.finish_undo_result(get_db_path(), user_id, plan_id, total, text)
+    text = summary["text"]
+    if not already_done:
+        context.user_data[UNDO_TOTAL_KEY] = summary["total"]
 
     msg_id = context.user_data.get(UNDO_MSG_ID_KEY)
     if msg_id and restored:
@@ -321,8 +346,6 @@ async def _flag_current_word(update: Update, context: ContextTypes.DEFAULT_TYPE,
         return await _resume_after_clarify(update, context, "✅ Flag saved.", state_override=QUIZ_DE_RU)
     if return_state == QUIZ_PL_SG:
         return await _resume_after_clarify(update, context, "✅ Flag saved.", state_override=QUIZ_PL_SG)
-    if return_state == QUIZ_ARTICLE:
-        return await _resume_after_clarify(update, context, "✅ Flag saved.", state_override=QUIZ_ARTICLE)
     return await _back_to_tests(update, context)
 
 
@@ -533,7 +556,6 @@ def main():
             QUIZ_RU_DE: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_ru_de)],
             QUIZ_DE_RU: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_de_ru)],
             QUIZ_PL_SG: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_pl_sg)],
-            QUIZ_ARTICLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz_article)],
             SYN_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, synonyms_menu)],
             SYN_ADD_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, synonyms_add_input)],
             SYN_REMOVE_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, synonyms_remove_input)],

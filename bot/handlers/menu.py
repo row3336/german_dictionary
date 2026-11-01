@@ -83,6 +83,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id
     close_display(get_db_path(), user_id)
+    _clear_last_answer(context)
+    _reset_retry_state(context)
+    _reset_fsrs_cycle_state(context)
     reset_undo_progress(context)  # leaving the undo flow ends its live counter
     if not _is_owner_only(user_id):
         return await _guest_start(update, context)

@@ -9,7 +9,6 @@ from telegram.ext import ContextTypes
 from ..app_config import (
     BACK_TEXT,
     DB_SEARCH_VIEW,
-    QUIZ_ARTICLE,
     QUIZ_DE_RU,
     QUIZ_PL_SG,
     QUIZ_RU_DE,
@@ -101,7 +100,6 @@ async def _return_from_synonyms(update: Update, context: ContextTypes.DEFAULT_TY
     """Handle return from synonyms."""
     from ..handlers.db_search import _send_db_search_prompt
     from ..handlers.quiz import (
-        _send_article_prompt,
         _send_de_ru_prompt,
         _send_pl_sg_prompt,
         _send_ru_de_prompt,
@@ -121,8 +119,6 @@ async def _return_from_synonyms(update: Update, context: ContextTypes.DEFAULT_TY
         return await _send_de_ru_prompt(update, context, prefix)
     if return_state == QUIZ_PL_SG:
         return await _send_pl_sg_prompt(update, context, prefix)
-    if return_state == QUIZ_ARTICLE:
-        return await _send_article_prompt(update, context, prefix)
     if return_state == DB_SEARCH_VIEW:
         return await _send_db_search_prompt(update, update.effective_user.id, prefix)
     return await _back_to_tests(update, context)

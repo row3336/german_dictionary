@@ -52,7 +52,11 @@ class _Msg:
 
 
 class _Update:
+    sequence = 0
+
     def __init__(self, uid):
+        type(self).sequence += 1
+        self.update_id = type(self).sequence
         self.message = _Msg()
         self.effective_user = type("U", (), {"id": uid, "username": "u", "first_name": "U"})()
         self.effective_chat = type("C", (), {"id": uid})()
@@ -204,6 +208,7 @@ class UndoCounterTest(unittest.TestCase):
         self.assertIn("1 step", upd.message.replies[0])
         self.assertEqual(ctx.bot.edits, [])
 
+        upd.update_id += 1000
         _run(M.undo_steps(upd, ctx))
         self.assertEqual(len(upd.message.replies), 1)      # no second message
         self.assertEqual(len(ctx.bot.edits), 1)            # edited in place
@@ -216,6 +221,7 @@ class UndoCounterTest(unittest.TestCase):
         _run(M.undo_steps(upd, ctx))
         self.assertEqual(len(upd.message.replies), 1)
         reset_undo_progress(ctx)                            # simulate leaving the undo flow
+        upd.update_id += 1000
         _run(M.undo_steps(upd, ctx))
         self.assertEqual(len(upd.message.replies), 2)       # fresh message, not an edit
         self.assertEqual(ctx.bot.edits, [])

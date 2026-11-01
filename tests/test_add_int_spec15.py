@@ -23,7 +23,6 @@ if "dotenv" not in sys.modules:
 
 from bot.app_config import (  # noqa: E402
     DB_SEARCH_VIEW,
-    QUIZ_ARTICLE,
     QUIZ_DE_RU,
     QUIZ_PL_SG,
     QUIZ_RU_DE,
@@ -152,13 +151,11 @@ class AddIntFlowTest(unittest.TestCase):
     def test_each_directional_quiz_resolves_its_progress_mode(self):
         from bot.common.lang import _mode_de_l1, _mode_pl_sg
         from bot.handlers.clarify_fields import _add_int_mode_for_return_state
-        from bot.storage import QUIZ_ARTICLE as MODE_ARTICLE
 
         expected = {
             QUIZ_RU_DE: self._mode(OWNER),
             QUIZ_DE_RU: _mode_de_l1(OWNER),
             QUIZ_PL_SG: _mode_pl_sg(OWNER),
-            QUIZ_ARTICLE: MODE_ARTICLE,
         }
         for return_state, mode in expected.items():
             with self.subTest(return_state=return_state):

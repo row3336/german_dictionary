@@ -23,7 +23,6 @@ from ..app_config import (
     LEARNING_QUIZ,
     MENU,
     PREPOSITION_TYPES,
-    QUIZ_ARTICLE,
     QUIZ_DE_RU,
     QUIZ_PL_SG,
     QUIZ_RU_DE,
@@ -45,7 +44,6 @@ from ..common.navigation import _action_key_from_text, _back_to_main_menu, _back
 from ..common.txlog import _capture_transaction_snapshot, _log_transaction
 from ..handlers.quiz import (
     _interval_divisor_for_mode,
-    _send_article_prompt,
     _send_de_ru_prompt,
     _send_pl_sg_prompt,
     _send_ru_de_prompt,
@@ -53,7 +51,6 @@ from ..handlers.quiz import (
 from ..i18n import t
 from ..labels import SYN_CONFIRM_TEXT, SYNONYMS_TEXT
 from ..storage import (
-    QUIZ_ARTICLE as MODE_ARTICLE,
     add_error_report,
     delete_word,
     get_progress,
@@ -69,18 +66,13 @@ from ..storage import (
 from ..text_utils import type_label as _type_label
 from ..ui.formatting import (
     _entry_translation,
-    _format_article_question,
     _format_conjugation_card,
-    _format_de_ru_question,
-    _format_pl_sg_question,
-    _format_ru_question,
     _format_word_card,
 )
 from ..ui.keyboards import (
     _clarify_conjugation_markup,
     _clarify_fields_markup,
     _main_menu_markup,
-    _quiz_markup,
     _type_choice_markup,
     _value_entry_markup,
 )
@@ -173,8 +165,6 @@ def _add_int_mode_for_return_state(user_id, return_state, selected_mode=None):
         return selected_mode if selected_mode in direction_mode_family(base_mode) else base_mode
     if return_state == QUIZ_PL_SG:
         return _mode_pl_sg(user_id)
-    if return_state == QUIZ_ARTICLE:
-        return MODE_ARTICLE
     return None
 
 
@@ -603,53 +593,11 @@ async def _resume_after_clarify(update: Update, context: ContextTypes.DEFAULT_TY
     if not entry:
         return await _exit_clarify(update, context)
 
-    if state == QUIZ_RU_DE:
-        text = _format_ru_question(entry, _user_dict_lang(update.effective_user.id))
-        if prefix_text:
-            text = f"{prefix_text}\n\n{text}"
-        await _reply_text_with_retry(
-            update.message,
-            text,
-            reply_markup=_quiz_markup(update.effective_user.id, article=False),
-            parse_mode="Markdown",
-        )
-        return QUIZ_RU_DE
-
-    if state == QUIZ_DE_RU:
-        text = _format_de_ru_question(entry)
-        if prefix_text:
-            text = f"{prefix_text}\n\n{text}"
-        await _reply_text_with_retry(
-            update.message,
-            text,
-            reply_markup=_quiz_markup(update.effective_user.id, article=False),
-            parse_mode="Markdown",
-        )
-        return QUIZ_DE_RU
-
-    if state == QUIZ_PL_SG:
-        text = _format_pl_sg_question(entry)
-        if prefix_text:
-            text = f"{prefix_text}\n\n{text}"
-        await _reply_text_with_retry(
-            update.message,
-            text,
-            reply_markup=_quiz_markup(update.effective_user.id, article=False),
-            parse_mode="Markdown",
-        )
-        return QUIZ_PL_SG
-
-    if state == QUIZ_ARTICLE:
-        text = _format_article_question(entry)
-        if prefix_text:
-            text = f"{prefix_text}\n\n{text}"
-        await _reply_text_with_retry(
-            update.message,
-            text,
-            reply_markup=_quiz_markup(update.effective_user.id, article=True),
-            parse_mode="Markdown",
-        )
-        return QUIZ_ARTICLE
+    if state in {QUIZ_RU_DE, QUIZ_DE_RU, QUIZ_PL_SG}:
+        from .quiz import _repeat_current_ru_de, _repeat_current_de_ru, _repeat_current_pl_sg
+        repeat = {QUIZ_RU_DE: _repeat_current_ru_de, QUIZ_DE_RU: _repeat_current_de_ru,
+                  QUIZ_PL_SG: _repeat_current_pl_sg}[state]
+        return await repeat(update, context, prefix_text)
 
     if state == LEARNING_QUIZ:
         return await _send_learning_prompt(update, context, prefix_text, force_entry=context.user_data.get("quiz_entry"))
@@ -769,8 +717,8 @@ async def clarify_fields_input(update: Update, context: ContextTypes.DEFAULT_TYP
             return await _send_ru_de_prompt(update, context, prefix)
         if state == QUIZ_DE_RU:
             return await _send_de_ru_prompt(update, context, prefix)
-        if state == QUIZ_ARTICLE:
-            return await _send_article_prompt(update, context, prefix)
+        if state == QUIZ_PL_SG:
+            return await _send_pl_sg_prompt(update, context, prefix)
         if state == DB_SEARCH_VIEW:
             _clear_db_search_variants(context)
             return await _send_db_search_prompt(update, update.effective_user.id, prefix)

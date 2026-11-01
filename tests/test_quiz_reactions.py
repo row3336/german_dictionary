@@ -2,8 +2,8 @@
 
 Correct answers get a streak-based reaction (1-9 -> thumbs up, 10-19 -> hundred
 points, 20+ -> fire); wrong answers get thumbs down. Reactions land on the
-USER's answer message (never the bot's own text), only in the four FSRS quizzes
-(Lang>De/De>Lang/pl>sg/article). A failed reaction
+USER's answer message (never the bot's own text), only in the written FSRS quizzes
+(Lang>De/De>Lang/pl>sg). A failed reaction
 call must not break the quiz, and "input_err" (typo rollback) lifts the
 thumbs-down from the corrected message without setting a new one.
 """
@@ -25,7 +25,7 @@ if "dotenv" not in sys.modules:  # quiz_ru_de imports bot.main locally (`from do
     _d.load_dotenv = lambda *a, **k: False
     sys.modules["dotenv"] = _d
 
-from bot.app_config import QUIZ_ARTICLE, QUIZ_RU_DE  # noqa: E402
+from bot.app_config import QUIZ_RU_DE  # noqa: E402
 from bot.common.session import (  # noqa: E402
     _bump_answer_streak,
     _reaction_emoji_for_streak,
@@ -33,7 +33,8 @@ from bot.common.session import (  # noqa: E402
     _reset_session,
 )
 from bot.handlers import quiz as Q  # noqa: E402
-from bot.storage import init_db, register_or_update_user  # noqa: E402
+from bot.storage import init_db, register_or_update_user, set_user_status
+from _written_fixture import confirmed_frame, remember_wrong  # noqa: E402
 
 OWNER, GUEST = 999, 111
 THUMBS_UP, THUMBS_DOWN, HUNDRED_POINTS, FIRE = "\U0001F44D", "\U0001F44E", "\U0001F4AF", "\U0001F525"
@@ -182,6 +183,7 @@ class InputErrReactionTest(unittest.TestCase):
         conn.commit()
         conn.close()
         register_or_update_user(self.db, GUEST, "g", "G")
+        set_user_status(self.db, GUEST, "approved")
         self._old = {k: os.environ.get(k) for k in ("DB_PATH", "OWNER_ID")}
         os.environ["DB_PATH"] = self.db
         os.environ["OWNER_ID"] = str(OWNER)
@@ -196,25 +198,26 @@ class InputErrReactionTest(unittest.TestCase):
 
     def _ctx_with_wrong_last_answer(self, message_id=99):
         entry = {"id": "w1", "type": "nomen", "german": "Hund", "article": "der", "plural": "Hunde"}
-        return _Ctx(user_data={
+        ctx = _Ctx(user_data={
             "last_answered_entry": entry,
             "last_answered_mode": QUIZ_RU_DE,
             "last_answered_ok": False,
             "last_answered_srs": {"interval": 1, "repetitions": 0},
             "last_answered_message_id": message_id,
         })
+        return remember_wrong(self.db, GUEST, ctx, "w1")
 
     def test_successful_correction_lifts_the_reaction(self):
         update = _Update(GUEST, "я ошибся")
         ctx = self._ctx_with_wrong_last_answer(message_id=99)
-        applied = _run(Q._apply_input_err(update, ctx, QUIZ_RU_DE))
+        applied = _run(Q._apply_input_err(update, ctx, "ru_de"))
         self.assertTrue(applied)
         self.assertEqual(ctx.bot.reactions, [(GUEST, 99, [])])
 
     def test_nothing_to_fix_does_not_touch_reactions(self):
         update = _Update(GUEST, "я ошибся")
         ctx = _Ctx(user_data={})  # no last wrong answer at all
-        applied = _run(Q._apply_input_err(update, ctx, QUIZ_RU_DE))
+        applied = _run(Q._apply_input_err(update, ctx, "ru_de"))
         self.assertFalse(applied)
         self.assertEqual(ctx.bot.reactions, [])
 
@@ -236,6 +239,7 @@ class QuizHandlerReactionWiringTest(unittest.TestCase):
         conn.commit()
         conn.close()
         register_or_update_user(self.db, GUEST, "g", "G")
+        set_user_status(self.db, GUEST, "approved")
         self._old = {k: os.environ.get(k) for k in ("DB_PATH", "OWNER_ID")}
         os.environ["DB_PATH"] = self.db
         os.environ["OWNER_ID"] = str(OWNER)
@@ -253,7 +257,8 @@ class QuizHandlerReactionWiringTest(unittest.TestCase):
 
     def test_correct_answer_through_quiz_ru_de_reacts_thumbs_up(self):
         update = _Update(GUEST, "der Hund Hunde", message_id=55)
-        ctx = _Ctx(user_data={"quiz_entry": self._entry()})
+        ctx = _Ctx(user_data={"quiz_entry": self._entry(),
+                             "written_frame": confirmed_frame(GUEST, "w1")})
         _run(Q.quiz_ru_de(update, ctx))
         self.assertIn((GUEST, 55, [THUMBS_UP]), ctx.bot.reactions)
         with sqlite3.connect(self.db) as conn:
@@ -265,16 +270,13 @@ class QuizHandlerReactionWiringTest(unittest.TestCase):
 
     def test_wrong_answer_through_quiz_ru_de_reacts_thumbs_down(self):
         update = _Update(GUEST, "die Katze Katzen", message_id=56)
-        ctx = _Ctx(user_data={"quiz_entry": self._entry()})
+        ctx = _Ctx(user_data={"quiz_entry": self._entry(),
+                             "written_frame": confirmed_frame(GUEST, "w1")})
         _run(Q.quiz_ru_de(update, ctx))
         self.assertIn((GUEST, 56, [THUMBS_DOWN]), ctx.bot.reactions)
 
-    def test_article_quiz_also_reacts(self):
-        entry = {"id": "w1", "type": "nomen", "german": "Hund", "article": "der", "plural": "Hunde"}
-        update = _Update(GUEST, "der", message_id=57)
-        ctx = _Ctx(user_data={"quiz_entry": entry})
-        _run(Q.quiz_article(update, ctx))
-        self.assertIn((GUEST, 57, [THUMBS_UP]), ctx.bot.reactions)
+    def test_article_quiz_is_removed(self):
+        self.assertFalse(hasattr(Q, "quiz_article"))
 
 
 class LearningReactionsTest(unittest.TestCase):

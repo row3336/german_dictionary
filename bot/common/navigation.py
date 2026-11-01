@@ -48,7 +48,6 @@ def _action_key_from_text(text, user_id):
         ("settings", "settings"),
         ("info", "info"),
         ("stat", "stat"),
-        ("quiz_article", "quiz_article"),
         ("dump_db", "dump_db"),
         ("dump_logs", "dump_logs"),
         ("dump", "dump"),
@@ -153,6 +152,8 @@ async def _reply_text_with_retry(message, text, max_retries=3, **kwargs):
 
 def _clear_last_answer(context):
     """Handle clear last answer."""
+    from ..written.frame import close
+    close(context)
     context.user_data.pop("last_answered_entry", None)
     context.user_data.pop("last_answered_mode", None)
     context.user_data.pop("last_answered_ok", None)
