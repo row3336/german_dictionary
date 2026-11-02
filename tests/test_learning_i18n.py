@@ -36,6 +36,7 @@ OWNER, GUEST = 999, 111
 _NEW_KEYS = (
     "learning_batch_full",
     "learning_no_new",
+    "learning_add_closed",
     "learning_added",
     "learning_no_due",
     "learning_session_reset",

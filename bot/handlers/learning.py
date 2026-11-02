@@ -7,7 +7,6 @@ db_search).
 """
 
 import logging
-import random
 from datetime import datetime, timezone
 
 from telegram import ReplyKeyboardMarkup, Update
@@ -40,6 +39,7 @@ from ..handlers.quiz import _check_ru_de_strict, _set_reaction
 from ..i18n import t
 from ..storage import (
     learning_active_count,
+    learning_add_closed,
     learning_add_word_by_id,
     learning_add_words,
     learning_due_entries,
@@ -111,41 +111,6 @@ def _learning_empty_text(user_id):
 
 # A word must not reappear within this many consecutive shows (>= once per three).
 _LEARNING_RECENT_SHOWS = 2
-
-
-def _pick_learning_due_entry(context, user_id):
-    """Pick the next word to show in the running learning queue.
-
-    STATIC show rule — identical whether or not mix mode is on (mix only shapes
-    which words enter the queue, never their show order; see storage.py:
-    learning_pick_new_words):
-      - first round (freshly previewed, step_index == 0): strict preview order
-        (words as they were reviewed, i.e. created_at ASC from the query);
-      - later rounds (step_index > 0): random, but a word is not shown again
-        within the last two shows — at most once per three consecutive shows.
-    Recent shows are tracked in context ("learning_recent_ids"); when the pool is
-    too small to honour the spacing, it relaxes as far as needed. An available
-    alternative to the last shown word is selected before step priority is
-    applied, so a wrong answer reset to step 0 cannot jump ahead of that
-    alternative and immediately repeat.
-    """
-    due_entries = learning_due_entries(get_db_path(), user_id=user_id)
-    if not due_entries:
-        return None
-    recent = context.user_data.get("learning_recent_ids") or []
-    last_shown = recent[-1] if recent else None
-    alternatives = [entry for entry in due_entries if entry.get("id") != last_shown]
-    selection_entries = alternatives or due_entries
-
-    first_round = [entry for entry in selection_entries if int(entry.get("learning_step") or 0) == 0]
-    if first_round:
-        # already ordered by created_at ASC (preview order) in the query
-        return first_round[0]
-
-    pool = [entry for entry in selection_entries if entry.get("id") not in recent]
-    if not pool:
-        pool = selection_entries
-    return random.choice(pool)
 
 
 def _note_learning_shown(context, word_id):
@@ -239,6 +204,13 @@ async def _learning_add_words(update: Update, context: ContextTypes.DEFAULT_TYPE
     """Handle learning add words."""
     user_id = update.effective_user.id
     db_path = get_db_path()
+    if learning_add_closed(db_path, user_id=user_id):
+        await _reply_text_with_retry(
+            update.message,
+            t(_user_interface_lang(user_id), "learning_add_closed"),
+            reply_markup=ReplyKeyboardMarkup(_learning_menu_keys(user_id), resize_keyboard=True),
+        )
+        return LEARNING_MENU
     daily_qty = _learning_daily_qty(db_path, user_id)
     batch_id = learning_get_or_create_batch(db_path, user_id=user_id, daily_qty=daily_qty)
     active_count = learning_active_count(db_path, user_id=user_id, batch_id=batch_id)

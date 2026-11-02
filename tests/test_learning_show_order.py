@@ -2,7 +2,7 @@
 
 Two independent layers, verified separately:
 
-* Show layer (handlers.learning._pick_learning_due_entry) — STATIC rule, never
+* Show layer (learning_store._choose) — STATIC rule, never
   affected by mix mode: first round (step 0) strictly in preview order; later
   rounds (step > 0) random but no word within the last two shows.
 * Selection layer (storage.learning_pick_new_words) — the ONLY place mix acts:
@@ -16,11 +16,15 @@ import tempfile
 import types
 import unittest
 import warnings
+from datetime import datetime, timezone
 
-from bot.handlers.learning import _note_learning_shown, _pick_learning_due_entry
+from bot.handlers.learning import _note_learning_shown
+from bot.learning_store import _choose
 from bot.storage import (
+    _connect,
     _mix_by_topic_proportional,
     add_word,
+    get_word_by_id,
     init_db,
     learning_add_words,
     learning_get_or_create_batch,
@@ -83,13 +87,20 @@ class LearningShowOrderTests(unittest.TestCase):
                     (step_index, f"2000-01-01 00:00:{i:02d}", w["id"]),
                 )
 
+    def _pick(self, ctx):
+        with _connect(self.db) as conn:
+            phase, item = _choose(conn, 1, ctx.user_data.get("learning_recent_ids") or [],
+                                  datetime.now(timezone.utc))
+        self.assertEqual(phase, "question")
+        return get_word_by_id(self.db, item["word_id"])
+
     def test_first_round_follows_preview_order(self):
         words = [_add(self.db, g, "1") for g in ("Apfel", "Katze", "Haus", "Buch")]
         self._enqueue_due(words, step_index=0)
         ctx = _ctx()
         seen = []
         for _ in range(len(words)):
-            entry = _pick_learning_due_entry(ctx, user_id=1)
+            entry = self._pick(ctx)
             seen.append(entry["german"])
             _note_learning_shown(ctx, entry["id"])
             # answering advances the word out of the first round (step 0 -> 1)
@@ -106,7 +117,7 @@ class LearningShowOrderTests(unittest.TestCase):
         ctx = _ctx()
         seen = []
         for _ in range(len(words)):
-            entry = _pick_learning_due_entry(ctx, user_id=1)
+            entry = self._pick(ctx)
             seen.append(entry["german"])
             _note_learning_shown(ctx, entry["id"])
             learning_update_result(self.db, user_id=1, word_id=entry["id"], ok=True, intervals_seconds=[0, 0, 0, 0])
@@ -120,7 +131,7 @@ class LearningShowOrderTests(unittest.TestCase):
         ctx = _ctx()
         ctx.user_data["learning_recent_ids"] = [reset_word["id"]]
 
-        entry = _pick_learning_due_entry(ctx, user_id=1)
+        entry = self._pick(ctx)
 
         self.assertEqual(entry["id"], alternative["id"])
 
@@ -131,7 +142,7 @@ class LearningShowOrderTests(unittest.TestCase):
         ctx = _ctx()
         shown = []
         for _ in range(40):
-            entry = _pick_learning_due_entry(ctx, user_id=1)
+            entry = self._pick(ctx)
             wid = entry["id"]
             # invariant: not equal to either of the last two shows (>= once per three)
             self.assertNotIn(wid, shown[-2:])
@@ -148,13 +159,14 @@ class LearningShowOrderTests(unittest.TestCase):
         ctx = _ctx()
         prev = None
         for _ in range(20):
-            entry = _pick_learning_due_entry(ctx, user_id=1)
+            entry = self._pick(ctx)
             self.assertNotEqual(entry["id"], prev)
             prev = entry["id"]
             _note_learning_shown(ctx, entry["id"])
 
-    def test_empty_queue_returns_none(self):
-        self.assertIsNone(_pick_learning_due_entry(_ctx(), user_id=1))
+    def test_empty_queue_is_completed(self):
+        with _connect(self.db) as conn:
+            self.assertEqual(_choose(conn, 1, [], datetime.now(timezone.utc)), ("completed", None))
 
 
 class LearningMixSelectionTests(unittest.TestCase):

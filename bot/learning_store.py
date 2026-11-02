@@ -4,9 +4,9 @@ import json
 import random
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-from .learning_logic import reduce_answer, stamp
+from .learning_logic import clock, reduce_answer, stamp
 from .storage import _connect, _row_to_entry
 
 
@@ -75,9 +75,11 @@ def _choose(conn, user_id, recent_ids, now):
         ORDER BY created_at,word_id LIMIT 1""", (int(user_id),))
     if preview:
         return "preview", preview
+    # next_due first: a wrong answer moves its word behind the words still waiting
+    # for their one answer in preview order.
     due = [dict(row) for row in conn.execute("""SELECT word_id,cycle_token,step_index
         FROM learning_items WHERE user_id=? AND status='active' AND preview_done=1
-          AND next_due<=? ORDER BY created_at,word_id""", (int(user_id), stamp(now)))]
+          AND next_due<=? ORDER BY next_due,created_at,word_id""", (int(user_id), stamp(now)))]
     if due:
         recent = list(recent_ids or [])[-2:]
         alternatives = [item for item in due if item["word_id"] != recent[-1]] if recent else due
@@ -233,10 +235,12 @@ def _apply_preview(conn, user_id, item, kind, now):
             WHERE user_id=? AND word_id=? AND cycle_token=? AND status='active'""",
             (stamp(now), int(user_id), item["word_id"], item["cycle_token"]))
     if finalize:
+        # Stamps have one-second precision: keep first deadlines strictly earlier than
+        # a wrong answer given in the same second, or that word would not move back.
         conn.execute("""UPDATE learning_items SET next_due=?,first_due_pending=0,
             updated_at=? WHERE user_id=? AND batch_id=? AND status='active'
               AND preview_done=1 AND first_due_pending=1""",
-            (stamp(now), stamp(now), int(user_id), batch_id))
+            (stamp(clock(now) - timedelta(seconds=1)), stamp(now), int(user_id), batch_id))
     conn.execute("UPDATE learning_batches SET updated_at=? WHERE id=? AND user_id=?",
                  (stamp(now), batch_id, int(user_id)))
     return affected
