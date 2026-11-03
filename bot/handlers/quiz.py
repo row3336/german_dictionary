@@ -494,7 +494,8 @@ async def _send_prompt(update, context, prefix_text, direction, keep=False):
             wrong=_session_wrong_count(context, mode))
         due_key = "no_due_pl_sg" if direction == "pl_sg" else "no_due_words"
         text += "\n\n" + t(_user_interface_lang(user_id), _no_words_key(user_id, due_key))
-        kwargs = {"reply_markup": _quiz_idle_markup(user_id),
+        # The Markdown answer feedback (prefix_text) shares this message.
+        kwargs = {"reply_markup": _quiz_idle_markup(user_id), "parse_mode": "Markdown",
                   "message_effect_id": _session_effect_id(context, mode)}
     if prefix_text:
         text = f"{prefix_text}\n\n{text}"

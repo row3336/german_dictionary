@@ -67,6 +67,18 @@ class SessionSummaryMergeTest(unittest.TestCase):
         self.assertNotIn("NO DUE", text)
         self.assertIsNone(kwargs.get("reply_markup"))
 
+    def test_last_answer_feedback_keeps_markdown_in_summary(self):
+        # bug #49: feedback of the last answer is folded into the summary message
+        for send in (Q._send_ru_de_prompt, Q._send_de_ru_prompt, Q._send_pl_sg_prompt):
+            with self.subTest(send=send.__name__):
+                upd = _FakeUpdate()
+                asyncio.run(send(upd, _Ctx(), "Верно ⚪ >>>     *🔵 der Vogel 🔵*"))
+                self.assertEqual(len(upd.message.calls), 1)
+                text, kwargs = upd.message.calls[0]
+                self.assertTrue(text.startswith("Верно ⚪ >>>     *🔵 der Vogel 🔵*\n\n"))
+                self.assertEqual(kwargs.get("parse_mode"), "Markdown")
+                self.assertIn("message_effect_id", kwargs)
+
 
 if __name__ == "__main__":
     unittest.main()
